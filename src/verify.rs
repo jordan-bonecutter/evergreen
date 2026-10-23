@@ -306,6 +306,16 @@ fn destructor_body(body: &[Statement]) -> bool {
     })
 }
 
+/// Specifications inspect values without consuming ownership. Ideal code is
+/// erased computation, but its affine values still move. Runtime code cannot
+/// inspect erased bindings. Keep these modes distinct at every phase boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    Runtime,
+    Ideal,
+    Specification,
+}
+
 struct Context<'a> {
     functions: &'a BTreeMap<String, Function>,
     structs: &'a BTreeMap<String, Struct>,
@@ -317,14 +327,13 @@ struct Context<'a> {
     obligations: usize,
     memory: Memory<Symbol>,
     roots: BTreeMap<String, PlaneId>,
-    specification: bool,
+    phase: Phase,
     current: Option<String>,
     measure: Option<Linear>,
     opened: BTreeMap<String, BTreeSet<String>>,
     drops: &'a BTreeSet<String>,
     dropping: bool,
     helpers: &'a BTreeSet<String>,
-    ideal: bool,
     session: &'a mut Session,
     writable: BTreeSet<PlaneId>,
     old_values: BTreeMap<String, Symbol>,
@@ -350,14 +359,13 @@ impl<'a> Context<'a> {
             obligations: 0,
             memory: Memory::default(),
             roots: BTreeMap::new(),
-            specification: false,
+            phase: Phase::Runtime,
             current: None,
             measure: None,
             opened: BTreeMap::new(),
             drops,
             dropping: false,
             helpers,
-            ideal: false,
             session,
             writable: BTreeSet::new(),
             old_values: BTreeMap::new(),
@@ -369,7 +377,7 @@ impl<'a> Context<'a> {
         format!("evg_{}", self.fresh)
     }
     fn runtime_name(&self, name: &str) -> Result<()> {
-        if self.ideal_bindings.contains(name) && !self.ideal && !self.specification {
+        if self.ideal_bindings.contains(name) && self.phase == Phase::Runtime {
             return Err(format!(
                 "{name} is an ideal parameter and cannot be read by runtime code"
             ));
@@ -398,7 +406,7 @@ impl<'a> Context<'a> {
         }
     }
     fn number_type(&self) -> Ty {
-        if self.ideal || self.specification {
+        if self.phase != Phase::Runtime {
             Ty::Int
         } else {
             Ty::Machine(MachineInt::parse("isize").expect("isize type"))
@@ -422,10 +430,10 @@ impl<'a> Context<'a> {
         Ok(feasible)
     }
     fn proposition(&mut self, e: &Expr) -> Result<Formula> {
-        let saved = self.specification;
-        self.specification = true;
+        let saved = self.phase;
+        self.phase = Phase::Specification;
         let result = self.eval(e, Some(&Ty::Bool)).and_then(|v| v.proposition());
-        self.specification = saved;
+        self.phase = saved;
         result
     }
     fn nonnegative(&mut self, e: &Expr, label: &str) -> Result<Linear> {
@@ -448,7 +456,7 @@ impl<'a> Context<'a> {
     }
     fn resolve(&mut self, t: &Type) -> Result<Ty> {
         match t {
-            Type::Int | Type::Nat if !self.ideal && !self.specification => Err("int and nat are proof-only; use a machine integer for runtime storage or declare ideal code".into()),
+            Type::Int | Type::Nat if self.phase == Phase::Runtime => Err("int and nat are proof-only; use a machine integer for runtime storage or declare ideal code".into()),
             Type::Int => Ok(Ty::Int), Type::Nat => Ok(Ty::Nat),
             Type::Bool => Ok(Ty::Bool),
             Type::Machine(t) => Ok(Ty::Machine(*t)),
@@ -460,15 +468,15 @@ impl<'a> Context<'a> {
                         "unknown struct {n}; recursive types are not supported yet"
                     ));
                 }
-                if self.structs.get(n).is_some_and(|s| s.ideal) && !self.ideal && !self.specification {return Err(format!("{n} is ideal data and has no runtime layout"));}
+                if self.structs.get(n).is_some_and(|s| s.ideal) && self.phase == Phase::Runtime {return Err(format!("{n} is ideal data and has no runtime layout"));}
                 Ok(Ty::Record(n.clone()))
             }
             Type::Array(element, len) => {
                 let element = self.resolve(element)?;
-                let saved_spec = self.specification;
-                self.specification = true;
+                let saved_spec = self.phase;
+                self.phase = Phase::Specification;
                 let n = self.nonnegative(len, "nonnegative array length")?;
-                self.specification = saved_spec;
+                self.phase = saved_spec;
                 Ok(Ty::Array(Box::new(element), n))
             }
         }
@@ -1160,7 +1168,7 @@ impl<'a> Context<'a> {
         })?;
         let projecting_owner = matches!(&e.kind, Kind::Field(..) | Kind::Index(..))
             || matches!(&e.kind, Kind::Unary(op, _) if op == "*");
-        if !self.specification && self.symbol_is_affine(&value) && projecting_owner {
+        if self.phase != Phase::Specification && self.symbol_is_affine(&value) && projecting_owner {
             return Err(format!("line {}: moving owning fields or borrowed values needs partial-initialization tracking; unsupported", e.line));
         }
         if let Some(t) = expected {
@@ -1294,7 +1302,7 @@ impl<'a> Context<'a> {
         }
     }
     fn fact_at(&mut self, place: &Expr, fact: &str, line: usize) -> Result<Formula> {
-        if !self.specification {
+        if self.phase != Phase::Specification {
             return Err(format!(
                 "line {line}: named type facts are propositions, not runtime values"
             ));
@@ -1379,7 +1387,7 @@ impl<'a> Context<'a> {
                 // Never let an unrelated fact redefine a type invariant.
                 if !self.env.contains_key(n) {
                     if let Some(definition) = self.facts.get(n).cloned() {
-                        if !self.specification {
+                        if self.phase != Phase::Specification {
                             return Err(format!(
                                 "fact {n} is a proof-only proposition, not a runtime boolean"
                             ));
@@ -1399,7 +1407,7 @@ impl<'a> Context<'a> {
                         .cloned()
                         .ok_or_else(|| format!("unknown value {n}"))
                 }?;
-                if !self.specification && self.symbol_is_affine(&value) {
+                if self.phase != Phase::Specification && self.symbol_is_affine(&value) {
                     if self.dropping {
                         return Err("destructor receivers and owned fields cannot be moved in this initial destructor subset".into());
                     }
@@ -1424,7 +1432,7 @@ impl<'a> Context<'a> {
                     .get(name)
                     .cloned()
                     .ok_or_else(|| format!("unknown struct {name}"))?;
-                if def.ideal && !self.ideal && !self.specification {
+                if def.ideal && self.phase == Phase::Runtime {
                     return Err(format!(
                         "{name} is ideal data and cannot be constructed at runtime"
                     ));
@@ -1615,7 +1623,7 @@ impl<'a> Context<'a> {
             }
             Kind::Call(name, args) => {
                 if name == "old" {
-                    if !self.specification || args.len() != 1 {
+                    if self.phase != Phase::Specification || args.len() != 1 {
                         return Err(
                             "old is proof-only and takes one entry-state parameter expression"
                                 .into(),
@@ -1629,7 +1637,7 @@ impl<'a> Context<'a> {
                         .ok_or_else(|| format!("{key} is not a function entry parameter"));
                 }
                 if name == "int" || name == "nat" {
-                    if !self.ideal && !self.specification {
+                    if self.phase == Phase::Runtime {
                         return Err("mathematical views are proof-only".into());
                     }
                     if args.len() != 1 {
@@ -1644,11 +1652,11 @@ impl<'a> Context<'a> {
                         n,
                     ));
                 }
-                if self.specification && self.current.as_ref() == Some(name) {
+                if self.phase == Phase::Specification && self.current.as_ref() == Some(name) {
                     return Err("recursive calls are forbidden in specifications".into());
                 }
                 if name == "move" || name == "drop" {
-                    if self.specification {
+                    if self.phase == Phase::Specification {
                         return Err("specifications and facts cannot move or drop values".into());
                     }
                     if args.len() != 1 {
@@ -1672,10 +1680,10 @@ impl<'a> Context<'a> {
                     return Ok(if name == "drop" { Symbol::Unit } else { value });
                 }
                 let f = self.functions.get(name).cloned().ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration (recursion is not supported yet)"))?;
-                if !f.modifies.is_empty() && self.specification {
+                if !f.modifies.is_empty() && self.phase == Phase::Specification {
                     return Err("modifying calls are forbidden in proof expressions".into());
                 }
-                if f.ideal && !self.ideal && !self.specification {
+                if f.ideal && self.phase == Phase::Runtime {
                     return Err(format!(
                         "{name} is ideal code and cannot be called at runtime"
                     ));
@@ -1694,12 +1702,12 @@ impl<'a> Context<'a> {
                         Type::Machine(t) => Some(Ty::Machine(*t)),
                         _ => None,
                     };
-                    let saved_specification = self.specification;
+                    let saved_specification = self.phase;
                     if f.ideal_params.contains(parameter) {
-                        self.specification = true;
+                        self.phase = Phase::Specification;
                     }
                     let value = self.eval(arg, hint.as_ref())?;
-                    self.specification = saved_specification;
+                    self.phase = saved_specification;
                     self.validate_argument(&value, e.line)?;
                     actuals.push(value);
                 }
@@ -1711,12 +1719,12 @@ impl<'a> Context<'a> {
                 self.env.clear();
                 self.roots.clear();
                 for ((n, t), value) in f.params.iter().zip(actuals) {
-                    let saved_specification = self.specification;
+                    let saved_specification = self.phase;
                     if f.ideal_params.contains(n) {
-                        self.specification = true;
+                        self.phase = Phase::Specification;
                     }
                     let t = self.resolve(t)?;
-                    self.specification = saved_specification;
+                    self.phase = saved_specification;
                     self.compatible(&value.ty(), &t, e.line)?;
                     self.env.insert(n.clone(), value);
                 }
@@ -1734,10 +1742,10 @@ impl<'a> Context<'a> {
                         .decreases
                         .as_ref()
                         .ok_or("recursive calls require a decreases clause")?;
-                    let saved_specification = self.specification;
-                    self.specification = true;
+                    let saved_specification = self.phase;
+                    self.phase = Phase::Specification;
                     let next = self.nonnegative(expression, "nonnegative recursion measure")?;
-                    self.specification = saved_specification;
+                    self.phase = saved_specification;
                     self.prove(
                         &Formula::Ge(entry.sub(&next)?.add(&Linear::number(-1))?),
                         "strictly decreasing recursion measure",
@@ -2035,7 +2043,11 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             &empty_drops,
             session,
         );
-        ctx.ideal = s.ideal;
+        ctx.phase = if s.ideal {
+            Phase::Ideal
+        } else {
+            Phase::Runtime
+        };
         for (n, t) in &s.fields {
             if !s.ideal && !runtime_type(t, &structs) {
                 return Err(format!(
@@ -2133,17 +2145,26 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         }
         let mut ctx = Context::new(&available, &structs, &drops, &helpers, session);
         ctx.dropping = f.drop_target.is_some();
-        ctx.ideal = f.ideal;
+        let execution = if f.ideal {
+            Phase::Ideal
+        } else {
+            Phase::Runtime
+        };
+        ctx.phase = execution;
         ctx.ideal_bindings = f.ideal_params.iter().cloned().collect();
         ctx.current = Some(f.name.clone());
         for (n, t) in &f.params {
             if ctx.env.contains_key(n) {
                 return Err(format!("line {}: duplicate parameter {n}", f.line));
             }
-            ctx.specification = f.ideal_params.contains(n);
+            ctx.phase = if f.ideal_params.contains(n) {
+                Phase::Specification
+            } else {
+                execution
+            };
             let ty = ctx.resolve(t)?;
             let value = ctx.arbitrary(&ty)?;
-            ctx.specification = false;
+            ctx.phase = execution;
             ctx.env.insert(n.clone(), value);
         }
         ctx.capture_old()?;
@@ -2153,16 +2174,16 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             }
         }
         if let Some(pre) = &f.pre {
-            ctx.specification = true;
+            ctx.phase = Phase::Specification;
             let p = ctx.eval(pre, Some(&Ty::Bool))?.proposition()?;
             ctx.assume(&p)?;
-            ctx.specification = false;
+            ctx.phase = execution;
         }
         let ret = ctx.resolve(&f.ret)?;
         if let Some(measure) = &f.decreases {
-            ctx.specification = true;
+            ctx.phase = Phase::Specification;
             ctx.measure = Some(ctx.nonnegative(measure, "nonnegative recursion measure")?);
-            ctx.specification = false;
+            ctx.phase = execution;
         }
         let contract_env = ctx.env.clone();
         for statement in &f.body {
@@ -2172,7 +2193,7 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         ctx.validate_live(f.result.line)?;
         ctx.finish_scope(f)?;
         if let Some(post) = &f.post {
-            ctx.specification = true;
+            ctx.phase = Phase::Specification;
             ctx.env = contract_env;
             ctx.roots.clear();
             ctx.env.insert("result".into(), value);
