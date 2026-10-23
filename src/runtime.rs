@@ -352,6 +352,7 @@ impl Evaluator<'_> {
         expected: Option<&Type>,
     ) -> Result<Value> {
         match &e.kind {
+            Kind::FactAt(..) => Err("type facts are erased propositions".into()),
             Kind::Unit => Ok(Value::Unit),
             Kind::Constant(t, n) => Ok(Value::Machine(*t, *n)),
             Kind::Number(n) => Ok(match expected {

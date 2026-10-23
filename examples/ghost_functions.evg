@@ -1,0 +1,10 @@
+ghost fn successor(n: nat) -> nat
+ensures (result == n + 1) {
+    n + 1
+}
+
+fn main() -> usize {
+    let count: usize = 42;
+    proof grows: successor(nat(count)) > nat(count);
+    count
+}

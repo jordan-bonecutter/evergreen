@@ -23,8 +23,14 @@ named `fact` declarations, preconditions (`where`), postconditions (`ensures`),
 length-indexed arrays (`[T; n]`), array literals, calls to earlier verified
 functions, and conditional expressions. Array access requires a proof of its bound.
 Nominal structs support dependent fields and `where` invariants. Construction
-and field assignments must establish those invariants. `update (place, ...)`
-explicitly opens the invariants of named local struct places. Its body allows
+and field assignments must establish those invariants. `update(place, ...) lifts
+fact_name, ... { ... }` explicitly opens selected named requirements on local
+struct places. Other requirements remain checked at every write. Type-local
+facts are declared inside `where (fact name = proposition; name && ...)` and
+can be referenced as `place::name` in proof code. Merely declaring a type fact
+does not require it to hold: only the final `where` proposition imposes a
+constraint. Lifted names must be declared facts used as independent conjuncts
+of that constraint. `Type::name` can qualify a lifted selector. Its body allows
 checked scalar-field writes, local scalar values/borrows, and pure facts; each
 invariant must hold again on exit. Calls with a checked invariant-independent
 effect summary are permitted. The current effect analysis accepts scalar values
@@ -66,7 +72,8 @@ proposition in proof code, never a runtime boolean. Local fact definitions are
 re-evaluated against the current places; an old witness cannot certify a changed
 state. `examples/named_facts.evg` includes an unused false fact and actual proof
 reuse; `examples/reject_false_proof.evg` rejects a false proof. Exported and
-parameterized proposition declarations are not implemented yet.
+parameterized proposition declarations are not implemented yet. Type-local
+named propositions and their instance references are supported.
 
 The bootstrap target is 64-bit: `usize` is `u64`, and `isize` is `i64`.
 Explicit `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, and `i64` types are

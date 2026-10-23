@@ -187,6 +187,16 @@ fn extend(paths: &[Vec<Linear>], formula: &Formula, negated: bool) -> Result<Vec
 fn equal(a: &Linear, b: &Linear) -> Result<Formula> {
     Ok(Formula::Ge(a.sub(b)?).and(Formula::Ge(b.sub(a)?)))
 }
+fn clauses<'a>(expression: &'a Expr, out: &mut Vec<&'a Expr>) {
+    if let Kind::Binary(op, a, b) = &expression.kind {
+        if op == "&&" {
+            clauses(a, out);
+            clauses(b, out);
+            return;
+        }
+    }
+    out.push(expression);
+}
 
 pub(crate) fn needs_drop(
     t: &Type,
@@ -219,7 +229,7 @@ fn destructor_expression(e: &Expr) -> bool {
     match &e.kind {
         Kind::Call(..) | Kind::Record(..) => false,
         Kind::Unary(op, _) if op == "&" || op == "*" => false,
-        Kind::Unary(_, x) | Kind::Field(x, _) => destructor_expression(x),
+        Kind::Unary(_, x) | Kind::Field(x, _) | Kind::FactAt(x, _) => destructor_expression(x),
         Kind::Binary(_, a, b) | Kind::Index(a, b) => {
             destructor_expression(a) && destructor_expression(b)
         }
@@ -257,7 +267,7 @@ struct Context<'a> {
     specification: bool,
     current: Option<String>,
     measure: Option<Linear>,
-    opened: BTreeSet<String>,
+    opened: BTreeMap<String, BTreeSet<String>>,
     drops: &'a BTreeSet<String>,
     dropping: bool,
     helpers: &'a BTreeSet<String>,
@@ -285,7 +295,7 @@ impl<'a> Context<'a> {
             specification: false,
             current: None,
             measure: None,
-            opened: BTreeSet::new(),
+            opened: BTreeMap::new(),
             drops,
             dropping: false,
             helpers,
@@ -415,6 +425,8 @@ impl<'a> Context<'a> {
                 let def = self.structs.get(name).cloned().ok_or("unknown struct")?;
                 let saved = self.env.clone();
                 let saved_roots = self.roots.clone();
+                let saved_facts = self.facts.clone();
+                self.facts = def.facts.iter().cloned().collect();
                 self.roots.clear();
                 self.env.clear();
                 let mut fields = BTreeMap::new();
@@ -432,12 +444,21 @@ impl<'a> Context<'a> {
                 }
                 self.env = saved;
                 self.roots = saved_roots;
+                self.facts = saved_facts;
                 Ok(value)
             }
         }
     }
 
     fn record_valid(&mut self, value: &Symbol, line: usize) -> Result<()> {
+        self.record_valid_with(value, line, &BTreeSet::new())
+    }
+    fn record_valid_with(
+        &mut self,
+        value: &Symbol,
+        line: usize,
+        lifted: &BTreeSet<String>,
+    ) -> Result<()> {
         if let Symbol::Array {
             items: Some(items), ..
         } = value
@@ -456,6 +477,8 @@ impl<'a> Context<'a> {
         }
         let saved = self.env.clone();
         let saved_roots = self.roots.clone();
+        let saved_facts = self.facts.clone();
+        self.facts = def.facts.iter().cloned().collect();
         self.roots.clear();
         self.env.clear();
         for (n, t) in &def.fields {
@@ -469,11 +492,19 @@ impl<'a> Context<'a> {
         }
         self.env.insert("self".into(), value.clone());
         if let Some(p) = &def.invariant {
-            let p = self.proposition(p)?;
-            self.prove(&p, &format!("invariant of {name}"), line)?;
+            let mut requirements = Vec::new();
+            clauses(p, &mut requirements);
+            for requirement in requirements {
+                if matches!(&requirement.kind, Kind::Name(n) if lifted.contains(n)) {
+                    continue;
+                }
+                let p = self.proposition(requirement)?;
+                self.prove(&p, &format!("invariant of {name}"), line)?;
+            }
         }
         self.env = saved;
         self.roots = saved_roots;
+        self.facts = saved_facts;
         Ok(())
     }
 
@@ -556,9 +587,8 @@ impl<'a> Context<'a> {
             .cloned()
             .ok_or("unknown assignment target")?;
         replace(&mut root, &fields, new)?;
-        if !self.opened.contains(&name) {
-            self.record_valid(&root, place.line)?;
-        }
+        let lifted = self.opened.get(&name).cloned().unwrap_or_default();
+        self.record_valid_with(&root, place.line, &lifted)?;
         if let Some(id) = self.roots.get(&name) {
             self.memory.write(*id, root.clone(), replace_plane)?;
         }
@@ -568,7 +598,12 @@ impl<'a> Context<'a> {
 
     fn statement(&mut self, s: &Statement) -> Result<()> {
         match s {
-            Statement::Update { places, body, line } => self.update(places, body, *line),
+            Statement::Update {
+                places,
+                lifts,
+                body,
+                line,
+            } => self.update(places, lifts, body, *line),
             Statement::Assign { target, value } => self.assign(target, value),
             Statement::Effect(e) => {
                 self.eval(e, None)?;
@@ -620,7 +655,7 @@ impl<'a> Context<'a> {
             Kind::Unary(op, x) if op == "*" => {
                 matches!(self.hint(x), Some(Ty::Ref(t)) if matches!(*t, Ty::Machine(_) | Ty::Bool | Ty::Int | Ty::Nat))
             }
-            Kind::Unary(_, x) | Kind::Field(x, _) => self.update_expression(x),
+            Kind::Unary(_, x) | Kind::Field(x, _) | Kind::FactAt(x, _) => self.update_expression(x),
             Kind::Binary(_, a, b) | Kind::Index(a, b) => {
                 self.update_expression(a) && self.update_expression(b)
             }
@@ -630,7 +665,13 @@ impl<'a> Context<'a> {
             _ => true,
         }
     }
-    fn update(&mut self, places: &[String], body: &[Statement], line: usize) -> Result<()> {
+    fn update(
+        &mut self,
+        places: &[String],
+        lifts: &[String],
+        body: &[Statement],
+        line: usize,
+    ) -> Result<()> {
         fn root(e: &Expr) -> Option<&str> {
             match &e.kind {
                 Kind::Name(n) => Some(n),
@@ -641,21 +682,59 @@ impl<'a> Context<'a> {
         if !self.opened.is_empty() {
             return Err("nested invariant updates are not supported yet".into());
         }
-        let opened: BTreeSet<_> = places.iter().cloned().collect();
-        if opened.len() != places.len() {
+        let roots: BTreeSet<_> = places.iter().cloned().collect();
+        if roots.len() != places.len() {
             return Err(format!("line {line}: duplicate update place"));
         }
+        if lifts.iter().collect::<BTreeSet<_>>().len() != lifts.len() {
+            return Err(format!("line {line}: duplicate lifted requirement"));
+        }
+        let mut opened = BTreeMap::new();
+        let mut matched = BTreeSet::new();
         for name in places {
             let v = self.storage(&Expr {
                 kind: Kind::Name(name.clone()),
                 line,
             })?;
             self.record_valid(&v, line)?;
-            if !matches!(v, Symbol::Record(..)) {
+            let Symbol::Record(typename, _) = v else {
                 return Err(format!(
                     "line {line}: update requires a live local struct place"
                 ));
+            };
+            let def = self.structs.get(&typename).ok_or("unknown update type")?;
+            let mut required = Vec::new();
+            if let Some(p) = &def.invariant {
+                clauses(p, &mut required);
             }
+            let names: BTreeSet<_> = required
+                .iter()
+                .filter_map(|p| {
+                    if let Kind::Name(n) = &p.kind {
+                        Some(n.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let mut selected = BTreeSet::new();
+            for selector in lifts {
+                let (qualifier, fact) = selector
+                    .split_once("::")
+                    .map(|(q, n)| (Some(q), n))
+                    .unwrap_or((None, selector.as_str()));
+                if qualifier.is_some_and(|q| q != typename) {
+                    continue;
+                }
+                if names.contains(fact) && def.facts.iter().any(|(n, _)| n == fact) {
+                    selected.insert(fact.to_owned());
+                    matched.insert(selector.clone());
+                }
+            }
+            opened.insert(name.clone(), selected);
+        }
+        if matched.len() != lifts.len() {
+            return Err(format!("line {line}: lifts must name declared facts used as independent where requirements of an opened place"));
         }
         self.opened = opened;
         let mut locals = Vec::new();
@@ -665,7 +744,7 @@ impl<'a> Context<'a> {
             match statement {
                 Statement::Assign {target, value} if matches!(target.kind, Kind::Field(..)) && self.update_expression(value) => {
                     let name = root(target).ok_or("update writes must target local struct fields")?;
-                    if !self.opened.contains(name) { return Err(format!("line {}: {name} was not opened by this update", target.line)); }
+                    if !self.opened.contains_key(name) { return Err(format!("line {}: {name} was not opened by this update", target.line)); }
                     let old = self.storage(target)?;
                     if !matches!(old, Symbol::Number(..) | Symbol::Bool(_)) { return Err(format!("line {}: updates currently allow only scalar fields; replacing owned fields requires destructor/effect proofs", target.line)); }
                     self.assign(target, value)?;
@@ -994,6 +1073,40 @@ impl<'a> Context<'a> {
             _ => self.eval(e, None),
         }
     }
+    fn fact_at(&mut self, place: &Expr, fact: &str, line: usize) -> Result<Formula> {
+        if !self.specification {
+            return Err(format!(
+                "line {line}: named type facts are propositions, not runtime values"
+            ));
+        }
+        let value = self.storage(place)?;
+        let Symbol::Record(typename, fields) = &value else {
+            return Err("type facts require struct storage".into());
+        };
+        let def = self
+            .structs
+            .get(typename)
+            .ok_or("unknown fact owner")?
+            .clone();
+        let expression = def
+            .facts
+            .iter()
+            .find(|(name, _)| name == fact)
+            .map(|(_, p)| p.clone())
+            .ok_or_else(|| format!("unknown fact {typename}::{fact}"))?;
+        let saved = self.env.clone();
+        let roots = self.roots.clone();
+        let facts = self.facts.clone();
+        self.env = fields.clone();
+        self.env.insert("self".into(), value);
+        self.roots.clear();
+        self.facts = def.facts.iter().cloned().collect();
+        let result = self.proposition(&expression);
+        self.env = saved;
+        self.roots = roots;
+        self.facts = facts;
+        result
+    }
 
     fn validate_argument(&mut self, value: &Symbol, line: usize) -> Result<()> {
         if let Symbol::Ref(_, r, path) = value {
@@ -1024,6 +1137,7 @@ impl<'a> Context<'a> {
     }
     fn eval_inner(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
         match &e.kind {
+            Kind::FactAt(place, name) => Ok(Symbol::Bool(self.fact_at(place, name, e.line)?)),
             Kind::Unit => Ok(Symbol::Unit),
             Kind::Constant(t, n) => Ok(Symbol::Number(Ty::Machine(*t), Linear::number(*n))),
             Kind::Number(n) => Ok(Symbol::Number(
@@ -1483,6 +1597,11 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
             "self".into(),
             Symbol::Record(s.name.clone(), ctx.env.clone()),
         );
+        for (name, proposition) in &s.facts {
+            ctx.fresh_binding(name, proposition.line)?;
+            ctx.proposition(proposition)?;
+            ctx.facts.insert(name.clone(), proposition.clone());
+        }
         if let Some(p) = &s.invariant {
             ctx.proposition(p)?;
         }
@@ -1790,7 +1909,7 @@ mod tests {
 
     #[test]
     fn explicit_updates_restore_invariants_and_ordinary_writes_preserve_them() {
-        let s = "type Pair struct {left: usize, right: usize} where (left == right); fn read(p: &Pair) -> usize {*p.left} fn main() -> usize {let p = Pair {left: 1, right: 1}; update (p) {p.left = 2; p.right = p.left;} p.right}";
+        let s = "type Pair struct {left: usize, right: usize} where (fact balanced = left == right; balanced); fn read(p: &Pair) -> usize {*p.left} fn main() -> usize {let p = Pair {left: 1, right: 1}; update(p) lifts balanced {p.left = 2; p.right = p.left;} p.right}";
         // Field projection binds tighter than dereference.
         let s = s.replace("*p.left", "(*p).left");
         assert_eq!(verify(&s).unwrap().run().unwrap().to_string(), "2");
@@ -1800,7 +1919,7 @@ mod tests {
 
     #[test]
     fn incomplete_states_cannot_be_observed_as_the_refined_type() {
-        let prefix = "type Pair struct {left: usize, right: usize} where (left == right); fn read(p: &Pair) -> usize {(*p).left} ";
+        let prefix = "type Pair struct {left: usize, right: usize} where (fact balanced = left == right; balanced); fn read(p: &Pair) -> usize {(*p).left} ";
         for body in [
             "let p = Pair {left: 1, right: 1}; let r = &p; p.left = 2; read(r)",
             "let p = Pair {left: 1, right: 1}; p.left = 2; let r = &p; p.right = 2; 0",
@@ -1811,7 +1930,7 @@ mod tests {
                 "{body}"
             );
         }
-        let body = "let p = Pair {left: 1, right: 1}; let r = &p; update (p) {p.left = 2; p.right = 2;} read(r)";
+        let body = "let p = Pair {left: 1, right: 1}; let r = &p; update(p) lifts balanced {p.left = 2; p.right = 2;} read(r)";
         assert_eq!(
             verify(&format!("{prefix} fn main() -> usize {{ {body} }}"))
                 .unwrap()
@@ -1834,18 +1953,18 @@ mod tests {
 
     #[test]
     fn updates_enforce_visibility_cleanup_and_restoration_boundaries() {
-        let prefix = "type Pair struct {left: usize, right: usize} where (left == right); fn observe(p: &Pair) -> usize {(*p).left} ";
+        let prefix = "type Pair struct {left: usize, right: usize} where (fact balanced = left == right; balanced); fn observe(p: &Pair) -> usize {(*p).left} ";
         for update in [
-            "update (p) {p.left = 2;}",
-            "update (p) {p.left = observe(r); p.right = 2;}",
-            "update (p) {p.left = *r; p.right = 2;}",
-            "update (p) {p.left = drop(p); p.right = 2;}",
-            "update (p) {p.left = move(p); p.right = 2;}",
-            "update (p) {p.left = &p; p.right = 2;}",
-            "update (p) {q.left = 2; q.right = 2;}",
-            "update (p, p) {p.left = 2; p.right = 2;}",
-            "update (p) {p = Pair {left: 2, right: 2};}",
-            "update (p) {p.left = usize::MAX + 1; p.right = 2;}",
+            "update(p) lifts balanced {p.left = 2;}",
+            "update(p) lifts balanced {p.left = observe(r); p.right = 2;}",
+            "update(p) lifts balanced {p.left = *r; p.right = 2;}",
+            "update(p) lifts balanced {p.left = drop(p); p.right = 2;}",
+            "update(p) lifts balanced {p.left = move(p); p.right = 2;}",
+            "update(p) lifts balanced {p.left = &p; p.right = 2;}",
+            "update(p) lifts balanced {q.left = 2; q.right = 2;}",
+            "update(p, p) lifts balanced {p.left = 2; p.right = 2;}",
+            "update(p) lifts balanced {p = Pair {left: 2, right: 2};}",
+            "update(p) lifts balanced {p.left = usize::MAX + 1; p.right = 2;}",
         ] {
             let source = format!("{prefix} fn main() -> usize {{let p = Pair {{left: 1, right: 1}}; let q = Pair {{left: 1, right: 1}}; let r = &p; {update} p.left}}");
             assert!(verify(&source).is_err(), "accepted {update}");
@@ -1854,7 +1973,7 @@ mod tests {
 
     #[test]
     fn updates_preserve_untouched_owned_fields() {
-        let source = "type Resource struct {tag: usize} where (tag == 7); type Pair struct {left: usize, right: usize, resource: Resource} where (left == right); fn main() -> usize {let p = Pair {left: 1, right: 1, resource: Resource {tag: 7}}; update (p) {p.left = 2; p.right = 2;} p.resource.tag}";
+        let source = "type Resource struct {tag: usize} where (tag == 7); type Pair struct {left: usize, right: usize, resource: Resource} where (fact balanced = left == right; balanced); fn main() -> usize {let p = Pair {left: 1, right: 1, resource: Resource {tag: 7}}; update(p) lifts balanced {p.left = 2; p.right = 2;} p.resource.tag}";
         assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "7");
         let replace = source.replace(
             "p.left = 2; p.right = 2;",
@@ -1915,16 +2034,16 @@ mod tests {
         assert!(verify(&missing_restore).is_err());
         let escape = source.replace("    pair.right\n}", "    read(view)\n}");
         assert!(verify(&escape).is_err());
-        let prefix = "type Pair struct {left: usize, right: usize} where (left == right); fn equal(a: usize, b: usize) -> usize where (a == b) ensures (result == a) {a} ";
-        let source = format!("{prefix} fn main() -> usize {{let p = Pair {{left: 1, right: 1}}; update (p) {{p.left = 2; p.right = equal(p.left, p.right);}} p.right}}");
+        let prefix = "type Pair struct {left: usize, right: usize} where (fact balanced = left == right; balanced); fn equal(a: usize, b: usize) -> usize where (a == b) ensures (result == a) {a} ";
+        let source = format!("{prefix} fn main() -> usize {{let p = Pair {{left: 1, right: 1}}; update(p) lifts balanced {{p.left = 2; p.right = equal(p.left, p.right);}} p.right}}");
         assert!(verify(&source).is_err());
     }
 
     #[test]
     fn calls_with_unproven_effects_cannot_observe_open_invariants() {
-        let source = "type Pair struct {left: usize, right: usize} where (left == right); fn observe(p: &Pair) -> usize {(*p).left} fn main() -> usize {let p = Pair {left: 1, right: 1}; update (p) {p.left = 2; p.right = observe(&p);} p.right}";
+        let source = "type Pair struct {left: usize, right: usize} where (fact balanced = left == right; balanced); fn observe(p: &Pair) -> usize {(*p).left} fn main() -> usize {let p = Pair {left: 1, right: 1}; update(p) lifts balanced {p.left = 2; p.right = observe(&p);} p.right}";
         assert!(verify(source).is_err());
-        let source = "type Resource struct {} impl Drop for Resource {fn drop(self){}} type Pair struct {left: usize, right: usize} where (left == right); fn cleanup(value: usize) -> usize {let r = Resource {}; value} fn main() -> usize {let p = Pair {left: 1, right: 1}; update (p) {p.left = cleanup(p.left); p.right = p.left;} p.right}";
+        let source = "type Resource struct {} impl Drop for Resource {fn drop(self){}} type Pair struct {left: usize, right: usize} where (fact balanced = left == right; balanced); fn cleanup(value: usize) -> usize {let r = Resource {}; value} fn main() -> usize {let p = Pair {left: 1, right: 1}; update(p) lifts balanced {p.left = cleanup(p.left); p.right = p.left;} p.right}";
         assert!(verify(source).is_err());
     }
 
@@ -1982,5 +2101,38 @@ mod tests {
         assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
         let source = "fn main() -> usize {let value = 42; proof bounded: value <= isize::MAX; 0}";
         assert!(verify(source).is_ok());
+    }
+
+    #[test]
+    fn lifted_requirements_are_named_and_selective() {
+        let source = include_str!("../examples/selective_update.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        let bounded_violation = source.replace(
+            "pair.left = 42;",
+            "pair.left = 101; pair.right = 101; pair.left = 42;",
+        );
+        assert!(verify(&bounded_violation).is_err());
+        assert!(
+            verify(&bounded_violation.replace("lifts balanced", "lifts balanced, bounded")).is_ok()
+        );
+        assert!(verify(&source.replace("lifts balanced", "lifts bounded")).is_err());
+        assert!(verify(&source.replace("lifts balanced", "lifts unknown")).is_err());
+        assert!(verify(&source.replace("lifts balanced", "lifts unused_false_claim")).is_err());
+        assert!(verify(&source.replace("lifts balanced", "lifts Pair::balanced")).is_ok());
+        assert!(verify(&source.replace("lifts balanced", "lifts balanced, balanced")).is_err());
+        assert!(verify(&source.replace("lifts balanced", "")).is_err());
+    }
+
+    #[test]
+    fn named_type_facts_do_not_add_unproven_assumptions() {
+        let source = "type State struct {n: usize} where (fact claim = n == 0; true); fn main() -> usize {let s = State {n: 1}; fact false_statement = s::claim; 0}";
+        assert!(verify(source).is_ok());
+        assert!(verify(&source.replace(
+            "fact false_statement = s::claim;",
+            "proof invalid: s::claim;"
+        ))
+        .is_err());
+        let source = "type Checked struct {valid: bool} where (fact required = valid; required); fn main() -> usize {fact required = true; let s = Checked {valid: false}; 0}";
+        assert!(verify(source).is_err());
     }
 }

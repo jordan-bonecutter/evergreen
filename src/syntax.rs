@@ -72,6 +72,7 @@ pub enum Kind {
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     Record(String, Vec<(String, Expr)>),
     Field(Box<Expr>, String),
+    FactAt(Box<Expr>, String),
 }
 #[derive(Clone, Debug)]
 pub enum Statement {
@@ -96,6 +97,7 @@ pub enum Statement {
     Effect(Expr),
     Update {
         places: Vec<String>,
+        lifts: Vec<String>,
         body: Vec<Statement>,
         line: usize,
     },
@@ -107,6 +109,7 @@ pub struct Struct {
     pub invariant: Option<Expr>,
     pub line: usize,
     pub ghost: bool,
+    pub facts: Vec<(String, Expr)>,
 }
 #[derive(Clone, Debug)]
 pub struct Program {
@@ -302,18 +305,26 @@ impl Parser {
             } else {
                 let n = self.name()?;
                 if self.eat("::") {
-                    let ty = MachineInt::parse(&n)
-                        .ok_or_else(|| self.err("qualified constants require an integer type"))?;
-                    let (lo, hi) = ty.bounds();
-                    let bound = self.name()?;
-                    Kind::Constant(
-                        ty,
-                        match bound.as_str() {
-                            "MAX" | "max" => hi,
-                            "MIN" | "min" => lo,
-                            _ => return Err(self.err("expected MAX or MIN")),
-                        },
-                    )
+                    let member = self.name()?;
+                    if let Some(ty) = MachineInt::parse(&n) {
+                        let (lo, hi) = ty.bounds();
+                        Kind::Constant(
+                            ty,
+                            match member.as_str() {
+                                "MAX" | "max" => hi,
+                                "MIN" | "min" => lo,
+                                _ => return Err(self.err("expected MAX or MIN")),
+                            },
+                        )
+                    } else {
+                        Kind::FactAt(
+                            Box::new(Expr {
+                                kind: Kind::Name(n),
+                                line,
+                            }),
+                            member,
+                        )
+                    }
                 } else if n.starts_with(|c: char| c.is_ascii_uppercase()) && self.eat("{") {
                     let mut fields = Vec::new();
                     if !self.eat("}") {
@@ -351,6 +362,14 @@ impl Parser {
             Expr { kind, line }
         };
         loop {
+            if min <= 8 && self.eat("::") {
+                let name = self.name()?;
+                lhs = Expr {
+                    kind: Kind::FactAt(Box::new(lhs), name),
+                    line,
+                };
+                continue;
+            }
             if min <= 8 && self.eat(".") {
                 let field = self.name()?;
                 lhs = Expr {
@@ -490,6 +509,19 @@ impl Parser {
                     }
                     self.expect(",")?;
                 }
+                self.expect("lifts")?;
+                let mut lifts = Vec::new();
+                loop {
+                    let mut name = self.name()?;
+                    if self.eat("::") {
+                        name.push_str("::");
+                        name.push_str(&self.name()?);
+                    }
+                    lifts.push(name);
+                    if !self.eat(",") {
+                        break;
+                    }
+                }
                 self.expect("{")?;
                 let mut updates = Vec::new();
                 while !self.eat("}") {
@@ -522,6 +554,7 @@ impl Parser {
                 }
                 body.push(Statement::Update {
                     places,
+                    lifts,
                     body: updates,
                     line,
                 });
@@ -657,11 +690,21 @@ impl Parser {
                 }
             }
         }
+        let mut facts = Vec::new();
         let invariant = if self.eat("where") {
             self.expect("(")?;
-            let p = self.expr(0)?;
+            while self.peek() == "fact" || self.peek() == "pub" {
+                self.eat("pub");
+                self.expect("fact")?;
+                let name = self.name()?;
+                self.expect("=")?;
+                let value = self.expr(0)?;
+                self.expect(";")?;
+                facts.push((name, value));
+            }
+            let value = self.expr(0)?;
             self.expect(")")?;
-            Some(p)
+            Some(value)
         } else {
             None
         };
@@ -672,6 +715,7 @@ impl Parser {
             invariant,
             line,
             ghost,
+            facts,
         })
     }
 }
