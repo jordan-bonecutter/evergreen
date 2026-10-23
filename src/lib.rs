@@ -4,6 +4,7 @@ pub mod certificate;
 mod effects;
 pub mod kernel;
 pub mod memory;
+pub mod native;
 pub mod runtime;
 pub mod syntax;
 pub mod verify;

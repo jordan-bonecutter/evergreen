@@ -23,6 +23,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Action {
+    /// Emit a verified scalar Linux x86-64 executable.
+    Build {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Replay checked source certificates before native emission.
+        #[arg(long)]
+        proof: Option<PathBuf>,
+    },
     /// Verify a program with the internal proof kernel.
     Check {
         #[arg(required = true)]
@@ -58,9 +68,10 @@ enum Action {
 fn execute() -> Result<(), String> {
     let cli = Cli::parse();
     let files: Vec<&PathBuf> = match &cli.command {
-        Action::Check { files, .. } | Action::Prove { files, .. } | Action::Run { files } => {
-            files.iter().collect()
-        }
+        Action::Check { files, .. }
+        | Action::Prove { files, .. }
+        | Action::Run { files }
+        | Action::Build { files, .. } => files.iter().collect(),
         Action::Emit { file, .. } | Action::LeanCheck { file } | Action::LeanRun { file } => {
             vec![file]
         }
@@ -84,8 +95,14 @@ fn execute() -> Result<(), String> {
         report_trust(&program);
         return Ok(());
     }
-    if matches!(cli.command, Action::Check { .. } | Action::Run { .. }) {
+    if matches!(
+        cli.command,
+        Action::Check { .. } | Action::Run { .. } | Action::Build { .. }
+    ) {
         let program = if let Action::Check {
+            proof: Some(path), ..
+        }
+        | Action::Build {
             proof: Some(path), ..
         } = &cli.command
         {
@@ -95,6 +112,17 @@ fn execute() -> Result<(), String> {
             evergreen::verify::verify(&source)?
         };
         enforce_trust(&program, cli.deny_trust)?;
+        if let Action::Build { output, .. } = &cli.command {
+            let binary = evergreen::native::emit(&program)?;
+            write_bytes(output, &binary, &files, true)?;
+            println!(
+                "{}; built {} (Linux x86-64)",
+                status(&program),
+                output.display()
+            );
+            report_trust(&program);
+            return Ok(());
+        }
         if matches!(cli.command, Action::Check { .. }) {
             println!(
                 "{}: {} ({} obligations, internal kernel{})",
@@ -165,6 +193,14 @@ fn report_trust(program: &evergreen::verify::VerifiedProgram) {
     }
 }
 fn write_output(path: &std::path::Path, content: &str, inputs: &[&PathBuf]) -> Result<(), String> {
+    write_bytes(path, content.as_bytes(), inputs, false)
+}
+fn write_bytes(
+    path: &std::path::Path,
+    content: &[u8],
+    inputs: &[&PathBuf],
+    executable: bool,
+) -> Result<(), String> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -188,8 +224,17 @@ fn write_output(path: &std::path::Path, content: &str, inputs: &[&PathBuf]) -> R
             .create_new(true)
             .open(&temp)
             .map_err(|e| e.to_string())?;
-        file.write_all(content.as_bytes())
-            .map_err(|e| e.to_string())?;
+        file.write_all(content).map_err(|e| e.to_string())?;
+        if executable {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(fs::Permissions::from_mode(0o755))
+                    .map_err(|e| e.to_string())?;
+            }
+            #[cfg(not(unix))]
+            return Err("native executable output currently requires a Unix host".into());
+        }
         file.sync_all().map_err(|e| e.to_string())?;
         fs::rename(&temp, path).map_err(|e| e.to_string())
     })();

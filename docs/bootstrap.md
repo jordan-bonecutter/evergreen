@@ -144,8 +144,8 @@ is strictly smaller than the entry measure. The callee contract is available
 only under this well-founded induction rule. Recursive calls in specifications
 are rejected. Mutual recursion is not implemented yet.
 
-Not yet supported: patterns,
-allocation, FFI, machine layouts, or native code generation. Unsupported syntax
+Not yet supported: non-record patterns, heap allocation, FFI, aggregate machine
+layouts, or native lowering of memory/ownership constructs. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
 
 `src/memory.rs` provides the internal generation-checked plane store used by
@@ -180,8 +180,8 @@ The solver is incomplete for general integer arithmetic and rejects nonlinear
 products of symbolic values. Boolean conditions split into at most 64 paths;
 search is limited to 2,048 constraints and 64 elimination steps.
 
-The parser, type elaborator, condition generator, certificate checker, and
-evaluator remain trusted Rust code. The kernel is not a full dependent type
+The parser, type elaborator, condition generator, certificate checker, evaluator,
+and native backend remain trusted Rust code. The kernel is not a full dependent type
 theory yet. There is no theorem of compiler correctness. Arithmetic is
 mathematical in verification; the reference evaluator uses checked i128 and
 reports an error for values beyond its range. It never wraps silently.
@@ -383,3 +383,31 @@ cargo run -- run proofs/rc_protocol.evg stdlib/counter.evg proofs/rc_count_refin
 That program executes increment/release stores, proves their relation to the
 ideal protocol, and reaches zero without evaluating the ideal metadata. The
 metadata still supplies no ownership authority.
+
+## Native scalar executables
+
+```sh
+cargo run -- --deny-trust build examples/native.evg -o /tmp/answer
+/tmp/answer
+# The process exit status is 42; native programs currently produce no stdout.
+```
+
+`build` verifies the source, then emits a standalone Linux x86-64 ELF executable
+with the internal backend. Ordered source files and `--proof source.evgproof`
+are supported. No assembler, linker, C compiler, or runtime library is needed.
+The supported subset includes machine scalars, Boolean and unit values, local
+mutation, calls, branches, and erased facts/proofs/ideal scalar arguments.
+Comparison instructions respect signed versus unsigned machine types.
+
+The entry function's scalar result supplies the low eight bits of the process
+exit status. The executable uses a private 64 KiB writable stack, with separate
+read/execute code pages. Emission checks the entire static call-tree stack bound.
+Recursive native calls, references, arrays, records, destructors, patterns, and
+invariant updates are rejected. Unsupported or unproved input does not replace
+an existing output; input sources cannot be overwritten.
+
+Native tests execute generated programs and compare their results with the
+interpreter, including signed minima, unsigned maxima, argument ordering,
+Boolean expressions, branches, mutation, and erased arguments. These tests are
+not a formal proof of compiler correctness. Source certificates do not certify
+the generated instructions; the native backend and platform remain trusted.

@@ -221,3 +221,84 @@ fn proof_artifacts_and_trust_policy_are_enforced_by_cli() {
     );
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn native_cli_builds_without_external_tools_and_preserves_failed_outputs() {
+    let cli = env!("CARGO_BIN_EXE_evg");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "evergreen-native-cli-{}-{stamp}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).unwrap();
+    let binary = directory.join("program");
+    let proof = directory.join("source.evgproof");
+    let run = |args: &[&str]| {
+        Command::new(cli)
+            .env("PATH", "")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let saved = run(&[
+        "prove",
+        "examples/native.evg",
+        "-o",
+        proof.to_str().unwrap(),
+    ]);
+    assert!(saved.status.success());
+    let built = run(&[
+        "--deny-trust",
+        "build",
+        "examples/native.evg",
+        "--proof",
+        proof.to_str().unwrap(),
+        "-o",
+        binary.to_str().unwrap(),
+    ]);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let output = Command::new(&binary).output().unwrap();
+    assert_eq!(output.status.code(), Some(42));
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    let previous = fs::read(&binary).unwrap();
+    for source in [
+        "examples/destructure.evg",
+        "examples/reject_overflow.evg",
+        "examples/trustme.evg",
+    ] {
+        let failed = run(&[
+            "--deny-trust",
+            "build",
+            source,
+            "-o",
+            binary.to_str().unwrap(),
+        ]);
+        assert!(!failed.status.success());
+        assert!(failed.stdout.is_empty());
+        assert_eq!(fs::read(&binary).unwrap(), previous);
+    }
+    let source = directory.join("input.evg");
+    fs::write(&source, include_str!("../examples/native.evg")).unwrap();
+    assert!(!run(&[
+        "build",
+        source.to_str().unwrap(),
+        "-o",
+        source.to_str().unwrap()
+    ])
+    .status
+    .success());
+    assert_eq!(
+        fs::read_to_string(&source).unwrap(),
+        include_str!("../examples/native.evg")
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
