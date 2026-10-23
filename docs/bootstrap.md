@@ -468,3 +468,8 @@ scope changes; branch-specific facts do not. Writes still create a new contents
 identity. Record-field and nested-array reads use the same logical read table.
 Plain array literals at calls infer their element type from the parameter;
 dependent length checks occur in the callee's parameter environment.
+
+Discarding an owned expression drops its temporary at the end of that statement,
+including values returned from helpers and moved out of a binding. Named locals
+retain reverse-binding cleanup order. `examples/temporary_cleanup.evg` checks
+that a returned temporary's fields are cleaned up before a later scope exit.

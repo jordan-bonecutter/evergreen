@@ -782,7 +782,10 @@ impl<'a> Context<'a> {
             } => self.update(places, lifts, body, *line),
             Statement::Assign { target, value } => self.assign(target, value),
             Statement::Effect(e) => {
-                self.eval(e, None)?;
+                let value = self.eval(e, None)?;
+                if self.symbol_is_affine(&value) {
+                    self.validate_argument(&value, e.line)?;
+                }
                 Ok(())
             }
             Statement::Let { name, ty, value } => {

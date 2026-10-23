@@ -208,7 +208,8 @@ impl Evaluator<'_> {
                     }
                 }
                 Statement::Effect(e) => {
-                    self.expr(e, &env, None)?;
+                    let value = self.expr(e, &env, None)?;
+                    self.drop_value(value)?;
                 }
                 Statement::Fact { .. } | Statement::Proof { .. } => {}
                 Statement::Let { name, ty, value } => {
@@ -778,6 +779,37 @@ impl VerifiedProgram {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unused_owned_temporaries_are_dropped_at_the_statement() {
+        let (_, events) = verify(include_str!("../examples/temporary_cleanup.evg"))
+            .unwrap()
+            .run_with_events()
+            .unwrap();
+        assert_eq!(events, ["drop Second", "drop First", "drop First"]);
+        let declarations = "type Resource struct {} impl Drop for Resource {fn drop(self){}} fn make() -> Resource {Resource {}}";
+        for body in [
+            "Resource {}; 0",
+            "make(); 0",
+            "let r = Resource {}; move(r); 0",
+            "let r = Resource {}; drop(r); 0",
+            "let r = Resource {}; if true {move(r)} else {move(r)}; 0",
+        ] {
+            let (_, events) = verify(&format!("{declarations}\nfn main() -> usize {{{body}}}"))
+                .unwrap()
+                .run_with_events()
+                .unwrap();
+            assert_eq!(events, ["drop Resource"], "{body}");
+        }
+        let declarations = "type First struct {} impl Drop for First {fn drop(self){}} type Second struct {} impl Drop for Second {fn drop(self){}}";
+        let (_, events) = verify(&format!(
+            "{declarations}\nfn main() -> usize {{let later = Second {{}}; First {{}}; 0}}"
+        ))
+        .unwrap()
+        .run_with_events()
+        .unwrap();
+        assert_eq!(events, ["drop First", "drop Second"]);
+    }
+
     use crate::verify::verify;
     #[test]
     fn executes_verified_calls_arrays_and_branches() {
