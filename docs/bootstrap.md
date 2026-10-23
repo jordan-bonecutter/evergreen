@@ -22,7 +22,11 @@ ideal reference model inside Lean; it is not Evergreen runtime execution.
 The supported language contains typed functions, local `let` bindings,
 named `fact` declarations, preconditions (`where`), postconditions (`ensures`),
 length-indexed arrays (`[T; n]`), array literals, calls to earlier verified
-functions, and conditional expressions. Array access requires a proof of its bound.
+functions, and conditional expressions. Conditionals can select scalar values,
+unit, or records with scalar fields, including nested records. Their checked
+relations preserve which branch supplied each result field; array and reference
+joins remain unsupported. See `examples/conditional_records.evg`.
+Array access requires a proof of its bound.
 Nominal structs support dependent fields and `where` invariants. Construction
 and field assignments must establish those invariants. `update(place, ...) lifts
 fact_name, ... { ... }` explicitly opens selected named requirements on local

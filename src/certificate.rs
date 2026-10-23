@@ -420,6 +420,7 @@ mod tests {
             include_str!("../examples/contracts.evg"),
             include_str!("../examples/drop.evg"),
             include_str!("../examples/selective_update.evg"),
+            include_str!("../examples/conditional_records.evg"),
             include_str!("../proofs/rc_protocol.evg"),
         ] {
             let (original, bundle) = prove(source).unwrap();
@@ -471,5 +472,51 @@ mod tests {
         assert!(verify_with_certificate(source, &altered).is_err());
         assert!(verify(&source.replace("trustme", "omega")).is_err());
         assert!(verify(&source.replace("trustme", "trustme; omega")).is_err());
+    }
+
+    #[test]
+    fn layout_probe_misses_replay_conservatively() {
+        let source = "type Storage struct {len: usize, data: [usize; len]} fn main() -> usize {let s = Storage {len: 1, data: [7]}; s = Storage {len: 2, data: [11, 42]}; s.data[1]}";
+        let (_, bundle) = prove(source).unwrap();
+        assert!(bundle
+            .records
+            .iter()
+            .any(|r| r.optional && r.certificate.is_none()));
+        let replay = verify_with_certificate(source, &bundle).unwrap();
+        assert_eq!(replay.proof_search_count(), 0);
+        assert_eq!(replay.run().unwrap().to_string(), "42");
+        let mut forged = bundle.clone();
+        let record = Arc::make_mut(&mut forged.records)
+            .iter_mut()
+            .find(|r| r.optional && r.certificate.is_none())
+            .unwrap();
+        record.certificate = Some(Certificate::from_weights(BTreeMap::from([(0, 1)])).unwrap());
+        assert!(verify_with_certificate(source, &forged).is_err());
+        let dangling = source
+            .replace("s = Storage", "let r = &s.data[0]; s = Storage")
+            .replace("s.data[1]", "*r");
+        assert!(verify(&dangling).is_err());
+    }
+
+    #[test]
+    fn malformed_artifacts_fail_closed() {
+        let hash = "0".repeat(64);
+        let prefix = format!("{HEADER}\n{MODEL}\nsource {hash}\ntrusted 0\nqueries 1\n");
+        for record in [
+            format!("must {hash} 1 0:0"),
+            format!("must {hash} 1 0:-1"),
+            format!("must {hash} 2 0:1 0:2"),
+            format!("must {hash} 1 0:170141183460469231731687303715884105728"),
+            format!("miss {hash} 1 0:1"),
+            format!("must {hash} 2049"),
+            format!("unknown {hash} 0"),
+            format!("must {hash} 1"),
+        ] {
+            assert!(
+                ProofBundle::parse(&format!("{prefix}{record}\nend\n")).is_err(),
+                "{record}"
+            );
+        }
+        assert!(ProofBundle::parse(&"x".repeat(MAX_ARTIFACT_BYTES + 1)).is_err());
     }
 }

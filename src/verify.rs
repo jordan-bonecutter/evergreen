@@ -941,12 +941,20 @@ impl<'a> Context<'a> {
             }
             Kind::Unary(_, x) => self.hint(x),
             Kind::Field(base, field) => {
-                if let Kind::Name(n) = &base.kind {
-                    if let Some(Symbol::Record(_, fields)) = self.env.get(n) {
-                        return fields.get(field).map(Symbol::ty);
+                fn stored<'a>(e: &Expr, env: &'a BTreeMap<String, Symbol>) -> Option<&'a Symbol> {
+                    match &e.kind {
+                        Kind::Name(n) => env.get(n),
+                        Kind::Field(base, field) => match stored(base, env)? {
+                            Symbol::Record(_, fields) => fields.get(field),
+                            _ => None,
+                        },
+                        _ => None,
                     }
                 }
-                None
+                match stored(base, &self.env)? {
+                    Symbol::Record(_, fields) => fields.get(field).map(Symbol::ty),
+                    _ => None,
+                }
             }
             Kind::Binary(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
             Kind::Call(n, _) => self.functions.get(n).and_then(|f| match f.ret {
@@ -1579,7 +1587,16 @@ impl<'a> Context<'a> {
                 .clone()
                 .and(b.clone())
                 .or(a.clone().not().and(b.clone().not()))),
-            _ => Err("conditional array values are not supported yet".into()),
+            (Symbol::Unit, Symbol::Unit) => Ok(Formula::True),
+            (Symbol::Record(an, a), Symbol::Record(bn, b)) if an == bn && a.len() == b.len() => {
+                let mut relation = Formula::True;
+                for (field, value) in a {
+                    let other = b.get(field).ok_or("conditional record fields differ")?;
+                    relation = relation.and(self.symbol_equal(value, other)?);
+                }
+                Ok(relation)
+            }
+            _ => Err("conditional values need matching scalar or record fields; array and reference joins are not supported yet".into()),
         }
     }
 }
@@ -1814,6 +1831,32 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn conditional_records_preserve_branch_relations_and_nested_types() {
+        let source = include_str!("../examples/conditional_records.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        assert!(verify(&source.replace(
+            "Pair {chosen: Checked {value: 42}",
+            "Pair {chosen: Checked {value: 0}"
+        ))
+        .is_err());
+        assert!(verify(&source.replace("choose(true,", "choose(false,")).is_err());
+        let source = "fn noop(flag: bool) -> () {if flag {()} else {()}} fn main() -> usize {let x = noop(false); 42}";
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn trusted_function_contracts_remain_audited_at_callers() {
+        let source = "fn external() -> usize ensures (result == 99) {0} proof {trustme} fn main() -> usize ensures (result == 99) {external()}";
+        let program = verify(source).unwrap();
+        assert_eq!(program.trusted_assumptions().len(), 1);
+        assert!(program.trusted_assumptions()[0].goal.contains("external"));
+        // Erased assumptions can lie about runtime behavior, so the audit must
+        // survive even when downstream obligations use only checked arithmetic.
+        assert_eq!(program.run().unwrap().to_string(), "0");
+        assert!(verify(&source.replace("trustme", "omega")).is_err());
+    }
+
     use super::*;
     #[test]
     fn checks_contracts_and_bounds_internally() {
