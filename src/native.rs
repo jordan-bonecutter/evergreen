@@ -5,7 +5,7 @@ use crate::{
     syntax::{Expr, Function, Kind, MachineInt, Statement, Struct, Type},
     verify::VerifiedProgram,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 type Result<T> = std::result::Result<T, String>;
 const BASE: u64 = 0x400000;
 const HEADER: usize = 64 + 2 * 56;
@@ -57,6 +57,19 @@ struct Compiled {
     offset: usize,
     stack: usize,
 }
+#[derive(Clone, Copy)]
+enum ReadMode {
+    Place,
+    Value,
+    Storage,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
+enum TraceMode {
+    Value,
+    Count,
+    Order,
+}
 struct Emitter<'a> {
     code: &'a mut Vec<u8>,
     known: &'a BTreeMap<String, Compiled>,
@@ -66,6 +79,11 @@ struct Emitter<'a> {
     structs: &'a BTreeMap<String, Struct>,
     temporary: usize,
     peak: usize,
+    drops: &'a BTreeSet<String>,
+    alive: BTreeSet<String>,
+    temporaries: Vec<(i32, Type)>,
+    trace: TraceMode,
+    drop_ids: &'a BTreeMap<String, u32>,
 }
 impl Emitter<'_> {
     fn allocate(&mut self, ty: &Type) -> Result<i32> {
@@ -125,6 +143,7 @@ impl Emitter<'_> {
     fn slot(&mut self, name: &str, ty: Type) -> Result<()> {
         let offset = self.allocate(&ty)?;
         self.copy_frame(offset, &ty)?;
+        self.alive.insert(name.into());
         if self.slots.insert(name.into(), (offset, ty)).is_some() {
             return Err("duplicate native binding".into());
         }
@@ -139,6 +158,179 @@ impl Emitter<'_> {
         self.frame_address(offset);
         self.snapshot(&ty)?;
         Ok(ty)
+    }
+    fn has_drop(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Named(name) => {
+                self.drops.contains(name)
+                    || self
+                        .structs
+                        .get(name)
+                        .is_some_and(|s| s.fields.iter().any(|(_, t)| self.has_drop(t)))
+            }
+            Type::Array(element, _) => self.has_drop(element),
+            _ => false,
+        }
+    }
+    fn push_value(&mut self, ty: &Type) -> Result<()> {
+        if layout::aggregate(ty) {
+            self.code.extend([0x48, 0x89, 0xc2]);
+            for offset in (0..layout::of(ty, self.structs)?.size).step_by(8).rev() {
+                self.code.extend([0x48, 0x8b, 0x82]);
+                self.code.extend((offset as i32).to_le_bytes());
+                self.push();
+            }
+        } else {
+            self.push();
+        }
+        Ok(())
+    }
+    fn invoke(&mut self, name: &str, argument_bytes: usize) -> Result<()> {
+        let callee = self
+            .known
+            .get(name)
+            .ok_or_else(|| format!("native callee {name} is recursive or has not been compiled"))?;
+        self.peak = self.peak.max(self.temporary + 8 + callee.stack);
+        self.code.push(0xe8);
+        let displacement = self.code.len();
+        self.code.extend([0; 4]);
+        patch(self.code, displacement, callee.offset)?;
+        if argument_bytes != 0 {
+            self.code.extend([0x48, 0x81, 0xc4]);
+            self.code.extend(
+                u32::try_from(argument_bytes)
+                    .map_err(|_| "native argument stack overflow")?
+                    .to_le_bytes(),
+            );
+            self.temporary = self
+                .temporary
+                .checked_sub(argument_bytes)
+                .ok_or("native argument stack underflow")?;
+        }
+        Ok(())
+    }
+    fn trace_drop(&mut self, name: &str) -> Result<()> {
+        match self.trace {
+            TraceMode::Value => {}
+            TraceMode::Count => self.code.extend([0x49, 0xff, 0xc7]),
+            TraceMode::Order => {
+                self.code.extend([0x4d, 0x69, 0xff]);
+                self.code.extend(167u32.to_le_bytes());
+                self.code.extend([0x49, 0x81, 0xc7]);
+                self.code.extend(
+                    self.drop_ids
+                        .get(name)
+                        .ok_or("missing native trace type")?
+                        .to_le_bytes(),
+                );
+            }
+        }
+        Ok(())
+    }
+    fn drop_fields(&mut self, ty: &Type, offset: i32) -> Result<()> {
+        match ty {
+            Type::Named(name) => {
+                let fields = self
+                    .structs
+                    .get(name)
+                    .ok_or("unknown native cleanup type")?
+                    .fields
+                    .clone();
+                let object = layout::of(ty, self.structs)?;
+                for (name, ty) in fields {
+                    self.drop_frame(&ty, offset + object.fields[&name].offset as i32)?;
+                }
+            }
+            Type::Array(element, count) if self.has_drop(element) => {
+                let bytes = layout::of(element, self.structs)?.size;
+                for index in 0..layout::array_length(count)? {
+                    self.drop_frame(element, offset + (index * bytes) as i32)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    fn drop_frame(&mut self, ty: &Type, offset: i32) -> Result<()> {
+        if !self.has_drop(ty) {
+            return Ok(());
+        }
+        if let Type::Named(name) = ty {
+            if self.drops.contains(name) {
+                self.trace_drop(name)?;
+                self.frame_address(offset);
+                self.push_value(ty)?;
+                return self.invoke(
+                    &format!("evg_drop_{name}"),
+                    layout::of(ty, self.structs)?.size,
+                );
+            }
+        }
+        self.drop_fields(ty, offset)
+    }
+    fn drop_value(&mut self, ty: &Type) -> Result<()> {
+        if self.has_drop(ty) {
+            let home = self.allocate(ty)?;
+            self.copy_frame(home, ty)?;
+            self.drop_frame(ty, home)?;
+        }
+        Ok(())
+    }
+    fn finish_temporaries(&mut self, start: usize) -> Result<()> {
+        for (offset, ty) in self.temporaries.split_off(start).into_iter().rev() {
+            self.drop_frame(&ty, offset)?;
+        }
+        Ok(())
+    }
+    fn scoped_expr(&mut self, e: &Expr, expected: Option<&Type>) -> Result<Type> {
+        let start = self.temporaries.len();
+        let ty = self.expr(e, expected)?;
+        if self.temporaries.len() != start {
+            let home = self.allocate(&ty)?;
+            self.copy_frame(home, &ty)?;
+            self.finish_temporaries(start)?;
+            self.frame_address(home);
+            if !layout::aggregate(&ty) {
+                self.code.extend([0x48, 0x8b, 0x00]);
+            }
+        }
+        Ok(ty)
+    }
+    fn storage_value(&mut self, e: &Expr) -> Result<Type> {
+        match &e.kind {
+            Kind::Name(name) => self.load(name),
+            Kind::Field(base, name) => {
+                let ty = self.storage_value(base)?;
+                let field = self.field(&ty, name)?;
+                self.add_offset(field.offset);
+                if !layout::aggregate(&field.ty) {
+                    self.code.extend([0x48, 0x8b, 0x00]);
+                }
+                Ok(field.ty)
+            }
+            Kind::Index(base, index) => {
+                let ty = self.index_address(base, index, ReadMode::Storage)?;
+                if !layout::aggregate(&ty) {
+                    self.code.extend([0x48, 0x8b, 0x00]);
+                }
+                Ok(ty)
+            }
+            Kind::Unary(op, _) if op == "*" => {
+                let ty = self.address(e)?;
+                self.snapshot(&ty)?;
+                Ok(ty)
+            }
+            _ => {
+                let ty = self.expr(e, None)?;
+                if self.has_drop(&ty) {
+                    let home = self.allocate(&ty)?;
+                    self.copy_frame(home, &ty)?;
+                    self.temporaries.push((home, ty.clone()));
+                    self.frame_address(home);
+                }
+                Ok(ty)
+            }
+        }
     }
     fn field(&self, ty: &Type, name: &str) -> Result<layout::Field> {
         layout::of(ty, self.structs)?
@@ -168,11 +360,11 @@ impl Emitter<'_> {
             _ => Ok(false),
         }
     }
-    fn index_address(&mut self, base: &Expr, index: &Expr, place: bool) -> Result<Type> {
-        let ty = if place {
-            self.address(base)?
-        } else {
-            self.expr(base, None)?
+    fn index_address(&mut self, base: &Expr, index: &Expr, mode: ReadMode) -> Result<Type> {
+        let ty = match mode {
+            ReadMode::Place => self.address(base)?,
+            ReadMode::Value => self.expr(base, None)?,
+            ReadMode::Storage => self.storage_value(base)?,
         };
         let Type::Array(element, _) = ty else {
             return Err("native index requires an array".into());
@@ -252,7 +444,7 @@ impl Emitter<'_> {
                 self.add_offset(field.offset);
                 Ok(field.ty)
             }
-            Kind::Index(base, index) => self.index_address(base, index, true),
+            Kind::Index(base, index) => self.index_address(base, index, ReadMode::Place),
             Kind::Name(name) => {
                 let (offset, ty) = self.slots.get(name).ok_or("unknown native place")?;
                 self.code.extend([0x48, 0x8d, 0x85]);
@@ -284,7 +476,13 @@ impl Emitter<'_> {
                 self.immediate(0);
                 Type::Unit
             }
-            Kind::Name(n) => self.load(n)?,
+            Kind::Name(n) => {
+                let ty = self.load(n)?;
+                if crate::verify::is_affine(&ty, self.structs, self.drops) {
+                    self.alive.remove(n);
+                }
+                ty
+            }
             Kind::Record(name, entries) => {
                 let ty = Type::Named(name.clone());
                 let object = self.allocate(&ty)?;
@@ -300,15 +498,7 @@ impl Emitter<'_> {
                 self.frame_address(object);
                 ty
             }
-            Kind::Field(base, name) => {
-                let base = self.expr(base, None)?;
-                let field = self.field(&base, name)?;
-                self.add_offset(field.offset);
-                if !layout::aggregate(&field.ty) {
-                    self.code.extend([0x48, 0x8b, 0x00]);
-                }
-                field.ty
-            }
+            Kind::Field(..) => self.storage_value(e)?,
             Kind::Array(items) => {
                 let ty = if let Some(Type::Array(..)) = expected {
                     expected.unwrap().clone()
@@ -343,7 +533,15 @@ impl Emitter<'_> {
             }
             Kind::Index(base, index) => {
                 let borrowed = stored(base) && no_calls(index);
-                let ty = self.index_address(base, index, borrowed)?;
+                let ty = self.index_address(
+                    base,
+                    index,
+                    if borrowed {
+                        ReadMode::Place
+                    } else {
+                        ReadMode::Value
+                    },
+                )?;
                 if layout::aggregate(&ty) && borrowed {
                     self.snapshot(&ty)?;
                 } else if !layout::aggregate(&ty) {
@@ -444,14 +642,20 @@ impl Emitter<'_> {
                 }
             }
             Kind::If(condition, yes, no) => {
-                self.expr(condition, Some(&Type::Bool))?;
+                self.scoped_expr(condition, Some(&Type::Bool))?;
+                let base_alive = self.alive.clone();
                 self.code.extend([0x48, 0x85, 0xc0]);
                 let alternative = self.jump(true);
-                let ty = self.expr(yes, expected)?;
+                let ty = self.scoped_expr(yes, expected)?;
+                let yes_alive = self.alive.clone();
                 let end = self.jump(false);
                 let target = self.code.len();
                 patch(self.code, alternative, target)?;
-                self.expr(no, Some(&ty))?;
+                self.alive = base_alive;
+                self.scoped_expr(no, Some(&ty))?;
+                if self.alive != yes_alive {
+                    return Err("native conditional ownership states differ".into());
+                }
                 let target = self.code.len();
                 patch(self.code, end, target)?;
                 ty
@@ -461,7 +665,11 @@ impl Emitter<'_> {
                     return Err("invalid native move/drop".into());
                 }
                 let ty = self.expr(&args[0], None)?;
+                if let Kind::Name(binding) = &args[0].kind {
+                    self.alive.remove(binding);
+                }
                 if name == "drop" {
+                    self.drop_value(&ty)?;
                     self.immediate(0);
                     Type::Unit
                 } else {
@@ -470,11 +678,6 @@ impl Emitter<'_> {
             }
             Kind::Call(name, args) => {
                 let function = self.functions.get(name).ok_or("unknown native callee")?;
-                let callee = self
-                    .known
-                    .get(name)
-                    .ok_or("native recursion and calls to ideal functions are unsupported")?
-                    .clone();
                 if function.params.len() != args.len() {
                     return Err("native argument count mismatch".into());
                 }
@@ -484,37 +687,14 @@ impl Emitter<'_> {
                         continue;
                     }
                     self.expr(arg, Some(ty))?;
-                    if layout::aggregate(ty) {
-                        self.code.extend([0x48, 0x89, 0xc2]);
-                        for offset in (0..layout::of(ty, self.structs)?.size).step_by(8).rev() {
-                            self.code.extend([0x48, 0x8b, 0x82]);
-                            self.code.extend((offset as i32).to_le_bytes());
-                            self.push();
-                        }
-                    } else {
-                        self.push();
-                    }
+                    self.push_value(ty)?;
                 }
                 if layout::aggregate(&function.ret) {
                     let output = self.allocate(&function.ret)?;
                     self.frame_address(output);
                     self.push();
                 }
-                self.peak = self.peak.max(self.temporary + 8 + callee.stack);
-                self.code.push(0xe8);
-                let displacement = self.code.len();
-                self.code.extend([0; 4]);
-                patch(self.code, displacement, callee.offset)?;
-                let argument_bytes = self.temporary - saved_temporary;
-                if argument_bytes > 0 {
-                    self.code.extend([0x48, 0x81, 0xc4]);
-                    self.code.extend(
-                        u32::try_from(argument_bytes)
-                            .map_err(|_| "native argument stack overflow")?
-                            .to_le_bytes(),
-                    );
-                    self.temporary = saved_temporary;
-                }
+                self.invoke(name, self.temporary - saved_temporary)?;
                 function.ret.clone()
             }
             _ => {
@@ -536,6 +716,11 @@ impl Emitter<'_> {
         Ok(ty)
     }
     fn statement(&mut self, statement: &Statement) -> Result<()> {
+        let start = self.temporaries.len();
+        self.statement_inner(statement)?;
+        self.finish_temporaries(start)
+    }
+    fn statement_inner(&mut self, statement: &Statement) -> Result<()> {
         match statement {
             Statement::Fact { .. } | Statement::Proof { .. } => Ok(()),
             Statement::Let { name, ty, value } => {
@@ -543,11 +728,45 @@ impl Emitter<'_> {
                 self.slot(name, ty)
             }
             Statement::Assign { target, value } => {
+                fn root(e: &Expr) -> Option<&str> {
+                    match &e.kind {
+                        Kind::Name(n) => Some(n),
+                        Kind::Field(base, _) | Kind::Index(base, _) => root(base),
+                        _ => None,
+                    }
+                }
+                let owner = root(target).map(str::to_owned);
                 let ty = self.address(target)?;
-                self.push();
+                let pointer_ty = Type::Ref(Box::new(ty.clone()));
+                let pointer = self.allocate(&pointer_ty)?;
+                self.copy_frame(pointer, &pointer_ty)?;
+                let old = if self.has_drop(&ty)
+                    && owner.as_ref().is_some_and(|n| self.alive.contains(n))
+                {
+                    let home = self.allocate(&ty)?;
+                    self.copy_frame(home, &ty)?;
+                    Some(home)
+                } else {
+                    None
+                };
                 self.expr(value, Some(&ty))?;
-                self.pop();
-                self.copy_address(&ty)
+                if self.has_drop(&ty) {
+                    let new_value = self.allocate(&ty)?;
+                    self.copy_frame(new_value, &ty)?;
+                    if let Some(old) = old {
+                        if owner.as_ref().is_some_and(|n| self.alive.contains(n)) {
+                            self.drop_frame(&ty, old)?;
+                        }
+                    }
+                    self.frame_address(new_value);
+                }
+                self.code.extend([0x48, 0x8b, 0x8d]);
+                self.code.extend(pointer.to_le_bytes());
+                self.copy_address(&ty)?;
+                if let Kind::Name(name) = &target.kind {
+                    self.alive.insert(name.clone());
+                }
+                Ok(())
             }
             Statement::Destructure {
                 record,
@@ -570,27 +789,87 @@ impl Emitter<'_> {
             }
             Statement::Update { body, .. } => {
                 let saved = self.slots.clone();
+                let saved_alive = self.alive.clone();
                 for statement in body {
                     self.statement(statement)?;
                 }
                 self.slots = saved;
+                self.alive = saved_alive;
                 Ok(())
             }
             Statement::Effect(e) => {
-                self.expr(e, None)?;
-                Ok(())
+                let ty = self.expr(e, None)?;
+                self.drop_value(&ty)
             }
         }
     }
 }
 
+fn compilation_order(program: &VerifiedProgram) -> Result<Vec<&Function>> {
+    fn visit<'a>(
+        ty: &Type,
+        program: &'a VerifiedProgram,
+        methods: &BTreeMap<&str, &'a Function>,
+        seen: &mut BTreeSet<String>,
+        output: &mut Vec<&'a Function>,
+    ) -> Result<()> {
+        match ty {
+            Type::Named(name) if seen.insert(name.clone()) => {
+                for (_, field) in &program
+                    .structs
+                    .get(name)
+                    .ok_or("unknown native cleanup dependency")?
+                    .fields
+                {
+                    visit(field, program, methods, seen, output)?;
+                }
+                if let Some(method) = methods.get(name.as_str()) {
+                    output.push(*method);
+                }
+            }
+            Type::Array(element, _) => visit(element, program, methods, seen, output)?,
+            _ => {}
+        }
+        Ok(())
+    }
+    let methods = program
+        .functions
+        .iter()
+        .filter_map(|f| f.drop_target.as_deref().map(|name| (name, f)))
+        .collect::<BTreeMap<_, _>>();
+    let mut ordered = Vec::new();
+    let mut seen = BTreeSet::new();
+    for name in &program.drops {
+        visit(
+            &Type::Named(name.clone()),
+            program,
+            &methods,
+            &mut seen,
+            &mut ordered,
+        )?;
+    }
+    ordered.extend(program.functions.iter().filter(|f| f.drop_target.is_none()));
+    Ok(ordered)
+}
+
 /// Emit a standalone Linux x86-64 executable. Its scalar main result is the
 /// process exit status (low eight bits). It performs no runtime I/O.
 pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
+    emit_mode(program, TraceMode::Value)
+}
+fn emit_mode(program: &VerifiedProgram, trace: TraceMode) -> Result<Vec<u8>> {
     program.check_entry()?;
-    if !program.drops.is_empty() {
-        return Err("native destructors require checked cleanup lowering; unsupported".into());
-    }
+    let drop_ids = program
+        .drops
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            Ok((
+                name.clone(),
+                u32::try_from(index + 1).map_err(|_| "native trace type count overflow")?,
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
     let functions = program
         .functions
         .iter()
@@ -599,11 +878,19 @@ pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
     let mut known = BTreeMap::new();
     let mut code = vec![0x48, 0xbc];
     code.extend([0; 8]); // mov rsp, private stack end
+    if trace != TraceMode::Value {
+        code.extend([0x4d, 0x31, 0xff]);
+    }
     code.push(0xe8);
     let entry_call = code.len();
     code.extend([0; 4]);
-    code.extend([0x48, 0x89, 0xc7, 0xb8, 60, 0, 0, 0, 0x0f, 0x05, 0x0f, 0x0b]);
-    for function in &program.functions {
+    code.extend(if trace == TraceMode::Value {
+        [0x48, 0x89, 0xc7]
+    } else {
+        [0x4c, 0x89, 0xff]
+    });
+    code.extend([0xb8, 60, 0, 0, 0, 0x0f, 0x05, 0x0f, 0x0b]);
+    for function in compilation_order(program)? {
         if function.ideal {
             continue;
         }
@@ -634,6 +921,11 @@ pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
             structs: &program.structs,
             temporary: 0,
             peak: 0,
+            drops: &program.drops,
+            alive: BTreeSet::new(),
+            temporaries: Vec::new(),
+            trace,
+            drop_ids: &drop_ids,
         };
         let mut incoming_offsets = vec![0usize; sizes.len()];
         let mut incoming_bytes = 16 + output_pointer;
@@ -657,7 +949,39 @@ pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
         for statement in &function.body {
             emitter.statement(statement)?;
         }
-        emitter.expr(&function.result, Some(&function.ret))?;
+        emitter.scoped_expr(&function.result, Some(&function.ret))?;
+        let saved_result = if program.drops.is_empty() {
+            None
+        } else {
+            let home = emitter.allocate(&function.ret)?;
+            emitter.copy_frame(home, &function.ret)?;
+            Some(home)
+        };
+        let names = params
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .chain(function.body.iter().flat_map(Statement::bindings))
+            .collect::<Vec<_>>();
+        for name in names.into_iter().rev() {
+            if emitter.alive.remove(name) {
+                let (offset, ty) = emitter
+                    .slots
+                    .get(name)
+                    .cloned()
+                    .ok_or("missing native cleanup binding")?;
+                if name == "self" && function.drop_target.is_some() {
+                    emitter.drop_fields(&ty, offset)?;
+                } else {
+                    emitter.drop_frame(&ty, offset)?;
+                }
+            }
+        }
+        if let Some(home) = saved_result {
+            emitter.frame_address(home);
+            if !layout::aggregate(&function.ret) {
+                emitter.code.extend([0x48, 0x8b, 0x00]);
+            }
+        }
         if output_pointer != 0 {
             emitter.code.extend([0x48, 0x8b, 0x8d]);
             emitter.code.extend(16i32.to_le_bytes());
@@ -728,7 +1052,6 @@ mod tests {
         for source in [
             "fn read(n: usize, a: [usize; n]) -> usize {n} fn main() -> usize {0}",
             "type Dynamic struct {len: usize, data: [usize; len]} fn main() -> usize {let d = Dynamic {len: 1, data: [42]}; d.data[0]}",
-            include_str!("../examples/drop.evg"),
             include_str!("../examples/recursion.evg"),
             "fn main() -> usize where (false) {0}",
             "fn main() -> [usize; 1] {[0]}",
@@ -790,6 +1113,9 @@ mod tests {
             std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
         fs::create_dir(&directory).unwrap();
         let mut cases = [
+            include_str!("../examples/drop.evg"),
+            include_str!("../examples/temporary_cleanup.evg"),
+            include_str!("../examples/borrowed_temporaries.evg"),
             include_str!("../examples/native.evg"),
             include_str!("../examples/native_aggregates.evg"),
             include_str!("../examples/array_contracts.evg"),
@@ -845,43 +1171,86 @@ mod tests {
             ]
             .join("\n"),
         );
+        let declarations = "type Resource struct {tag: usize} where (tag == 7); impl Drop for Resource {fn drop(self){}} fn make() -> Resource {Resource {tag: 7}} fn consume(r: Resource) -> usize {r.tag}";
+        for body in [
+            "let r = make(); let s = r; s.tag",
+            "let r = make(); r = make(); r.tag",
+            "let r = make(); r = move(r); r.tag",
+            "Resource {tag: 7}; 7",
+            "make().tag",
+            "let r = make(); let s = if true {move(r)} else {move(r)}; s.tag",
+            "let r = make(); if true {move(r)} else {move(r)}; 7",
+            "let r = make(); drop(r); 7",
+            "let r = make(); consume(r)",
+            "[Resource {tag: 7}]; 7",
+            "let a: [Resource; 2] = [make(), make()]; a[0].tag",
+            "let a: [Resource; 0] = []; 7",
+        ] {
+            cases.push(format!("{declarations} fn main() -> usize {{{body}}}"));
+        }
+        let pair = "type Left struct {} impl Drop for Left {fn drop(self){}} type Right struct {} impl Drop for Right {fn drop(self){}} type Pair struct {left: Left, right: Right} fn take(p: Pair) -> Left {let Pair {left, right} = p; left}";
+        for body in [
+            "let p = Pair {left: Left {}, right: Right {}}; p.left = Left {}; 42",
+            "let p = Pair {left: Left {}, right: Right {}}; p = Pair {left: take(p), right: Right {}}; 42",
+        ] {
+            cases.push(format!("{pair} fn main() -> usize {{{body}}}"));
+        }
+        cases.push("type Owner struct {tag: usize} where (tag == 7); impl Drop for Owner {fn drop(self){}} type Holder struct {reference: &usize, tag: usize} where (fact live = *reference == 7; live); impl Drop for Holder {fn drop(self){proof receiver_valid: self::live;}} fn main() -> usize {let owner = Owner {tag: 7}; let value = Holder {reference: &owner.tag, tag: 42}.tag; drop(owner); value}".into());
         for (index, source) in cases.iter().enumerate() {
             let program = verify(source).unwrap_or_else(|error| panic!("{error}: {source}"));
-            let expected = match program.run().unwrap() {
+            let (value, events) = program.run_with_events().unwrap();
+            let expected = match value {
                 crate::runtime::Value::Machine(_, n) => i32::from(n as u8),
                 crate::runtime::Value::Bool(b) => i32::from(b),
                 crate::runtime::Value::Unit => 0,
                 other => panic!("unexpected native value: {other}"),
             };
-            let binary = emit(&program).unwrap();
-            assert_eq!(binary, emit(&program).unwrap());
-            assert_eq!(&binary[..4], b"\x7fELF");
-            let path = directory.join(index.to_string());
-            fs::write(&path, binary).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-            let mut child = Command::new(&path)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap();
-            let deadline = Instant::now() + Duration::from_secs(3);
-            let status = loop {
-                if let Some(status) = child.try_wait().unwrap() {
-                    break status;
-                }
-                if Instant::now() >= deadline {
-                    child.kill().unwrap();
-                    child.wait().unwrap();
-                    panic!("native test timed out: {source}");
-                }
-                std::thread::sleep(Duration::from_millis(5));
-            };
-            assert_eq!(
-                status.code(),
-                Some(expected),
-                "native/interpreter disagreement: {source}"
-            );
+            let mut modes = vec![(TraceMode::Value, expected)];
+            if !program.drops.is_empty() {
+                let ids = program
+                    .drops
+                    .iter()
+                    .enumerate()
+                    .map(|(i, name)| (format!("drop {name}"), i as u64 + 1))
+                    .collect::<BTreeMap<_, _>>();
+                let order = events.iter().fold(0u64, |h, event| {
+                    h.wrapping_mul(167).wrapping_add(ids[event])
+                });
+                modes.push((TraceMode::Count, i32::from(events.len() as u8)));
+                modes.push((TraceMode::Order, i32::from(order as u8)));
+            }
+            for (mode_index, (mode, expected)) in modes.into_iter().enumerate() {
+                let binary =
+                    emit_mode(&program, mode).unwrap_or_else(|error| panic!("{error}: {source}"));
+                assert_eq!(binary, emit_mode(&program, mode).unwrap());
+                assert_eq!(&binary[..4], b"\x7fELF");
+                let path = directory.join(format!("{index}-{mode_index}"));
+                fs::write(&path, binary).unwrap();
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+                let mut child = Command::new(&path)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .unwrap();
+                let deadline = Instant::now() + Duration::from_secs(3);
+                let status = loop {
+                    if let Some(status) = child.try_wait().unwrap() {
+                        break status;
+                    }
+                    if Instant::now() >= deadline {
+                        child.kill().unwrap();
+                        child.wait().unwrap();
+                        panic!("native test timed out: {source}");
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                };
+                assert_eq!(
+                    status.code(),
+                    Some(expected),
+                    "native/interpreter disagreement: {source}"
+                );
+            }
         }
         fs::remove_dir_all(directory).unwrap();
     }

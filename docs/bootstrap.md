@@ -145,7 +145,7 @@ only under this well-founded induction rule. Recursive calls in specifications
 are rejected. Mutual recursion is not implemented yet.
 
 Not yet supported: non-record patterns, heap allocation, FFI, foreign aggregate
-layouts, or native destructor lowering. Unsupported syntax
+layouts. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
 
 `src/memory.rs` provides the internal generation-checked plane store used by
@@ -398,18 +398,20 @@ are supported. No assembler, linker, C compiler, or runtime library is needed.
 The supported subset includes machine scalars, Boolean and unit values, fixed
 local arrays and records, field references and their writes, local mutation,
 complete record patterns, invariant updates, calls, branches, and erased
-facts/proofs/ideal scalar arguments.
+facts/proofs/ideal scalar arguments, and owned destructor cleanup.
 Comparison instructions respect signed versus unsigned machine types.
 
 The entry function's scalar result supplies the low eight bits of the process
 exit status. The executable uses a private 64 KiB writable stack, with separate
 read/execute code pages. Emission checks the entire static call-tree stack bound.
-Recursive native calls, inline dependent layouts, and destructors are rejected. Unsupported or unproved input does not replace
+Recursive native calls and inline dependent layouts are rejected. Unsupported or unproved input does not replace
 an existing output; input sources cannot be overwritten.
 
 Native tests execute generated programs and compare their results with the
 interpreter, including signed minima, unsigned maxima, argument ordering,
-Boolean expressions, branches, mutation, and erased arguments. These tests are
+Boolean expressions, branches, mutation, and erased arguments. Destructor tests
+also compare cleanup counts and order using test-only machine instrumentation,
+covering replacement, moves, field cleanup, and borrowed temporaries. These tests are
 not a formal proof of compiler correctness. Source certificates do not certify
 the generated instructions; the native backend and platform remain trusted.
 
@@ -484,3 +486,10 @@ pending temporaries. Proof and fact expressions create no runtime temporaries.
 Implicit temporary cleanup also checks that the destructor receiver still has
 its valid type. A later operand cannot consume an owner referenced by a pending
 temporary and leave that temporary with a dangling field at cleanup.
+
+Native cleanup follows the interpreter: an owned `Drop` method runs before its
+fields, fields clean up in declaration order, and remaining locals clean up in
+reverse binding order. A move transfers cleanup responsibility. Replacement
+cleans up the old live value, and borrowed owned temporaries survive until the
+end of their expression or statement scope. Return values are saved across
+cleanup calls. The emitted code uses no external runtime for these operations.
