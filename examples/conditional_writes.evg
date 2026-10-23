@@ -1,0 +1,23 @@
+fn increment(r: &usize) -> ()
+where (*r < usize::MAX)
+modifies(r)
+ensures (*r == old(*r) + 1) {
+    *r = *r + 1;
+}
+
+fn maybe_increment(r: &usize, flag: bool) -> ()
+where (*r < usize::MAX)
+modifies(r)
+ensures ((flag && *r == old(*r) + 1) || (!flag && *r == old(*r))) {
+    if flag {increment(r)} else {()}
+}
+
+type Counters struct {left: usize, right: usize}
+fn main() -> usize ensures (result == 42) {
+    let counters = Counters {left: 40, right: 0};
+    let alias = &counters.left;
+    let selected = if true {increment(alias)} else {()};
+    maybe_increment(alias, false);
+    counters.right = 1;
+    *alias + counters.right
+}

@@ -316,7 +316,22 @@ aliases, overflow bounds, and preservation of an unrelated sibling field.
 The initial contract supports exactly one machine-scalar or Boolean reference
 parameter and no other reference-containing parameters. Multiple borrowed
 parameters need alias-aware contracts; treating them as independent would be
-unsound. Modifying calls inside conditional branches await state joins, and
-inside invariant updates await suitable checked effect summaries. Modifying
+unsound. Modifying calls inside invariant updates await suitable checked effect
+summaries. Modifying
 calls in proof expressions and ideal functions are rejected. There are no
 concurrency or atomic-operation guarantees in this rule.
+
+Scalar modifying calls also work inside conditional expressions. Verification
+forks the symbolic store, checks each branch, and joins changed values with
+relations guarded by the condition. Storage layout and live bindings must agree
+on both exits. Consuming the same affine input in both branches works; consuming
+it on only one branch is rejected until conditional shapes are implemented.
+`examples/conditional_writes.evg` checks nested effects, aliases, and framed
+sibling fields. These proof snapshots do not introduce runtime transactions.
+
+Symbolic array reads are cached by contents version. Updating an element creates
+a fresh contents version without changing the plane's storage generation, so
+old read facts cannot certify the changed contents and existing references stay
+valid. Symbolic indexing into reference-containing elements is rejected until
+an alias-aware selection rule exists. A statically known index into a concrete
+reference array retains the actual reference and works.

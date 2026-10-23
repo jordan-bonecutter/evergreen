@@ -52,6 +52,31 @@ impl<T> Default for Memory<T> {
     }
 }
 impl<T> Memory<T> {
+    pub(crate) fn snapshot(&self) -> Self
+    where
+        T: Clone,
+    {
+        Self {
+            owner: self.owner,
+            planes: self.planes.clone(),
+        }
+    }
+    pub(crate) fn states(&self) -> Vec<(PlaneId, u64, Option<&T>)> {
+        self.planes
+            .iter()
+            .enumerate()
+            .map(|(slot, plane)| {
+                (
+                    PlaneId {
+                        owner: self.owner,
+                        slot,
+                    },
+                    plane.generation,
+                    plane.value.as_ref(),
+                )
+            })
+            .collect()
+    }
     pub fn allocate(&mut self, value: T) -> Result<PlaneId, String> {
         if self.planes.len() >= 100_000 {
             return Err("plane allocation limit reached".into());
@@ -144,6 +169,19 @@ impl<T> Memory<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn proof_snapshots_isolate_branch_writes_and_consumption() {
+        let mut original = Memory::default();
+        let plane = original.allocate(7).unwrap();
+        let reference = original.borrow(plane).unwrap();
+        let mut branch = original.snapshot();
+        branch.write(plane, 42, false).unwrap();
+        assert_eq!(*original.read(reference).unwrap(), 7);
+        assert_eq!(*branch.read(reference).unwrap(), 42);
+        branch.take(plane).unwrap();
+        assert!(branch.read(reference).is_err());
+        assert_eq!(*original.read(reference).unwrap(), 7);
+    }
     #[test]
     fn aliases_observe_scalar_writes() {
         let mut m = Memory::default();

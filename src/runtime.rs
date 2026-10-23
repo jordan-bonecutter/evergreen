@@ -96,6 +96,10 @@ impl Evaluator<'_> {
                 }
             }
             Kind::Unary(_, x) => self.hint(x, env),
+            Kind::Index(base, _) => match self.hint(base, env)? {
+                Type::Array(element, _) => Some(*element),
+                _ => None,
+            },
             Kind::Field(base, field) => {
                 fn stored<'a>(e: &Expr, env: &'a BTreeMap<String, Value>) -> Option<&'a Value> {
                     match &e.kind {

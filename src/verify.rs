@@ -55,7 +55,7 @@ impl Formula {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Ty {
     Int,
     Nat,
@@ -66,7 +66,7 @@ enum Ty {
     Array(Box<Ty>, Linear),
     Record(String),
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Symbol {
     Number(Ty, Linear),
     Bool(Formula),
@@ -129,7 +129,12 @@ fn project<'a>(value: &'a Symbol, path: &[Projection]) -> Result<&'a Symbol> {
     };
     project(value, &path[1..])
 }
-fn replace_projection(value: &mut Symbol, path: &[Projection], new: Symbol) -> Result<()> {
+fn replace_projection(
+    value: &mut Symbol,
+    path: &[Projection],
+    new: Symbol,
+    fresh: &mut usize,
+) -> Result<()> {
     if path.is_empty() {
         *value = new;
         return Ok(());
@@ -141,12 +146,18 @@ fn replace_projection(value: &mut Symbol, path: &[Projection], new: Symbol) -> R
         (
             Projection::Index(i),
             Symbol::Array {
-                items: Some(items), ..
+                items: Some(items),
+                identity,
+                ..
             },
-        ) => items.get_mut(*i).ok_or("reference index out of bounds")?,
+        ) => {
+            *fresh += 1;
+            *identity = format!("evg_{}", fresh);
+            items.get_mut(*i).ok_or("reference index out of bounds")?
+        }
         _ => return Err("invalid reference projection".into()),
     };
-    replace_projection(value, &path[1..], new)
+    replace_projection(value, &path[1..], new, fresh)
 }
 
 fn type_has_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
@@ -302,7 +313,6 @@ struct Context<'a> {
     session: &'a mut Session,
     writable: BTreeSet<PlaneId>,
     old_values: BTreeMap<String, Symbol>,
-    conditional_depth: usize,
 }
 
 impl<'a> Context<'a> {
@@ -335,7 +345,6 @@ impl<'a> Context<'a> {
             session,
             writable: BTreeSet::new(),
             old_values: BTreeMap::new(),
-            conditional_depth: 0,
         }
     }
     fn fresh_name(&mut self) -> String {
@@ -579,7 +588,7 @@ impl<'a> Context<'a> {
             let new = self.eval(value, Some(&old.ty()))?;
             let replace_plane = !self.same_layout(&old, &new)?;
             let mut root = self.memory.read(reference)?.clone();
-            replace_projection(&mut root, &fields, new)?;
+            replace_projection(&mut root, &fields, new, &mut self.fresh)?;
             self.record_valid(&root, place.line)?;
             self.memory.write(id, root.clone(), replace_plane)?;
             for (n, plane) in &self.roots {
@@ -1020,6 +1029,10 @@ impl<'a> Context<'a> {
                 }
             }
             Kind::Unary(_, x) => self.hint(x),
+            Kind::Index(base, _) => match self.hint(base)? {
+                Ty::Array(element, _) => Some(*element),
+                _ => None,
+            },
             Kind::Field(base, field) => {
                 fn stored<'a>(e: &Expr, env: &'a BTreeMap<String, Symbol>) -> Option<&'a Symbol> {
                     match &e.kind {
@@ -1142,6 +1155,14 @@ impl<'a> Context<'a> {
             _ => false,
         }
     }
+    fn ty_has_reference(&self, t: &Ty) -> bool {
+        match t {
+            Ty::Ref(_) => true,
+            Ty::Array(element, _) => self.ty_has_reference(element),
+            Ty::Record(name) => type_has_reference(&Type::Named(name.clone()), self.structs),
+            _ => false,
+        }
+    }
     fn finish_scope(&mut self, f: &Function) -> Result<()> {
         let mut names = f.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
         names.extend(
@@ -1216,6 +1237,9 @@ impl<'a> Context<'a> {
                     {
                         return Ok(v.clone());
                     }
+                }
+                if self.ty_has_reference(&element) {
+                    return Err("symbolic reads of reference-containing array elements need an alias contract; unsupported".into());
                 }
                 self.arbitrary(&element)
             }
@@ -1530,6 +1554,9 @@ impl<'a> Context<'a> {
                     }
                 }
                 // Repeated reads of the same symbolic element have the same value.
+                if self.ty_has_reference(&element) {
+                    return Err("symbolic reads of reference-containing array elements need an alias contract; unsupported".into());
+                }
                 let key = format!("evg_read_{identity}_{index:?}");
                 if let Some(v) = self.env.get(&key) {
                     return Ok(v.clone());
@@ -1597,8 +1624,8 @@ impl<'a> Context<'a> {
                     return Ok(if name == "drop" { Symbol::Unit } else { value });
                 }
                 let f = self.functions.get(name).cloned().ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration (recursion is not supported yet)"))?;
-                if !f.modifies.is_empty() && (self.specification || self.conditional_depth > 0) {
-                    return Err("modifying calls are forbidden in proof expressions and require branch-state joins inside conditionals; unsupported".into());
+                if !f.modifies.is_empty() && self.specification {
+                    return Err("modifying calls are forbidden in proof expressions".into());
                 }
                 if f.ideal && !self.ideal && !self.specification {
                     return Err(format!(
@@ -1667,7 +1694,7 @@ impl<'a> Context<'a> {
                     }
                     let new = self.arbitrary(&ty)?;
                     let mut root = self.memory.read(reference)?.clone();
-                    replace_projection(&mut root, &fields, new)?;
+                    replace_projection(&mut root, &fields, new, &mut self.fresh)?;
                     self.memory.write(id, root.clone(), false)?;
                     for (binding, plane) in &saved_roots {
                         if *plane == id {
@@ -1691,21 +1718,63 @@ impl<'a> Context<'a> {
             Kind::If(condition, yes, no) => {
                 let p = self.eval(condition, Some(&Ty::Bool))?.proposition()?;
                 let base = self.paths.clone();
+                // Give caller bindings stable storage identities before forking.
+                for (name, value) in self.env.clone() {
+                    if !self.roots.contains_key(&name) {
+                        self.roots.insert(name, self.memory.allocate(value)?);
+                    }
+                }
                 let env = self.env.clone();
+                let roots = self.roots.clone();
+                let store = self.memory.snapshot();
                 self.paths = extend(&base, &p, false)?;
-                self.conditional_depth += 1;
                 let a = self.eval(yes, expected)?;
                 let a_paths = self.paths.clone();
+                let a_store = self.memory.snapshot();
                 self.paths = extend(&base, &p, true)?;
                 self.env = env.clone();
+                self.roots = roots.clone();
+                self.memory = store.snapshot();
                 let b = self.eval(no, Some(&a.ty()))?;
-                self.conditional_depth -= 1;
                 let b_paths = self.paths.clone();
+                let b_store = self.memory.snapshot();
                 self.paths = base;
                 self.env = env;
+                self.roots = roots;
+                self.memory = store.snapshot();
+                let mut state_a = Formula::True;
+                let mut state_b = Formula::True;
+                let a_states = a_store.states();
+                let b_states = b_store.states();
+                for (index, (id, generation, original)) in store.states().into_iter().enumerate() {
+                    let (_, ag, av) = a_states.get(index).ok_or("missing branch plane")?;
+                    let (_, bg, bv) = b_states.get(index).ok_or("missing branch plane")?;
+                    if ag != bg {
+                        return Err("conditional branches have different ownership or storage generations; conditional shapes are not implemented".into());
+                    }
+                    match (av, bv) {
+                        (Some(av), Some(bv)) if *ag == generation => {
+                            let (joined, left, right) = self.join_value(av, bv)?;
+                            self.memory.write(id, joined, false)?;
+                            state_a = state_a.and(left);
+                            state_b = state_b.and(right);
+                        }
+                        (None, None) => {
+                            let expected = if original.is_some() {generation.checked_add(1).ok_or("plane generation exhausted")?} else {generation};
+                            if *ag != expected { return Err("conditional storage generation cannot be joined".into()); }
+                            if original.is_some() { self.memory.take(id)?; }
+                        }
+                        _ => return Err("conditional branches must leave the same live bindings and storage layout".into()),
+                    }
+                }
+                for (name, id) in &self.roots {
+                    if let Ok(value) = self.memory.get(*id) {
+                        self.env.insert(name.clone(), value.clone());
+                    }
+                }
                 let result = self.arbitrary(&a.ty())?;
-                let relation_a = self.symbol_equal(&result, &a)?;
-                let relation_b = self.symbol_equal(&result, &b)?;
+                let relation_a = state_a.and(self.symbol_equal(&result, &a)?);
+                let relation_b = state_b.and(self.symbol_equal(&result, &b)?);
                 let mut paths = extend(&a_paths, &relation_a, false)?;
                 paths.extend(extend(&b_paths, &relation_b, false)?);
                 if paths.len() > 64 {
@@ -1714,6 +1783,79 @@ impl<'a> Context<'a> {
                 self.paths = paths;
                 Ok(result)
             }
+        }
+    }
+    fn join_value(&mut self, a: &Symbol, b: &Symbol) -> Result<(Symbol, Formula, Formula)> {
+        if a == b {
+            return Ok((a.clone(), Formula::True, Formula::True));
+        }
+        match (a, b) {
+            (Symbol::Number(at, _), Symbol::Number(bt, _)) if at == bt => {
+                let value = self.arbitrary(at)?;
+                Ok((
+                    value.clone(),
+                    self.symbol_equal(&value, a)?,
+                    self.symbol_equal(&value, b)?,
+                ))
+            }
+            (Symbol::Bool(_), Symbol::Bool(_)) => {
+                let value = self.arbitrary(&Ty::Bool)?;
+                Ok((
+                    value.clone(),
+                    self.symbol_equal(&value, a)?,
+                    self.symbol_equal(&value, b)?,
+                ))
+            }
+            (Symbol::Record(an, a), Symbol::Record(bn, b)) if an == bn && a.len() == b.len() => {
+                let mut fields = BTreeMap::new();
+                let mut left = Formula::True;
+                let mut right = Formula::True;
+                for (name, value) in a {
+                    let (value, l, r) =
+                        self.join_value(value, b.get(name).ok_or("branch fields differ")?)?;
+                    fields.insert(name.clone(), value);
+                    left = left.and(l);
+                    right = right.and(r);
+                }
+                Ok((Symbol::Record(an.clone(), fields), left, right))
+            }
+            (
+                Symbol::Array {
+                    element,
+                    len,
+                    items: Some(a),
+                    ..
+                },
+                Symbol::Array {
+                    element: be,
+                    len: bl,
+                    items: Some(b),
+                    ..
+                },
+            ) if element == be && len == bl && a.len() == b.len() => {
+                let mut values = Vec::new();
+                let mut left = Formula::True;
+                let mut right = Formula::True;
+                for (a, b) in a.iter().zip(b) {
+                    let (value, l, r) = self.join_value(a, b)?;
+                    values.push(value);
+                    left = left.and(l);
+                    right = right.and(r);
+                }
+                Ok((
+                    Symbol::Array {
+                        element: element.clone(),
+                        len: len.clone(),
+                        items: Some(values),
+                        identity: self.fresh_name(),
+                    },
+                    left,
+                    right,
+                ))
+            }
+            _ => Err(
+                "conditional storage joins require matching layouts and stable references".into(),
+            ),
         }
     }
     fn symbol_equal(&self, a: &Symbol, b: &Symbol) -> Result<Formula> {
@@ -1989,6 +2131,87 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 #[cfg(test)]
 mod tests {
     #[test]
+    fn symbolic_array_reads_are_versioned_after_writes() {
+        let prefix = "fn increment(r: &usize) where (*r < usize::MAX) modifies(r) ensures (*r == old(*r) + 1) {*r = *r + 1;}";
+        for mutation in [
+            "let r = &a[0]; *r = 1;",
+            "increment(&a[0]);",
+            "let x = if true {increment(&a[0])} else {()};",
+        ] {
+            let source = format!("{prefix} fn unchanged(i: usize) -> bool where (i < 1) ensures (result) {{let a: [usize; 1] = [0]; let before = a[i]; {mutation} a[i] == before}}");
+            assert!(
+                verify(&source).is_err(),
+                "stale array read survived {mutation}"
+            );
+        }
+        let unchanged = "fn unchanged(i: usize) -> bool where (i < 1) ensures (result) {let a: [usize; 1] = [0]; let before = a[i]; a[i] == before}";
+        assert!(verify(unchanged).is_ok());
+        let copy = "fn unchanged(i: usize) -> bool where (i < 1) ensures (result) {let a: [usize; 1] = [0]; let snapshot = a; let before = snapshot[i]; let r = &a[0]; *r = 1; snapshot[i] == before}";
+        assert!(verify(copy).is_ok());
+        let alias = "fn bad(i: usize) -> bool where (i < 1) ensures (result) {let n: usize = 0; let a: [&usize; 1] = [&n]; let before = *a[i]; n = 1; *a[i] == before}";
+        assert!(verify(alias).unwrap_err().contains("alias contract"));
+        let concrete = "fn main() -> usize ensures (result == 1) {let n: usize = 0; let a: [&usize; 1] = [&n]; n = 1; *a[0]}";
+        assert_eq!(verify(concrete).unwrap().run().unwrap().to_string(), "1");
+    }
+
+    #[test]
+    fn conditional_stores_join_effects_without_leaking_branch_assumptions() {
+        let source = include_str!("../examples/conditional_writes.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        assert!(verify(&source.replace(
+            "maybe_increment(alias, false)",
+            "maybe_increment(alias, true)"
+        ))
+        .is_err());
+        assert!(
+            verify(&source.replace("*alias + counters.right", "*alias + counters.right + 1"))
+                .is_err()
+        );
+        let declarations = source.split("type Counters").next().unwrap();
+        let invalid = "fn bad(r: &usize, flag: bool) where (*r < usize::MAX) modifies(r) ensures (*r == old(*r) + 1) {if flag {increment(r)} else {()}}";
+        assert!(verify(&format!("{declarations}\n{invalid}")).is_err());
+        let array = "fn main() -> usize ensures (result == 41) {let a: [usize; 2] = [40, 7]; let alias = &a[0]; let x = if false {()} else {increment(alias)}; proof frame: a[1] == 7; *alias}";
+        assert_eq!(
+            verify(&format!("{declarations}\n{array}"))
+                .unwrap()
+                .run()
+                .unwrap()
+                .to_string(),
+            "41"
+        );
+        let nested = "fn main() -> usize ensures (result == 2) {let n: usize = 0; let x = if true {if false {()} else {increment(&n)}} else {()}; increment(&n); n}";
+        assert_eq!(
+            verify(&format!("{declarations}\n{nested}"))
+                .unwrap()
+                .run()
+                .unwrap()
+                .to_string(),
+            "2"
+        );
+    }
+
+    #[test]
+    fn branches_must_agree_on_consumed_ownership() {
+        let declarations = "affine type Token struct {tag: usize} fn consume(t: Token) -> usize ensures (result == t.tag) {t.tag}";
+        let valid = "fn main() -> usize ensures (result == 7) {let t = Token {tag: 7}; if true {consume(t)} else {consume(t)}}";
+        assert_eq!(
+            verify(&format!("{declarations}\n{valid}"))
+                .unwrap()
+                .run()
+                .unwrap()
+                .to_string(),
+            "7"
+        );
+        let invalid = "fn main() -> usize {let t = Token {tag: 7}; let x = if true {consume(t)} else {0}; t.tag}";
+        assert!(verify(&format!("{declarations}\n{invalid}")).is_err());
+        let invalid = valid.replace(
+            "if true {consume(t)} else {consume(t)}",
+            "let x = if true {consume(t)} else {consume(t)}; t.tag",
+        );
+        assert!(verify(&format!("{declarations}\n{invalid}")).is_err());
+    }
+
+    #[test]
     fn scalar_write_contracts_update_aliases_and_frame_other_fields() {
         let source = include_str!("../examples/write_contracts.evg");
         assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
@@ -1999,7 +2222,6 @@ mod tests {
         for body in [
             "fn wrapper(r: &usize) {increment(r);}",
             "fn wrapper(r: &usize, other: &usize) modifies(r) {*r = 1;}",
-            "fn main() -> usize {let n: usize = 0; let x = if true {increment(&n)} else {()}; n}",
             "fn main() -> usize {let n: usize = 0; proof p: old(n) == 0; n}",
             "fn main() -> usize {let n: usize = 0; proof p: n == 0; increment(&n); proof stale: n == 0 by {exact p}; n}",
             "type Balanced struct {left: usize, right: usize} where (left == right); fn main() -> usize {let p = Balanced {left: 0, right: 0}; increment(&p.left); p.left}",
