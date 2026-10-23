@@ -248,6 +248,7 @@ struct Context<'a> {
     opened: BTreeSet<String>,
     drops: &'a BTreeSet<String>,
     dropping: bool,
+    helpers: &'a BTreeSet<String>,
 }
 
 impl<'a> Context<'a> {
@@ -255,6 +256,7 @@ impl<'a> Context<'a> {
         functions: &'a BTreeMap<String, Function>,
         structs: &'a BTreeMap<String, Struct>,
         drops: &'a BTreeSet<String>,
+        helpers: &'a BTreeSet<String>,
     ) -> Self {
         Self {
             functions,
@@ -272,6 +274,7 @@ impl<'a> Context<'a> {
             opened: BTreeSet::new(),
             drops,
             dropping: false,
+            helpers,
         }
     }
     fn fresh_name(&mut self) -> String {
@@ -573,23 +576,31 @@ impl<'a> Context<'a> {
         }
     }
 
+    fn update_expression(&self, e: &Expr) -> bool {
+        match &e.kind {
+            Kind::Call(name, args) => {
+                self.helpers.contains(name) && args.iter().all(|e| self.update_expression(e))
+            }
+            Kind::Record(..) | Kind::Array(..) => false,
+            Kind::Unary(op, x) if op == "*" => {
+                matches!(self.hint(x), Some(Ty::Ref(t)) if matches!(*t, Ty::Machine(_) | Ty::Bool | Ty::Int | Ty::Nat))
+            }
+            Kind::Unary(_, x) | Kind::Field(x, _) => self.update_expression(x),
+            Kind::Binary(_, a, b) | Kind::Index(a, b) => {
+                self.update_expression(a) && self.update_expression(b)
+            }
+            Kind::If(c, a, b) => {
+                self.update_expression(c) && self.update_expression(a) && self.update_expression(b)
+            }
+            _ => true,
+        }
+    }
     fn update(&mut self, places: &[String], body: &[Statement], line: usize) -> Result<()> {
         fn root(e: &Expr) -> Option<&str> {
             match &e.kind {
                 Kind::Name(n) => Some(n),
                 Kind::Field(b, _) => root(b),
                 _ => None,
-            }
-        }
-        fn pure(e: &Expr) -> bool {
-            match &e.kind {
-                Kind::Call(..) | Kind::Record(..) => false,
-                Kind::Unary(op, _) if op == "&" || op == "*" => false,
-                Kind::Unary(_, x) | Kind::Field(x, _) => pure(x),
-                Kind::Binary(_, a, b) | Kind::Index(a, b) => pure(a) && pure(b),
-                Kind::If(c, a, b) => pure(c) && pure(a) && pure(b),
-                Kind::Array(xs) => xs.iter().all(pure),
-                _ => true,
             }
         }
         if !self.opened.is_empty() {
@@ -612,17 +623,28 @@ impl<'a> Context<'a> {
             }
         }
         self.opened = opened;
+        let mut locals = Vec::new();
+        let mut local_facts = Vec::new();
         for statement in body {
             match statement {
-                Statement::Assign {target, value} if matches!(target.kind, Kind::Field(..)) && pure(value) => {
+                Statement::Assign {target, value} if matches!(target.kind, Kind::Field(..)) && self.update_expression(value) => {
                     let name = root(target).ok_or("update writes must target local struct fields")?;
                     if !self.opened.contains(name) { return Err(format!("line {}: {name} was not opened by this update", target.line)); }
                     let old = self.storage(target)?;
                     if !matches!(old, Symbol::Number(..) | Symbol::Bool(_)) { return Err(format!("line {}: updates currently allow only scalar fields; replacing owned fields requires destructor/effect proofs", target.line)); }
                     self.assign(target, value)?;
                 }
-                Statement::Fact {value, ..} if pure(value) => self.statement(statement)?,
-                _ => return Err(format!("line {line}: calls, borrowing, moves, drops, and exits are forbidden while invariants are open")),
+                Statement::Let {name, value, ..} if self.update_expression(value) => {
+                    self.statement(statement)?;
+                    let ty = self.env.get(name).ok_or("unknown update local")?.ty();
+                    let leaf = matches!(ty, Ty::Machine(_) | Ty::Int | Ty::Nat | Ty::Bool | Ty::Unit) || matches!(ty, Ty::Ref(t) if matches!(*t, Ty::Machine(_) | Ty::Int | Ty::Nat | Ty::Bool));
+                    if !leaf {return Err(format!("line {}: update locals require scalar values or scalar borrows, without an open object invariant", value.line));}
+                    locals.push(name.clone());
+                }
+                Statement::Fact {name, value, ..} if self.update_expression(value) => {
+                    self.statement(statement)?; local_facts.push(name.clone());
+                }
+                _ => return Err(format!("line {line}: this operation needs invariant-independent effects; moves, drops, exits, and unknown effects are forbidden while invariants are open")),
             }
         }
         for name in places {
@@ -634,6 +656,15 @@ impl<'a> Context<'a> {
             self.record_valid(&value, line)?;
         }
         self.opened.clear();
+        for name in locals.into_iter().rev() {
+            if let Some(id) = self.roots.remove(&name) {
+                self.memory.take(id)?;
+            }
+            self.env.remove(&name);
+        }
+        for name in local_facts {
+            self.facts.remove(&name);
+        }
         Ok(())
     }
 
@@ -1303,7 +1334,7 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         if structs.contains_key(&s.name) {
             return Err(format!("line {}: duplicate struct {}", s.line, s.name));
         }
-        let mut ctx = Context::new(&empty_functions, &structs, &empty_drops);
+        let mut ctx = Context::new(&empty_functions, &structs, &empty_drops, &empty_drops);
         for (n, t) in &s.fields {
             if n == "self" || ctx.env.contains_key(n) {
                 return Err(format!("line {}: duplicate or reserved field {n}", s.line));
@@ -1323,6 +1354,7 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
     }
     let mut functions = BTreeMap::new();
     let mut drops = BTreeSet::new();
+    let mut helpers = BTreeSet::new();
     for (target, f) in &parsed.destructors {
         if !structs.contains_key(target) || !drops.insert(target.clone()) {
             return Err(format!(
@@ -1351,7 +1383,7 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         if f.decreases.is_some() {
             available.insert(f.name.clone(), f.clone());
         }
-        let mut ctx = Context::new(&available, &structs, &drops);
+        let mut ctx = Context::new(&available, &structs, &drops, &helpers);
         ctx.dropping = f.drop_target.is_some();
         ctx.current = Some(f.name.clone());
         for (n, t) in &f.params {
@@ -1391,6 +1423,9 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
             ctx.prove(&p, &format!("postcondition of {}", f.name), post.line)?;
         }
         obligations += ctx.obligations;
+        if crate::effects::invariant_independent(f, &functions, &helpers) {
+            helpers.insert(f.name.clone());
+        }
         functions.insert(f.name.clone(), f.clone());
     }
     Ok(VerifiedProgram {
@@ -1706,5 +1741,26 @@ mod tests {
         assert!(verify(source).is_err());
         let source = "type Borrower struct {p: &usize} impl Drop for Borrower {fn drop(self){}} fn main() -> usize {let first: usize = 1; let h = Borrower {p: &first}; 0}";
         assert!(verify(source).is_ok());
+    }
+
+    #[test]
+    fn independent_calls_and_scalar_borrows_are_allowed_inside_updates() {
+        let source = include_str!("../examples/update_helpers.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        let missing_restore = source.replace("pair.right = read(view);", "pair.right = 0;");
+        assert!(verify(&missing_restore).is_err());
+        let escape = source.replace("    pair.right\n}", "    read(view)\n}");
+        assert!(verify(&escape).is_err());
+        let prefix = "type Pair struct {left: usize, right: usize} where (left == right); fn equal(a: usize, b: usize) -> usize where (a == b) ensures (result == a) {a} ";
+        let source = format!("{prefix} fn main() -> usize {{let p = Pair {{left: 1, right: 1}}; update (p) {{p.left = 2; p.right = equal(p.left, p.right);}} p.right}}");
+        assert!(verify(&source).is_err());
+    }
+
+    #[test]
+    fn calls_with_unproven_effects_cannot_observe_open_invariants() {
+        let source = "type Pair struct {left: usize, right: usize} where (left == right); fn observe(p: &Pair) -> usize {(*p).left} fn main() -> usize {let p = Pair {left: 1, right: 1}; update (p) {p.left = 2; p.right = observe(&p);} p.right}";
+        assert!(verify(source).is_err());
+        let source = "type Resource struct {} impl Drop for Resource {fn drop(self){}} type Pair struct {left: usize, right: usize} where (left == right); fn cleanup(value: usize) -> usize {let r = Resource {}; value} fn main() -> usize {let p = Pair {left: 1, right: 1}; update (p) {p.left = cleanup(p.left); p.right = p.left;} p.right}";
+        assert!(verify(source).is_err());
     }
 }

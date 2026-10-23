@@ -487,7 +487,18 @@ impl Parser {
                 self.expect("{")?;
                 let mut updates = Vec::new();
                 while !self.eat("}") {
-                    if self.eat("fact") {
+                    if self.eat("let") {
+                        let name = self.name()?;
+                        let ty = if self.eat(":") {
+                            Some(self.ty()?)
+                        } else {
+                            None
+                        };
+                        self.expect("=")?;
+                        let value = self.expr(0)?;
+                        self.expect(";")?;
+                        updates.push(Statement::Let { name, ty, value });
+                    } else if self.eat("fact") {
                         let name = self.name()?;
                         self.expect("=")?;
                         let value = self.expr(0)?;

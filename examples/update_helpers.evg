@@ -1,0 +1,23 @@
+type Pair struct { left: usize, right: usize } where (left == right);
+
+fn increment(value: usize) -> usize
+where (value < usize::MAX)
+ensures (result == value + 1) {
+    value + 1
+}
+
+fn read(value: &usize) -> usize ensures (result == *value) {
+    *value
+}
+
+fn main() -> usize ensures (result == 42) {
+    let pair = Pair { left: 41, right: 41 };
+    update (pair) {
+        // This helper cannot observe Pair: its checked effects are scalar-only.
+        pair.left = increment(pair.left);
+        // The scalar field stays initialized and typed even while Pair is open.
+        let view = &pair.left;
+        pair.right = read(view);
+    }
+    pair.right
+}

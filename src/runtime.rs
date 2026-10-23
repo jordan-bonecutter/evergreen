@@ -142,10 +142,26 @@ impl Evaluator<'_> {
             match statement {
                 Statement::Assign { target, value } => self.assign(target, value, &mut env)?,
                 Statement::Update { body, .. } => {
+                    let mut locals = Vec::new();
                     for update in body {
-                        if let Statement::Assign { target, value } = update {
-                            self.assign(target, value, &mut env)?;
+                        match update {
+                            Statement::Assign { target, value } => {
+                                self.assign(target, value, &mut env)?
+                            }
+                            Statement::Let { name, ty, value } => {
+                                let value = self.expr(value, &env, ty.as_ref())?;
+                                env.insert(name.clone(), value);
+                                locals.push(name.clone());
+                            }
+                            Statement::Fact { .. } => {}
+                            _ => return Err("unverified operation in update".into()),
                         }
+                    }
+                    for name in locals.into_iter().rev() {
+                        if let Some(id) = self.roots.remove(&name) {
+                            self.memory.take(id)?;
+                        }
+                        env.remove(&name);
                     }
                 }
                 Statement::Effect(e) => {

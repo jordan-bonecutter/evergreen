@@ -24,9 +24,16 @@ functions, and conditional expressions. Array access requires a proof of its bou
 Nominal structs support dependent fields and `where` invariants. Construction
 and field assignments must establish those invariants. `update (place, ...)`
 explicitly opens the invariants of named local struct places. Its body allows
-checked scalar-field writes and pure facts; each invariant must hold again on
-exit. Calls, borrowing, dereferencing, allocation, moves, drops, early exits,
-and suspension are forbidden inside. Owned fields cannot be replaced. Opening
+checked scalar-field writes, local scalar values/borrows, and pure facts; each
+invariant must hold again on exit. Calls with a checked invariant-independent
+effect summary are permitted. The current effect analysis accepts scalar values
+and read-only borrows of scalar storage, with scalar returns, no allocation or
+cleanup effects, and no access to a whole refined object. Summaries compose
+through previously checked helpers. `examples/update_helpers.evg` demonstrates
+this distinction: `&pair.left` and a read-only scalar helper work while `&pair`
+and a whole-object observer cannot rely on the open invariant. Unknown effects,
+allocation, moves, drops, early exits, and suspension remain rejected. Borrow
+locals are scoped to the update. Owned fields cannot be replaced. Opening
 an invariant does not destroy the object or relinquish its initialized fields.
 The update erases to ordinary stores, not a hardware transaction; concurrency
 will require separate visibility permissions. Outside this construct, assigning

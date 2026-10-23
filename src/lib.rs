@@ -1,6 +1,7 @@
 //! Evergreen's proof-producing bootstrap frontend. Lean is currently the backend.
 use std::collections::HashSet;
 
+mod effects;
 pub mod kernel;
 pub mod memory;
 pub mod runtime;
