@@ -106,6 +106,7 @@ pub struct Struct {
     pub fields: Vec<(String, Type)>,
     pub invariant: Option<Expr>,
     pub line: usize,
+    pub ghost: bool,
 }
 #[derive(Clone, Debug)]
 pub struct Program {
@@ -126,6 +127,7 @@ pub struct Function {
     pub proof: Option<Vec<String>>,
     pub line: usize,
     pub drop_target: Option<String>,
+    pub ghost: bool,
 }
 
 struct Parser {
@@ -416,7 +418,7 @@ impl Parser {
         }
         Ok(steps)
     }
-    fn function(&mut self, receiver: Option<&str>) -> Result<Function, String> {
+    fn function(&mut self, receiver: Option<&str>, ghost: bool) -> Result<Function, String> {
         let line = self.line();
         self.expect("fn")?;
         let name = self.name()?;
@@ -588,6 +590,7 @@ impl Parser {
             proof,
             line,
             drop_target: receiver.map(str::to_owned),
+            ghost,
         })
     }
 
@@ -614,7 +617,7 @@ impl Parser {
         self.expect("for")?;
         let target = self.name()?;
         self.expect("{")?;
-        let mut function = self.function(Some(&target))?;
+        let mut function = self.function(Some(&target), false)?;
         if function.name != "drop"
             || function.params != vec![("self".into(), Type::Named(target.clone()))]
             || function.ret != Type::Unit
@@ -630,7 +633,7 @@ impl Parser {
         Ok((target, function))
     }
 
-    fn structure(&mut self) -> Result<Struct, String> {
+    fn structure(&mut self, ghost: bool) -> Result<Struct, String> {
         let line = self.line();
         self.expect("type")?;
         let name = self.name()?;
@@ -668,6 +671,7 @@ impl Parser {
             fields,
             invariant,
             line,
+            ghost,
         })
     }
 }
@@ -685,12 +689,16 @@ pub fn parse(source: &str) -> Result<Program, String> {
     let mut structs = Vec::new();
     let mut destructors = Vec::new();
     while p.peek() != "<eof>" {
+        let ghost = p.eat("ghost");
         if p.peek() == "type" {
-            structs.push(p.structure()?);
+            structs.push(p.structure(ghost)?);
         } else if p.peek() == "impl" {
+            if ghost {
+                return Err(p.err("ghost data has no runtime destructor"));
+            }
             destructors.push(p.destructor()?);
         } else {
-            functions.push(p.function(None)?);
+            functions.push(p.function(None, ghost)?);
         }
     }
     if functions.is_empty() && destructors.is_empty() {

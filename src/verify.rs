@@ -204,6 +204,16 @@ pub(crate) fn needs_drop(
         _ => false,
     }
 }
+fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
+    match t {
+        Type::Int | Type::Nat => false,
+        Type::Named(n) => structs
+            .get(n)
+            .is_some_and(|s| !s.ghost && s.fields.iter().all(|(_, t)| runtime_type(t, structs))),
+        Type::Array(t, _) | Type::Ref(t) => runtime_type(t, structs),
+        _ => true,
+    }
+}
 
 fn destructor_expression(e: &Expr) -> bool {
     match &e.kind {
@@ -251,6 +261,7 @@ struct Context<'a> {
     drops: &'a BTreeSet<String>,
     dropping: bool,
     helpers: &'a BTreeSet<String>,
+    ghost: bool,
 }
 
 impl<'a> Context<'a> {
@@ -278,11 +289,19 @@ impl<'a> Context<'a> {
             drops,
             dropping: false,
             helpers,
+            ghost: false,
         }
     }
     fn fresh_name(&mut self) -> String {
         self.fresh += 1;
         format!("evg_{}", self.fresh)
+    }
+    fn number_type(&self) -> Ty {
+        if self.ghost || self.specification {
+            Ty::Int
+        } else {
+            Ty::Machine(MachineInt::parse("isize").expect("isize type"))
+        }
     }
     fn assume(&mut self, p: &Formula) -> Result<()> {
         self.paths = extend(&self.paths, p, false)?;
@@ -315,8 +334,8 @@ impl<'a> Context<'a> {
     }
     fn resolve(&mut self, t: &Type) -> Result<Ty> {
         match t {
-            Type::Int => Ok(Ty::Int),
-            Type::Nat => Ok(Ty::Nat),
+            Type::Int | Type::Nat if !self.ghost && !self.specification => Err("int and nat are proof-only; use a machine integer for runtime storage or declare ghost code".into()),
+            Type::Int => Ok(Ty::Int), Type::Nat => Ok(Ty::Nat),
             Type::Bool => Ok(Ty::Bool),
             Type::Machine(t) => Ok(Ty::Machine(*t)),
             Type::Unit => Ok(Ty::Unit),
@@ -327,6 +346,7 @@ impl<'a> Context<'a> {
                         "unknown struct {n}; recursive types are not supported yet"
                     ));
                 }
+                if self.structs.get(n).is_some_and(|s| s.ghost) && !self.ghost && !self.specification {return Err(format!("{n} is ghost data and has no runtime layout"));}
                 Ok(Ty::Record(n.clone()))
             }
             Type::Array(element, len) => {
@@ -786,6 +806,8 @@ impl<'a> Context<'a> {
     }
     fn hint(&self, e: &Expr) -> Option<Ty> {
         match &e.kind {
+            Kind::Call(name, _) if name == "nat" => Some(Ty::Nat),
+            Kind::Call(name, _) if name == "int" => Some(Ty::Int),
             Kind::Constant(t, _) => Some(Ty::Machine(*t)),
             Kind::Name(n) => self.env.get(n).map(Symbol::ty),
             Kind::Unary(op, x) if op == "*" => {
@@ -1008,7 +1030,7 @@ impl<'a> Context<'a> {
                 match expected {
                     Some(Ty::Nat) => Ty::Nat,
                     Some(Ty::Machine(t)) => Ty::Machine(*t),
-                    _ => Ty::Int,
+                    _ => self.number_type(),
                 },
                 Linear::number(*n),
             )),
@@ -1067,6 +1089,11 @@ impl<'a> Context<'a> {
                     .get(name)
                     .cloned()
                     .ok_or_else(|| format!("unknown struct {name}"))?;
+                if def.ghost && !self.ghost && !self.specification {
+                    return Err(format!(
+                        "{name} is ghost data and cannot be constructed at runtime"
+                    ));
+                }
                 let saved = self.env.clone();
                 let mut fields = BTreeMap::new();
                 for (n, value) in entries {
@@ -1123,7 +1150,7 @@ impl<'a> Context<'a> {
                     .cloned()
                     .or_else(|| self.hint(x))
                     .filter(|t| matches!(t, Ty::Machine(_)))
-                    .unwrap_or(Ty::Int);
+                    .unwrap_or_else(|| self.number_type());
                 let n = if let Kind::Number(n) = x.kind {
                     Linear::number(n)
                 } else {
@@ -1145,7 +1172,7 @@ impl<'a> Context<'a> {
                 }
                 .or_else(|| self.hint(a))
                 .or_else(|| self.hint(b))
-                .unwrap_or(Ty::Int);
+                .unwrap_or_else(|| self.number_type());
                 if !matches!(ty, Ty::Int | Ty::Nat | Ty::Machine(_)) {
                     return Err("arithmetic and comparisons require integer operands".into());
                 }
@@ -1193,7 +1220,7 @@ impl<'a> Context<'a> {
                 let element = if let Some(Ty::Array(t, _)) = expected {
                     (**t).clone()
                 } else if let Some(first) = items.first() {
-                    self.hint(first).unwrap_or(Ty::Int)
+                    self.hint(first).unwrap_or_else(|| self.number_type())
                 } else {
                     return Err("empty array needs an explicit type".into());
                 };
@@ -1243,6 +1270,22 @@ impl<'a> Context<'a> {
                 Ok(v)
             }
             Kind::Call(name, args) => {
+                if name == "int" || name == "nat" {
+                    if !self.ghost && !self.specification {
+                        return Err("mathematical views are proof-only".into());
+                    }
+                    if args.len() != 1 {
+                        return Err(format!("{name} expects one integer"));
+                    }
+                    let n = self.eval(&args[0], None)?.number()?;
+                    if name == "nat" {
+                        self.prove(&Formula::Ge(n.clone()), "nonnegative natural view", e.line)?;
+                    }
+                    return Ok(Symbol::Number(
+                        if name == "nat" { Ty::Nat } else { Ty::Int },
+                        n,
+                    ));
+                }
                 if self.specification && self.current.as_ref() == Some(name) {
                     return Err("recursive calls are forbidden in specifications".into());
                 }
@@ -1271,6 +1314,11 @@ impl<'a> Context<'a> {
                     return Ok(if name == "drop" { Symbol::Unit } else { value });
                 }
                 let f = self.functions.get(name).cloned().ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration (recursion is not supported yet)"))?;
+                if f.ghost && !self.ghost && !self.specification {
+                    return Err(format!(
+                        "{name} is ghost code and cannot be called at runtime"
+                    ));
+                }
                 if args.len() != f.params.len() {
                     return Err(format!("{name} expects {} arguments", f.params.len()));
                 }
@@ -1375,6 +1423,37 @@ pub struct VerifiedProgram {
     pub(crate) drops: BTreeSet<String>,
 }
 
+impl VerifiedProgram {
+    pub(crate) fn check_entry(&self) -> Result<()> {
+        let main = self
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .ok_or("run requires fn main()")?;
+        if main.ghost {
+            return Err(
+                "main is ghost code; proof computations are erased and cannot execute".into(),
+            );
+        }
+        if !main.params.is_empty() {
+            return Err("main requires no arguments".into());
+        }
+        if let Some(pre) = &main.pre {
+            let functions = self
+                .functions
+                .iter()
+                .map(|f| (f.name.clone(), f.clone()))
+                .collect();
+            let helpers = BTreeSet::new();
+            let mut ctx = Context::new(&functions, &self.structs, &self.drops, &helpers);
+            ctx.current = Some("main".into());
+            let p = ctx.proposition(pre)?;
+            ctx.prove(&p, "entry precondition of main", pre.line)?;
+        }
+        Ok(())
+    }
+}
+
 pub fn verify(source: &str) -> Result<VerifiedProgram> {
     let parsed = syntax::parse(source)?;
     let mut structs = BTreeMap::new();
@@ -1385,7 +1464,14 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
             return Err(format!("line {}: duplicate struct {}", s.line, s.name));
         }
         let mut ctx = Context::new(&empty_functions, &structs, &empty_drops, &empty_drops);
+        ctx.ghost = s.ghost;
         for (n, t) in &s.fields {
+            if !s.ghost && !runtime_type(t, &structs) {
+                return Err(format!(
+                    "line {}: field {n} needs a runtime layout; use ghost type for proof data",
+                    s.line
+                ));
+            }
             if n == "self" || ctx.env.contains_key(n) {
                 return Err(format!("line {}: duplicate or reserved field {n}", s.line));
             }
@@ -1406,6 +1492,12 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
     let mut drops = BTreeSet::new();
     let mut helpers = BTreeSet::new();
     for (target, f) in &parsed.destructors {
+        if structs.get(target).is_some_and(|s| s.ghost) {
+            return Err(format!(
+                "line {}: ghost data has no runtime Drop implementation",
+                f.line
+            ));
+        }
         if !structs.contains_key(target) || !drops.insert(target.clone()) {
             return Err(format!(
                 "line {}: unknown or duplicate Drop implementation for {target}",
@@ -1420,7 +1512,13 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
     all_functions.extend(parsed.destructors.into_iter().map(|(_, f)| f));
     let mut obligations = 0;
     for f in &all_functions {
-        if matches!(f.name.as_str(), "move" | "drop") {
+        if !f.ghost
+            && (!runtime_type(&f.ret, &structs)
+                || f.params.iter().any(|(_, t)| !runtime_type(t, &structs)))
+        {
+            return Err(format!("line {}: runtime signatures require fixed-layout types; int/nat and ghost records are proof-only", f.line));
+        }
+        if matches!(f.name.as_str(), "move" | "drop" | "int" | "nat") {
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));
         }
         if type_has_reference(&f.ret, &structs) {
@@ -1435,6 +1533,7 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         }
         let mut ctx = Context::new(&available, &structs, &drops, &helpers);
         ctx.dropping = f.drop_target.is_some();
+        ctx.ghost = f.ghost;
         ctx.current = Some(f.name.clone());
         for (n, t) in &f.params {
             if ctx.env.contains_key(n) {
@@ -1513,37 +1612,38 @@ mod tests {
     }
     #[test]
     fn composes_calls_and_checks_preconditions() {
-        let prefix = "fn inc(n: nat) -> nat where (n < 10) ensures (result == n + 1) { n + 1 } ";
+        let prefix =
+            "fn inc(n: usize) -> usize where (n < 10) ensures (result == n + 1) { n + 1 } ";
         assert!(verify(&format!(
-            "{prefix} fn main() -> nat ensures (result == 5) {{ inc(4) }}"
+            "{prefix} fn main() -> usize ensures (result == 5) {{ inc(4) }}"
         ))
         .is_ok());
-        assert!(verify(&format!("{prefix} fn main() -> nat {{ inc(10) }}")).is_err());
+        assert!(verify(&format!("{prefix} fn main() -> usize {{ inc(10) }}")).is_err());
     }
     #[test]
     fn verifies_both_branches_and_natural_subtraction() {
-        verify("fn abs(n: int) -> int ensures (result >= 0) { if n >= 0 { n } else { -n } }")
+        verify("ghost fn abs(n: int) -> int ensures (result >= 0) { if n >= 0 { n } else { -n } }")
             .unwrap();
-        verify("fn sub(n: nat) -> nat ensures (result <= n) { n - 1 }").unwrap();
+        verify("ghost fn sub(n: nat) -> nat ensures (result <= n) { n - 1 }").unwrap();
         assert!(verify(
-            "fn bad(n: int) -> int ensures (result >= 0) { if n >= 0 { n } else { n } }"
+            "fn bad(n: isize) -> isize ensures (result >= 0) { if n >= 0 { n } else { n } }"
         )
         .is_err());
     }
     #[test]
     fn facts_are_proved_before_use() {
-        assert!(verify("fn bad(n: nat) -> nat { proof lie: n < 0; n }").is_err());
-        assert!(verify("fn bad() -> nat { proof h: true by { exact missing }; 0 }").is_err());
-        assert!(verify("fn bad() -> nat { result }").is_err());
+        assert!(verify("fn bad(n: usize) -> usize { proof lie: n < 0; n }").is_err());
+        assert!(verify("fn bad() -> usize { proof h: true by { exact missing }; 0 }").is_err());
+        assert!(verify("fn bad() -> usize { result }").is_err());
     }
     #[test]
     fn arrays_and_types_are_checked() {
-        verify("fn main() -> nat ensures (result == 20) { let a: [nat; 2] = [10, 20]; a[1] }")
+        verify("fn main() -> usize ensures (result == 20) { let a: [usize; 2] = [10, 20]; a[1] }")
             .unwrap();
         for s in [
-            "fn f() -> nat { let a: [nat; 2] = [1]; 0 }",
-            "fn f() -> nat { let a: [nat; 1] = [1]; a[1] }",
-            "fn f() -> nat { -1 }",
+            "fn f() -> usize { let a: [usize; 2] = [1]; 0 }",
+            "fn f() -> usize { let a: [usize; 1] = [1]; a[1] }",
+            "fn f() -> usize { -1 }",
             "fn f() -> bool { 1 }",
         ] {
             assert!(verify(s).is_err(), "{s}");
@@ -1551,14 +1651,15 @@ mod tests {
     }
     #[test]
     fn compound_logic_and_contradictory_preconditions() {
-        verify("fn f(n: nat) -> nat where (n < 3 || n > 10) ensures (result != 5) { n }").unwrap();
-        verify("fn f(n: nat) -> nat where (n < 0) ensures (result > 100) { n }").unwrap();
+        verify("fn f(n: usize) -> usize where (n < 3 || n > 10) ensures (result != 5) { n }")
+            .unwrap();
+        verify("fn f(n: usize) -> usize where (n < 0) ensures (result > 100) { n }").unwrap();
     }
 
     #[test]
     fn struct_invariants_and_atomic_replacement() {
-        let prefix = "type Buffer struct { len: nat, cap: nat } where (len <= cap); ";
-        let valid = format!("{prefix} fn main() -> nat {{ let b = Buffer {{ len: 1, cap: 2 }}; b = Buffer {{ len: b.len + 2, cap: b.cap + 2 }}; b.len }}");
+        let prefix = "type Buffer struct { len: usize, cap: usize } where (len <= cap); ";
+        let valid = format!("{prefix} fn main() -> usize {{ let b = Buffer {{ len: 1, cap: 2 }}; b = Buffer {{ len: b.len + 2, cap: b.cap + 2 }}; b.len }}");
         assert_eq!(verify(&valid).unwrap().run().unwrap().to_string(), "3");
         for body in [
             "let b = Buffer {len: 3, cap: 2}; b.len",
@@ -1567,7 +1668,7 @@ mod tests {
             "let b = Buffer {len: 1, cap: 2, extra: 0}; b.len",
         ] {
             assert!(
-                verify(&format!("{prefix} fn main() -> nat {{ {body} }}")).is_err(),
+                verify(&format!("{prefix} fn main() -> usize {{ {body} }}")).is_err(),
                 "{body}"
             );
         }
@@ -1575,42 +1676,42 @@ mod tests {
 
     #[test]
     fn dependent_struct_fields_and_nested_invariants() {
-        let s = "type Storage struct { len: nat, data: [int; len] } type Outer struct { storage: Storage } fn main() -> int { let s = Storage {len: 2, data: [10, 20]}; let o = Outer {storage: s}; o.storage.data[1] }";
+        let s = "type Storage struct { len: usize, data: [isize; len] } type Outer struct { storage: Storage } fn main() -> isize { let s = Storage {len: 2, data: [10, 20]}; let o = Outer {storage: s}; o.storage.data[1] }";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "20");
-        assert!(verify("type Storage struct {len: nat, data: [int; len]} fn main() -> nat {let s = Storage {len: 2, data: [1, 2]}; s.len = 3; 0}").is_err());
-        assert!(verify("type Inner struct {x: nat} where (x > 0); type Outer struct {inner: Inner} fn main() -> nat {let o = Outer {inner: Inner {x: 1}}; o.inner.x = 0; 0}").is_err());
+        assert!(verify("type Storage struct {len: usize, data: [isize; len]} fn main() -> usize {let s = Storage {len: 2, data: [1, 2]}; s.len = 3; 0}").is_err());
+        assert!(verify("type Inner struct {x: usize} where (x > 0); type Outer struct {inner: Inner} fn main() -> usize {let o = Outer {inner: Inner {x: 1}}; o.inner.x = 0; 0}").is_err());
     }
 
     #[test]
     fn contracts_capture_entry_parameters() {
-        assert!(verify("fn bad(n: nat) -> nat ensures (result == n) { n = 0; n }").is_err());
-        let s = "fn reset(n: nat) -> nat ensures (result == 0) { n = 0; n } fn main() -> nat ensures (result == 0) {reset(10)}";
+        assert!(verify("fn bad(n: usize) -> usize ensures (result == n) { n = 0; n }").is_err());
+        let s = "fn reset(n: usize) -> usize ensures (result == 0) { n = 0; n } fn main() -> usize ensures (result == 0) {reset(10)}";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "0");
     }
 
     #[test]
     fn aliased_references_share_scalar_updates() {
-        let s = "fn read(r: &nat) -> nat ensures (result == *r) { *r } fn main() -> nat ensures (result == 7) { let x: nat = 1; let a = &x; let b = &x; *a = 7; read(b) }";
+        let s = "fn read(r: &usize) -> usize ensures (result == *r) { *r } fn main() -> usize ensures (result == 7) { let x: usize = 1; let a = &x; let b = &x; *a = 7; read(b) }";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "7");
-        let s = "fn main() -> nat ensures (result == 11) { let data: [nat; 2] = [1, 2]; let a = &data[0]; let b = &data[1]; *a = 9; *b = 11; *b }";
+        let s = "fn main() -> usize ensures (result == 11) { let data: [usize; 2] = [1, 2]; let a = &data[0]; let b = &data[1]; *a = 9; *b = 11; *b }";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "11");
     }
 
     #[test]
     fn stale_references_are_compile_errors() {
         for body in [
-            "let x: nat = 1; let r = &x; drop(x); *r",
-            "let x: nat = 1; let r = &x; let y = move(x); *r",
-            "let a: [nat; 1] = [1]; let r = &a[0]; drop(a); *r",
-            "let x: nat = 1; let r = &x; drop(x); x = 2; *r",
-            "let x: nat = 1; let y = move(x); x",
+            "let x: usize = 1; let r = &x; drop(x); *r",
+            "let x: usize = 1; let r = &x; let y = move(x); *r",
+            "let a: [usize; 1] = [1]; let r = &a[0]; drop(a); *r",
+            "let x: usize = 1; let r = &x; drop(x); x = 2; *r",
+            "let x: usize = 1; let y = move(x); x",
         ] {
             assert!(
-                verify(&format!("fn main() -> nat {{ {body} }}")).is_err(),
+                verify(&format!("fn main() -> usize {{ {body} }}")).is_err(),
                 "{body}"
             );
         }
-        let s = "fn main() -> nat { let x: nat = 1; let y = move(x); x = 2; x + y }";
+        let s = "fn main() -> usize { let x: usize = 1; let y = move(x); x = 2; x + y }";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "3");
         let fixed = "fn main() -> usize ensures (result == 3) { let a: [usize; 2] = [1, 2]; let r = &a[0]; a = [3, 4]; *r }";
         assert_eq!(verify(fixed).unwrap().run().unwrap().to_string(), "3");
@@ -1618,19 +1719,19 @@ mod tests {
 
     #[test]
     fn reference_updates_recheck_invariants_and_cannot_escape() {
-        let prefix = "type Small struct {n: nat} where (n < 4); ";
+        let prefix = "type Small struct {n: usize} where (n < 4); ";
         assert!(verify(&format!(
-            "{prefix} fn main() -> nat {{let x = Small {{n: 1}}; let r = &x.n; *r = 9; x.n }}"
+            "{prefix} fn main() -> usize {{let x = Small {{n: 1}}; let r = &x.n; *r = 9; x.n }}"
         ))
         .is_err());
-        assert!(verify("fn escape() -> &nat {let x: nat = 1; &x}").is_err());
-        assert!(verify("fn write(r: &nat) -> () { *r = 1; () }").is_err());
-        assert!(verify("fn f(n: nat) -> nat ensures (result == move(n)) { n }").is_err());
+        assert!(verify("fn escape() -> &usize {let x: usize = 1; &x}").is_err());
+        assert!(verify("fn write(r: &usize) -> () { *r = 1; () }").is_err());
+        assert!(verify("fn f(n: usize) -> usize ensures (result == move(n)) { n }").is_err());
     }
 
     #[test]
     fn verifies_well_founded_recursion() {
-        let s = "fn countdown(n: nat) -> nat ensures (result == n) decreases (n) { if n == 0 { 0 } else { countdown(n - 1) + 1 } } fn main() -> nat ensures (result == 12) { countdown(12) }";
+        let s = "fn countdown(n: usize) -> usize ensures (result == n) decreases (n) { if n == 0 { 0 } else { countdown(n - 1) + 1 } } fn main() -> usize ensures (result == 12) { countdown(12) }";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "12");
         for body in [
             "loop(n)",
@@ -1639,13 +1740,15 @@ mod tests {
         ] {
             assert!(
                 verify(&format!(
-                    "fn loop(n: nat) -> nat decreases (n) {{ {body} }}"
+                    "fn loop(n: usize) -> usize decreases (n) {{ {body} }}"
                 ))
                 .is_err(),
                 "{body}"
             );
         }
-        assert!(verify("fn bad(n: nat) -> nat ensures (bad(n) == 0) decreases (n) {0}").is_err());
+        assert!(
+            verify("fn bad(n: usize) -> usize ensures (bad(n) == 0) decreases (n) {0}").is_err()
+        );
     }
 
     #[test]
@@ -1853,6 +1956,31 @@ mod tests {
         let source = "type Checked struct {valid: bool} where (valid); fn main() -> usize {fact valid = true; let c = Checked {valid: false}; 0}";
         assert!(verify(source).is_err());
         let source = "type Checked struct {valid: bool} where (valid); fn main() -> usize {fact valid = false; let c = Checked {valid: true}; 0}";
+        assert!(verify(source).is_ok());
+    }
+
+    #[test]
+    fn mathematical_values_and_ghost_records_cannot_leak_into_runtime_storage() {
+        for source in [
+            "fn main() -> nat {0}",
+            "fn main() -> usize {let n: nat = 0; 0}",
+            "type Bad struct {n: int} fn main() -> usize {0}",
+            "ghost type Model struct {n: nat} fn main() -> usize {let m = Model {n: 0}; 0}",
+            "ghost fn answer() -> usize {42} fn main() -> usize {answer()}",
+            "fn main() -> usize {let n = nat(42); 0}",
+        ] {
+            assert!(verify(source).is_err(), "{source}");
+        }
+        let source = "ghost fn main() -> nat {1 + 2}";
+        assert!(verify(source).is_ok());
+        assert!(verify(source).unwrap().run().is_err());
+    }
+
+    #[test]
+    fn proof_views_and_ghost_contracts_are_erased_before_execution() {
+        let source = "ghost fn positive(n: nat) -> bool where (n > 0) ensures (result) {true} fn main() -> usize where (positive(nat(1))) {let value: usize = 42; proof p: nat(value) >= 0; value}";
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        let source = "fn main() -> usize {let value = 42; proof bounded: value <= isize::MAX; 0}";
         assert!(verify(source).is_ok());
     }
 }

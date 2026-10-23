@@ -1,4 +1,4 @@
 // Must fail: no proof establishes index < n.
-fn bad_index(n: nat, data: [int; n], index: nat) -> int {
+ghost fn bad_index(n: nat, data: [int; n], index: nat) -> int {
     data[index]
 }

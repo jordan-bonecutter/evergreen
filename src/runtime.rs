@@ -122,6 +122,9 @@ impl Evaluator<'_> {
             .find(|f| f.name == name)
             .cloned()
             .ok_or("unknown function")?;
+        if f.ghost {
+            return Err("ghost functions have no runtime body".into());
+        }
         if f.params.len() != actuals.len() {
             return Err("argument count mismatch".into());
         }
@@ -133,11 +136,7 @@ impl Evaluator<'_> {
             .collect();
         let saved_roots = std::mem::take(&mut self.roots);
         self.depth += 1;
-        if let Some(pre) = &f.pre {
-            if !self.expr(pre, &env, Some(&Type::Bool))?.boolean()? {
-                return Err(format!("entry precondition of {name} is false"));
-            }
-        }
+        // Contracts were discharged by the verifier and are erased here.
         for statement in &f.body {
             match statement {
                 Statement::Assign { target, value } => self.assign(target, value, &mut env)?,
@@ -358,7 +357,7 @@ impl Evaluator<'_> {
             Kind::Number(n) => Ok(match expected {
                 Some(Type::Nat) => Value::Nat(*n),
                 Some(Type::Machine(t)) => Value::Machine(*t, *n),
-                _ => Value::Int(*n),
+                _ => Value::Machine(MachineInt::parse("isize").expect("isize type"), *n),
             }),
             Kind::Bool(b) => Ok(Value::Bool(*b)),
             Kind::Name(n) => {
@@ -418,7 +417,9 @@ impl Evaluator<'_> {
                         .cloned()
                         .or_else(|| self.hint(x, env))
                         .filter(|t| matches!(t, Type::Machine(_)))
-                        .unwrap_or(Type::Int);
+                        .unwrap_or(Type::Machine(
+                            MachineInt::parse("isize").expect("isize type"),
+                        ));
                     let n = self
                         .expr(x, env, Some(&ty))?
                         .number()?
@@ -444,7 +445,9 @@ impl Evaluator<'_> {
                 }
                 .or_else(|| self.hint(a, env))
                 .or_else(|| self.hint(b, env))
-                .unwrap_or(Type::Int);
+                .unwrap_or(Type::Machine(
+                    MachineInt::parse("isize").expect("isize type"),
+                ));
                 let a = self.expr(a, env, Some(&ty))?.number()?;
                 let b = self.expr(b, env, Some(&ty))?.number()?;
                 let number = match op.as_str() {
@@ -482,7 +485,9 @@ impl Evaluator<'_> {
                     items
                         .first()
                         .and_then(|x| self.hint(x, env))
-                        .or(Some(Type::Int))
+                        .or(Some(Type::Machine(
+                            MachineInt::parse("isize").expect("isize type"),
+                        )))
                 };
                 items
                     .iter()
@@ -687,6 +692,7 @@ impl VerifiedProgram {
     }
     /// Returns a detached result snapshot and an execution trace for debugging.
     pub fn run_with_events(&self) -> Result<(Value, Vec<String>)> {
+        self.check_entry()?;
         let mut evaluator = Evaluator {
             functions: &self.functions,
             structs: &self.structs,
@@ -708,7 +714,7 @@ mod tests {
     use crate::verify::verify;
     #[test]
     fn executes_verified_calls_arrays_and_branches() {
-        let s = "fn abs(n: int) -> int ensures (result >= 0) { if n >= 0 { n } else { -n } } fn main() -> int { let a: [int; 2] = [-4, 8]; abs(a[0]) }";
+        let s = "fn abs(n: isize) -> isize where (n > isize::MIN) ensures (result >= 0) { if n >= 0 { n } else { -n } } fn main() -> isize { let a: [isize; 2] = [-4, 8]; abs(a[0]) }";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "4");
         assert_eq!(
             verify(include_str!("../examples/contracts.evg"))
@@ -721,15 +727,15 @@ mod tests {
     }
     #[test]
     fn false_entry_precondition_cannot_execute() {
-        assert!(verify("fn main() -> nat where (false) { 1 }")
+        assert!(verify("fn main() -> usize where (false) { 1 }")
             .unwrap()
             .run()
             .is_err());
     }
     #[test]
-    fn reports_evaluator_overflow_without_panicking() {
+    fn ghost_math_is_never_executed_by_the_runtime() {
         let source = format!(
-            "fn double(n: int) -> int {{ n + n }} fn main() -> int {{ double({}) }}",
+            "ghost fn double(n: int) -> int {{ n + n }} ghost fn main() -> int {{ double({}) }}",
             i128::MAX
         );
         assert!(verify(&source).unwrap().run().is_err());

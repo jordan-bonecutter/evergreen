@@ -1,0 +1,16 @@
+// Parameters are universally quantified; this is not testing example inputs.
+ghost fn increment(n: nat) -> nat
+ensures (result > n) {
+    proof successor_grows: n + 1 > n by { omega };
+    n + 1
+} proof { omega }
+
+ghost fn bounded_index(n: nat, data: [int; n], index: nat) -> int
+where (index < n) {
+    data[index]
+}
+
+ghost fn main() -> nat ensures (result == 42) {
+    let answer: nat = 40 + 2;
+    answer
+} proof { rfl }

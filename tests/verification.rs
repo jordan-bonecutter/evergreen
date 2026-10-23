@@ -6,7 +6,7 @@ use std::{fs, process::Command};
 fn proof_kernel_accepts_and_rejects() {
     let cli = env!("CARGO_BIN_EXE_evg");
     let output = Command::new(cli)
-        .args(["lean-run", "examples/contracts.evg"])
+        .args(["lean-run", "examples/lean_reference.evg"])
         .output()
         .unwrap();
     assert!(
@@ -41,7 +41,7 @@ fn proof_kernel_accepts_and_rejects() {
 fn missing_backend_never_reports_verified() {
     let output = Command::new(env!("CARGO_BIN_EXE_evg"))
         .env("EVG_LEAN", "/nonexistent/evergreen/lean")
-        .args(["lean-check", "examples/contracts.evg"])
+        .args(["lean-check", "examples/lean_reference.evg"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -52,7 +52,7 @@ fn missing_backend_never_reports_verified() {
 #[test]
 fn emission_is_inspectable_without_backend() {
     let output = Command::new(env!("CARGO_BIN_EXE_evg"))
-        .args(["emit", "examples/contracts.evg"])
+        .args(["emit", "examples/lean_reference.evg"])
         .output()
         .unwrap();
     assert!(output.status.success());

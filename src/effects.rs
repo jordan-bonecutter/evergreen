@@ -132,16 +132,15 @@ pub(crate) fn invariant_independent(
     functions: &BTreeMap<String, Function>,
     safe: &BTreeSet<String>,
 ) -> bool {
-    if !scalar(&f.ret) || f.params.iter().any(|(_, t)| !leaf(t)) || f.drop_target.is_some() {
-        return false;
-    }
-    let mut env: BTreeMap<String, Type> = f.params.iter().cloned().collect();
-    if f.pre
-        .as_ref()
-        .is_some_and(|p| expression(p, Some(&Type::Bool), &env, functions, safe).is_none())
+    if f.ghost
+        || !scalar(&f.ret)
+        || f.params.iter().any(|(_, t)| !leaf(t))
+        || f.drop_target.is_some()
     {
         return false;
     }
+    let mut env: BTreeMap<String, Type> = f.params.iter().cloned().collect();
+    // Contracts and their proof computations are erased, not runtime effects.
     for s in &f.body {
         match s {
             Statement::Let { name, ty, value } => {
