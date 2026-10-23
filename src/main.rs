@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::io::Write;
 use std::{
     env, fs,
     path::PathBuf,
@@ -13,6 +14,9 @@ use std::{
     about = "Evergreen proof-oriented language compiler"
 )]
 struct Cli {
+    /// Reject any use of trustme, including in unused definitions.
+    #[arg(long, global = true)]
+    deny_trust: bool,
     #[command(subcommand)]
     command: Action,
 }
@@ -23,6 +27,16 @@ enum Action {
     Check {
         #[arg(required = true)]
         files: Vec<PathBuf>,
+        /// Replay this proof artifact without invoking proof search.
+        #[arg(long)]
+        proof: Option<PathBuf>,
+    },
+    /// Verify source and save a portable, checked proof artifact.
+    Prove {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        #[arg(short, long)]
+        output: PathBuf,
     },
     /// Verify and evaluate main with bounded execution.
     Run { file: PathBuf },
@@ -41,7 +55,7 @@ enum Action {
 fn execute() -> Result<(), String> {
     let cli = Cli::parse();
     let files: Vec<&PathBuf> = match &cli.command {
-        Action::Check { files } => files.iter().collect(),
+        Action::Check { files, .. } | Action::Prove { files, .. } => files.iter().collect(),
         Action::Run { file }
         | Action::Emit { file, .. }
         | Action::LeanCheck { file }
@@ -53,27 +67,56 @@ fn execute() -> Result<(), String> {
         .map(|file| fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display())))
         .collect::<Result<Vec<_>, _>>()?
         .join("\n");
+    if let Action::Prove { output, .. } = &cli.command {
+        let (program, bundle) = evergreen::verify::prove(&source)?;
+        enforce_trust(&program, cli.deny_trust)?;
+        write_output(output, &bundle.to_text(), &files)?;
+        println!(
+            "{}; wrote {} certificates to {}",
+            status(&program),
+            bundle.certificate_count(),
+            output.display()
+        );
+        report_trust(&program);
+        return Ok(());
+    }
     if matches!(cli.command, Action::Check { .. } | Action::Run { .. }) {
-        let program = evergreen::verify::verify(&source)?;
+        let program = if let Action::Check {
+            proof: Some(path), ..
+        } = &cli.command
+        {
+            let bundle = evergreen::certificate::ProofBundle::read(path)?;
+            evergreen::verify::verify_with_certificate(&source, &bundle)?
+        } else {
+            evergreen::verify::verify(&source)?
+        };
+        enforce_trust(&program, cli.deny_trust)?;
         if matches!(cli.command, Action::Check { .. }) {
             println!(
-                "verified {} ({} obligations, internal kernel)",
+                "{}: {} ({} obligations, internal kernel{})",
+                status(&program),
                 files
                     .iter()
                     .map(|file| file.display().to_string())
                     .collect::<Vec<_>>()
                     .join(", "),
-                program.obligations
+                program.obligations,
+                if matches!(cli.command, Action::Check { proof: Some(_), .. }) {
+                    ", certificate replay"
+                } else {
+                    ""
+                },
             );
         } else {
             println!("{}", program.run()?);
         }
+        report_trust(&program);
         return Ok(());
     }
     let lean = evergreen::emit(&source, matches!(cli.command, Action::LeanRun { .. }))?;
     if let Action::Emit { output, .. } = &cli.command {
         if let Some(path) = output {
-            fs::write(path, lean).map_err(|e| format!("{}: {e}", path.display()))?;
+            write_output(path, &lean, &files)?;
         } else {
             print!("{lean}");
         }
@@ -94,6 +137,62 @@ fn execute() -> Result<(), String> {
         print!("{output}");
     }
     Ok(())
+}
+
+fn status(program: &evergreen::verify::VerifiedProgram) -> String {
+    if program.trusted_assumptions().is_empty() {
+        "verified".into()
+    } else {
+        format!(
+            "checked with {} trusted assumptions",
+            program.trusted_assumptions().len()
+        )
+    }
+}
+fn enforce_trust(program: &evergreen::verify::VerifiedProgram, deny: bool) -> Result<(), String> {
+    if deny && !program.trusted_assumptions().is_empty() {
+        return Err("--deny-trust rejects this program's trustme assumptions".into());
+    }
+    Ok(())
+}
+fn report_trust(program: &evergreen::verify::VerifiedProgram) {
+    for assumption in program.trusted_assumptions() {
+        eprintln!("trustme at line {}: {}", assumption.line, assumption.goal);
+    }
+}
+fn write_output(path: &std::path::Path, content: &str, inputs: &[&PathBuf]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."));
+    let name = path.file_name().ok_or("output must be a file path")?;
+    let parent = parent.canonicalize().map_err(|e| e.to_string())?;
+    let destination = path.canonicalize().unwrap_or_else(|_| parent.join(name));
+    for input in inputs {
+        if input.canonicalize().map_err(|e| e.to_string())? == destination {
+            return Err("output must not overwrite a source input".into());
+        }
+    }
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let temp = parent.join(format!(".evg-output-{}-{stamp}.tmp", process::id()));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|e| e.to_string())?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        fs::rename(&temp, path).map_err(|e| e.to_string())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
 }
 
 fn verify(dir: &std::path::Path, lean: &str) -> Result<String, String> {

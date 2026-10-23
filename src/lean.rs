@@ -11,6 +11,9 @@ struct Emitter {
 }
 impl Emitter {
     fn steps(&self, steps: &[String]) -> Result<String> {
+        if steps.iter().any(|s| s == "trustme") {
+            return Err("trustme declares a trusted assumption; the optional Lean reference backend requires checked proofs".into());
+        }
         for step in steps {
             if let Some(name) = step.strip_prefix("exact ") {
                 if steps.len() != 1 || !self.proofs.contains(name) {

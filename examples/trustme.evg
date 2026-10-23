@@ -1,0 +1,7 @@
+fn main() -> usize {
+    // Deliberately false, to demonstrate an explicit trusted assumption.
+    // This is a proof escape hatch, not an FFI implementation.
+    fact external_contract = 1 == 2;
+    proof assumed: external_contract by { trustme };
+    42
+}

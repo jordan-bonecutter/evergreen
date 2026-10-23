@@ -134,3 +134,68 @@ fn ordered_proof_units_share_checked_contracts() {
     assert!(bad.stdout.is_empty());
     assert!(String::from_utf8_lossy(&bad.stderr).contains("precondition of reserve"));
 }
+
+#[test]
+fn proof_artifacts_and_trust_policy_are_enforced_by_cli() {
+    let cli = env!("CARGO_BIN_EXE_evg");
+    let dir = std::env::temp_dir().join(format!("evergreen-cache-test-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let artifact = dir.join("proof.evgproof");
+    let artifact = artifact.to_str().unwrap();
+    let run = |args: &[&str]| {
+        Command::new(cli)
+            .env("PATH", "")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let output = run(&["prove", "examples/contracts.evg", "-o", artifact]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        run(&["check", "examples/contracts.evg", "--proof", artifact])
+            .status
+            .success()
+    );
+    assert!(
+        !run(&["check", "examples/increment.evg", "--proof", artifact])
+            .status
+            .success()
+    );
+    let previous = fs::read(artifact).unwrap();
+    let denied = run(&[
+        "--deny-trust",
+        "prove",
+        "examples/trustme.evg",
+        "-o",
+        artifact,
+    ]);
+    assert!(!denied.status.success());
+    assert!(denied.stdout.is_empty());
+    assert_eq!(fs::read(artifact).unwrap(), previous);
+    let trusted = run(&["check", "examples/trustme.evg"]);
+    assert!(trusted.status.success());
+    assert!(String::from_utf8_lossy(&trusted.stdout).contains("checked with 1 trusted assumptions"));
+    assert!(String::from_utf8_lossy(&trusted.stderr).contains("trustme at line"));
+    assert!(!run(&["--deny-trust", "check", "examples/trustme.evg"])
+        .status
+        .success());
+    let source = dir.join("source.evg");
+    fs::write(&source, include_str!("../examples/contracts.evg")).unwrap();
+    assert!(!run(&[
+        "prove",
+        source.to_str().unwrap(),
+        "-o",
+        source.to_str().unwrap()
+    ])
+    .status
+    .success());
+    assert_eq!(
+        fs::read_to_string(&source).unwrap(),
+        include_str!("../examples/contracts.evg")
+    );
+    fs::remove_dir_all(dir).unwrap();
+}

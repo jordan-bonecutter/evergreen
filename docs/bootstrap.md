@@ -1,8 +1,9 @@
 # Evergreen bootstrap
 
 Build with `cargo build`. The executable is `target/debug/evg`.
-The CLI uses Clap; the language frontend, verifier, kernel, and evaluator have
-no third-party runtime dependencies. `evg --help` describes available commands.
+The CLI uses Clap and proof artifact fingerprints use `sha2`. The arithmetic
+kernel and evaluator use the Rust standard library. `evg --help` describes
+available commands.
 
 ```sh
 cargo run -- emit examples/lean_reference.evg
@@ -211,3 +212,38 @@ The unbalanced transition in `proofs/reject_rc_unbalanced.evg` and reusing a sin
 credit twice both fail verification. Ideal erasure and restricting mathematical
 types to proof code are implemented with explicit ideal declarations. Connecting
 the model to linear capabilities and physical heap ownership remains planned.
+
+## Explicit trusted assumptions
+
+`proof assumed: proposition by { trustme };` accepts any proposition without
+proving it, including false ones. This is the explicit boundary for assumptions
+such as a future foreign function's contract. A false trusted assumption can
+invalidate every subsequent safety conclusion. It does not construct runtime
+values or implement FFI. Named facts alone still introduce no assumptions.
+
+The checker reports each `trustme` location and labels the result as checked
+with trusted assumptions instead of verified. `--deny-trust` rejects the whole
+source unit if any such assumption occurs, including in a called helper.
+The optional Lean reference emitter rejects `trustme` rather than emitting
+an implicit admission.
+
+## Replayable proof artifacts
+
+```sh
+cargo run -- prove proofs/rc_protocol.evg -o proofs/rc_protocol.evgproof
+cargo run -- --deny-trust check proofs/rc_protocol.evg --proof proofs/rc_protocol.evgproof
+```
+
+Artifacts can be committed alongside their source. Replay regenerates types and
+verification conditions, then checks arithmetic certificates with the internal
+kernel without invoking arithmetic search. Source content, model version, query
+digests, and explicit trusted assumptions must match; invalid or missing evidence
+fails without a search fallback. SHA-256 from `sha2` supplies fingerprints;
+fingerprints do not replace checking the certificates. Artifact size, query count,
+and checking work are bounded. Output is replaced only after successful checking,
+and the CLI refuses to overwrite an input source file.
+
+This first cache still checks all source and regenerates its conditions. It is
+not separate compilation of library interfaces, a zero-knowledge proof, or a
+proof of generated machine code. Avoiding repeated frontend work for standard
+libraries will require checked module interfaces and their dependency manifests.

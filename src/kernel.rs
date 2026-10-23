@@ -69,6 +69,17 @@ impl Linear {
 pub struct Certificate {
     weights: BTreeMap<usize, i128>,
 }
+impl Certificate {
+    pub(crate) fn weights(&self) -> impl Iterator<Item = (usize, i128)> + '_ {
+        self.weights.iter().map(|(i, w)| (*i, *w))
+    }
+    pub(crate) fn from_weights(weights: BTreeMap<usize, i128>) -> ArithmeticResult<Self> {
+        if weights.values().any(|w| *w <= 0) {
+            return Err("certificate weights must be positive".into());
+        }
+        Ok(Self { weights })
+    }
+}
 
 /// Check a contradiction certificate independently of the search algorithm.
 pub fn check(assumptions: &[Linear], certificate: &Certificate) -> ArithmeticResult<()> {

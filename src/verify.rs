@@ -1,6 +1,7 @@
 //! Internal elaboration and verification-condition generation.
 use crate::{
-    kernel::{self, Linear},
+    certificate::{ProofBundle, Session},
+    kernel::Linear,
     memory::{Memory, PlaneId, Projection, Reference},
     syntax::{self, Expr, Function, Kind, MachineInt, Statement, Struct, Type},
 };
@@ -18,6 +19,31 @@ enum Formula {
     Not(Box<Self>),
 }
 impl Formula {
+    fn encode(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::True => out.push(0),
+            Self::False => out.push(1),
+            Self::Ge(row) => {
+                out.push(2);
+                out.extend(row.constant.to_le_bytes());
+                out.extend((row.terms.len() as u64).to_le_bytes());
+                for (name, coefficient) in &row.terms {
+                    out.extend((name.len() as u64).to_le_bytes());
+                    out.extend(name.as_bytes());
+                    out.extend(coefficient.to_le_bytes());
+                }
+            }
+            Self::And(a, b) | Self::Or(a, b) => {
+                out.push(if matches!(self, Self::And(..)) { 3 } else { 4 });
+                a.encode(out);
+                b.encode(out);
+            }
+            Self::Not(p) => {
+                out.push(5);
+                p.encode(out);
+            }
+        }
+    }
     fn and(self, other: Self) -> Self {
         Self::And(Box::new(self), Box::new(other))
     }
@@ -272,6 +298,7 @@ struct Context<'a> {
     dropping: bool,
     helpers: &'a BTreeSet<String>,
     ideal: bool,
+    session: &'a mut Session,
 }
 
 impl<'a> Context<'a> {
@@ -280,6 +307,7 @@ impl<'a> Context<'a> {
         structs: &'a BTreeMap<String, Struct>,
         drops: &'a BTreeSet<String>,
         helpers: &'a BTreeSet<String>,
+        session: &'a mut Session,
     ) -> Self {
         Self {
             functions,
@@ -300,6 +328,7 @@ impl<'a> Context<'a> {
             dropping: false,
             helpers,
             ideal: false,
+            session,
         }
     }
     fn fresh_name(&mut self) -> String {
@@ -336,9 +365,9 @@ impl<'a> Context<'a> {
     fn prove(&mut self, p: &Formula, label: &str, line: usize) -> Result<()> {
         self.obligations += 1;
         for path in extend(&self.paths, p, true)? {
-            let certificate = kernel::solve(&path)
+            self.session
+                .prove(&path)
                 .map_err(|e| format!("line {line}: cannot prove {label}: {e}"))?;
-            kernel::check(&path, &certificate)?;
         }
         Ok(())
     }
@@ -520,7 +549,7 @@ impl<'a> Context<'a> {
                 return Err("overwriting owned fields through references requires ownership effect proofs; unsupported".into());
             }
             let new = self.eval(value, Some(&old.ty()))?;
-            let replace_plane = !self.same_layout(&old, &new);
+            let replace_plane = !self.same_layout(&old, &new)?;
             let mut root = self.memory.read(reference)?.clone();
             replace_projection(&mut root, &fields, new)?;
             self.record_valid(&root, place.line)?;
@@ -573,7 +602,7 @@ impl<'a> Context<'a> {
                 "destructors cannot replace owning fields without cleanup/effect proofs".into(),
             );
         }
-        let replace_plane = !self.same_layout(&old, &new);
+        let replace_plane = !self.same_layout(&old, &new)?;
         let old_live = self
             .roots
             .get(&name)
@@ -787,13 +816,21 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
-    fn same_layout(&mut self, a: &Symbol, b: &Symbol) -> bool {
+    fn same_layout(&mut self, a: &Symbol, b: &Symbol) -> Result<bool> {
         match (a, b) {
             (Symbol::Record(an, a), Symbol::Record(bn, b)) => {
-                an == bn
-                    && a.len() == b.len()
-                    && a.iter()
-                        .all(|(n, v)| b.get(n).is_some_and(|w| self.same_layout(v, w)))
+                if an != bn || a.len() != b.len() {
+                    return Ok(false);
+                }
+                for (name, value) in a {
+                    let Some(other) = b.get(name) else {
+                        return Ok(false);
+                    };
+                    if !self.same_layout(value, other)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
             }
             (
                 Symbol::Array {
@@ -809,30 +846,36 @@ impl<'a> Context<'a> {
                     ..
                 },
             ) => {
-                let length = equal(a, b)
-                    .is_ok_and(|p| self.prove(&p, "stable array storage length", 0).is_ok());
-                length
-                    && match (av, bv) {
-                        (Some(a), Some(b)) => a.iter().zip(b).all(|(v, w)| self.same_layout(v, w)),
-                        _ => {
-                            ai == bi
-                                || matches!(
-                                    **element,
-                                    Ty::Int
-                                        | Ty::Nat
-                                        | Ty::Machine(_)
-                                        | Ty::Bool
-                                        | Ty::Ref(_)
-                                        | Ty::Unit
-                                )
-                        }
+                self.obligations += 1;
+                for path in extend(&self.paths, &equal(a, b)?, true)? {
+                    if !self.session.probe(&path)? {
+                        return Ok(false);
                     }
+                }
+                match (av, bv) {
+                    (Some(a), Some(b)) => {
+                        if a.len() != b.len() {
+                            return Ok(false);
+                        }
+                        for (a, b) in a.iter().zip(b) {
+                            if !self.same_layout(a, b)? {
+                                return Ok(false);
+                            }
+                        }
+                        Ok(true)
+                    }
+                    _ => Ok(ai == bi
+                        || matches!(
+                            **element,
+                            Ty::Int | Ty::Nat | Ty::Machine(_) | Ty::Bool | Ty::Ref(_) | Ty::Unit
+                        )),
+                }
             }
             (Symbol::Number(_, _), Symbol::Number(_, _))
             | (Symbol::Bool(_), Symbol::Bool(_))
             | (Symbol::Ref(..), Symbol::Ref(..))
-            | (Symbol::Unit, Symbol::Unit) => true,
-            _ => false,
+            | (Symbol::Unit, Symbol::Unit) => Ok(true),
+            _ => Ok(false),
         }
     }
 
@@ -924,6 +967,18 @@ impl<'a> Context<'a> {
         steps: Option<&[String]>,
     ) -> Result<()> {
         if let Some(steps) = steps {
+            if steps.iter().any(|s| s == "trustme") {
+                if steps.len() != 1 {
+                    return Err(format!(
+                        "line {line}: trustme must be a single explicit proof term"
+                    ));
+                }
+                let mut proposition = Vec::new();
+                goal.encode(&mut proposition);
+                self.session.trust(&self.paths, &proposition, line, label)?;
+                self.obligations += 1;
+                return Ok(());
+            }
             if let Some(name) = steps.iter().find_map(|s| s.strip_prefix("exact ")) {
                 if steps.len() != 1 {
                     return Err(format!(
@@ -1535,9 +1590,17 @@ pub struct VerifiedProgram {
     pub(crate) structs: BTreeMap<String, Struct>,
     pub obligations: usize,
     pub(crate) drops: BTreeSet<String>,
+    trusted: Vec<crate::certificate::TrustedAssumption>,
+    proof_searches: usize,
 }
 
 impl VerifiedProgram {
+    pub fn trusted_assumptions(&self) -> &[crate::certificate::TrustedAssumption] {
+        &self.trusted
+    }
+    pub fn proof_search_count(&self) -> usize {
+        self.proof_searches
+    }
     pub(crate) fn check_entry(&self) -> Result<()> {
         let main = self
             .functions
@@ -1559,7 +1622,14 @@ impl VerifiedProgram {
                 .map(|f| (f.name.clone(), f.clone()))
                 .collect();
             let helpers = BTreeSet::new();
-            let mut ctx = Context::new(&functions, &self.structs, &self.drops, &helpers);
+            let mut session = Session::search();
+            let mut ctx = Context::new(
+                &functions,
+                &self.structs,
+                &self.drops,
+                &helpers,
+                &mut session,
+            );
             ctx.current = Some("main".into());
             let p = ctx.proposition(pre)?;
             ctx.prove(&p, "entry precondition of main", pre.line)?;
@@ -1569,6 +1639,25 @@ impl VerifiedProgram {
 }
 
 pub fn verify(source: &str) -> Result<VerifiedProgram> {
+    let mut session = Session::search();
+    let program = verify_using(source, &mut session)?;
+    session.finish()?;
+    Ok(program)
+}
+pub fn prove(source: &str) -> Result<(VerifiedProgram, ProofBundle)> {
+    let mut session = Session::recording();
+    let program = verify_using(source, &mut session)?;
+    session.finish()?;
+    Ok((program, session.bundle(source)?))
+}
+pub fn verify_with_certificate(source: &str, bundle: &ProofBundle) -> Result<VerifiedProgram> {
+    bundle.check_source(source)?;
+    let mut session = Session::replay(bundle);
+    let program = verify_using(source, &mut session)?;
+    session.finish()?;
+    Ok(program)
+}
+fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> {
     let parsed = syntax::parse(source)?;
     let mut structs = BTreeMap::new();
     let empty_functions = BTreeMap::new();
@@ -1577,7 +1666,13 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         if structs.contains_key(&s.name) {
             return Err(format!("line {}: duplicate struct {}", s.line, s.name));
         }
-        let mut ctx = Context::new(&empty_functions, &structs, &empty_drops, &empty_drops);
+        let mut ctx = Context::new(
+            &empty_functions,
+            &structs,
+            &empty_drops,
+            &empty_drops,
+            session,
+        );
         ctx.ideal = s.ideal;
         for (n, t) in &s.fields {
             if !s.ideal && !runtime_type(t, &structs) {
@@ -1650,7 +1745,7 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         if f.decreases.is_some() {
             available.insert(f.name.clone(), f.clone());
         }
-        let mut ctx = Context::new(&available, &structs, &drops, &helpers);
+        let mut ctx = Context::new(&available, &structs, &drops, &helpers, session);
         ctx.dropping = f.drop_target.is_some();
         ctx.ideal = f.ideal;
         ctx.current = Some(f.name.clone());
@@ -1712,6 +1807,8 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         structs,
         obligations,
         drops,
+        trusted: session.trusted_assumptions().to_vec(),
+        proof_searches: session.search_count(),
     })
 }
 
