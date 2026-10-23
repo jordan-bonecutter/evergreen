@@ -12,7 +12,7 @@ fn main() -> usize ensures (result == 42) {
     let reference = &pair;
     update(pair) lifts balanced {
         pair.left = 42;
-        // The invariant is open here. Calls and borrowing are forbidden.
+        // The whole-pair invariant is unavailable until the update closes.
         pair.right = pair.left;
     }
     // Closing the update proves Pair again; its storage was never moved.

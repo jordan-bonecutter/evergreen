@@ -1,7 +1,8 @@
 //! Small Linux x86-64 backend. Source verification is required before emission.
 //! This backend is trusted code, not a machine-checked compiler-correctness proof.
 use crate::{
-    syntax::{Expr, Function, Kind, MachineInt, Statement, Type},
+    layout,
+    syntax::{Expr, Function, Kind, MachineInt, Statement, Struct, Type},
     verify::VerifiedProgram,
 };
 use std::collections::BTreeMap;
@@ -12,17 +13,39 @@ const STACK: usize = 65536;
 const MAX_CODE: usize = 8 * 1024 * 1024;
 
 fn scalar(t: &Type) -> Result<()> {
-    if let Type::Ref(inner) = t {
-        return scalar(inner);
+    if matches!(t, Type::Ref(_)) {
+        return Ok(());
     }
     if matches!(t, Type::Machine(_) | Type::Bool | Type::Unit) {
         Ok(())
     } else {
-        Err("native backend currently requires scalar runtime values and references; arrays and records are unsupported".into())
+        Err("native function ABI currently requires scalar values or references; by-value aggregate parameters and returns are unsupported".into())
     }
 }
 fn machine() -> Type {
     Type::Machine(MachineInt::parse("isize").expect("isize"))
+}
+// A stored read may avoid a value copy only when computing the path cannot
+// change its contents. Calls are kept on the snapshot path, including helpers.
+fn no_calls(e: &Expr) -> bool {
+    match &e.kind {
+        Kind::Call(..) => false,
+        Kind::Unary(_, x) | Kind::Field(x, _) | Kind::FactAt(x, _) => no_calls(x),
+        Kind::Binary(_, a, b) | Kind::Index(a, b) => no_calls(a) && no_calls(b),
+        Kind::If(c, a, b) => no_calls(c) && no_calls(a) && no_calls(b),
+        Kind::Array(items) => items.iter().all(no_calls),
+        Kind::Record(_, fields) => fields.iter().all(|(_, e)| no_calls(e)),
+        _ => true,
+    }
+}
+fn stored(e: &Expr) -> bool {
+    match &e.kind {
+        Kind::Name(_) => true,
+        Kind::Field(base, _) => stored(base),
+        Kind::Index(base, index) => stored(base) && no_calls(index),
+        Kind::Unary(op, x) if op == "*" => no_calls(x),
+        _ => false,
+    }
 }
 fn patch(code: &mut [u8], displacement: usize, target: usize) -> Result<()> {
     let relative = i32::try_from(target as i64 - (displacement + 4) as i64)
@@ -42,30 +65,117 @@ struct Emitter<'a> {
     known: &'a BTreeMap<String, Compiled>,
     functions: &'a BTreeMap<String, &'a Function>,
     slots: BTreeMap<String, (i32, Type)>,
-    next_slot: usize,
+    frame: usize,
+    structs: &'a BTreeMap<String, Struct>,
     temporary: usize,
     peak: usize,
 }
 impl Emitter<'_> {
+    fn allocate(&mut self, ty: &Type) -> Result<i32> {
+        self.frame = self
+            .frame
+            .checked_add(layout::of(ty, self.structs)?.size)
+            .ok_or("native frame overflow")?;
+        if self.frame + 16 > STACK {
+            return Err("native frame exceeds private stack budget".into());
+        }
+        Ok(-i32::try_from(self.frame).map_err(|_| "native frame offset overflow")?)
+    }
+    fn frame_address(&mut self, offset: i32) {
+        self.code.extend([0x48, 0x8d, 0x85]);
+        self.code.extend(offset.to_le_bytes());
+    }
+    fn copy_frame(&mut self, offset: i32, ty: &Type) -> Result<()> {
+        if !layout::aggregate(ty) {
+            self.code.extend([0x48, 0x89, 0x85]);
+            self.code.extend(offset.to_le_bytes());
+        } else {
+            self.code.extend([0x48, 0x89, 0xc2]); // rdx = source
+            for index in (0..layout::of(ty, self.structs)?.size).step_by(8) {
+                self.code.extend([0x48, 0x8b, 0x82]);
+                self.code.extend((index as i32).to_le_bytes());
+                self.code.extend([0x48, 0x89, 0x85]);
+                self.code.extend((offset + index as i32).to_le_bytes());
+            }
+        }
+        Ok(())
+    }
+    fn copy_address(&mut self, ty: &Type) -> Result<()> {
+        // Destination is rcx. Aggregate rax values are snapshot addresses.
+        if !layout::aggregate(ty) {
+            self.code.extend([0x48, 0x89, 0x01]);
+        } else {
+            self.code.extend([0x48, 0x89, 0xc2]);
+            for index in (0..layout::of(ty, self.structs)?.size).step_by(8) {
+                self.code.extend([0x48, 0x8b, 0x82]);
+                self.code.extend((index as i32).to_le_bytes());
+                self.code.extend([0x48, 0x89, 0x81]);
+                self.code.extend((index as i32).to_le_bytes());
+            }
+        }
+        Ok(())
+    }
+    fn snapshot(&mut self, ty: &Type) -> Result<()> {
+        if layout::aggregate(ty) {
+            let offset = self.allocate(ty)?;
+            self.copy_frame(offset, ty)?;
+            self.frame_address(offset);
+        } else {
+            self.code.extend([0x48, 0x8b, 0x00]);
+        }
+        Ok(())
+    }
     fn slot(&mut self, name: &str, ty: Type) -> Result<()> {
-        scalar(&ty)?;
-        self.next_slot += 1;
-        let offset = i32::try_from(self.next_slot * 8).map_err(|_| "native frame overflow")?;
-        if self.slots.insert(name.into(), (-offset, ty)).is_some() {
+        let offset = self.allocate(&ty)?;
+        self.copy_frame(offset, &ty)?;
+        if self.slots.insert(name.into(), (offset, ty)).is_some() {
             return Err("duplicate native binding".into());
         }
-        self.code.extend([0x48, 0x89, 0x85]);
-        self.code.extend((-offset).to_le_bytes());
         Ok(())
     }
     fn load(&mut self, name: &str) -> Result<Type> {
         let (offset, ty) = self
             .slots
             .get(name)
+            .cloned()
             .ok_or_else(|| format!("missing native binding {name}"))?;
-        self.code.extend([0x48, 0x8b, 0x85]);
-        self.code.extend(offset.to_le_bytes());
-        Ok(ty.clone())
+        self.frame_address(offset);
+        self.snapshot(&ty)?;
+        Ok(ty)
+    }
+    fn field(&self, ty: &Type, name: &str) -> Result<layout::Field> {
+        layout::of(ty, self.structs)?
+            .fields
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("unknown native field {name}"))
+    }
+    fn add_offset(&mut self, offset: usize) {
+        if offset != 0 {
+            self.code.extend([0x48, 0x05]);
+            self.code.extend((offset as u32).to_le_bytes());
+        }
+    }
+    fn index_address(&mut self, base: &Expr, index: &Expr, place: bool) -> Result<Type> {
+        let ty = if place {
+            self.address(base)?
+        } else {
+            self.expr(base, None)?
+        };
+        let Type::Array(element, _) = ty else {
+            return Err("native index requires an array".into());
+        };
+        let bytes = layout::of(&element, self.structs)?.size;
+        self.push();
+        let index_ty = self.expr(index, None)?;
+        if !matches!(index_ty, Type::Machine(_)) {
+            return Err("native index requires a machine integer".into());
+        }
+        self.code.extend([0x48, 0x69, 0xc0]);
+        self.code.extend((bytes as u32).to_le_bytes());
+        self.pop();
+        self.code.extend([0x48, 0x01, 0xc8]);
+        Ok(*element)
     }
     fn immediate(&mut self, value: u64) {
         self.code.extend([0x48, 0xb8]);
@@ -93,6 +203,12 @@ impl Emitter<'_> {
     fn hint(&self, e: &Expr) -> Option<Type> {
         match &e.kind {
             Kind::Name(n) => self.slots.get(n).map(|(_, t)| t.clone()),
+            Kind::Record(name, _) => Some(Type::Named(name.clone())),
+            Kind::Field(base, name) => self.field(&self.hint(base)?, name).ok().map(|f| f.ty),
+            Kind::Index(base, _) => match self.hint(base)? {
+                Type::Array(element, _) => Some(*element),
+                _ => None,
+            },
             Kind::Bool(_) => Some(Type::Bool),
             Kind::Constant(t, _) => Some(Type::Machine(*t)),
             Kind::Unary(op, _) if op == "!" => Some(Type::Bool),
@@ -118,6 +234,13 @@ impl Emitter<'_> {
     }
     fn address(&mut self, e: &Expr) -> Result<Type> {
         match &e.kind {
+            Kind::Field(base, name) => {
+                let base = self.address(base)?;
+                let field = self.field(&base, name)?;
+                self.add_offset(field.offset);
+                Ok(field.ty)
+            }
+            Kind::Index(base, index) => self.index_address(base, index, true),
             Kind::Name(name) => {
                 let (offset, ty) = self.slots.get(name).ok_or("unknown native place")?;
                 self.code.extend([0x48, 0x8d, 0x85]);
@@ -128,7 +251,7 @@ impl Emitter<'_> {
                 Type::Ref(inner) => Ok(*inner),
                 _ => Err("native place dereference requires a reference".into()),
             },
-            _ => Err("native references currently require scalar local storage".into()),
+            _ => Err("native references require stored places".into()),
         }
     }
     fn expr(&mut self, e: &Expr, expected: Option<&Type>) -> Result<Type> {
@@ -150,12 +273,78 @@ impl Emitter<'_> {
                 Type::Unit
             }
             Kind::Name(n) => self.load(n)?,
+            Kind::Record(name, entries) => {
+                let ty = Type::Named(name.clone());
+                let object = self.allocate(&ty)?;
+                if entries.is_empty() {
+                    self.immediate(0);
+                    self.copy_frame(object, &Type::Unit)?;
+                }
+                for (field, expression) in entries {
+                    let field = self.field(&ty, field)?;
+                    self.expr(expression, Some(&field.ty))?;
+                    self.copy_frame(object + field.offset as i32, &field.ty)?;
+                }
+                self.frame_address(object);
+                ty
+            }
+            Kind::Field(base, name) => {
+                let base = self.expr(base, None)?;
+                let field = self.field(&base, name)?;
+                self.add_offset(field.offset);
+                if !layout::aggregate(&field.ty) {
+                    self.code.extend([0x48, 0x8b, 0x00]);
+                }
+                field.ty
+            }
+            Kind::Array(items) => {
+                let ty = if let Some(Type::Array(..)) = expected {
+                    expected.unwrap().clone()
+                } else {
+                    let first = items.first().ok_or("native empty array needs a type")?;
+                    Type::Array(
+                        Box::new(self.hint(first).unwrap_or_else(machine)),
+                        Box::new(Expr {
+                            kind: Kind::Number(items.len() as i128),
+                            line: e.line,
+                        }),
+                    )
+                };
+                let Type::Array(element, count) = &ty else {
+                    unreachable!()
+                };
+                if layout::array_length(count)? != items.len() {
+                    return Err("native array literal length mismatch".into());
+                }
+                let bytes = layout::of(element, self.structs)?.size;
+                let object = self.allocate(&ty)?;
+                if items.is_empty() {
+                    self.immediate(0);
+                    self.copy_frame(object, &Type::Unit)?;
+                }
+                for (index, item) in items.iter().enumerate() {
+                    self.expr(item, Some(element))?;
+                    self.copy_frame(object + (index * bytes) as i32, element)?;
+                }
+                self.frame_address(object);
+                ty
+            }
+            Kind::Index(base, index) => {
+                let borrowed = stored(base) && no_calls(index);
+                let ty = self.index_address(base, index, borrowed)?;
+                if layout::aggregate(&ty) && borrowed {
+                    self.snapshot(&ty)?;
+                } else if !layout::aggregate(&ty) {
+                    self.code.extend([0x48, 0x8b, 0x00]);
+                }
+                ty
+            }
             Kind::Unary(op, x) if op == "&" => Type::Ref(Box::new(self.address(x)?)),
             Kind::Unary(op, x) if op == "*" => {
                 let Type::Ref(inner) = self.expr(x, None)? else {
                     return Err("native dereference requires a reference".into());
                 };
-                self.code.extend([0x48, 0x8b, 0x00]);
+                self.snapshot(&inner)?;
                 *inner
             }
             Kind::Unary(op, x) if op == "!" => {
@@ -309,8 +498,8 @@ impl Emitter<'_> {
                 ))
             }
         };
-        scalar(&ty)?;
-        if expected.is_some_and(|t| t != &ty) {
+        layout::of(&ty, self.structs)?;
+        if expected.is_some_and(|t| t != &ty && !matches!((t, &ty), (Type::Ref(_), Type::Ref(_)))) {
             return Err(format!("line {}: native type mismatch", e.line));
         }
         if self.code.len() > MAX_CODE {
@@ -326,32 +515,43 @@ impl Emitter<'_> {
                 self.slot(name, ty)
             }
             Statement::Assign { target, value } => {
-                if matches!(&target.kind, Kind::Unary(op, _) if op == "*") {
-                    let ty = self.address(target)?;
-                    self.push();
-                    self.expr(value, Some(&ty))?;
-                    self.pop();
-                    self.code.extend([0x48, 0x89, 0x01]);
-                    return Ok(());
-                }
-                let Kind::Name(name) = &target.kind else {
-                    return Err("native field assignments are unsupported".into());
-                };
-                let (offset, ty) = self
-                    .slots
-                    .get(name)
-                    .cloned()
-                    .ok_or("unknown native assignment")?;
+                let ty = self.address(target)?;
+                self.push();
                 self.expr(value, Some(&ty))?;
-                self.code.extend([0x48, 0x89, 0x85]);
-                self.code.extend(offset.to_le_bytes());
+                self.pop();
+                self.copy_address(&ty)
+            }
+            Statement::Destructure {
+                record,
+                fields,
+                value,
+            } => {
+                let ty = Type::Named(record.clone());
+                self.expr(value, Some(&ty))?;
+                self.code.extend([0x48, 0x89, 0xc6]);
+                for (field, name) in fields {
+                    let field = self.field(&ty, field)?;
+                    self.code.extend([0x48, 0x8d, 0x86]);
+                    self.code.extend((field.offset as i32).to_le_bytes());
+                    if !layout::aggregate(&field.ty) {
+                        self.code.extend([0x48, 0x8b, 0x00]);
+                    }
+                    self.slot(name, field.ty)?;
+                }
+                Ok(())
+            }
+            Statement::Update { body, .. } => {
+                let saved = self.slots.clone();
+                for statement in body {
+                    self.statement(statement)?;
+                }
+                self.slots = saved;
                 Ok(())
             }
             Statement::Effect(e) => {
                 self.expr(e, None)?;
                 Ok(())
             }
-            _ => Err("native patterns and invariant updates are unsupported".into()),
         }
     }
 }
@@ -360,6 +560,9 @@ impl Emitter<'_> {
 /// process exit status (low eight bits). It performs no runtime I/O.
 pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
     program.check_entry()?;
+    if !program.drops.is_empty() {
+        return Err("native destructors require checked cleanup lowering; unsupported".into());
+    }
     let functions = program
         .functions
         .iter()
@@ -385,26 +588,17 @@ pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
         for (_, ty) in &params {
             scalar(ty)?;
         }
-        let locals = function
-            .body
-            .iter()
-            .filter(|s| matches!(s, Statement::Let { .. }))
-            .count();
-        let frame = (params.len() + locals)
-            .checked_mul(8)
-            .ok_or("native frame overflow")?;
-        if frame + 16 > STACK {
-            return Err("native frame exceeds private stack budget".into());
-        }
         let offset = code.len();
         code.extend([0x55, 0x48, 0x89, 0xe5, 0x48, 0x81, 0xec]);
-        code.extend((frame as u32).to_le_bytes());
+        let frame_fixup = code.len();
+        code.extend([0; 4]);
         let mut emitter = Emitter {
             code: &mut code,
             known: &known,
             functions: &functions,
             slots: BTreeMap::new(),
-            next_slot: 0,
+            frame: 0,
+            structs: &program.structs,
             temporary: 0,
             peak: 0,
         };
@@ -422,6 +616,8 @@ pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
         if emitter.temporary != 0 {
             return Err("unbalanced native expression stack".into());
         }
+        let frame = emitter.frame;
+        emitter.code[frame_fixup..frame_fixup + 4].copy_from_slice(&(frame as u32).to_le_bytes());
         let stack = 8 + frame + emitter.peak;
         if stack + 8 > STACK {
             return Err("native call tree exceeds 64 KiB private stack budget".into());
@@ -479,8 +675,8 @@ mod tests {
     #[test]
     fn native_rejects_unsupported_memory_recursion_and_entry_assumptions() {
         for source in [
-            "fn main() -> usize {let a: [usize; 1] = [1]; let r = &a; (*r)[0]}",
-            "fn main() -> usize {let a: [usize; 1] = [1]; a[0]}",
+            "fn read(n: usize, a: [usize; n]) -> usize {n} fn main() -> usize {0}",
+            "type Dynamic struct {len: usize, data: [usize; len]} fn main() -> usize {let d = Dynamic {len: 1, data: [42]}; d.data[0]}",
             include_str!("../examples/destructure.evg"),
             include_str!("../examples/recursion.evg"),
             "fn main() -> usize where (false) {0}",
@@ -530,6 +726,14 @@ mod tests {
         fs::create_dir(&directory).unwrap();
         let mut cases = [
             include_str!("../examples/native.evg"),
+            include_str!("../examples/native_aggregates.evg"),
+            include_str!("../examples/intermediate_states.evg"),
+            include_str!("../examples/conditional_writes.evg"),
+            "fn head(ideal n: nat, data: &[usize; n]) -> usize where (n > 0) {(*data)[0]} fn main() -> usize {let a: [usize; 1] = [42]; head(1, &a)}",
+            "fn set(r: &usize) -> usize modifies(r) ensures (*r == 99 && result == 0) {*r = 99; 0} fn main() -> usize {let a: [usize; 1] = [42]; a[set(&a[0])]}",
+            "type Values struct {first: usize, second: usize} fn set(r: &usize) -> usize modifies(r) ensures (*r == 99 && result == 0) {*r = 99; 0} fn main() -> usize {let n: usize = 42; let v = Values {first: n, second: set(&n)}; v.first}",
+            "fn main() -> usize {let a: [usize; (1 - 2) + 2] = [7, 42]; a[1]}",
+            "fn main() -> usize {let a: [[usize; 2]; 2] = [[1, 2], [3, 42]]; a[1][1]}",
             "fn main() -> i8 {-128}",
             "fn main() -> u8 {255}",
             "fn main() -> u64 {u64::MAX}",

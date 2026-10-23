@@ -144,8 +144,8 @@ is strictly smaller than the entry measure. The callee contract is available
 only under this well-founded induction rule. Recursive calls in specifications
 are rejected. Mutual recursion is not implemented yet.
 
-Not yet supported: non-record patterns, heap allocation, FFI, aggregate machine
-layouts, or native lowering of aggregate ownership constructs. Unsupported syntax
+Not yet supported: non-record patterns, heap allocation, FFI, foreign aggregate
+layouts, or native destructor lowering. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
 
 `src/memory.rs` provides the internal generation-checked plane store used by
@@ -395,16 +395,17 @@ cargo run -- --deny-trust build examples/native.evg -o /tmp/answer
 `build` verifies the source, then emits a standalone Linux x86-64 ELF executable
 with the internal backend. Ordered source files and `--proof source.evgproof`
 are supported. No assembler, linker, C compiler, or runtime library is needed.
-The supported subset includes machine scalars, Boolean and unit values, local
-mutation, scalar references and their writes, calls, branches, and erased
+The supported subset includes machine scalars, Boolean and unit values, fixed
+local arrays and records, field references and their writes, local mutation,
+complete record patterns, invariant updates, calls, branches, and erased
 facts/proofs/ideal scalar arguments.
 Comparison instructions respect signed versus unsigned machine types.
 
 The entry function's scalar result supplies the low eight bits of the process
 exit status. The executable uses a private 64 KiB writable stack, with separate
 read/execute code pages. Emission checks the entire static call-tree stack bound.
-Recursive native calls, arrays, records, destructors, patterns, and
-invariant updates are rejected. Unsupported or unproved input does not replace
+Recursive native calls, by-value aggregate function parameters/returns, inline
+dependent layouts, and destructors are rejected. Unsupported or unproved input does not replace
 an existing output; input sources cannot be overwritten.
 
 Native tests execute generated programs and compare their results with the
@@ -428,3 +429,16 @@ The counter executable exits with status 42. The count-refinement executable
 performs the checked sequential reserve/release stores and exits with status 0.
 Native differential tests include these programs, scalar alias writes, nested
 references, and Boolean updates.
+
+The internal word ABI gives each scalar, reference, or empty value an eight-byte
+home. Record homes follow declaration order; fixed arrays contain consecutive
+element homes. Inline aggregate layouts must be constant and at most 64 KiB;
+ideal, recursive inline, overflowing, and dependent layouts are rejected. Constant
+natural length arithmetic follows the frontend's truncated subtraction rules.
+
+`examples/native_aggregates.evg` compiles owned local records, complete patterns,
+field borrows, fixed arrays, and stable-layout replacement. Value reads preserve
+snapshot semantics when later expression evaluation can mutate the source.
+Pure stored indexing can read directly; effectful index expressions retain the
+value copy. Native tests cover this ordering and nested arrays. Aggregate calls
+and destructor cleanup still need their own lowering rules.

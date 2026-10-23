@@ -1,0 +1,20 @@
+affine type Permit struct {tag: usize}
+type Pair struct {left: Permit, right: Permit}
+type Data struct {values: [usize; 2], marker: bool}
+
+fn increment(r: &usize) -> ()
+where (*r < usize::MAX)
+modifies(r)
+ensures (*r == old(*r) + 1) {*r = *r + 1;}
+
+fn main() -> usize ensures (result == 42) {
+    let pair = Pair {left: Permit {tag: 20}, right: Permit {tag: 21}};
+    let Pair {left: first, right: second} = pair;
+    let data = Data {values: [first.tag, second.tag], marker: true};
+    let alias = &data.values[1];
+    increment(alias);
+    // Replacing the array preserves its storage and the existing alias.
+    data.values = [20, 22];
+    proof marker: data.marker;
+    data.values[0] + *alias
+}
