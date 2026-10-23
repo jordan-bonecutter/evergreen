@@ -188,20 +188,26 @@ derivations while keeping search outside the kernel.
 
 ## RC proof experiment
 
-`cargo run -- check proofs/rc_protocol.evg` verifies an ordinary Evergreen model
-of reserve, publish, retire, decrement, retain, and release. The stored-count
-model is bounded by the target's maximum count. Its arithmetic safety condition
-`count >= owners` is checked at intermediate program points; the stronger
-`count == owners + credits` relation is restored when each generic update closes.
-Zero count implies zero owners and credits. There are no RC intrinsics or
-special type names in this implementation.
+`cargo run -- check proofs/rc_protocol.evg` verifies a shared ideal count
+protocol for RC and ARC: reserve, publish, retire, decrement, retain, and release.
+Each complete ideal transition preserves `count == owners + credits` and the
+target's maximum-count bound, without lifting. Zero count implies zero owners
+and credits. The physical implementation must still prove that its ordinary
+store (RC) or atomic operation (ARC) realizes the corresponding ideal transition.
+There are no RC intrinsics or special type names in the compiler.
+
+`cargo run -- check proofs/rc_protocol.evg proofs/arc_interleavings.evg` also
+checks count-level interleavings, including releasing the old owner before a
+reserved clone is published, and the equality needed on successful CAS. The
+stale check in `proofs/reject_arc_stale_check.evg` fails. `check` accepts ordered
+source units; definitions from an earlier unit are available to later units.
 
 This is a protocol model, not an RC library implementation or a memory-safety
 theorem. Its owners and credits are mathematical numbers, not unforgeable
 capabilities. Connecting that arithmetic to unique ownership witnesses,
 physical heap steps, borrowing, and destruction is still necessary. The
 compiler must provide general rules for those concepts rather than RC policy.
-The unbalanced update in `proofs/reject_rc_unbalanced.evg` and reusing a single
+The unbalanced transition in `proofs/reject_rc_unbalanced.evg` and reusing a single
 credit twice both fail verification. Ideal erasure and restricting mathematical
 types to proof code are implemented with explicit ideal declarations. Connecting
 the model to linear capabilities and physical heap ownership remains planned.

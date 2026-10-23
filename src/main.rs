@@ -20,7 +20,10 @@ struct Cli {
 #[derive(Subcommand)]
 enum Action {
     /// Verify a program with the internal proof kernel.
-    Check { file: PathBuf },
+    Check {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
     /// Verify and evaluate main with bounded execution.
     Run { file: PathBuf },
     /// Emit Lean source for the reference backend (does not verify).
@@ -31,26 +34,35 @@ enum Action {
     },
     /// Verify with the optional pinned Lean toolchain.
     LeanCheck { file: PathBuf },
-    /// Verify and evaluate using the optional Lean toolchain.
+    /// Evaluate the ideal reference model using the optional Lean toolchain.
     LeanRun { file: PathBuf },
 }
 
 fn execute() -> Result<(), String> {
     let cli = Cli::parse();
-    let file = match &cli.command {
-        Action::Check { file }
-        | Action::Run { file }
+    let files: Vec<&PathBuf> = match &cli.command {
+        Action::Check { files } => files.iter().collect(),
+        Action::Run { file }
         | Action::Emit { file, .. }
         | Action::LeanCheck { file }
-        | Action::LeanRun { file } => file,
+        | Action::LeanRun { file } => vec![file],
     };
-    let source = fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let file = files.first().ok_or("at least one input file is required")?;
+    let source = files
+        .iter()
+        .map(|file| fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display())))
+        .collect::<Result<Vec<_>, _>>()?
+        .join("\n");
     if matches!(cli.command, Action::Check { .. } | Action::Run { .. }) {
         let program = evergreen::verify::verify(&source)?;
         if matches!(cli.command, Action::Check { .. }) {
             println!(
                 "verified {} ({} obligations, internal kernel)",
-                file.display(),
+                files
+                    .iter()
+                    .map(|file| file.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 program.obligations
             );
         } else {

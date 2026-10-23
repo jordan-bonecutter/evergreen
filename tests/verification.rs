@@ -105,3 +105,32 @@ fn internal_backend_needs_no_external_tools() {
         assert!(output.stdout.is_empty());
     }
 }
+
+#[test]
+fn ordered_proof_units_share_checked_contracts() {
+    let output = Command::new(env!("CARGO_BIN_EXE_evg"))
+        .env("PATH", "")
+        .args([
+            "check",
+            "proofs/rc_protocol.evg",
+            "proofs/arc_interleavings.evg",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bad = Command::new(env!("CARGO_BIN_EXE_evg"))
+        .args([
+            "check",
+            "proofs/rc_protocol.evg",
+            "proofs/reject_arc_stale_check.evg",
+        ])
+        .output()
+        .unwrap();
+    assert!(!bad.status.success());
+    assert!(bad.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("precondition of reserve"));
+}

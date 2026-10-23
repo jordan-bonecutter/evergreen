@@ -1,0 +1,36 @@
+// Verify together with rc_protocol.evg. These are arithmetic interleaving
+// obligations, not a model of weak memory, pointer provenance, or atomic code.
+
+// A clone reserves first; the old handle is fully released before publication.
+// The count stays positive during the interval with zero completed owners.
+ideal fn old_owner_releases_before_clone_publication(state: RcProtocol) -> RcProtocol
+where (state.owners == 1 && state.credits == 0 && state.count < 18446744073709551615)
+ensures (result.count == 1 && result.owners == 1 && result.credits == 0) {
+    let reserved = reserve(state);
+    let retired = retire(reserved);
+    let pending = decrement(retired);
+    proof protected: pending.count == 1 && pending.owners == 0 && pending.credits == 1;
+    publish(pending)
+}
+
+ideal fn clone_drop_interleaving(state: RcProtocol) -> RcProtocol
+where (state.owners > 0 && state.count < 18446744073709551615)
+ensures (result.count == state.count && result.owners == state.owners && result.credits == state.credits) {
+    let reserved = reserve(state);
+    let retired = retire(reserved);
+    let published = publish(retired);
+    decrement(published)
+}
+
+// CAS success connects an earlier observation to the state at the atomic step.
+ideal fn cas_success_reserves(state: RcProtocol, observed: nat) -> RcProtocol
+where (state.owners > 0 && observed < 18446744073709551615 && state.count == observed)
+ensures (result.count == state.count + 1 && result.credits == state.credits + 1) {
+    reserve(state)
+}
+
+ideal fn cas_failure_preserves_state(state: RcProtocol, observed: nat) -> RcProtocol
+where (state.count != observed)
+ensures (result.count == state.count && result.owners == state.owners && result.credits == state.credits) {
+    state
+}

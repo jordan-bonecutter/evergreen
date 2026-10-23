@@ -1,0 +1,6 @@
+// Verify with rc_protocol.evg. Checking an earlier observation cannot prove
+// the current counter's bound; successful CAS must establish equality.
+ideal fn stale_check(state: RcProtocol, observed: nat) -> RcProtocol
+where (state.owners > 0 && observed < 18446744073709551615) {
+    reserve(state)
+}

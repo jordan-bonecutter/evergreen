@@ -1947,8 +1947,10 @@ mod tests {
         assert!(verify(source).unwrap().obligations >= 50);
         assert!(verify(&source.replace("RcProtocol", "OrdinaryUserState")).is_ok());
         assert!(verify(include_str!("../proofs/reject_rc_unbalanced.evg")).is_err());
-        let double_publish = format!("{source}\nfn duplicate_credit(s: RcProtocol) -> RcProtocol where (s.credits == 1) {{publish(publish(s))}}");
-        assert!(verify(&double_publish).is_err());
+        let double_publish = format!("{source}\nideal fn duplicate_credit(s: RcProtocol) -> RcProtocol where (s.credits == 1) {{publish(publish(s))}}");
+        assert!(verify(&double_publish)
+            .unwrap_err()
+            .contains("precondition of publish"));
     }
 
     #[test]
@@ -2134,5 +2136,23 @@ mod tests {
         .is_err());
         let source = "type Checked struct {valid: bool} where (fact required = valid; required); fn main() -> usize {fact required = true; let s = Checked {valid: false}; 0}";
         assert!(verify(source).is_err());
+    }
+
+    #[test]
+    fn rc_and_arc_share_a_lifting_free_ideal_count_protocol() {
+        let protocol = include_str!("../proofs/rc_protocol.evg");
+        assert!(!protocol.contains("lifts"));
+        let model = format!(
+            "{protocol}\n{}",
+            include_str!("../proofs/arc_interleavings.evg")
+        );
+        assert!(verify(&model).is_ok());
+        let stale = format!(
+            "{protocol}\n{}",
+            include_str!("../proofs/reject_arc_stale_check.evg")
+        );
+        assert!(verify(&stale)
+            .unwrap_err()
+            .contains("precondition of reserve"));
     }
 }
