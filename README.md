@@ -2,7 +2,7 @@
 
 ## Bootstrap implementation
 
-The bootstrap compiler is written in dependency-free Rust. See
+The bootstrap compiler is written in Rust, with an internal verifier. See
 [the bootstrap guide](docs/bootstrap.md) for commands, supported syntax, and
 the current trust boundary. The remainder of this README is the original
 language design sketch; not all of it is implemented yet.

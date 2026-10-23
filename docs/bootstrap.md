@@ -1,6 +1,8 @@
 # Evergreen bootstrap
 
 Build with `cargo build`. The executable is `target/debug/evg`.
+The CLI uses Clap; the language frontend, verifier, kernel, and evaluator have
+no third-party runtime dependencies. `evg --help` describes available commands.
 
 ```sh
 cargo run -- emit examples/contracts.evg

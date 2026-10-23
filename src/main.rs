@@ -1,3 +1,4 @@
+use clap::{Parser, Subcommand};
 use std::{
     env, fs,
     path::PathBuf,
@@ -5,32 +6,65 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[derive(Parser)]
+#[command(
+    name = "evg",
+    version,
+    about = "Evergreen proof-oriented language compiler"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Action,
+}
+
+#[derive(Subcommand)]
+enum Action {
+    /// Verify a program with the internal proof kernel.
+    Check { file: PathBuf },
+    /// Verify and evaluate main with bounded execution.
+    Run { file: PathBuf },
+    /// Emit Lean source for the reference backend (does not verify).
+    Emit {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Verify with the optional pinned Lean toolchain.
+    LeanCheck { file: PathBuf },
+    /// Verify and evaluate using the optional Lean toolchain.
+    LeanRun { file: PathBuf },
+}
+
 fn execute() -> Result<(), String> {
-    let args: Vec<String> = env::args().skip(1).collect();
-    if args.len() != 2
-        || !matches!(
-            args[0].as_str(),
-            "emit" | "check" | "run" | "lean-check" | "lean-run"
-        )
-    {
-        return Err("usage: evg <emit|check|run|lean-check|lean-run> <file.evg>\ncheck/run use the internal kernel; lean-check/lean-run optionally use Lean 4".into());
-    }
-    let source = fs::read_to_string(&args[1]).map_err(|e| format!("{}: {e}", args[1]))?;
-    if args[0] == "check" || args[0] == "run" {
+    let cli = Cli::parse();
+    let file = match &cli.command {
+        Action::Check { file }
+        | Action::Run { file }
+        | Action::Emit { file, .. }
+        | Action::LeanCheck { file }
+        | Action::LeanRun { file } => file,
+    };
+    let source = fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    if matches!(cli.command, Action::Check { .. } | Action::Run { .. }) {
         let program = evergreen::verify::verify(&source)?;
-        if args[0] == "check" {
+        if matches!(cli.command, Action::Check { .. }) {
             println!(
                 "verified {} ({} obligations, internal kernel)",
-                args[1], program.obligations
+                file.display(),
+                program.obligations
             );
         } else {
             println!("{}", program.run()?);
         }
         return Ok(());
     }
-    let lean = evergreen::emit(&source, args[0] == "lean-run")?;
-    if args[0] == "emit" {
-        print!("{lean}");
+    let lean = evergreen::emit(&source, matches!(cli.command, Action::LeanRun { .. }))?;
+    if let Action::Emit { output, .. } = &cli.command {
+        if let Some(path) = output {
+            fs::write(path, lean).map_err(|e| format!("{}: {e}", path.display()))?;
+        } else {
+            print!("{lean}");
+        }
         return Ok(());
     }
     let stamp = SystemTime::now()
@@ -42,8 +76,8 @@ fn execute() -> Result<(), String> {
     let result = verify(&dir, &lean);
     let _ = fs::remove_dir_all(&dir);
     let output = result?;
-    if args[0] == "lean-check" {
-        println!("verified {}", args[1]);
+    if matches!(cli.command, Action::LeanCheck { .. }) {
+        println!("verified {}", file.display());
     } else {
         print!("{output}");
     }
