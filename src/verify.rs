@@ -2,7 +2,7 @@
 use crate::{
     kernel::{self, Linear},
     memory::{Memory, PlaneId, Projection, Reference},
-    syntax::{self, Expr, Function, Kind, Struct, Type},
+    syntax::{self, Expr, Function, Kind, MachineInt, Struct, Type},
 };
 use std::collections::BTreeMap;
 
@@ -36,6 +36,7 @@ enum Ty {
     Bool,
     Unit,
     Ref(Box<Ty>),
+    Machine(MachineInt),
     Array(Box<Ty>, Linear),
     Record(String),
 }
@@ -237,6 +238,15 @@ impl<'a> Context<'a> {
         self.specification = saved;
         result
     }
+    fn nonnegative(&mut self, e: &Expr, label: &str) -> Result<Linear> {
+        let ty = self.hint(e).unwrap_or(Ty::Nat);
+        if !matches!(ty, Ty::Int | Ty::Nat | Ty::Machine(_)) {
+            return Err(format!("line {}: {label} must be an integer", e.line));
+        }
+        let n = self.eval(e, Some(&ty))?.number()?;
+        self.prove(&Formula::Ge(n.clone()), label, e.line)?;
+        Ok(n)
+    }
     fn prove(&mut self, p: &Formula, label: &str, line: usize) -> Result<()> {
         self.obligations += 1;
         for path in extend(&self.paths, p, true)? {
@@ -251,6 +261,7 @@ impl<'a> Context<'a> {
             Type::Int => Ok(Ty::Int),
             Type::Nat => Ok(Ty::Nat),
             Type::Bool => Ok(Ty::Bool),
+            Type::Machine(t) => Ok(Ty::Machine(*t)),
             Type::Unit => Ok(Ty::Unit),
             Type::Ref(t) => Ok(Ty::Ref(Box::new(self.resolve(t)?))),
             Type::Named(n) => {
@@ -265,7 +276,7 @@ impl<'a> Context<'a> {
                 let element = self.resolve(element)?;
                 let saved_spec = self.specification;
                 self.specification = true;
-                let n = self.eval(len, Some(&Ty::Nat))?.number()?;
+                let n = self.nonnegative(len, "nonnegative array length")?;
                 self.specification = saved_spec;
                 Ok(Ty::Array(Box::new(element), n))
             }
@@ -278,6 +289,7 @@ impl<'a> Context<'a> {
             | (Ty::Bool, Ty::Bool)
             | (Ty::Unit, Ty::Unit) => Ok(()),
             (Ty::Ref(a), Ty::Ref(b)) => self.compatible(a, b, line),
+            (Ty::Machine(a), Ty::Machine(b)) if a == b => Ok(()),
             (Ty::Record(a), Ty::Record(b)) if a == b => Ok(()),
             (Ty::Array(a, n), Ty::Array(b, m)) => {
                 self.compatible(a, b, line)?;
@@ -291,6 +303,13 @@ impl<'a> Context<'a> {
     fn arbitrary(&mut self, t: &Ty) -> Result<Symbol> {
         let name = self.fresh_name();
         match t {
+            Ty::Machine(t) => {
+                let n = Linear::variable(name);
+                let (lo, hi) = t.bounds();
+                self.assume(&Formula::Ge(n.sub(&Linear::number(lo))?))?;
+                self.assume(&Formula::Ge(Linear::number(hi).sub(&n)?))?;
+                Ok(Symbol::Number(Ty::Machine(*t), n))
+            }
             Ty::Unit => Ok(Symbol::Unit),
             Ty::Ref(t) => {
                 let v = self.arbitrary(t)?;
@@ -381,7 +400,7 @@ impl<'a> Context<'a> {
             }
             let old = project(self.memory.read(reference)?, &fields)?.clone();
             let new = self.eval(value, Some(&old.ty()))?;
-            let replace_plane = matches!(old, Symbol::Record(..) | Symbol::Array { .. });
+            let replace_plane = !self.same_layout(&old, &new);
             let mut root = self.memory.read(reference)?.clone();
             replace_projection(&mut root, &fields, new)?;
             self.record_valid(&root, place.line)?;
@@ -429,6 +448,7 @@ impl<'a> Context<'a> {
             self.eval(place, None)?
         };
         let new = self.eval(value, Some(&old.ty()))?;
+        let replace_plane = !self.same_layout(&old, &new);
         let mut root = self
             .env
             .get(&name)
@@ -437,14 +457,59 @@ impl<'a> Context<'a> {
         replace(&mut root, &fields, new)?;
         self.record_valid(&root, place.line)?;
         if let Some(id) = self.roots.get(&name) {
-            self.memory.write(
-                *id,
-                root.clone(),
-                matches!(old, Symbol::Record(..) | Symbol::Array { .. }),
-            )?;
+            self.memory.write(*id, root.clone(), replace_plane)?;
         }
         self.env.insert(name, root);
         Ok(())
+    }
+
+    fn same_layout(&mut self, a: &Symbol, b: &Symbol) -> bool {
+        match (a, b) {
+            (Symbol::Record(an, a), Symbol::Record(bn, b)) => {
+                an == bn
+                    && a.len() == b.len()
+                    && a.iter()
+                        .all(|(n, v)| b.get(n).is_some_and(|w| self.same_layout(v, w)))
+            }
+            (
+                Symbol::Array {
+                    len: a,
+                    items: av,
+                    element,
+                    identity: ai,
+                },
+                Symbol::Array {
+                    len: b,
+                    items: bv,
+                    identity: bi,
+                    ..
+                },
+            ) => {
+                let length = equal(a, b)
+                    .is_ok_and(|p| self.prove(&p, "stable array storage length", 0).is_ok());
+                length
+                    && match (av, bv) {
+                        (Some(a), Some(b)) => a.iter().zip(b).all(|(v, w)| self.same_layout(v, w)),
+                        _ => {
+                            ai == bi
+                                || matches!(
+                                    **element,
+                                    Ty::Int
+                                        | Ty::Nat
+                                        | Ty::Machine(_)
+                                        | Ty::Bool
+                                        | Ty::Ref(_)
+                                        | Ty::Unit
+                                )
+                        }
+                    }
+            }
+            (Symbol::Number(_, _), Symbol::Number(_, _))
+            | (Symbol::Bool(_), Symbol::Bool(_))
+            | (Symbol::Ref(..), Symbol::Ref(..))
+            | (Symbol::Unit, Symbol::Unit) => true,
+            _ => false,
+        }
     }
 
     fn location(&mut self, e: &Expr) -> Result<(Reference, Vec<Projection>)> {
@@ -472,7 +537,7 @@ impl<'a> Context<'a> {
             }
             Kind::Index(base, i) => {
                 let (r, mut path) = self.location(base)?;
-                let index = self.eval(i, Some(&Ty::Nat))?.number()?;
+                let index = self.nonnegative(i, "nonnegative reference index")?;
                 if !index.terms.is_empty() {
                     return Err(
                         "reference projections currently need a statically known index".into(),
@@ -496,6 +561,7 @@ impl<'a> Context<'a> {
     }
     fn hint(&self, e: &Expr) -> Option<Ty> {
         match &e.kind {
+            Kind::Constant(t, _) => Some(Ty::Machine(*t)),
             Kind::Name(n) => self.env.get(n).map(Symbol::ty),
             Kind::Unary(op, x) if op == "*" => {
                 if let Some(Ty::Ref(t)) = self.hint(x) {
@@ -518,6 +584,7 @@ impl<'a> Context<'a> {
                 Type::Int => Some(Ty::Int),
                 Type::Nat => Some(Ty::Nat),
                 Type::Bool => Some(Ty::Bool),
+                Type::Machine(t) => Some(Ty::Machine(t)),
                 _ => None,
             }),
             _ => None,
@@ -544,16 +611,30 @@ impl<'a> Context<'a> {
         if let Some(t) = expected {
             self.compatible(&value.ty(), t, e.line)?;
         }
+        if let Symbol::Number(Ty::Machine(t), n) = &value {
+            let (lo, hi) = t.bounds();
+            self.prove(
+                &Formula::Ge(n.sub(&Linear::number(lo))?),
+                "machine integer lower bound",
+                e.line,
+            )?;
+            self.prove(
+                &Formula::Ge(Linear::number(hi).sub(n)?),
+                "machine integer upper bound (no overflow)",
+                e.line,
+            )?;
+        }
         Ok(value)
     }
     fn eval_inner(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
         match &e.kind {
             Kind::Unit => Ok(Symbol::Unit),
+            Kind::Constant(t, n) => Ok(Symbol::Number(Ty::Machine(*t), Linear::number(*n))),
             Kind::Number(n) => Ok(Symbol::Number(
-                if matches!(expected, Some(Ty::Nat)) {
-                    Ty::Nat
-                } else {
-                    Ty::Int
+                match expected {
+                    Some(Ty::Nat) => Ty::Nat,
+                    Some(Ty::Machine(t)) => Ty::Machine(*t),
+                    _ => Ty::Int,
                 },
                 Linear::number(*n),
             )),
@@ -603,6 +684,7 @@ impl<'a> Context<'a> {
                         Type::Nat => Some(Ty::Nat),
                         Type::Int => Some(Ty::Int),
                         Type::Bool => Some(Ty::Bool),
+                        Type::Machine(t) => Some(Ty::Machine(*t)),
                         _ => None,
                     };
                     fields.insert(n.clone(), self.eval(value, hint.as_ref())?);
@@ -625,8 +707,17 @@ impl<'a> Context<'a> {
                 self.eval(x, Some(&Ty::Bool))?.proposition()?.not(),
             )),
             Kind::Unary(_, x) => {
-                let n = self.eval(x, Some(&Ty::Int))?.number()?;
-                Ok(Symbol::Number(Ty::Int, n.scale(-1)?))
+                let ty = expected
+                    .cloned()
+                    .or_else(|| self.hint(x))
+                    .filter(|t| matches!(t, Ty::Machine(_)))
+                    .unwrap_or(Ty::Int);
+                let n = if let Kind::Number(n) = x.kind {
+                    Linear::number(n)
+                } else {
+                    self.eval(x, Some(&ty))?.number()?
+                };
+                Ok(Symbol::Number(ty, n.scale(-1)?))
             }
             Kind::Binary(op, a, b) if op == "&&" || op == "||" => {
                 let a = self.eval(a, Some(&Ty::Bool))?.proposition()?;
@@ -643,7 +734,7 @@ impl<'a> Context<'a> {
                 .or_else(|| self.hint(a))
                 .or_else(|| self.hint(b))
                 .unwrap_or(Ty::Int);
-                if !matches!(ty, Ty::Int | Ty::Nat) {
+                if !matches!(ty, Ty::Int | Ty::Nat | Ty::Machine(_)) {
                     return Err("arithmetic and comparisons require integer operands".into());
                 }
                 let a = self.eval(a, Some(&ty))?.number()?;
@@ -707,7 +798,7 @@ impl<'a> Context<'a> {
             }
             Kind::Index(array, index) => {
                 let array = self.eval(array, None)?;
-                let index = self.eval(index, Some(&Ty::Nat))?.number()?;
+                let index = self.nonnegative(index, "nonnegative array index")?;
                 let Symbol::Array {
                     element,
                     len,
@@ -776,6 +867,7 @@ impl<'a> Context<'a> {
                         Type::Nat => Some(Ty::Nat),
                         Type::Int => Some(Ty::Int),
                         Type::Bool => Some(Ty::Bool),
+                        Type::Machine(t) => Some(Ty::Machine(*t)),
                         _ => None,
                     };
                     actuals.push(self.eval(arg, hint.as_ref())?);
@@ -802,7 +894,7 @@ impl<'a> Context<'a> {
                         .decreases
                         .as_ref()
                         .ok_or("recursive calls require a decreases clause")?;
-                    let next = self.eval(expression, Some(&Ty::Nat))?.number()?;
+                    let next = self.nonnegative(expression, "nonnegative recursion measure")?;
                     self.prove(
                         &Formula::Ge(entry.sub(&next)?.add(&Linear::number(-1))?),
                         "strictly decreasing recursion measure",
@@ -926,7 +1018,7 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         let ret = ctx.resolve(&f.ret)?;
         if let Some(measure) = &f.decreases {
             ctx.specification = true;
-            ctx.measure = Some(ctx.eval(measure, Some(&Ty::Nat))?.number()?);
+            ctx.measure = Some(ctx.nonnegative(measure, "nonnegative recursion measure")?);
             ctx.specification = false;
         }
         let contract_env = ctx.env.clone();
@@ -1001,38 +1093,37 @@ mod tests {
     }
     #[test]
     fn composes_calls_and_checks_preconditions() {
-        let prefix =
-            "fn inc(n: usize) -> usize where (n < 10) ensures (result == n + 1) { n + 1 } ";
+        let prefix = "fn inc(n: nat) -> nat where (n < 10) ensures (result == n + 1) { n + 1 } ";
         assert!(verify(&format!(
-            "{prefix} fn main() -> usize ensures (result == 5) {{ inc(4) }}"
+            "{prefix} fn main() -> nat ensures (result == 5) {{ inc(4) }}"
         ))
         .is_ok());
-        assert!(verify(&format!("{prefix} fn main() -> usize {{ inc(10) }}")).is_err());
+        assert!(verify(&format!("{prefix} fn main() -> nat {{ inc(10) }}")).is_err());
     }
     #[test]
     fn verifies_both_branches_and_natural_subtraction() {
-        verify("fn abs(n: isize) -> isize ensures (result >= 0) { if n >= 0 { n } else { -n } }")
+        verify("fn abs(n: int) -> int ensures (result >= 0) { if n >= 0 { n } else { -n } }")
             .unwrap();
-        verify("fn sub(n: usize) -> usize ensures (result <= n) { n - 1 }").unwrap();
+        verify("fn sub(n: nat) -> nat ensures (result <= n) { n - 1 }").unwrap();
         assert!(verify(
-            "fn bad(n: isize) -> isize ensures (result >= 0) { if n >= 0 { n } else { n } }"
+            "fn bad(n: int) -> int ensures (result >= 0) { if n >= 0 { n } else { n } }"
         )
         .is_err());
     }
     #[test]
     fn facts_are_proved_before_use() {
-        assert!(verify("fn bad(n: usize) -> usize { fact lie = n < 0; n }").is_err());
-        assert!(verify("fn bad() -> usize { fact h = true by { exact missing }; 0 }").is_err());
-        assert!(verify("fn bad() -> usize { result }").is_err());
+        assert!(verify("fn bad(n: nat) -> nat { fact lie = n < 0; n }").is_err());
+        assert!(verify("fn bad() -> nat { fact h = true by { exact missing }; 0 }").is_err());
+        assert!(verify("fn bad() -> nat { result }").is_err());
     }
     #[test]
     fn arrays_and_types_are_checked() {
-        verify("fn main() -> usize ensures (result == 20) { let a: [usize; 2] = [10, 20]; a[1] }")
+        verify("fn main() -> nat ensures (result == 20) { let a: [nat; 2] = [10, 20]; a[1] }")
             .unwrap();
         for s in [
-            "fn f() -> usize { let a: [usize; 2] = [1]; 0 }",
-            "fn f() -> usize { let a: [usize; 1] = [1]; a[1] }",
-            "fn f() -> usize { -1 }",
+            "fn f() -> nat { let a: [nat; 2] = [1]; 0 }",
+            "fn f() -> nat { let a: [nat; 1] = [1]; a[1] }",
+            "fn f() -> nat { -1 }",
             "fn f() -> bool { 1 }",
         ] {
             assert!(verify(s).is_err(), "{s}");
@@ -1040,15 +1131,14 @@ mod tests {
     }
     #[test]
     fn compound_logic_and_contradictory_preconditions() {
-        verify("fn f(n: usize) -> usize where (n < 3 || n > 10) ensures (result != 5) { n }")
-            .unwrap();
-        verify("fn f(n: usize) -> usize where (n < 0) ensures (result > 100) { n }").unwrap();
+        verify("fn f(n: nat) -> nat where (n < 3 || n > 10) ensures (result != 5) { n }").unwrap();
+        verify("fn f(n: nat) -> nat where (n < 0) ensures (result > 100) { n }").unwrap();
     }
 
     #[test]
     fn struct_invariants_and_atomic_replacement() {
-        let prefix = "type Buffer struct { len: usize, cap: usize } where (len <= cap); ";
-        let valid = format!("{prefix} fn main() -> usize {{ let b = Buffer {{ len: 1, cap: 2 }}; b = Buffer {{ len: b.len + 2, cap: b.cap + 2 }}; b.len }}");
+        let prefix = "type Buffer struct { len: nat, cap: nat } where (len <= cap); ";
+        let valid = format!("{prefix} fn main() -> nat {{ let b = Buffer {{ len: 1, cap: 2 }}; b = Buffer {{ len: b.len + 2, cap: b.cap + 2 }}; b.len }}");
         assert_eq!(verify(&valid).unwrap().run().unwrap().to_string(), "3");
         for body in [
             "let b = Buffer {len: 3, cap: 2}; b.len",
@@ -1057,7 +1147,7 @@ mod tests {
             "let b = Buffer {len: 1, cap: 2, extra: 0}; b.len",
         ] {
             assert!(
-                verify(&format!("{prefix} fn main() -> usize {{ {body} }}")).is_err(),
+                verify(&format!("{prefix} fn main() -> nat {{ {body} }}")).is_err(),
                 "{body}"
             );
         }
@@ -1065,60 +1155,62 @@ mod tests {
 
     #[test]
     fn dependent_struct_fields_and_nested_invariants() {
-        let s = "type Storage struct { len: usize, data: [isize; len] } type Outer struct { storage: Storage } fn main() -> isize { let s = Storage {len: 2, data: [10, 20]}; let o = Outer {storage: s}; o.storage.data[1] }";
+        let s = "type Storage struct { len: nat, data: [int; len] } type Outer struct { storage: Storage } fn main() -> int { let s = Storage {len: 2, data: [10, 20]}; let o = Outer {storage: s}; o.storage.data[1] }";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "20");
-        assert!(verify("type Storage struct {len: usize, data: [isize; len]} fn main() -> usize {let s = Storage {len: 2, data: [1, 2]}; s.len = 3; 0}").is_err());
-        assert!(verify("type Inner struct {x: usize} where (x > 0); type Outer struct {inner: Inner} fn main() -> usize {let o = Outer {inner: Inner {x: 1}}; o.inner.x = 0; 0}").is_err());
+        assert!(verify("type Storage struct {len: nat, data: [int; len]} fn main() -> nat {let s = Storage {len: 2, data: [1, 2]}; s.len = 3; 0}").is_err());
+        assert!(verify("type Inner struct {x: nat} where (x > 0); type Outer struct {inner: Inner} fn main() -> nat {let o = Outer {inner: Inner {x: 1}}; o.inner.x = 0; 0}").is_err());
     }
 
     #[test]
     fn contracts_capture_entry_parameters() {
-        assert!(verify("fn bad(n: usize) -> usize ensures (result == n) { n = 0; n }").is_err());
-        let s = "fn reset(n: usize) -> usize ensures (result == 0) { n = 0; n } fn main() -> usize ensures (result == 0) {reset(10)}";
+        assert!(verify("fn bad(n: nat) -> nat ensures (result == n) { n = 0; n }").is_err());
+        let s = "fn reset(n: nat) -> nat ensures (result == 0) { n = 0; n } fn main() -> nat ensures (result == 0) {reset(10)}";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "0");
     }
 
     #[test]
     fn aliased_references_share_scalar_updates() {
-        let s = "fn read(r: &usize) -> usize ensures (result == *r) { *r } fn main() -> usize ensures (result == 7) { let x: usize = 1; let a = &x; let b = &x; *a = 7; read(b) }";
+        let s = "fn read(r: &nat) -> nat ensures (result == *r) { *r } fn main() -> nat ensures (result == 7) { let x: nat = 1; let a = &x; let b = &x; *a = 7; read(b) }";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "7");
-        let s = "fn main() -> usize ensures (result == 11) { let data: [usize; 2] = [1, 2]; let a = &data[0]; let b = &data[1]; *a = 9; *b = 11; *b }";
+        let s = "fn main() -> nat ensures (result == 11) { let data: [nat; 2] = [1, 2]; let a = &data[0]; let b = &data[1]; *a = 9; *b = 11; *b }";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "11");
     }
 
     #[test]
     fn stale_references_are_compile_errors() {
         for body in [
-            "let x: usize = 1; let r = &x; drop(x); *r",
-            "let x: usize = 1; let r = &x; let y = move(x); *r",
-            "let a: [usize; 1] = [1]; let r = &a[0]; a = [2]; *r",
-            "let x: usize = 1; let r = &x; drop(x); x = 2; *r",
-            "let x: usize = 1; let y = move(x); x",
+            "let x: nat = 1; let r = &x; drop(x); *r",
+            "let x: nat = 1; let r = &x; let y = move(x); *r",
+            "let a: [nat; 1] = [1]; let r = &a[0]; drop(a); *r",
+            "let x: nat = 1; let r = &x; drop(x); x = 2; *r",
+            "let x: nat = 1; let y = move(x); x",
         ] {
             assert!(
-                verify(&format!("fn main() -> usize {{ {body} }}")).is_err(),
+                verify(&format!("fn main() -> nat {{ {body} }}")).is_err(),
                 "{body}"
             );
         }
-        let s = "fn main() -> usize { let x: usize = 1; let y = move(x); x = 2; x + y }";
+        let s = "fn main() -> nat { let x: nat = 1; let y = move(x); x = 2; x + y }";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "3");
+        let fixed = "fn main() -> usize ensures (result == 3) { let a: [usize; 2] = [1, 2]; let r = &a[0]; a = [3, 4]; *r }";
+        assert_eq!(verify(fixed).unwrap().run().unwrap().to_string(), "3");
     }
 
     #[test]
     fn reference_updates_recheck_invariants_and_cannot_escape() {
-        let prefix = "type Small struct {n: usize} where (n < 4); ";
+        let prefix = "type Small struct {n: nat} where (n < 4); ";
         assert!(verify(&format!(
-            "{prefix} fn main() -> usize {{let x = Small {{n: 1}}; let r = &x.n; *r = 9; x.n }}"
+            "{prefix} fn main() -> nat {{let x = Small {{n: 1}}; let r = &x.n; *r = 9; x.n }}"
         ))
         .is_err());
-        assert!(verify("fn escape() -> &usize {let x: usize = 1; &x}").is_err());
-        assert!(verify("fn write(r: &usize) -> () { *r = 1; () }").is_err());
-        assert!(verify("fn f(n: usize) -> usize ensures (result == move(n)) { n }").is_err());
+        assert!(verify("fn escape() -> &nat {let x: nat = 1; &x}").is_err());
+        assert!(verify("fn write(r: &nat) -> () { *r = 1; () }").is_err());
+        assert!(verify("fn f(n: nat) -> nat ensures (result == move(n)) { n }").is_err());
     }
 
     #[test]
     fn verifies_well_founded_recursion() {
-        let s = "fn countdown(n: usize) -> usize ensures (result == n) decreases (n) { if n == 0 { 0 } else { countdown(n - 1) + 1 } } fn main() -> usize ensures (result == 12) { countdown(12) }";
+        let s = "fn countdown(n: nat) -> nat ensures (result == n) decreases (n) { if n == 0 { 0 } else { countdown(n - 1) + 1 } } fn main() -> nat ensures (result == 12) { countdown(12) }";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "12");
         for body in [
             "loop(n)",
@@ -1127,14 +1219,49 @@ mod tests {
         ] {
             assert!(
                 verify(&format!(
-                    "fn loop(n: usize) -> usize decreases (n) {{ {body} }}"
+                    "fn loop(n: nat) -> nat decreases (n) {{ {body} }}"
                 ))
                 .is_err(),
                 "{body}"
             );
         }
-        assert!(
-            verify("fn bad(n: usize) -> usize ensures (bad(n) == 0) decreases (n) {0}").is_err()
+        assert!(verify("fn bad(n: nat) -> nat ensures (bad(n) == 0) decreases (n) {0}").is_err());
+    }
+
+    #[test]
+    fn machine_overflow_requires_a_proof() {
+        assert!(verify("fn increment(n: usize) -> usize { n + 1 }").is_err());
+        let p = "fn increment(n: usize) -> usize where (n < usize::MAX) ensures (result == n + 1) { n + 1 } fn main() -> usize ensures (result == usize::MAX) { increment(usize::MAX - 1) }";
+        assert_eq!(
+            verify(p).unwrap().run().unwrap().to_string(),
+            u64::MAX.to_string()
         );
+        for s in [
+            "fn main() -> usize {usize::MAX + 1}",
+            "fn main() -> u8 {256}",
+            "fn main() -> u8 {0 - 1}",
+            "fn abs(n: isize) -> isize {if n >= 0 {n} else {-n}}",
+            "fn main() -> i8 {-129}",
+            "fn main() -> i8 {-i8::MIN}",
+        ] {
+            assert!(verify(s).is_err(), "{s}");
+        }
+        assert_eq!(
+            verify("fn main() -> i8 {-128}")
+                .unwrap()
+                .run()
+                .unwrap()
+                .to_string(),
+            "-128"
+        );
+    }
+
+    #[test]
+    fn signed_array_indices_also_need_lower_bounds() {
+        assert!(
+            verify("fn at(n: usize, a: [isize; n], i: isize) -> isize where (i < 5) {a[i]}")
+                .is_err()
+        );
+        verify("fn at(a: [isize; 5], i: isize) -> isize where (i >= 0 && i < 5) {a[i]}").unwrap();
     }
 }

@@ -57,6 +57,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                         | ('!', '=')
                         | ('&', '&')
                         | ('|', '|')
+                        | (':', ':')
                 )
             {
                 i += 1;
@@ -146,8 +147,8 @@ impl Parser {
             return Ok(format!("Vector ({t}) ({n})"));
         }
         let t = match self.peek() {
-            "isize" => "Int",
-            "usize" => "Nat",
+            "int" => "Int",
+            "nat" => "Nat",
             "bool" => "Bool",
             _ => return Err(self.err("supported types: isize, usize, bool, [T; length]")),
         };
@@ -390,14 +391,18 @@ mod tests {
     use super::*;
     #[test]
     fn emits_contract_and_facts() {
-        let s = emit("fn inc(n: usize) -> usize ensures (result > n) { fact h = n + 1 > n by { omega }; n + 1 }", false).unwrap();
+        let s = emit(
+            "fn inc(n: nat) -> nat ensures (result > n) { fact h = n + 1 > n by { omega }; n + 1 }",
+            false,
+        )
+        .unwrap();
         assert!(s.contains("{ result : Nat // (result > n) }"));
         assert!(s.contains("have h : ((n + 1) > n) := by omega"));
     }
     #[test]
     fn emits_bounds_obligation() {
         let s = emit(
-            "fn at(n: usize, a: [isize; n], i: usize) -> isize where (i < n) { a[i] }",
+            "fn at(n: nat, a: [int; n], i: nat) -> int where (i < n) { a[i] }",
             false,
         )
         .unwrap();
@@ -408,7 +413,7 @@ mod tests {
     fn rejects_escape_hatches() {
         for tactic in ["sorry", "admit", "native_decide", "axiom", "exact missing"] {
             assert!(emit(
-                &format!("fn f() -> usize ensures (result == 1) {{ 0 }} proof {{ {tactic} }}"),
+                &format!("fn f() -> nat ensures (result == 1) {{ 0 }} proof {{ {tactic} }}"),
                 false
             )
             .is_err());
@@ -418,10 +423,10 @@ mod tests {
     fn rejects_bad_programs() {
         for s in [
             "",
-            "fn f() -> usize { missing }",
-            "fn f() -> usize { 1 / 0 }",
-            "fn f() -> usize { 1 } fn f() -> usize { 2 }",
-            "fn f() -> usize { let x = 1; let x = 2; x }",
+            "fn f() -> nat { missing }",
+            "fn f() -> nat { 1 / 0 }",
+            "fn f() -> nat { 1 } fn f() -> nat { 2 }",
+            "fn f() -> nat { let x = 1; let x = 2; x }",
             "type Vec<T> struct {}",
         ] {
             assert!(emit(s, false).is_err(), "{s}");
@@ -429,11 +434,11 @@ mod tests {
     }
     #[test]
     fn run_requires_entrypoint() {
-        assert!(emit("fn f() -> usize { 1 }", true).is_err());
+        assert!(emit("fn f() -> nat { 1 }", true).is_err());
     }
     #[test]
     fn comments_and_precedence() {
-        let s = emit("// comment\nfn main() -> isize { 1 + 2 * 3 }", true).unwrap();
+        let s = emit("// comment\nfn main() -> int { 1 + 2 * 3 }", true).unwrap();
         assert!(s.contains("(1 + (2 * 3))"));
         assert!(s.contains("#eval main"));
     }

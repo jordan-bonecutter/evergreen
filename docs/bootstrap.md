@@ -17,7 +17,7 @@ The optional `lean-check` and `lean-run` commands use the Lean version in
 Lean source without claiming verification. The Lean frontend currently covers
 the original smaller subset and rejects calls and branching.
 
-The supported language contains pure typed functions, immutable `let` bindings,
+The supported language contains typed functions, local `let` bindings,
 named `fact` declarations, preconditions (`where`), postconditions (`ensures`),
 length-indexed arrays (`[T; n]`), array literals, calls to earlier verified
 functions, and conditional expressions. Array access requires a proof of its bound.
@@ -30,7 +30,7 @@ each fact must itself have a proof. Only function preconditions are assumptions,
 and are universally quantified in the function's type.
 
 ```evg
-fn increment(n: usize) -> usize ensures (result > n) {
+fn increment(n: usize) -> usize where (n < usize::MAX) ensures (result > n) {
     fact grows = n + 1 > n by { omega };
     n + 1
 } proof { omega }
@@ -44,15 +44,26 @@ backend these steps are proof-search hints: the arithmetic checker must still
 prove the obligation, and `exact` must name an already proven fact. They are not
 yet an implementation of Lean's tactic semantics.
 
-`isize` and `usize` currently mean mathematical integers and naturals, not
-machine integers. Natural subtraction saturates at zero. This is an explicit
-bootstrap semantics, not a claim that overflow has been verified. Logical
-operators in propositions are `&&`, `||`, and `!`.
+The bootstrap target is 64-bit: `usize` is `u64`, and `isize` is `i64`.
+Explicit `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, and `i64` types are
+supported. Every machine arithmetic result must be proved within its type's
+bounds. There is no implicit wrapping. `T::MIN` and `T::MAX` denote bounds.
+For example, `fn increment(n: usize) -> usize { n + 1 }` is rejected; adding
+`where (n < usize::MAX)` supplies the required proof assumption. Negating a
+signed minimum is rejected as well.
+
+`int` and `nat` are the separate mathematical integer and natural types used for
+proofs. Natural subtraction saturates at zero. Logical operators in propositions
+are `&&`, `||`, and `!`. Array indices and lengths must be proved nonnegative,
+including when a signed index is used. The optional Lean frontend supports
+`int` and `nat` but does not yet lower machine arithmetic.
 
 References use `&place`, dereference uses `*reference`, and reference types use
 `&T`. Multiple mutable aliases are allowed. Scalar writes preserve identity and
-are visible through all aliases. Replacing an aggregate, `move(place)`, or
-`drop(place)` invalidates references to its plane. Reassignment restores a moved
+are visible through all aliases. Overwriting an array or struct in place also
+preserves references when its storage layout stays the same. A layout-changing
+replacement, `move(place)`, or `drop(place)` invalidates references to the plane.
+Reassignment restores a moved
 slot without restoring old references. References into structs and known array
 elements are supported. Moves are currently explicit; ordinary values copy.
 
@@ -63,7 +74,7 @@ returns, and writes through reference parameters are rejected until their plane
 and effect contracts are implemented. Read-only reference parameters work.
 
 Self recursion requires `decreases (measure)` after the postcondition. The
-measure must have type `usize`; every recursive call must prove that its value
+measure must be an integer proved nonnegative; every recursive call must prove that its value
 is strictly smaller than the entry measure. The callee contract is available
 only under this well-founded induction rule. Recursive calls in specifications
 are rejected. Mutual recursion is not implemented yet.

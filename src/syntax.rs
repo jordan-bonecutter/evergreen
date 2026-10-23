@@ -1,6 +1,46 @@
 //! Shared, source-located syntax for the internal compiler pipeline.
 use crate::{lex, Token};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MachineInt {
+    pub signed: bool,
+    pub bits: u8,
+}
+impl MachineInt {
+    pub fn parse(s: &str) -> Option<Self> {
+        if s == "usize" {
+            return Some(Self {
+                signed: false,
+                bits: 64,
+            });
+        }
+        if s == "isize" {
+            return Some(Self {
+                signed: true,
+                bits: 64,
+            });
+        }
+        let signed = match s.as_bytes().first()? {
+            b'i' => true,
+            b'u' => false,
+            _ => return None,
+        };
+        let bits = s.get(1..)?.parse().ok()?;
+        if !matches!(bits, 8 | 16 | 32 | 64) {
+            return None;
+        }
+        Some(Self { signed, bits })
+    }
+    pub fn bounds(self) -> (i128, i128) {
+        if self.signed {
+            let half = 1_i128 << (self.bits - 1);
+            (-half, half - 1)
+        } else {
+            (0, (1_i128 << self.bits) - 1)
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Type {
     Int,
@@ -8,6 +48,7 @@ pub enum Type {
     Bool,
     Unit,
     Ref(Box<Type>),
+    Machine(MachineInt),
     Named(String),
     Array(Box<Type>, Box<Expr>),
 }
@@ -19,6 +60,7 @@ pub struct Expr {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
     Number(i128),
+    Constant(MachineInt, i128),
     Bool(bool),
     Unit,
     Name(String),
@@ -144,11 +186,16 @@ impl Parser {
             Ok(Type::Array(Box::new(t), Box::new(n)))
         } else {
             match self.peek() {
-                "isize" => {
+                s if MachineInt::parse(s).is_some() => {
+                    let t = MachineInt::parse(s).expect("validated machine type");
+                    self.pos += 1;
+                    Ok(Type::Machine(t))
+                }
+                "int" => {
                     self.pos += 1;
                     Ok(Type::Int)
                 }
-                "usize" => {
+                "nat" => {
                     self.pos += 1;
                     Ok(Type::Nat)
                 }
@@ -233,7 +280,20 @@ impl Parser {
                 Kind::Name("result".into())
             } else {
                 let n = self.name()?;
-                if n.starts_with(|c: char| c.is_ascii_uppercase()) && self.eat("{") {
+                if self.eat("::") {
+                    let ty = MachineInt::parse(&n)
+                        .ok_or_else(|| self.err("qualified constants require an integer type"))?;
+                    let (lo, hi) = ty.bounds();
+                    let bound = self.name()?;
+                    Kind::Constant(
+                        ty,
+                        match bound.as_str() {
+                            "MAX" | "max" => hi,
+                            "MIN" | "min" => lo,
+                            _ => return Err(self.err("expected MAX or MIN")),
+                        },
+                    )
+                } else if n.starts_with(|c: char| c.is_ascii_uppercase()) && self.eat("{") {
                     let mut fields = Vec::new();
                     if !self.eat("}") {
                         loop {
@@ -540,17 +600,16 @@ mod tests {
     use super::*;
     #[test]
     fn parses_calls_branches_and_arrays() {
-        let f = parse(
-            "fn main() -> usize { let a: [usize; 2] = [1, 2]; if true { f(a[0]) } else { 3 } }",
-        )
-        .unwrap();
+        let f =
+            parse("fn main() -> nat { let a: [nat; 2] = [1, 2]; if true { f(a[0]) } else { 3 } }")
+                .unwrap();
         assert!(matches!(f.functions[0].result.kind, Kind::If(..)));
     }
     #[test]
     fn rejects_truncated_proofs_and_deep_syntax() {
-        assert!(parse("fn f() -> usize { 1 } proof {").is_err());
+        assert!(parse("fn f() -> nat { 1 } proof {").is_err());
         let s = format!(
-            "fn f() -> usize {{ {}1{} }}",
+            "fn f() -> nat {{ {}1{} }}",
             "(".repeat(200),
             ")".repeat(200)
         );

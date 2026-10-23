@@ -1,7 +1,7 @@
 //! Bounded reference evaluator; construction requires a verified program.
 use crate::{
     memory::{Memory, PlaneId, Projection, Reference},
-    syntax::{Expr, Function, Kind, Struct, Type},
+    syntax::{Expr, Function, Kind, MachineInt, Struct, Type},
     verify::VerifiedProgram,
 };
 use std::collections::BTreeMap;
@@ -16,11 +16,12 @@ pub enum Value {
     Record(String, BTreeMap<String, Value>),
     Unit,
     Ref(Box<Type>, Reference, Vec<Projection>),
+    Machine(MachineInt, i128),
 }
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Int(n) | Self::Nat(n) => write!(f, "{n}"),
+            Self::Int(n) | Self::Nat(n) | Self::Machine(_, n) => write!(f, "{n}"),
             Self::Bool(b) => write!(f, "{b}"),
             Self::Array(items) => {
                 write!(f, "[")?;
@@ -41,7 +42,7 @@ impl std::fmt::Display for Value {
 impl Value {
     fn number(&self) -> Result<i128> {
         match self {
-            Self::Int(n) | Self::Nat(n) => Ok(*n),
+            Self::Int(n) | Self::Nat(n) | Self::Machine(_, n) => Ok(*n),
             _ => Err("expected integer".into()),
         }
     }
@@ -60,7 +61,14 @@ impl Value {
             Self::Record(n, _) => Some(Type::Named(n.clone())),
             Self::Ref(t, _, _) => Some(Type::Ref(t.clone())),
             Self::Unit => Some(Type::Unit),
-            _ => None,
+            Self::Machine(t, _) => Some(Type::Machine(*t)),
+            Self::Array(items) => Some(Type::Array(
+                Box::new(items.first().and_then(Value::hint).unwrap_or(Type::Int)),
+                Box::new(Expr {
+                    kind: Kind::Number(items.len() as i128),
+                    line: 0,
+                }),
+            )),
         }
     }
 }
@@ -75,6 +83,7 @@ struct Evaluator<'a> {
 impl Evaluator<'_> {
     fn hint(&self, e: &Expr, env: &BTreeMap<String, Value>) -> Option<Type> {
         match &e.kind {
+            Kind::Constant(t, _) => Some(Type::Machine(*t)),
             Kind::Name(n) => env.get(n).and_then(Value::hint),
             Kind::Unary(op, x) if op == "*" => {
                 if let Some(Type::Ref(t)) = self.hint(x, env) {
@@ -136,11 +145,8 @@ impl Evaluator<'_> {
                     let id = self.memory.plane(r)?;
                     let mut root = self.memory.read(r)?.clone();
                     replace_projection(&mut root, &path, new)?;
-                    self.memory.write(
-                        id,
-                        root.clone(),
-                        matches!(old, Value::Record(..) | Value::Array(..)),
-                    )?;
+                    let replace_plane = !same_layout(&old, project(&root, &path)?);
+                    self.memory.write(id, root.clone(), replace_plane)?;
                     for (n, p) in &self.roots {
                         if *p == id {
                             env.insert(n.clone(), root.clone());
@@ -179,6 +185,7 @@ impl Evaluator<'_> {
                     self.expr(target, &env, None)?
                 };
                 let new = self.expr(&statement.value, &env, old.hint().as_ref())?;
+                let replace_plane = !same_layout(&old, &new);
                 let mut fields = Vec::new();
                 let root = path(target, &mut fields)?;
                 replace(
@@ -190,7 +197,7 @@ impl Evaluator<'_> {
                     self.memory.write(
                         *id,
                         env.get(&root).cloned().ok_or("unknown assignment root")?,
-                        matches!(old, Value::Record(..) | Value::Array(..)),
+                        replace_plane,
                     )?;
                 }
                 continue;
@@ -240,10 +247,11 @@ impl Evaluator<'_> {
     ) -> Result<Value> {
         match &e.kind {
             Kind::Unit => Ok(Value::Unit),
-            Kind::Number(n) => Ok(if matches!(expected, Some(Type::Nat)) {
-                Value::Nat(*n)
-            } else {
-                Value::Int(*n)
+            Kind::Constant(t, n) => Ok(Value::Machine(*t, *n)),
+            Kind::Number(n) => Ok(match expected {
+                Some(Type::Nat) => Value::Nat(*n),
+                Some(Type::Machine(t)) => Value::Machine(*t, *n),
+                _ => Value::Int(*n),
             }),
             Kind::Bool(b) => Ok(Value::Bool(*b)),
             Kind::Name(n) => {
@@ -293,12 +301,21 @@ impl Evaluator<'_> {
                         !self.expr(x, env, Some(&Type::Bool))?.boolean()?,
                     ))
                 } else {
-                    Ok(Value::Int(
-                        self.expr(x, env, Some(&Type::Int))?
-                            .number()?
-                            .checked_neg()
-                            .ok_or("bootstrap evaluator integer overflow")?,
-                    ))
+                    let ty = expected
+                        .cloned()
+                        .or_else(|| self.hint(x, env))
+                        .filter(|t| matches!(t, Type::Machine(_)))
+                        .unwrap_or(Type::Int);
+                    let n = self
+                        .expr(x, env, Some(&ty))?
+                        .number()?
+                        .checked_neg()
+                        .ok_or("bootstrap evaluator integer overflow")?;
+                    Ok(if let Type::Machine(t) = ty {
+                        Value::Machine(t, n)
+                    } else {
+                        Value::Int(n)
+                    })
                 }
             }
             Kind::Binary(op, a, b) if op == "&&" || op == "||" => {
@@ -331,10 +348,18 @@ impl Evaluator<'_> {
                     _ => return Err("unsupported binary expression".into()),
                 }
                 .ok_or("bootstrap evaluator integer overflow")?;
-                Ok(if ty == Type::Nat {
-                    Value::Nat(number)
-                } else {
-                    Value::Int(number)
+                Ok(match ty {
+                    Type::Nat => Value::Nat(number),
+                    Type::Machine(t) => {
+                        let (lo, hi) = t.bounds();
+                        if number < lo || number > hi {
+                            return Err(
+                                "verified machine overflow: compiler/runtime disagreement".into()
+                            );
+                        }
+                        Value::Machine(t, number)
+                    }
+                    _ => Value::Int(number),
                 })
             }
             Kind::Array(items) => {
@@ -442,6 +467,27 @@ impl Evaluator<'_> {
     }
 }
 
+fn same_layout(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Record(an, a), Value::Record(bn, b)) => {
+            an == bn
+                && a.len() == b.len()
+                && a.iter()
+                    .all(|(n, v)| b.get(n).is_some_and(|w| same_layout(v, w)))
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(v, w)| same_layout(v, w))
+        }
+        (Value::Int(_), Value::Int(_))
+        | (Value::Nat(_), Value::Nat(_))
+        | (Value::Bool(_), Value::Bool(_))
+        | (Value::Ref(..), Value::Ref(..))
+        | (Value::Unit, Value::Unit) => true,
+        (Value::Machine(a, _), Value::Machine(b, _)) => a == b,
+        _ => false,
+    }
+}
+
 fn project<'a>(value: &'a Value, path: &[Projection]) -> Result<&'a Value> {
     if path.is_empty() {
         return Ok(value);
@@ -491,7 +537,7 @@ mod tests {
     use crate::verify::verify;
     #[test]
     fn executes_verified_calls_arrays_and_branches() {
-        let s = "fn abs(n: isize) -> isize ensures (result >= 0) { if n >= 0 { n } else { -n } } fn main() -> isize { let a: [isize; 2] = [-4, 8]; abs(a[0]) }";
+        let s = "fn abs(n: int) -> int ensures (result >= 0) { if n >= 0 { n } else { -n } } fn main() -> int { let a: [int; 2] = [-4, 8]; abs(a[0]) }";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "4");
         assert_eq!(
             verify(include_str!("../examples/contracts.evg"))
@@ -504,7 +550,7 @@ mod tests {
     }
     #[test]
     fn false_entry_precondition_cannot_execute() {
-        assert!(verify("fn main() -> usize where (false) { 1 }")
+        assert!(verify("fn main() -> nat where (false) { 1 }")
             .unwrap()
             .run()
             .is_err());
@@ -512,7 +558,7 @@ mod tests {
     #[test]
     fn reports_evaluator_overflow_without_panicking() {
         let source = format!(
-            "fn double(n: isize) -> isize {{ n + n }} fn main() -> isize {{ double({}) }}",
+            "fn double(n: int) -> int {{ n + n }} fn main() -> int {{ double({}) }}",
             i128::MAX
         );
         assert!(verify(&source).unwrap().run().is_err());

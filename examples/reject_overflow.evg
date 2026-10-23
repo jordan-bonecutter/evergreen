@@ -1,0 +1,4 @@
+// Missing n < usize::MAX: the arithmetic operation cannot be proved safe.
+fn increment(n: usize) -> usize {
+    n + 1
+}

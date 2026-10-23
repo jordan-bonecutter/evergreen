@@ -4,7 +4,7 @@ ensures (result == n + 1) {
     n + 1
 }
 
-fn absolute(n: isize) -> isize ensures (result >= 0) {
+fn absolute(n: isize) -> isize where (n > isize::MIN) ensures (result >= 0) {
     if n >= 0 { n } else { -n }
 }
 

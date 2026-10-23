@@ -4,6 +4,7 @@ type Buffer struct {
 } where (len <= cap);
 
 fn grow(b: Buffer) -> Buffer
+where (b.cap < usize::MAX)
 ensures (result.len == b.len + 1 && result.cap == b.cap + 1) {
     Buffer { len: b.len + 1, cap: b.cap + 1 }
 }
