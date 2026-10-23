@@ -1,5 +1,12 @@
 # Evergreen
 
+## Bootstrap implementation
+
+The bootstrap compiler is written in dependency-free Rust. See
+[the bootstrap guide](docs/bootstrap.md) for commands, supported syntax, and
+the current trust boundary. The remainder of this README is the original
+language design sketch; not all of it is implemented yet.
+
 Evergreen is a systems programming language, aimed to finally be a successor to
 C and C++. Why have we failed so many times? Let's look at Rust for an example:
 

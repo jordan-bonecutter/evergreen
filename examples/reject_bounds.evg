@@ -1,0 +1,4 @@
+// Must fail: no proof establishes index < n.
+fn bad_index(n: usize, data: [isize; n], index: usize) -> isize {
+    data[index]
+}

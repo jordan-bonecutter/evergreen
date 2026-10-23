@@ -1,0 +1,12 @@
+[package]
+name = "evergreen"
+version = "0.1.0"
+edition = "2021"
+description = "Bootstrap interpreter for the Evergreen language"
+license = "MIT"
+
+[[bin]]
+name = "evg"
+path = "src/main.rs"
+
+[dependencies]

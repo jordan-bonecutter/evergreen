@@ -1,0 +1,4 @@
+// Must fail: n is never strictly greater than itself.
+fn bad_increment(n: usize) -> usize ensures (result > n) {
+    n
+}
