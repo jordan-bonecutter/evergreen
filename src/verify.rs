@@ -198,6 +198,8 @@ struct Context<'a> {
     memory: Memory<Symbol>,
     roots: BTreeMap<String, PlaneId>,
     specification: bool,
+    current: Option<String>,
+    measure: Option<Linear>,
 }
 
 impl<'a> Context<'a> {
@@ -216,6 +218,8 @@ impl<'a> Context<'a> {
             memory: Memory::default(),
             roots: BTreeMap::new(),
             specification: false,
+            current: None,
+            measure: None,
         }
     }
     fn fresh_name(&mut self) -> String {
@@ -736,6 +740,9 @@ impl<'a> Context<'a> {
                 Ok(v)
             }
             Kind::Call(name, args) => {
+                if self.specification && self.current.as_ref() == Some(name) {
+                    return Err("recursive calls are forbidden in specifications".into());
+                }
                 if name == "move" || name == "drop" {
                     if self.specification {
                         return Err("specifications and facts cannot move or drop values".into());
@@ -785,6 +792,22 @@ impl<'a> Context<'a> {
                 if let Some(pre) = &f.pre {
                     let p = self.proposition(pre)?;
                     self.prove(&p, &format!("precondition of {name}"), e.line)?;
+                }
+                if self.current.as_ref() == Some(name) {
+                    let entry = self
+                        .measure
+                        .clone()
+                        .ok_or("recursive calls require a decreases clause")?;
+                    let expression = f
+                        .decreases
+                        .as_ref()
+                        .ok_or("recursive calls require a decreases clause")?;
+                    let next = self.eval(expression, Some(&Ty::Nat))?.number()?;
+                    self.prove(
+                        &Formula::Ge(entry.sub(&next)?.add(&Linear::number(-1))?),
+                        "strictly decreasing recursion measure",
+                        e.line,
+                    )?;
                 }
                 let ret = self.resolve(&f.ret)?;
                 let value = self.arbitrary(&ret)?;
@@ -871,13 +894,21 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
     let mut functions = BTreeMap::new();
     let mut obligations = 0;
     for f in &parsed.functions {
+        if matches!(f.name.as_str(), "move" | "drop") {
+            return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));
+        }
         if type_has_reference(&f.ret, &structs) {
             return Err(format!("line {}: returning references needs an explicit lifetime/plane contract; unsupported", f.line));
         }
         if functions.contains_key(&f.name) {
             return Err(format!("line {}: duplicate function {}", f.line, f.name));
         }
-        let mut ctx = Context::new(&functions, &structs);
+        let mut available = functions.clone();
+        if f.decreases.is_some() {
+            available.insert(f.name.clone(), f.clone());
+        }
+        let mut ctx = Context::new(&available, &structs);
+        ctx.current = Some(f.name.clone());
         for (n, t) in &f.params {
             if ctx.env.contains_key(n) {
                 return Err(format!("line {}: duplicate parameter {n}", f.line));
@@ -893,6 +924,11 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
             ctx.specification = false;
         }
         let ret = ctx.resolve(&f.ret)?;
+        if let Some(measure) = &f.decreases {
+            ctx.specification = true;
+            ctx.measure = Some(ctx.eval(measure, Some(&Ty::Nat))?.number()?);
+            ctx.specification = false;
+        }
         let contract_env = ctx.env.clone();
         for statement in &f.body {
             if let Some(target) = &statement.target {
@@ -1078,5 +1114,27 @@ mod tests {
         assert!(verify("fn escape() -> &usize {let x: usize = 1; &x}").is_err());
         assert!(verify("fn write(r: &usize) -> () { *r = 1; () }").is_err());
         assert!(verify("fn f(n: usize) -> usize ensures (result == move(n)) { n }").is_err());
+    }
+
+    #[test]
+    fn verifies_well_founded_recursion() {
+        let s = "fn countdown(n: usize) -> usize ensures (result == n) decreases (n) { if n == 0 { 0 } else { countdown(n - 1) + 1 } } fn main() -> usize ensures (result == 12) { countdown(12) }";
+        assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "12");
+        for body in [
+            "loop(n)",
+            "loop(n + 1)",
+            "if n == 0 { loop(n) } else { loop(n - 1) }",
+        ] {
+            assert!(
+                verify(&format!(
+                    "fn loop(n: usize) -> usize decreases (n) {{ {body} }}"
+                ))
+                .is_err(),
+                "{body}"
+            );
+        }
+        assert!(
+            verify("fn bad(n: usize) -> usize ensures (bad(n) == 0) decreases (n) {0}").is_err()
+        );
     }
 }

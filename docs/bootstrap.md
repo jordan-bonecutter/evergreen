@@ -62,7 +62,13 @@ the same root. Symbolic-index reference projections, partial moves, reference
 returns, and writes through reference parameters are rejected until their plane
 and effect contracts are implemented. Read-only reference parameters work.
 
-Not yet supported: recursion, patterns,
+Self recursion requires `decreases (measure)` after the postcondition. The
+measure must have type `usize`; every recursive call must prove that its value
+is strictly smaller than the entry measure. The callee contract is available
+only under this well-founded induction rule. Recursive calls in specifications
+are rejected. Mutual recursion is not implemented yet.
+
+Not yet supported: patterns,
 allocation, FFI, machine layouts, or native code generation. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
 

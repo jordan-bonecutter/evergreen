@@ -60,6 +60,7 @@ pub struct Function {
     pub ret: Type,
     pub pre: Option<Expr>,
     pub post: Option<Expr>,
+    pub decreases: Option<Expr>,
     pub body: Vec<Statement>,
     pub result: Expr,
     pub proof: Vec<String>,
@@ -371,6 +372,14 @@ impl Parser {
         } else {
             None
         };
+        let decreases = if self.eat("decreases") {
+            self.expect("(")?;
+            let m = self.expr(0)?;
+            self.expect(")")?;
+            Some(m)
+        } else {
+            None
+        };
         self.expect("{")?;
         let mut body = Vec::new();
         let result = loop {
@@ -452,6 +461,7 @@ impl Parser {
             ret,
             pre,
             post,
+            decreases,
             body,
             result,
             proof,
