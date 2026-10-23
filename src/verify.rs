@@ -219,7 +219,7 @@ fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
         Type::Int | Type::Nat => false,
         Type::Named(n) => structs
             .get(n)
-            .is_some_and(|s| !s.ghost && s.fields.iter().all(|(_, t)| runtime_type(t, structs))),
+            .is_some_and(|s| !s.ideal && s.fields.iter().all(|(_, t)| runtime_type(t, structs))),
         Type::Array(t, _) | Type::Ref(t) => runtime_type(t, structs),
         _ => true,
     }
@@ -271,7 +271,7 @@ struct Context<'a> {
     drops: &'a BTreeSet<String>,
     dropping: bool,
     helpers: &'a BTreeSet<String>,
-    ghost: bool,
+    ideal: bool,
 }
 
 impl<'a> Context<'a> {
@@ -299,7 +299,7 @@ impl<'a> Context<'a> {
             drops,
             dropping: false,
             helpers,
-            ghost: false,
+            ideal: false,
         }
     }
     fn fresh_name(&mut self) -> String {
@@ -307,7 +307,7 @@ impl<'a> Context<'a> {
         format!("evg_{}", self.fresh)
     }
     fn number_type(&self) -> Ty {
-        if self.ghost || self.specification {
+        if self.ideal || self.specification {
             Ty::Int
         } else {
             Ty::Machine(MachineInt::parse("isize").expect("isize type"))
@@ -344,7 +344,7 @@ impl<'a> Context<'a> {
     }
     fn resolve(&mut self, t: &Type) -> Result<Ty> {
         match t {
-            Type::Int | Type::Nat if !self.ghost && !self.specification => Err("int and nat are proof-only; use a machine integer for runtime storage or declare ghost code".into()),
+            Type::Int | Type::Nat if !self.ideal && !self.specification => Err("int and nat are proof-only; use a machine integer for runtime storage or declare ideal code".into()),
             Type::Int => Ok(Ty::Int), Type::Nat => Ok(Ty::Nat),
             Type::Bool => Ok(Ty::Bool),
             Type::Machine(t) => Ok(Ty::Machine(*t)),
@@ -356,7 +356,7 @@ impl<'a> Context<'a> {
                         "unknown struct {n}; recursive types are not supported yet"
                     ));
                 }
-                if self.structs.get(n).is_some_and(|s| s.ghost) && !self.ghost && !self.specification {return Err(format!("{n} is ghost data and has no runtime layout"));}
+                if self.structs.get(n).is_some_and(|s| s.ideal) && !self.ideal && !self.specification {return Err(format!("{n} is ideal data and has no runtime layout"));}
                 Ok(Ty::Record(n.clone()))
             }
             Type::Array(element, len) => {
@@ -1203,9 +1203,9 @@ impl<'a> Context<'a> {
                     .get(name)
                     .cloned()
                     .ok_or_else(|| format!("unknown struct {name}"))?;
-                if def.ghost && !self.ghost && !self.specification {
+                if def.ideal && !self.ideal && !self.specification {
                     return Err(format!(
-                        "{name} is ghost data and cannot be constructed at runtime"
+                        "{name} is ideal data and cannot be constructed at runtime"
                     ));
                 }
                 let saved = self.env.clone();
@@ -1385,7 +1385,7 @@ impl<'a> Context<'a> {
             }
             Kind::Call(name, args) => {
                 if name == "int" || name == "nat" {
-                    if !self.ghost && !self.specification {
+                    if !self.ideal && !self.specification {
                         return Err("mathematical views are proof-only".into());
                     }
                     if args.len() != 1 {
@@ -1428,9 +1428,9 @@ impl<'a> Context<'a> {
                     return Ok(if name == "drop" { Symbol::Unit } else { value });
                 }
                 let f = self.functions.get(name).cloned().ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration (recursion is not supported yet)"))?;
-                if f.ghost && !self.ghost && !self.specification {
+                if f.ideal && !self.ideal && !self.specification {
                     return Err(format!(
-                        "{name} is ghost code and cannot be called at runtime"
+                        "{name} is ideal code and cannot be called at runtime"
                     ));
                 }
                 if args.len() != f.params.len() {
@@ -1544,9 +1544,9 @@ impl VerifiedProgram {
             .iter()
             .find(|f| f.name == "main")
             .ok_or("run requires fn main()")?;
-        if main.ghost {
+        if main.ideal {
             return Err(
-                "main is ghost code; proof computations are erased and cannot execute".into(),
+                "main is ideal code; proof computations are erased and cannot execute".into(),
             );
         }
         if !main.params.is_empty() {
@@ -1578,11 +1578,11 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
             return Err(format!("line {}: duplicate struct {}", s.line, s.name));
         }
         let mut ctx = Context::new(&empty_functions, &structs, &empty_drops, &empty_drops);
-        ctx.ghost = s.ghost;
+        ctx.ideal = s.ideal;
         for (n, t) in &s.fields {
-            if !s.ghost && !runtime_type(t, &structs) {
+            if !s.ideal && !runtime_type(t, &structs) {
                 return Err(format!(
-                    "line {}: field {n} needs a runtime layout; use ghost type for proof data",
+                    "line {}: field {n} needs a runtime layout; use ideal type for proof data",
                     s.line
                 ));
             }
@@ -1611,9 +1611,9 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
     let mut drops = BTreeSet::new();
     let mut helpers = BTreeSet::new();
     for (target, f) in &parsed.destructors {
-        if structs.get(target).is_some_and(|s| s.ghost) {
+        if structs.get(target).is_some_and(|s| s.ideal) {
             return Err(format!(
-                "line {}: ghost data has no runtime Drop implementation",
+                "line {}: ideal data has no runtime Drop implementation",
                 f.line
             ));
         }
@@ -1631,11 +1631,11 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
     all_functions.extend(parsed.destructors.into_iter().map(|(_, f)| f));
     let mut obligations = 0;
     for f in &all_functions {
-        if !f.ghost
+        if !f.ideal
             && (!runtime_type(&f.ret, &structs)
                 || f.params.iter().any(|(_, t)| !runtime_type(t, &structs)))
         {
-            return Err(format!("line {}: runtime signatures require fixed-layout types; int/nat and ghost records are proof-only", f.line));
+            return Err(format!("line {}: runtime signatures require fixed-layout types; int/nat and ideal records are proof-only", f.line));
         }
         if matches!(f.name.as_str(), "move" | "drop" | "int" | "nat") {
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));
@@ -1652,7 +1652,7 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         }
         let mut ctx = Context::new(&available, &structs, &drops, &helpers);
         ctx.dropping = f.drop_target.is_some();
-        ctx.ghost = f.ghost;
+        ctx.ideal = f.ideal;
         ctx.current = Some(f.name.clone());
         for (n, t) in &f.params {
             if ctx.env.contains_key(n) {
@@ -1741,9 +1741,9 @@ mod tests {
     }
     #[test]
     fn verifies_both_branches_and_natural_subtraction() {
-        verify("ghost fn abs(n: int) -> int ensures (result >= 0) { if n >= 0 { n } else { -n } }")
+        verify("ideal fn abs(n: int) -> int ensures (result >= 0) { if n >= 0 { n } else { -n } }")
             .unwrap();
-        verify("ghost fn sub(n: nat) -> nat ensures (result <= n) { n - 1 }").unwrap();
+        verify("ideal fn sub(n: nat) -> nat ensures (result <= n) { n - 1 }").unwrap();
         assert!(verify(
             "fn bad(n: isize) -> isize ensures (result >= 0) { if n >= 0 { n } else { n } }"
         )
@@ -2079,25 +2079,25 @@ mod tests {
     }
 
     #[test]
-    fn mathematical_values_and_ghost_records_cannot_leak_into_runtime_storage() {
+    fn mathematical_values_and_ideal_records_cannot_leak_into_runtime_storage() {
         for source in [
             "fn main() -> nat {0}",
             "fn main() -> usize {let n: nat = 0; 0}",
             "type Bad struct {n: int} fn main() -> usize {0}",
-            "ghost type Model struct {n: nat} fn main() -> usize {let m = Model {n: 0}; 0}",
-            "ghost fn answer() -> usize {42} fn main() -> usize {answer()}",
+            "ideal type Model struct {n: nat} fn main() -> usize {let m = Model {n: 0}; 0}",
+            "ideal fn answer() -> usize {42} fn main() -> usize {answer()}",
             "fn main() -> usize {let n = nat(42); 0}",
         ] {
             assert!(verify(source).is_err(), "{source}");
         }
-        let source = "ghost fn main() -> nat {1 + 2}";
+        let source = "ideal fn main() -> nat {1 + 2}";
         assert!(verify(source).is_ok());
         assert!(verify(source).unwrap().run().is_err());
     }
 
     #[test]
-    fn proof_views_and_ghost_contracts_are_erased_before_execution() {
-        let source = "ghost fn positive(n: nat) -> bool where (n > 0) ensures (result) {true} fn main() -> usize where (positive(nat(1))) {let value: usize = 42; proof p: nat(value) >= 0; value}";
+    fn proof_views_and_ideal_contracts_are_erased_before_execution() {
+        let source = "ideal fn positive(n: nat) -> bool where (n > 0) ensures (result) {true} fn main() -> usize where (positive(nat(1))) {let value: usize = 42; proof p: nat(value) >= 0; value}";
         assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
         let source = "fn main() -> usize {let value = 42; proof bounded: value <= isize::MAX; 0}";
         assert!(verify(source).is_ok());

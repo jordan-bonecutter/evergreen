@@ -122,8 +122,8 @@ impl Evaluator<'_> {
             .find(|f| f.name == name)
             .cloned()
             .ok_or("unknown function")?;
-        if f.ghost {
-            return Err("ghost functions have no runtime body".into());
+        if f.ideal {
+            return Err("ideal functions have no runtime body".into());
         }
         if f.params.len() != actuals.len() {
             return Err("argument count mismatch".into());
@@ -734,9 +734,9 @@ mod tests {
             .is_err());
     }
     #[test]
-    fn ghost_math_is_never_executed_by_the_runtime() {
+    fn ideal_math_is_never_executed_by_the_runtime() {
         let source = format!(
-            "ghost fn double(n: int) -> int {{ n + n }} ghost fn main() -> int {{ double({}) }}",
+            "ideal fn double(n: int) -> int {{ n + n }} ideal fn main() -> int {{ double({}) }}",
             i128::MAX
         );
         assert!(verify(&source).unwrap().run().is_err());

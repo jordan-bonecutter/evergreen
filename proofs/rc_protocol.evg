@@ -1,13 +1,13 @@
 // Arithmetic protocol model, NOT an RC implementation or a pointer-safety proof.
 // owners/credits are mathematical proof state. Linking them to unforgeable
 // ownership capabilities and actual heap instructions is still required.
-ghost type RcProtocol struct {
+ideal type RcProtocol struct {
     count: nat,
     owners: nat,
     credits: nat,
 } where (fact accounting = count == owners + credits; fact bounded = count <= 18446744073709551615; accounting && bounded);
 
-ghost fn reserve(state: RcProtocol) -> RcProtocol
+ideal fn reserve(state: RcProtocol) -> RcProtocol
 where (state.count < 18446744073709551615)
 ensures (result.count == state.count + 1 && result.owners == state.owners && result.credits == state.credits + 1) {
     let next = state;
@@ -21,7 +21,7 @@ ensures (result.count == state.count + 1 && result.owners == state.owners && res
     next
 }
 
-ghost fn publish(state: RcProtocol) -> RcProtocol
+ideal fn publish(state: RcProtocol) -> RcProtocol
 where (state.credits > 0)
 ensures (result.count == state.count && result.owners == state.owners + 1 && result.credits + 1 == state.credits) {
     let next = state;
@@ -33,13 +33,13 @@ ensures (result.count == state.count && result.owners == state.owners + 1 && res
     next
 }
 
-ghost fn retain(state: RcProtocol) -> RcProtocol
+ideal fn retain(state: RcProtocol) -> RcProtocol
 where (state.count < 18446744073709551615)
 ensures (result.count == state.count + 1 && result.owners == state.owners + 1 && result.credits == state.credits) {
     publish(reserve(state))
 }
 
-ghost fn retire(state: RcProtocol) -> RcProtocol
+ideal fn retire(state: RcProtocol) -> RcProtocol
 where (state.owners > 0)
 ensures (result.count == state.count && result.owners + 1 == state.owners && result.credits == state.credits + 1) {
     let next = state;
@@ -51,7 +51,7 @@ ensures (result.count == state.count && result.owners + 1 == state.owners && res
     next
 }
 
-ghost fn decrement(state: RcProtocol) -> RcProtocol
+ideal fn decrement(state: RcProtocol) -> RcProtocol
 where (state.credits > 0)
 ensures (result.count + 1 == state.count && result.owners == state.owners && result.credits + 1 == state.credits) {
     let next = state;
@@ -63,19 +63,19 @@ ensures (result.count + 1 == state.count && result.owners == state.owners && res
     next
 }
 
-ghost fn release(state: RcProtocol) -> RcProtocol
+ideal fn release(state: RcProtocol) -> RcProtocol
 where (state.owners > 0)
 ensures (result.count + 1 == state.count && result.owners + 1 == state.owners && result.credits == state.credits) {
     decrement(retire(state))
 }
 
-ghost fn zero_count_has_no_owners(state: RcProtocol) -> ()
+ideal fn zero_count_has_no_owners(state: RcProtocol) -> ()
 where (state.count == 0)
 ensures (state.owners == 0 && state.credits == 0) {
     ()
 }
 
-ghost fn final_release(state: RcProtocol) -> RcProtocol
+ideal fn final_release(state: RcProtocol) -> RcProtocol
 where (state.count == 1 && state.owners > 0)
 ensures (result.count == 0 && result.owners == 0 && result.credits == 0) {
     release(state)

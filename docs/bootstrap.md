@@ -15,8 +15,8 @@ tools or downloads. `run` checks every declaration before evaluating `main`.
 The optional `lean-check` and `lean-run` commands use the Lean version in
 `lean-toolchain`; set `EVG_LEAN` to its executable if necessary. `emit` prints
 Lean source without claiming verification. The Lean frontend currently covers
-nonrecursive mathematical ghost functions and vectors. `lean-run` evaluates a
-ghost reference model inside Lean; it is not Evergreen runtime execution.
+nonrecursive mathematical ideal functions and vectors. `lean-run` evaluates a
+ideal reference model inside Lean; it is not Evergreen runtime execution.
 
 The supported language contains typed functions, local `let` bindings,
 named `fact` declarations, preconditions (`where`), postconditions (`ensures`),
@@ -84,12 +84,12 @@ For example, `fn increment(n: usize) -> usize { n + 1 }` is rejected; adding
 signed minimum is rejected as well.
 
 `int` and `nat` are proof-only mathematical integers and naturals. They may occur
-in `ghost fn` and `ghost type` definitions and proof expressions, but cannot be
-stored in executable variables, structs, or function interfaces. Ghost functions
+in `ideal fn` and `ideal type` definitions and proof expressions, but cannot be
+stored in executable variables, structs, or function interfaces. Ideal functions
 cannot be called by runtime expressions; all fact/proof declarations and
 contracts are erased. `nat(value)` and `int(value)` provide mathematical views
 in proof code; the natural view requires nonnegativity. Entry conditions of
-`main` are proved before execution, so ghost predicates are never run by the
+`main` are proved before execution, so ideal predicates are never run by the
 runtime. Unannotated runtime integer literals default to `isize`.
 Natural subtraction saturates at zero. Logical operators in propositions
 are `&&`, `||`, and `!`. Array indices and lengths must be proved nonnegative,
@@ -202,6 +202,6 @@ capabilities. Connecting that arithmetic to unique ownership witnesses,
 physical heap steps, borrowing, and destruction is still necessary. The
 compiler must provide general rules for those concepts rather than RC policy.
 The unbalanced update in `proofs/reject_rc_unbalanced.evg` and reusing a single
-credit twice both fail verification. Ghost erasure and restricting mathematical
-types to proof code are implemented with explicit ghost declarations. Connecting
+credit twice both fail verification. Ideal erasure and restricting mathematical
+types to proof code are implemented with explicit ideal declarations. Connecting
 the model to linear capabilities and physical heap ownership remains planned.

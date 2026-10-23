@@ -108,7 +108,7 @@ pub struct Struct {
     pub fields: Vec<(String, Type)>,
     pub invariant: Option<Expr>,
     pub line: usize,
-    pub ghost: bool,
+    pub ideal: bool,
     pub facts: Vec<(String, Expr)>,
 }
 #[derive(Clone, Debug)]
@@ -130,7 +130,7 @@ pub struct Function {
     pub proof: Option<Vec<String>>,
     pub line: usize,
     pub drop_target: Option<String>,
-    pub ghost: bool,
+    pub ideal: bool,
 }
 
 struct Parser {
@@ -437,7 +437,7 @@ impl Parser {
         }
         Ok(steps)
     }
-    fn function(&mut self, receiver: Option<&str>, ghost: bool) -> Result<Function, String> {
+    fn function(&mut self, receiver: Option<&str>, ideal: bool) -> Result<Function, String> {
         let line = self.line();
         self.expect("fn")?;
         let name = self.name()?;
@@ -623,7 +623,7 @@ impl Parser {
             proof,
             line,
             drop_target: receiver.map(str::to_owned),
-            ghost,
+            ideal,
         })
     }
 
@@ -666,7 +666,7 @@ impl Parser {
         Ok((target, function))
     }
 
-    fn structure(&mut self, ghost: bool) -> Result<Struct, String> {
+    fn structure(&mut self, ideal: bool) -> Result<Struct, String> {
         let line = self.line();
         self.expect("type")?;
         let name = self.name()?;
@@ -714,7 +714,7 @@ impl Parser {
             fields,
             invariant,
             line,
-            ghost,
+            ideal,
             facts,
         })
     }
@@ -733,16 +733,16 @@ pub fn parse(source: &str) -> Result<Program, String> {
     let mut structs = Vec::new();
     let mut destructors = Vec::new();
     while p.peek() != "<eof>" {
-        let ghost = p.eat("ghost");
+        let ideal = p.eat("ideal");
         if p.peek() == "type" {
-            structs.push(p.structure(ghost)?);
+            structs.push(p.structure(ideal)?);
         } else if p.peek() == "impl" {
-            if ghost {
-                return Err(p.err("ghost data has no runtime destructor"));
+            if ideal {
+                return Err(p.err("ideal data has no runtime destructor"));
             }
             destructors.push(p.destructor()?);
         } else {
-            functions.push(p.function(None, ghost)?);
+            functions.push(p.function(None, ideal)?);
         }
     }
     if functions.is_empty() && destructors.is_empty() {

@@ -161,8 +161,8 @@ impl Emitter {
         }
     }
     fn function(&mut self, f: &Function, run: bool) -> Result<(String, bool)> {
-        if !f.ghost || f.decreases.is_some() {
-            return Err("the optional Lean backend currently checks nonrecursive ghost mathematical functions; executable machine code uses the internal kernel".into());
+        if !f.ideal || f.decreases.is_some() {
+            return Err("the optional Lean backend currently checks nonrecursive ideal mathematical functions; executable machine code uses the internal kernel".into());
         }
         self.env.clear();
         self.facts.clear();

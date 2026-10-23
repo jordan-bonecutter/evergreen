@@ -1,4 +1,4 @@
-ghost fn successor(n: nat) -> nat
+ideal fn successor(n: nat) -> nat
 ensures (result == n + 1) {
     n + 1
 }
