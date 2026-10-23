@@ -1,21 +1,21 @@
 // Check after rc_protocol.evg and stdlib/counter.evg. These wrappers prove
 // that ordinary sequential counter stores realize the count component of the
-// ideal transitions. The scalar metadata is not ownership authority, and this
+// ideal transitions. The erased metadata is not ownership authority, and this
 // does not prove allocation, payload lifetime, or atomic behavior.
-fn reserve_count_matches(count: &usize, owners: usize, credits: usize) -> ()
-where (nat(*count) == nat(owners) + nat(credits) && owners > 0 && *count < usize::MAX)
+fn reserve_count_matches(count: &usize, ideal owners: nat, ideal credits: nat) -> ()
+where (nat(*count) == owners + credits && owners > 0 && *count < usize::MAX)
 modifies(count)
 ensures (nat(*count) == reserve(RcProtocol {
-    count: nat(old(*count)), owners: nat(owners), credits: nat(credits)
+    count: nat(old(*count)), owners: owners, credits: credits
 }).count) {
     let success = counter_increment(count);
 }
 
-fn release_count_matches(count: &usize, owners: usize, credits: usize) -> bool
-where (nat(*count) == nat(owners) + nat(credits) && owners > 0)
+fn release_count_matches(count: &usize, ideal owners: nat, ideal credits: nat) -> bool
+where (nat(*count) == owners + credits && owners > 0)
 modifies(count)
 ensures (nat(*count) == release(RcProtocol {
-    count: nat(old(*count)), owners: nat(owners), credits: nat(credits)
+    count: nat(old(*count)), owners: owners, credits: credits
 }).count && (result == (*count == 0))) {
     counter_decrement(count)
 }

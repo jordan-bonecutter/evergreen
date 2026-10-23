@@ -328,6 +328,7 @@ struct Context<'a> {
     session: &'a mut Session,
     writable: BTreeSet<PlaneId>,
     old_values: BTreeMap<String, Symbol>,
+    ideal_bindings: BTreeSet<String>,
 }
 
 impl<'a> Context<'a> {
@@ -360,11 +361,20 @@ impl<'a> Context<'a> {
             session,
             writable: BTreeSet::new(),
             old_values: BTreeMap::new(),
+            ideal_bindings: BTreeSet::new(),
         }
     }
     fn fresh_name(&mut self) -> String {
         self.fresh += 1;
         format!("evg_{}", self.fresh)
+    }
+    fn runtime_name(&self, name: &str) -> Result<()> {
+        if self.ideal_bindings.contains(name) && !self.ideal && !self.specification {
+            return Err(format!(
+                "{name} is an ideal parameter and cannot be read by runtime code"
+            ));
+        }
+        Ok(())
     }
     fn capture_old(&mut self) -> Result<()> {
         self.old_values.clear();
@@ -395,8 +405,21 @@ impl<'a> Context<'a> {
         }
     }
     fn assume(&mut self, p: &Formula) -> Result<()> {
-        self.paths = extend(&self.paths, p, false)?;
+        let paths = extend(&self.paths, p, false)?;
+        self.paths = self.feasible_paths(paths)?;
         Ok(())
+    }
+    fn feasible_paths(&mut self, paths: Vec<Vec<Linear>>) -> Result<Vec<Vec<Linear>>> {
+        if paths.len() <= 1 {
+            return Ok(paths);
+        }
+        let mut feasible = Vec::new();
+        for path in paths {
+            if !self.session.probe(&path)? {
+                feasible.push(path);
+            }
+        }
+        Ok(feasible)
     }
     fn proposition(&mut self, e: &Expr) -> Result<Formula> {
         let saved = self.specification;
@@ -640,6 +663,7 @@ impl<'a> Context<'a> {
         }
         let mut fields = Vec::new();
         let name = path(place, &mut fields)?;
+        self.runtime_name(&name)?;
         let old = if let Kind::Name(n) = &place.kind {
             self.env
                 .get(n)
@@ -778,7 +802,13 @@ impl<'a> Context<'a> {
     fn update_expression(&self, e: &Expr) -> bool {
         match &e.kind {
             Kind::Call(name, args) => {
-                self.helpers.contains(name) && args.iter().all(|e| self.update_expression(e))
+                self.helpers.contains(name)
+                    && self.functions.get(name).is_some_and(|f| {
+                        f.params.len() == args.len()
+                            && f.params.iter().zip(args).all(|((parameter, _), e)| {
+                                f.ideal_params.contains(parameter) || self.update_expression(e)
+                            })
+                    })
             }
             Kind::Record(..) | Kind::Array(..) => false,
             Kind::Unary(op, x) if op == "*" => {
@@ -982,6 +1012,7 @@ impl<'a> Context<'a> {
     fn location(&mut self, e: &Expr) -> Result<(Reference, Vec<Projection>)> {
         match &e.kind {
             Kind::Name(n) => {
+                self.runtime_name(n)?;
                 let id = if let Some(id) = self.roots.get(n) {
                     *id
                 } else {
@@ -1206,6 +1237,7 @@ impl<'a> Context<'a> {
     fn storage(&mut self, e: &Expr) -> Result<Symbol> {
         match &e.kind {
             Kind::Name(n) => {
+                self.runtime_name(n)?;
                 if let Some(id) = self.roots.get(n) {
                     self.memory.get(*id).cloned()
                 } else {
@@ -1343,6 +1375,7 @@ impl<'a> Context<'a> {
             })),
             Kind::Name(n) => {
                 // A struct's field bindings shadow caller-side logical names.
+                self.runtime_name(n)?;
                 // Never let an unrelated fact redefine a type invariant.
                 if !self.env.contains_key(n) {
                     if let Some(definition) = self.facts.get(n).cloned() {
@@ -1653,7 +1686,7 @@ impl<'a> Context<'a> {
                 // Evaluate actuals in the caller; dependent parameter types in an
                 // isolated callee environment. Restore the caller on completion.
                 let mut actuals = Vec::new();
-                for ((_, t), arg) in f.params.iter().zip(args) {
+                for ((parameter, t), arg) in f.params.iter().zip(args) {
                     let hint = match t {
                         Type::Nat => Some(Ty::Nat),
                         Type::Int => Some(Ty::Int),
@@ -1661,17 +1694,29 @@ impl<'a> Context<'a> {
                         Type::Machine(t) => Some(Ty::Machine(*t)),
                         _ => None,
                     };
+                    let saved_specification = self.specification;
+                    if f.ideal_params.contains(parameter) {
+                        self.specification = true;
+                    }
                     let value = self.eval(arg, hint.as_ref())?;
+                    self.specification = saved_specification;
                     self.validate_argument(&value, e.line)?;
                     actuals.push(value);
                 }
                 let mut saved = self.env.clone();
                 let saved_roots = self.roots.clone();
                 let saved_old = self.old_values.clone();
+                let saved_ideal = self.ideal_bindings.clone();
+                self.ideal_bindings = f.ideal_params.iter().cloned().collect();
                 self.env.clear();
                 self.roots.clear();
                 for ((n, t), value) in f.params.iter().zip(actuals) {
+                    let saved_specification = self.specification;
+                    if f.ideal_params.contains(n) {
+                        self.specification = true;
+                    }
                     let t = self.resolve(t)?;
+                    self.specification = saved_specification;
                     self.compatible(&value.ty(), &t, e.line)?;
                     self.env.insert(n.clone(), value);
                 }
@@ -1689,7 +1734,10 @@ impl<'a> Context<'a> {
                         .decreases
                         .as_ref()
                         .ok_or("recursive calls require a decreases clause")?;
+                    let saved_specification = self.specification;
+                    self.specification = true;
                     let next = self.nonnegative(expression, "nonnegative recursion measure")?;
+                    self.specification = saved_specification;
                     self.prove(
                         &Formula::Ge(entry.sub(&next)?.add(&Linear::number(-1))?),
                         "strictly decreasing recursion measure",
@@ -1725,6 +1773,7 @@ impl<'a> Context<'a> {
                 self.env = saved;
                 self.roots = saved_roots;
                 self.old_values = saved_old;
+                self.ideal_bindings = saved_ideal;
                 if !f.modifies.is_empty() {
                     self.validate_live(e.line)?;
                 }
@@ -1794,15 +1843,7 @@ impl<'a> Context<'a> {
                 paths.extend(extend(&b_paths, &relation_b, false)?);
                 // Drop infeasible branch combinations only with a checked
                 // contradiction certificate; a failed probe keeps the path.
-                if paths.len() > 1 {
-                    let mut feasible = Vec::new();
-                    for path in paths {
-                        if !self.session.probe(&path)? {
-                            feasible.push(path);
-                        }
-                    }
-                    paths = feasible;
-                }
+                paths = self.feasible_paths(paths)?;
                 if paths.len() > 64 {
                     return Err("verification path limit reached (64)".into());
                 }
@@ -2047,6 +2088,13 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
     all_functions.extend(parsed.destructors.into_iter().map(|(_, f)| f));
     let mut obligations = 0;
     for f in &all_functions {
+        for (name, ty) in &f.params {
+            if f.ideal_params.contains(name)
+                && !matches!(ty, Type::Nat | Type::Int | Type::Bool | Type::Machine(_))
+            {
+                return Err(format!("line {}: ideal parameters currently accept scalar proof metadata; affine capabilities and reference-bearing proof arguments require resource-aware erasure", f.line));
+            }
+        }
         if !f.modifies.is_empty() {
             let references = f
                 .params
@@ -2064,7 +2112,9 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         }
         if !f.ideal
             && (!runtime_type(&f.ret, &structs)
-                || f.params.iter().any(|(_, t)| !runtime_type(t, &structs)))
+                || f.params
+                    .iter()
+                    .any(|(n, t)| !f.ideal_params.contains(n) && !runtime_type(t, &structs)))
         {
             return Err(format!("line {}: runtime signatures require fixed-layout types; int/nat and ideal records are proof-only", f.line));
         }
@@ -2084,13 +2134,16 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         let mut ctx = Context::new(&available, &structs, &drops, &helpers, session);
         ctx.dropping = f.drop_target.is_some();
         ctx.ideal = f.ideal;
+        ctx.ideal_bindings = f.ideal_params.iter().cloned().collect();
         ctx.current = Some(f.name.clone());
         for (n, t) in &f.params {
             if ctx.env.contains_key(n) {
                 return Err(format!("line {}: duplicate parameter {n}", f.line));
             }
+            ctx.specification = f.ideal_params.contains(n);
             let ty = ctx.resolve(t)?;
             let value = ctx.arbitrary(&ty)?;
+            ctx.specification = false;
             ctx.env.insert(n.clone(), value);
         }
         ctx.capture_old()?;
@@ -2157,6 +2210,52 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 #[cfg(test)]
 mod tests {
     #[test]
+    fn ideal_parameters_are_checked_and_erased_without_runtime_access() {
+        let source = include_str!("../examples/ideal_parameters.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        assert!(verify(&source.replace("countdown(5, 5)", "countdown(5, 6)")).is_err());
+        assert!(verify(&source.replace(
+            "checked_value(42, expected_answer())",
+            "checked_value(41, expected_answer())"
+        ))
+        .is_err());
+        for body in [
+            "n",
+            "let x = n; x",
+            "let r = &n; *r",
+            "n = 1; 0",
+            "if n > 0 {1} else {0}",
+            "move(n)",
+        ] {
+            assert!(
+                verify(&format!("fn bad(ideal n: usize) -> usize {{{body}}}")).is_err(),
+                "{body}"
+            );
+        }
+        let interleaved = "fn sum(ideal a: nat, x: usize, ideal b: nat, y: usize) -> usize where (x <= 10 && y <= 10 && a == nat(x) && b == nat(y)) ensures (nat(result) == a + b) {x + y} fn main() -> usize ensures (result == 3) {sum(1, 1, 2, 2)}";
+        assert_eq!(verify(interleaved).unwrap().run().unwrap().to_string(), "3");
+        let only_ideal = "fn answer(ideal expected: nat) -> usize where (expected == 42) ensures (nat(result) == expected) {42} fn main() -> usize {answer(42)}";
+        assert_eq!(verify(only_ideal).unwrap().run().unwrap().to_string(), "42");
+        let affine =
+            "ideal affine type Ticket struct {tag: nat} fn bad(ideal t: Ticket) -> usize {0}";
+        assert!(verify(affine)
+            .unwrap_err()
+            .contains("resource-aware erasure"));
+        let effect = "fn write(r: &usize) -> usize modifies(r) ensures (result == 1) {*r = 1; 1} fn metadata(ideal n: nat) -> usize {0} fn main() -> usize {let x: usize = 0; metadata(nat(write(&x)))}";
+        assert!(verify(effect).unwrap_err().contains("modifying calls"));
+        let declarations = source.split("fn main()").next().unwrap();
+        let update = "type Pair struct {left: usize, right: usize} where (fact balanced = left == right; balanced); fn main() -> usize ensures (result == 42) {let p = Pair {left: 0, right: 0}; update(p) lifts balanced {p.left = checked_value(42, expected_answer()); p.right = p.left;} p.right}";
+        assert_eq!(
+            verify(&format!("{declarations}\n{update}"))
+                .unwrap()
+                .run()
+                .unwrap()
+                .to_string(),
+            "42"
+        );
+    }
+
+    #[test]
     fn evergreen_counter_library_checks_boundaries_and_refines_rc_counts() {
         let library = include_str!("../stdlib/counter.evg");
         for initial in [0u64, 1, u64::MAX - 1, u64::MAX] {
@@ -2190,6 +2289,10 @@ mod tests {
         ]
         .join("\n");
         assert!(verify(&source).is_ok());
+        let executed = format!("{source}\n{}", include_str!("../examples/rc_count.evg"));
+        let program = verify(&executed).unwrap();
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(program.run().unwrap().to_string(), "0");
         let alternative = source.replace(
             "let success = counter_increment(count);",
             "let success = counter_try_increment(count);",

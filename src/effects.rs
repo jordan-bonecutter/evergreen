@@ -113,7 +113,10 @@ fn expression(
             if f.params.len() != args.len() {
                 return None;
             }
-            for ((_, t), e) in f.params.iter().zip(args) {
+            for ((name, t), e) in f.params.iter().zip(args) {
+                if f.ideal_params.contains(name) {
+                    continue;
+                }
                 expression(e, Some(t), env, functions, safe)?;
             }
             f.ret.clone()
@@ -135,12 +138,19 @@ pub(crate) fn invariant_independent(
     if f.ideal
         || !f.modifies.is_empty()
         || !scalar(&f.ret)
-        || f.params.iter().any(|(_, t)| !leaf(t))
+        || f.params
+            .iter()
+            .any(|(n, t)| !f.ideal_params.contains(n) && !leaf(t))
         || f.drop_target.is_some()
     {
         return false;
     }
-    let mut env: BTreeMap<String, Type> = f.params.iter().cloned().collect();
+    let mut env: BTreeMap<String, Type> = f
+        .params
+        .iter()
+        .filter(|(n, _)| !f.ideal_params.contains(n))
+        .cloned()
+        .collect();
     // Contracts and their proof computations are erased, not runtime effects.
     for s in &f.body {
         match s {

@@ -149,6 +149,7 @@ pub struct Function {
     pub drop_target: Option<String>,
     pub ideal: bool,
     pub modifies: Vec<String>,
+    pub ideal_params: Vec<String>,
 }
 
 struct Parser {
@@ -461,9 +462,14 @@ impl Parser {
         let name = self.name()?;
         self.expect("(")?;
         let mut params = Vec::new();
+        let mut ideal_params = Vec::new();
         if !self.eat(")") {
             loop {
+                let erased = self.eat("ideal");
                 let n = self.name()?;
+                if erased {
+                    ideal_params.push(n.clone());
+                }
                 let t = match receiver {
                     Some(target) if n == "self" && self.peek() != ":" => Type::Named(target.into()),
                     _ => {
@@ -684,6 +690,7 @@ impl Parser {
             drop_target: receiver.map(str::to_owned),
             ideal,
             modifies,
+            ideal_params,
         })
     }
 
@@ -717,6 +724,7 @@ impl Parser {
             || function.pre.is_some()
             || function.decreases.is_some()
             || !function.modifies.is_empty()
+            || !function.ideal_params.is_empty()
         {
             return Err(
                 self.err("Drop requires fn drop(self) -> () without preconditions or recursion")

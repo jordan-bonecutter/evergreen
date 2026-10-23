@@ -413,6 +413,23 @@ impl Session {
 mod tests {
     use super::*;
     use crate::verify::{prove, verify, verify_with_certificate};
+    #[test]
+    fn erased_count_refinement_replays_and_executes_without_search() {
+        let source = [
+            include_str!("../proofs/rc_protocol.evg"),
+            include_str!("../stdlib/counter.evg"),
+            include_str!("../proofs/rc_count_refinement.evg"),
+            include_str!("../examples/rc_count.evg"),
+        ]
+        .join("\n");
+        let (_, bundle) = prove(&source).unwrap();
+        let program =
+            verify_with_certificate(&source, &ProofBundle::parse(&bundle.to_text()).unwrap())
+                .unwrap();
+        assert_eq!(program.proof_search_count(), 0);
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(program.run().unwrap().to_string(), "0");
+    }
 
     #[test]
     fn replay_checks_certificates_without_search() {
@@ -427,6 +444,7 @@ mod tests {
             include_str!("../examples/write_contracts.evg"),
             include_str!("../examples/conditional_writes.evg"),
             include_str!("../stdlib/counter.evg"),
+            include_str!("../examples/ideal_parameters.evg"),
             include_str!("../proofs/rc_protocol.evg"),
         ] {
             let (original, bundle) = prove(source).unwrap();

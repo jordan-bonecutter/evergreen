@@ -1,0 +1,21 @@
+ideal fn expected_answer() -> nat ensures (result == 42) {42}
+
+fn countdown(n: usize, ideal fuel: nat) -> usize
+where (nat(n) == fuel)
+ensures (result == 0)
+decreases (fuel) {
+    if n == 0 {0} else {countdown(n - 1, fuel - 1)}
+}
+
+fn checked_value(value: usize, ideal expected: nat) -> usize
+where (nat(value) == expected)
+ensures (nat(result) == expected) {
+    proof agrees: nat(value) == expected;
+    value
+}
+
+fn main() -> usize ensures (result == 42) {
+    // The second argument and its ideal function call are erased.
+    let empty = countdown(5, 5);
+    checked_value(42, expected_answer()) + empty
+}

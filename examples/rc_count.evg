@@ -1,0 +1,12 @@
+// Run after rc_protocol.evg, counter.evg, and rc_count_refinement.evg.
+// This exercises physical count refinement, not allocated RC ownership.
+ideal fn one_owner() -> nat ensures (result == 1) {1}
+fn main() -> usize ensures (result == 0) {
+    let count: usize = 1;
+    reserve_count_matches(&count, one_owner(), 0);
+    let first_is_zero = release_count_matches(&count, 2, 0);
+    proof still_live: !first_is_zero;
+    let last_is_zero = release_count_matches(&count, 1, 0);
+    proof reached_zero: last_is_zero;
+    count
+}

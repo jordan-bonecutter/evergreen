@@ -146,12 +146,18 @@ impl Evaluator<'_> {
         if f.ideal {
             return Err("ideal functions have no runtime body".into());
         }
-        if f.params.len() != actuals.len() {
+        if f.params
+            .iter()
+            .filter(|(n, _)| !f.ideal_params.contains(n))
+            .count()
+            != actuals.len()
+        {
             return Err("argument count mismatch".into());
         }
         let mut env: BTreeMap<String, Value> = f
             .params
             .iter()
+            .filter(|(n, _)| !f.ideal_params.contains(n))
             .map(|(n, _)| n.clone())
             .zip(actuals)
             .collect();
@@ -212,7 +218,12 @@ impl Evaluator<'_> {
             }
         }
         let value = self.expr(&f.result, &env, Some(&f.ret))?;
-        let mut names = f.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
+        let mut names = f
+            .params
+            .iter()
+            .filter(|(n, _)| !f.ideal_params.contains(n))
+            .map(|(n, _)| n.clone())
+            .collect::<Vec<_>>();
         names.extend(
             f.body
                 .iter()
@@ -576,19 +587,17 @@ impl Evaluator<'_> {
                         Ok(value)
                     };
                 }
-                let types = self
+                let function = self
                     .functions
                     .iter()
                     .find(|f| f.name == *name)
                     .ok_or("unknown function")?
-                    .params
-                    .iter()
-                    .map(|(_, t)| t.clone())
-                    .collect::<Vec<_>>();
+                    .clone();
                 let values = args
                     .iter()
-                    .zip(&types)
-                    .map(|(x, t)| self.expr(x, env, Some(t)))
+                    .zip(&function.params)
+                    .filter(|(_, (name, _))| !function.ideal_params.contains(name))
+                    .map(|(x, (_, t))| self.expr(x, env, Some(t)))
                     .collect::<Result<Vec<_>>>()?;
                 self.call(name, values)
             }

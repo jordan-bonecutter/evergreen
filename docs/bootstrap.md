@@ -349,12 +349,37 @@ cover zero, one, `usize::MAX - 1`, and `usize::MAX`, and reject unchecked
 underflow/overflow callers. No `trustme` is used.
 
 The refinement wrappers prove that the physical sequential store realizes the
-count component of the ideal reserve/release transitions. Their explicit numeric
+count component of the ideal reserve/release transitions. Their erased numeric
 owner/credit arguments are metadata for this experiment, not ownership tokens.
 This still does not establish a complete RC library's allocation, authority,
 payload lifetime, destruction, or concurrent atomic behavior.
 
-At branch joins, impossible path combinations are discarded only after the
+After disjunctions and branch joins, impossible paths are discarded only after the
 kernel checks a contradiction certificate. Failed probes retain the path.
 Those probes are included in replay artifacts; path and search limits remain
 bounded instead of being raised to accommodate counter branches.
+
+## Ideal scalar parameters
+
+`fn checked(value: usize, ideal expected: nat)` accepts scalar proof metadata
+which is checked at calls and erased from execution. Contracts and proof terms
+can inspect `expected`; runtime expressions, branches, assignments, and borrows
+cannot. Actual ideal arguments are checked as proof expressions, so they cannot
+call modifying helpers. Their expressions are skipped by the evaluator,
+including calls to ideal functions. Runtime arguments retain their source order.
+`examples/ideal_parameters.evg` also uses an erased natural recursion measure.
+
+This first subset accepts `nat`, `int`, Boolean, and machine-scalar metadata.
+Affine and reference-containing ideal parameters are rejected: treating their
+arguments as freely reusable proof expressions would duplicate resource
+witnesses. Passing such witnesses needs resource-aware erasure rules.
+
+The physical count refinement wrappers now use erased owner/credit parameters:
+
+```sh
+cargo run -- run proofs/rc_protocol.evg stdlib/counter.evg proofs/rc_count_refinement.evg examples/rc_count.evg
+```
+
+That program executes increment/release stores, proves their relation to the
+ideal protocol, and reaches zero without evaluating the ideal metadata. The
+metadata still supplies no ownership authority.
