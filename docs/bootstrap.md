@@ -145,7 +145,7 @@ only under this well-founded induction rule. Recursive calls in specifications
 are rejected. Mutual recursion is not implemented yet.
 
 Not yet supported: non-record patterns, heap allocation, FFI, aggregate machine
-layouts, or native lowering of memory/ownership constructs. Unsupported syntax
+layouts, or native lowering of aggregate ownership constructs. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
 
 `src/memory.rs` provides the internal generation-checked plane store used by
@@ -396,13 +396,14 @@ cargo run -- --deny-trust build examples/native.evg -o /tmp/answer
 with the internal backend. Ordered source files and `--proof source.evgproof`
 are supported. No assembler, linker, C compiler, or runtime library is needed.
 The supported subset includes machine scalars, Boolean and unit values, local
-mutation, calls, branches, and erased facts/proofs/ideal scalar arguments.
+mutation, scalar references and their writes, calls, branches, and erased
+facts/proofs/ideal scalar arguments.
 Comparison instructions respect signed versus unsigned machine types.
 
 The entry function's scalar result supplies the low eight bits of the process
 exit status. The executable uses a private 64 KiB writable stack, with separate
 read/execute code pages. Emission checks the entire static call-tree stack bound.
-Recursive native calls, references, arrays, records, destructors, patterns, and
+Recursive native calls, arrays, records, destructors, patterns, and
 invariant updates are rejected. Unsupported or unproved input does not replace
 an existing output; input sources cannot be overwritten.
 
@@ -411,3 +412,19 @@ interpreter, including signed minima, unsigned maxima, argument ordering,
 Boolean expressions, branches, mutation, and erased arguments. These tests are
 not a formal proof of compiler correctness. Source certificates do not certify
 the generated instructions; the native backend and platform remain trusted.
+
+Native scalar references point into the private stack. Borrowing a local,
+following aliases, nested scalar references, and calls with checked scalar
+write contracts are supported. Scalar and reference locals currently occupy
+eight-byte homes; this internal convention is not an aggregate or foreign ABI.
+Reference returns remain rejected by the source checker.
+
+```sh
+cargo run -- --deny-trust build stdlib/counter.evg examples/counter.evg -o /tmp/counter
+cargo run -- --deny-trust build proofs/rc_protocol.evg stdlib/counter.evg proofs/rc_count_refinement.evg examples/rc_count.evg -o /tmp/count-refinement
+```
+
+The counter executable exits with status 42. The count-refinement executable
+performs the checked sequential reserve/release stores and exits with status 0.
+Native differential tests include these programs, scalar alias writes, nested
+references, and Boolean updates.

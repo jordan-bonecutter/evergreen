@@ -12,10 +12,13 @@ const STACK: usize = 65536;
 const MAX_CODE: usize = 8 * 1024 * 1024;
 
 fn scalar(t: &Type) -> Result<()> {
+    if let Type::Ref(inner) = t {
+        return scalar(inner);
+    }
     if matches!(t, Type::Machine(_) | Type::Bool | Type::Unit) {
         Ok(())
     } else {
-        Err("native backend currently requires scalar runtime values; arrays, records, and references are unsupported".into())
+        Err("native backend currently requires scalar runtime values and references; arrays and records are unsupported".into())
     }
 }
 fn machine() -> Type {
@@ -93,6 +96,11 @@ impl Emitter<'_> {
             Kind::Bool(_) => Some(Type::Bool),
             Kind::Constant(t, _) => Some(Type::Machine(*t)),
             Kind::Unary(op, _) if op == "!" => Some(Type::Bool),
+            Kind::Unary(op, x) if op == "&" => self.hint(x).map(|t| Type::Ref(Box::new(t))),
+            Kind::Unary(op, x) if op == "*" => match self.hint(x)? {
+                Type::Ref(inner) => Some(*inner),
+                _ => None,
+            },
             Kind::Unary(_, x) => self.hint(x),
             Kind::Binary(op, _, _)
                 if matches!(
@@ -106,6 +114,21 @@ impl Emitter<'_> {
             Kind::Call(n, _) => self.functions.get(n).map(|f| f.ret.clone()),
             Kind::If(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
             _ => None,
+        }
+    }
+    fn address(&mut self, e: &Expr) -> Result<Type> {
+        match &e.kind {
+            Kind::Name(name) => {
+                let (offset, ty) = self.slots.get(name).ok_or("unknown native place")?;
+                self.code.extend([0x48, 0x8d, 0x85]);
+                self.code.extend(offset.to_le_bytes());
+                Ok(ty.clone())
+            }
+            Kind::Unary(op, x) if op == "*" => match self.expr(x, None)? {
+                Type::Ref(inner) => Ok(*inner),
+                _ => Err("native place dereference requires a reference".into()),
+            },
+            _ => Err("native references currently require scalar local storage".into()),
         }
     }
     fn expr(&mut self, e: &Expr, expected: Option<&Type>) -> Result<Type> {
@@ -127,6 +150,14 @@ impl Emitter<'_> {
                 Type::Unit
             }
             Kind::Name(n) => self.load(n)?,
+            Kind::Unary(op, x) if op == "&" => Type::Ref(Box::new(self.address(x)?)),
+            Kind::Unary(op, x) if op == "*" => {
+                let Type::Ref(inner) = self.expr(x, None)? else {
+                    return Err("native dereference requires a reference".into());
+                };
+                self.code.extend([0x48, 0x8b, 0x00]);
+                *inner
+            }
             Kind::Unary(op, x) if op == "!" => {
                 self.expr(x, Some(&Type::Bool))?;
                 self.code.extend([0x83, 0xf0, 1]);
@@ -295,8 +326,16 @@ impl Emitter<'_> {
                 self.slot(name, ty)
             }
             Statement::Assign { target, value } => {
+                if matches!(&target.kind, Kind::Unary(op, _) if op == "*") {
+                    let ty = self.address(target)?;
+                    self.push();
+                    self.expr(value, Some(&ty))?;
+                    self.pop();
+                    self.code.extend([0x48, 0x89, 0x01]);
+                    return Ok(());
+                }
                 let Kind::Name(name) = &target.kind else {
-                    return Err("native field/reference assignments are unsupported".into());
+                    return Err("native field assignments are unsupported".into());
                 };
                 let (offset, ty) = self
                     .slots
@@ -440,7 +479,7 @@ mod tests {
     #[test]
     fn native_rejects_unsupported_memory_recursion_and_entry_assumptions() {
         for source in [
-            "fn main() -> usize {let x: usize = 1; let r = &x; *r}",
+            "fn main() -> usize {let a: [usize; 1] = [1]; let r = &a; (*r)[0]}",
             "fn main() -> usize {let a: [usize; 1] = [1]; a[0]}",
             include_str!("../examples/destructure.evg"),
             include_str!("../examples/recursion.evg"),
@@ -489,7 +528,7 @@ mod tests {
         let directory =
             std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
         fs::create_dir(&directory).unwrap();
-        let cases = [
+        let mut cases = [
             include_str!("../examples/native.evg"),
             "fn main() -> i8 {-128}",
             "fn main() -> u8 {255}",
@@ -500,13 +539,35 @@ mod tests {
             "fn main() -> bool {(1 < 2) == !(3 < 2)}",
             "fn main() -> usize {let x: usize = 42; let y = move(x); y}",
             "fn main() -> usize {let x: usize = 1; drop(x); x = 42; x}",
+            "fn main() -> usize {let x: usize = 1; let r = &x; *r = 42; x}",
+            "fn main() -> usize {let x: usize = 1; let a = &x; let b = &x; *a = 42; *b}",
+            "fn main() -> usize {let x: usize = 42; let r = &x; let rr = &r; **rr}",
+            "fn main() -> usize {let x: usize = 1; let y: usize = 42; let r = &x; let rr = &r; r = &y; **rr}",
+            "fn read(r: &usize) -> usize ensures (result == *r) {*r} fn main() -> usize {let x: usize = 42; read(&x)}",
+            "fn flip(r: &bool) modifies(r) ensures (*r == !old(*r)) {*r = !*r;} fn main() -> bool {let x = false; flip(&x); x}",
             "fn main() -> usize {(9 - 2) * 6}",
             "fn main() -> bool {true && (false || true)}",
             "fn main() -> () {()}",
             "fn choose(a: usize, b: usize, flag: bool) -> usize ensures ((flag && result == a) || (!flag && result == b)) {if flag {a} else {b}} fn main() -> usize {choose(7, 42, false)}",
             "fn add(a: usize, b: usize) -> usize where (a <= 10 && b <= 10) ensures (result == a + b) {a + b} fn main() -> usize {add(1, add(2, 3))}",
             "fn sum(a: usize,b: usize,c: usize,d: usize,e: usize,f: usize,g: usize,h: usize) -> usize where (a <= 10 && b <= 10 && c <= 10 && d <= 10 && e <= 10 && f <= 10 && g <= 10 && h <= 10) {a+b+c+d+e+f+g+h} fn main() -> usize {sum(1,2,3,4,5,6,7,8)}",
-        ];
+        ].map(str::to_owned).to_vec();
+        cases.push(
+            [
+                include_str!("../stdlib/counter.evg"),
+                include_str!("../examples/counter.evg"),
+            ]
+            .join("\n"),
+        );
+        cases.push(
+            [
+                include_str!("../proofs/rc_protocol.evg"),
+                include_str!("../stdlib/counter.evg"),
+                include_str!("../proofs/rc_count_refinement.evg"),
+                include_str!("../examples/rc_count.evg"),
+            ]
+            .join("\n"),
+        );
         for (index, source) in cases.iter().enumerate() {
             let program = verify(source).unwrap();
             let expected = match program.run().unwrap() {
