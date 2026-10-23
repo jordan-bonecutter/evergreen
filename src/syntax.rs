@@ -161,6 +161,7 @@ pub struct Function {
     pub pre: Option<Expr>,
     pub post: Option<Expr>,
     pub decreases: Option<Expr>,
+    pub borrows: Option<Expr>,
     pub body: Vec<Statement>,
     pub result: Expr,
     pub proof: Option<Vec<String>>,
@@ -214,6 +215,7 @@ impl Parser {
                     | "proof"
                     | "where"
                     | "ensures"
+                    | "borrows"
                     | "if"
                     | "else"
                     | "true"
@@ -530,6 +532,14 @@ impl Parser {
                 self.expect(",")?;
             }
         }
+        let borrows = if self.eat("borrows") {
+            self.expect("(")?;
+            let reference = self.expr(0)?;
+            self.expect(")")?;
+            Some(reference)
+        } else {
+            None
+        };
         let post = if self.eat("ensures") {
             self.expect("(")?;
             let p = self.expr(0)?;
@@ -705,6 +715,7 @@ impl Parser {
             pre,
             post,
             decreases,
+            borrows,
             body,
             result,
             proof,
@@ -745,6 +756,7 @@ impl Parser {
             || function.ret != Type::Unit
             || function.pre.is_some()
             || function.decreases.is_some()
+            || function.borrows.is_some()
             || !function.modifies.is_empty()
             || !function.ideal_params.is_empty()
         {

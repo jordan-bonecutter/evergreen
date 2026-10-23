@@ -277,6 +277,20 @@ fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     }
 }
 
+// Exact alias contracts may name an incoming reference or project a fixed
+// place through it. They cannot compute, allocate, call, or introduce evidence.
+fn borrow_expression(e: &Expr) -> bool {
+    match &e.kind {
+        Kind::Name(_) => true,
+        Kind::Field(e, _) => borrow_expression(e),
+        Kind::Unary(op, e) if op == "&" || op == "*" => borrow_expression(e),
+        Kind::Index(e, index) => {
+            borrow_expression(e) && matches!(index.kind, Kind::Number(n) if n >= 0)
+        }
+        _ => false,
+    }
+}
+
 fn destructor_expression(e: &Expr) -> bool {
     match &e.kind {
         Kind::Call(..) | Kind::Record(..) => false,
@@ -1849,6 +1863,11 @@ impl<'a> Context<'a> {
                     self.validate_argument(&value, e.line)?;
                     actuals.push(value);
                 }
+                // A later argument can consume storage borrowed by an earlier
+                // argument. Recheck the complete actual list at the call boundary.
+                for value in &actuals {
+                    self.validate_argument(value, e.line)?;
+                }
                 let mut saved = std::mem::take(&mut self.env);
                 let saved_roots = std::mem::take(&mut self.roots);
                 let saved_old = std::mem::take(&mut self.old_values);
@@ -1891,7 +1910,16 @@ impl<'a> Context<'a> {
                     )?;
                 }
                 let ret = self.resolve(&f.ret)?;
-                let value = self.arbitrary(&ret)?;
+                let value = if let Some(reference) = &f.borrows {
+                    let phase = self.phase;
+                    self.phase = Phase::Specification;
+                    let value = self.eval(reference, Some(&ret))?;
+                    self.phase = phase;
+                    self.validate_argument(&value, e.line)?;
+                    value
+                } else {
+                    self.arbitrary(&ret)?
+                };
                 for parameter in &f.modifies {
                     let Some(Symbol::Ref(ty, reference, fields)) = self.env.get(parameter).cloned()
                     else {
@@ -2306,8 +2334,16 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         if matches!(f.name.as_str(), "move" | "drop" | "int" | "nat" | "old") {
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));
         }
-        if type_has_reference(&f.ret, &structs) {
-            return Err(format!("line {}: returning references needs an explicit lifetime/plane contract; unsupported", f.line));
+        if let Some(reference) = &f.borrows {
+            if f.ideal
+                || !f.modifies.is_empty()
+                || !matches!(f.ret, Type::Ref(_))
+                || !borrow_expression(reference)
+            {
+                return Err(format!("line {}: borrows requires a reference return, a fixed incoming reference projection, and no modifies effects", f.line));
+            }
+        } else if type_has_reference(&f.ret, &structs) {
+            return Err(format!("line {}: returning references requires an explicit borrows contract; reference-bearing aggregate returns are unsupported", f.line));
         }
         if functions.contains_key(&f.name) {
             return Err(format!("line {}: duplicate function {}", f.line, f.name));
@@ -2358,10 +2394,38 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             ctx.phase = execution;
         }
         let contract_env = ctx.env.clone();
+        let borrowed_result = if let Some(reference) = &f.borrows {
+            ctx.phase = Phase::Specification;
+            let value = ctx.eval(reference, Some(&ret))?;
+            ctx.phase = execution;
+            let Symbol::Ref(_, expected, _) = &value else {
+                return Err("borrows must denote a reference".into());
+            };
+            let incoming = f.params.iter().any(|(name, ty)| {
+                matches!(ty, Type::Ref(_))
+                    && matches!(contract_env.get(name), Some(Symbol::Ref(_, r, _)) if r == expected)
+            });
+            if !incoming {
+                return Err(format!("line {}: borrows must refer to caller-owned parameter storage, not a local parameter slot", reference.line));
+            }
+            Some(value)
+        } else {
+            None
+        };
         for statement in &f.body {
             ctx.statement(statement)?;
         }
         let value = ctx.scoped_eval(&f.result, Some(&ret))?;
+        if let Some(Symbol::Ref(_, expected, path)) = &borrowed_result {
+            if !matches!(&value, Symbol::Ref(_, actual, actual_path) if actual == expected && actual_path == path)
+            {
+                return Err(format!(
+                    "line {}: returned reference does not match its borrows contract",
+                    f.result.line
+                ));
+            }
+            ctx.validate_argument(&value, f.result.line)?;
+        }
         ctx.validate_live(f.result.line)?;
         ctx.finish_scope(f)?;
         if let Some(post) = &f.post {
@@ -2402,6 +2466,38 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reference_returns_preserve_incoming_planes_and_reject_local_escapes() {
+        let good = include_str!("../examples/borrow_returns.evg");
+        assert_eq!(verify(good).unwrap().run().unwrap().to_string(), "42");
+        for source in [
+            "fn bad(r: &usize) -> &usize borrows(r) {let local = *r; &local}",
+            "fn bad(a: &usize, b: &usize) -> &usize borrows(a) {b}",
+            "fn bad(r: &usize) -> &&usize borrows(&r) {&r}",
+            "fn bad(n: usize) -> &usize borrows(&n) {&n}",
+            "fn bad(r: &usize) -> &usize {r}",
+            "fn bad(r: &usize) -> usize borrows(r) {*r}",
+            "fn bad(r: &usize) -> &usize borrows(if true {r} else {r}) {r}",
+        ] {
+            assert!(verify(source).is_err(), "{source}");
+        }
+        let stale = good.replace("    *r", "    drop(pair);\n    *r");
+        assert!(verify(&stale).is_err());
+        let replaced = good.replace(
+            "    *r",
+            "    drop(pair);\n    pair = Pair {left: 0, right: 42};\n    *r",
+        );
+        assert!(verify(&replaced).is_err());
+        let array = "fn first(a: &[usize; 2]) -> &usize borrows(&(*a)[0]) {&(*a)[0]} fn main() -> usize {let a: [usize; 2] = [42, 7]; *first(&a)}";
+        assert!(verify(array).is_err());
+    }
+
+    #[test]
+    fn later_call_arguments_cannot_invalidate_earlier_borrows() {
+        let source = "type Owner struct {tag: usize} impl Drop for Owner {fn drop(self){}} fn read_then_consume(r: &usize, owner: Owner) -> usize {*r} fn main() -> usize {let owner = Owner {tag: 42}; read_then_consume(&owner.tag, owner)}";
+        assert!(verify(source).is_err());
+    }
+
     #[test]
     fn compact_type_graphs_and_fact_chains_have_checked_work_limits() {
         let mut source = "type Node0 struct {value: usize}\n".to_owned();

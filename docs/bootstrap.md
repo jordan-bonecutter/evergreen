@@ -134,8 +134,8 @@ parent that owns a resource with its own destructor. The debug API
 
 The initial implementation conservatively treats an aggregate's storage as one
 plane, so replacing a nested aggregate may invalidate unrelated references in
-the same root. Symbolic-index reference projections, partial moves, and reference
-returns remain unsupported. Read-only reference parameters work; scalar writes
+the same root. Symbolic-index reference projections and partial moves remain unsupported.
+Reference returns require the exact alias contracts described below. Scalar writes
 require the explicit contracts described below.
 
 Self recursion requires `decreases (measure)` after the postcondition. The
@@ -508,3 +508,28 @@ depth 64, and each verification context bounds symbolic expansion and
 expression evaluation. Exceeding these bootstrap limits is a compile error,
 not a trusted assumption. These limits are conservative implementation limits;
 they are not a proof of a whole-process memory or time bound.
+
+A reference return requires an exact alias contract, for example:
+
+```evergreen
+fn identity(r: &usize) -> &usize borrows(r) {r}
+fn right(pair: &Pair) -> &usize
+borrows(&(*pair).right) {&(*pair).right}
+```
+
+`borrows` follows `where`/`modifies` and precedes `ensures`. The contract names
+the exact incoming reference or field projection returned, not merely a value
+with equal contents. The checker compares plane identity, generation, and
+projection independently of arithmetic proofs or `trustme`. The target must
+belong to a reference parameter's incoming plane. References to local values,
+parameter slots, and a different parameter are rejected. Calls instantiate the
+contract with the actual caller reference, so later same-layout writes remain
+visible and dropping/replacing consumed storage cannot revive the reference.
+
+This initial contract supports direct reference returns and fixed record
+projections in the interpreter and native backend. Reference-bearing aggregate
+returns, conditional aliases, projections into opaque array contents, and
+combining reference returns with `modifies` remain unsupported. These need
+stronger summaries rather than fabricated fresh reference storage. All call
+arguments are rechecked together after evaluation, preventing a later argument
+from consuming storage borrowed by an earlier one.

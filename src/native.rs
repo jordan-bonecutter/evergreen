@@ -1171,6 +1171,7 @@ mod tests {
             std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
         fs::create_dir(&directory).unwrap();
         let mut cases = [
+            include_str!("../examples/borrow_returns.evg"),
             include_str!("../examples/recursion.evg"),
             include_str!("../examples/drop.evg"),
             include_str!("../examples/temporary_cleanup.evg"),
