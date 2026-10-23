@@ -473,3 +473,14 @@ Discarding an owned expression drops its temporary at the end of that statement,
 including values returned from helpers and moved out of a binding. Named locals
 retain reverse-binding cleanup order. `examples/temporary_cleanup.evg` checks
 that a returned temporary's fields are cleaned up before a later scope exit.
+
+Owned temporaries inspected through fields (for example, `make().tag`) remain
+alive until the statement's temporary scope ends, then drop in reverse creation
+order. Conditions and branch blocks close their own scopes; a return expression's
+temporaries drop before named locals. Nested function calls preserve the caller's
+pending temporaries. Proof and fact expressions create no runtime temporaries.
+`examples/borrowed_temporaries.evg` exercises these ordering rules.
+
+Implicit temporary cleanup also checks that the destructor receiver still has
+its valid type. A later operand cannot consume an owner referenced by a pending
+temporary and leave that temporary with a dangling field at cleanup.

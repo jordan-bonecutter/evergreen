@@ -81,13 +81,34 @@ struct Evaluator<'a> {
     roots: BTreeMap<String, PlaneId>,
     drops: &'a BTreeSet<String>,
     events: Vec<String>,
+    temporaries: Vec<Value>,
 }
 impl Evaluator<'_> {
+    fn finish_temporaries(&mut self, start: usize) -> Result<()> {
+        let values = self.temporaries.split_off(start);
+        for value in values.into_iter().rev() {
+            self.drop_value(value)?;
+        }
+        Ok(())
+    }
+    fn scoped_expr(
+        &mut self,
+        e: &Expr,
+        env: &BTreeMap<String, Value>,
+        expected: Option<&Type>,
+    ) -> Result<Value> {
+        let start = self.temporaries.len();
+        let value = self.expr(e, env, expected)?;
+        self.finish_temporaries(start)?;
+        Ok(value)
+    }
     fn hint(&self, e: &Expr, env: &BTreeMap<String, Value>) -> Option<Type> {
         match &e.kind {
             Kind::Bool(_) => Some(Type::Bool),
             Kind::Constant(t, _) => Some(Type::Machine(*t)),
             Kind::Name(n) => env.get(n).and_then(Value::hint),
+            Kind::Record(n, _) => Some(Type::Named(n.clone())),
+            Kind::Unary(op, x) if op == "&" => self.hint(x, env).map(|t| Type::Ref(Box::new(t))),
             Kind::Unary(op, x) if op == "*" => {
                 if let Some(Type::Ref(t)) = self.hint(x, env) {
                     Some(*t)
@@ -111,10 +132,18 @@ impl Evaluator<'_> {
                         _ => None,
                     }
                 }
-                match stored(base, env)? {
-                    Value::Record(_, fields) => fields.get(field).and_then(Value::hint),
-                    _ => None,
+                if let Some(Value::Record(_, fields)) = stored(base, env) {
+                    return fields.get(field).and_then(Value::hint);
                 }
+                let Type::Named(name) = self.hint(base, env)? else {
+                    return None;
+                };
+                self.structs
+                    .get(&name)?
+                    .fields
+                    .iter()
+                    .find(|(n, _)| n == field)
+                    .map(|(_, t)| t.clone())
             }
             Kind::Binary(op, _, _)
                 if matches!(
@@ -162,6 +191,7 @@ impl Evaluator<'_> {
             .zip(actuals)
             .collect();
         let saved_roots = std::mem::take(&mut self.roots);
+        let saved_temporaries = std::mem::take(&mut self.temporaries);
         self.depth += 1;
         // Contracts were discharged by the verifier and are erased here.
         for statement in &f.body {
@@ -199,6 +229,7 @@ impl Evaluator<'_> {
                             Statement::Fact { .. } | Statement::Proof { .. } => {}
                             _ => return Err("unverified operation in update".into()),
                         }
+                        self.finish_temporaries(0)?;
                     }
                     for name in locals.into_iter().rev() {
                         if let Some(id) = self.roots.remove(&name) {
@@ -217,8 +248,9 @@ impl Evaluator<'_> {
                     env.insert(name.clone(), v);
                 }
             }
+            self.finish_temporaries(0)?;
         }
-        let value = self.expr(&f.result, &env, Some(&f.ret))?;
+        let value = self.scoped_expr(&f.result, &env, Some(&f.ret))?;
         let mut names = f
             .params
             .iter()
@@ -246,6 +278,7 @@ impl Evaluator<'_> {
             }
         }
         self.roots = saved_roots;
+        self.temporaries = saved_temporaries;
         self.depth -= 1;
         Ok(value)
     }
@@ -606,10 +639,13 @@ impl Evaluator<'_> {
                 self.call(name, values)
             }
             Kind::If(condition, yes, no) => {
-                if self.expr(condition, env, Some(&Type::Bool))?.boolean()? {
-                    self.expr(yes, env, expected)
+                if self
+                    .scoped_expr(condition, env, Some(&Type::Bool))?
+                    .boolean()?
+                {
+                    self.scoped_expr(yes, env, expected)
                 } else {
-                    self.expr(no, env, expected)
+                    self.scoped_expr(no, env, expected)
                 }
             }
         }
@@ -690,7 +726,13 @@ impl Evaluator<'_> {
                     .cloned()
                     .ok_or("storage index out of bounds".into())
             }
-            _ => self.expr(e, env, None),
+            _ => {
+                let value = self.expr(e, env, None)?;
+                if self.value_is_affine(&value) {
+                    self.temporaries.push(value.clone());
+                }
+                Ok(value)
+            }
         }
     }
 }
@@ -770,6 +812,7 @@ impl VerifiedProgram {
             roots: BTreeMap::new(),
             drops: &self.drops,
             events: Vec::new(),
+            temporaries: Vec::new(),
         };
         let value = evaluator.call("main", vec![])?;
         evaluator.drop_value(value.clone())?;
@@ -781,6 +824,29 @@ impl VerifiedProgram {
 mod tests {
     #[test]
     fn unused_owned_temporaries_are_dropped_at_the_statement() {
+        let declarations = include_str!("../examples/borrowed_temporaries.evg")
+            .split("fn main()")
+            .next()
+            .unwrap();
+        let proof_only = format!("{declarations}\nfn main() -> usize {{fact unused_false = first().tag == 0; proof erased: First {{tag: 1}}.tag == 1; 42}}");
+        let (_, events) = verify(&proof_only).unwrap().run_with_events().unwrap();
+        assert!(events.is_empty());
+        let (value, events) = verify(include_str!("../examples/borrowed_temporaries.evg"))
+            .unwrap()
+            .run_with_events()
+            .unwrap();
+        assert_eq!(value.to_string(), "6");
+        assert_eq!(
+            events,
+            [
+                "drop Second",
+                "drop First",
+                "drop First",
+                "drop Second",
+                "drop First",
+                "drop Third"
+            ]
+        );
         let (_, events) = verify(include_str!("../examples/temporary_cleanup.evg"))
             .unwrap()
             .run_with_events()
@@ -789,6 +855,7 @@ mod tests {
         let declarations = "type Resource struct {} impl Drop for Resource {fn drop(self){}} fn make() -> Resource {Resource {}}";
         for body in [
             "Resource {}; 0",
+            "[Resource {}]; 0",
             "make(); 0",
             "let r = Resource {}; move(r); 0",
             "let r = Resource {}; drop(r); 0",

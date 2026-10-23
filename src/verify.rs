@@ -339,6 +339,7 @@ struct Context<'a> {
     old_values: BTreeMap<String, Symbol>,
     ideal_bindings: BTreeSet<String>,
     array_reads: BTreeMap<String, Symbol>,
+    temporaries: Vec<(Symbol, usize)>,
 }
 
 impl<'a> Context<'a> {
@@ -372,6 +373,7 @@ impl<'a> Context<'a> {
             old_values: BTreeMap::new(),
             ideal_bindings: BTreeSet::new(),
             array_reads: BTreeMap::new(),
+            temporaries: Vec::new(),
         }
     }
     fn fresh_name(&mut self) -> String {
@@ -725,6 +727,24 @@ impl<'a> Context<'a> {
     }
 
     fn statement(&mut self, s: &Statement) -> Result<()> {
+        let start = self.temporaries.len();
+        self.statement_inner(s)?;
+        self.finish_temporaries(start)
+    }
+    fn finish_temporaries(&mut self, start: usize) -> Result<()> {
+        for (value, line) in self.temporaries.split_off(start).into_iter().rev() {
+            self.validate_argument(&value, line)
+                .map_err(|e| format!("line {line}: implicit temporary cleanup: {e}"))?;
+        }
+        Ok(())
+    }
+    fn scoped_eval(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
+        let start = self.temporaries.len();
+        let value = self.eval(e, expected)?;
+        self.finish_temporaries(start)?;
+        Ok(value)
+    }
+    fn statement_inner(&mut self, s: &Statement) -> Result<()> {
         match s {
             Statement::Destructure {
                 record,
@@ -1083,6 +1103,18 @@ impl<'a> Context<'a> {
             _ => Err(format!("line {}: expected a referenceable place", e.line)),
         }
     }
+    fn declared_hint(t: &Type) -> Option<Ty> {
+        match t {
+            Type::Int => Some(Ty::Int),
+            Type::Nat => Some(Ty::Nat),
+            Type::Bool => Some(Ty::Bool),
+            Type::Unit => Some(Ty::Unit),
+            Type::Machine(t) => Some(Ty::Machine(*t)),
+            Type::Named(n) => Some(Ty::Record(n.clone())),
+            Type::Ref(t) => Self::declared_hint(t).map(|t| Ty::Ref(Box::new(t))),
+            Type::Array(..) => None,
+        }
+    }
     fn hint(&self, e: &Expr) -> Option<Ty> {
         match &e.kind {
             Kind::Bool(_) => Some(Ty::Bool),
@@ -1093,6 +1125,8 @@ impl<'a> Context<'a> {
             Kind::Call(name, _) if name == "int" => Some(Ty::Int),
             Kind::Constant(t, _) => Some(Ty::Machine(*t)),
             Kind::Name(n) => self.env.get(n).map(Symbol::ty),
+            Kind::Record(n, _) => Some(Ty::Record(n.clone())),
+            Kind::Unary(op, x) if op == "&" => self.hint(x).map(|t| Ty::Ref(Box::new(t))),
             Kind::Unary(op, x) if op == "*" => {
                 if let Some(Ty::Ref(t)) = self.hint(x) {
                     Some(*t)
@@ -1116,10 +1150,18 @@ impl<'a> Context<'a> {
                         _ => None,
                     }
                 }
-                match stored(base, &self.env)? {
-                    Symbol::Record(_, fields) => fields.get(field).map(Symbol::ty),
-                    _ => None,
+                if let Some(Symbol::Record(_, fields)) = stored(base, &self.env) {
+                    return fields.get(field).map(Symbol::ty);
                 }
+                let Ty::Record(name) = self.hint(base)? else {
+                    return None;
+                };
+                self.structs
+                    .get(&name)?
+                    .fields
+                    .iter()
+                    .find(|(n, _)| n == field)
+                    .and_then(|(_, t)| Self::declared_hint(t))
             }
             Kind::Binary(op, _, _)
                 if matches!(
@@ -1130,13 +1172,10 @@ impl<'a> Context<'a> {
                 Some(Ty::Bool)
             }
             Kind::Binary(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
-            Kind::Call(n, _) => self.functions.get(n).and_then(|f| match f.ret {
-                Type::Int => Some(Ty::Int),
-                Type::Nat => Some(Ty::Nat),
-                Type::Bool => Some(Ty::Bool),
-                Type::Machine(t) => Some(Ty::Machine(t)),
-                _ => None,
-            }),
+            Kind::Call(n, _) => self
+                .functions
+                .get(n)
+                .and_then(|f| Self::declared_hint(&f.ret)),
             _ => None,
         }
     }
@@ -1368,7 +1407,13 @@ impl<'a> Context<'a> {
                 }
                 self.array_read(&element, &identity, &index)
             }
-            _ => self.eval(e, None),
+            _ => {
+                let value = self.eval(e, None)?;
+                if self.phase != Phase::Specification && self.symbol_is_affine(&value) {
+                    self.temporaries.push((value.clone(), e.line));
+                }
+                Ok(value)
+            }
         }
     }
     fn fact_at(&mut self, place: &Expr, fact: &str, line: usize) -> Result<Formula> {
@@ -1861,7 +1906,9 @@ impl<'a> Context<'a> {
                 Ok(value)
             }
             Kind::If(condition, yes, no) => {
-                let p = self.eval(condition, Some(&Ty::Bool))?.proposition()?;
+                let p = self
+                    .scoped_eval(condition, Some(&Ty::Bool))?
+                    .proposition()?;
                 let base = self.paths.clone();
                 // Give caller bindings stable storage identities before forking.
                 for (name, value) in self.env.clone() {
@@ -1873,14 +1920,14 @@ impl<'a> Context<'a> {
                 let roots = self.roots.clone();
                 let store = self.memory.snapshot();
                 self.paths = extend(&base, &p, false)?;
-                let a = self.eval(yes, expected)?;
+                let a = self.scoped_eval(yes, expected)?;
                 let a_paths = self.paths.clone();
                 let a_store = self.memory.snapshot();
                 self.paths = extend(&base, &p, true)?;
                 self.env = env.clone();
                 self.roots = roots.clone();
                 self.memory = store.snapshot();
-                let b = self.eval(no, Some(&a.ty()))?;
+                let b = self.scoped_eval(no, Some(&a.ty()))?;
                 let b_paths = self.paths.clone();
                 let b_store = self.memory.snapshot();
                 self.paths = base;
@@ -2262,7 +2309,7 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         for statement in &f.body {
             ctx.statement(statement)?;
         }
-        let value = ctx.eval(&f.result, Some(&ret))?;
+        let value = ctx.scoped_eval(&f.result, Some(&ret))?;
         ctx.validate_live(f.result.line)?;
         ctx.finish_scope(f)?;
         if let Some(post) = &f.post {
@@ -2303,6 +2350,22 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn borrowed_temporaries_keep_their_drop_receiver_valid_until_scope_exit() {
+        let declarations = "type Owner struct {tag: usize} where (tag == 7); impl Drop for Owner {fn drop(self){}} type Holder struct {reference: &usize, tag: usize} where (fact live = *reference == 7; live); impl Drop for Holder {fn drop(self){proof receiver_valid: self::live;}} fn consume(owner: Owner) -> usize ensures (result == 0) {0}";
+        let bad = "fn main() -> usize {let owner = Owner {tag: 7}; let value = Holder {reference: &owner.tag, tag: 42}.tag + consume(owner); value}";
+        assert!(verify(&format!("{declarations}\n{bad}"))
+            .unwrap_err()
+            .contains("implicit temporary cleanup"));
+        let good = "fn main() -> usize ensures (result == 42) {let owner = Owner {tag: 7}; let value = Holder {reference: &owner.tag, tag: 42}.tag; drop(owner); value}";
+        let (value, events) = verify(&format!("{declarations}\n{good}"))
+            .unwrap()
+            .run_with_events()
+            .unwrap();
+        assert_eq!(value.to_string(), "42");
+        assert_eq!(events, ["drop Holder", "drop Owner"]);
+    }
+
     #[test]
     fn array_read_facts_survive_contracts_and_branch_scope_changes() {
         let source = include_str!("../examples/array_contracts.evg");
