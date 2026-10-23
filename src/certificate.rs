@@ -422,6 +422,8 @@ mod tests {
             include_str!("../examples/selective_update.evg"),
             include_str!("../examples/conditional_records.evg"),
             include_str!("../examples/affine_values.evg"),
+            include_str!("../examples/destructure.evg"),
+            include_str!("../proofs/affine_credits.evg"),
             include_str!("../proofs/rc_protocol.evg"),
         ] {
             let (original, bundle) = prove(source).unwrap();

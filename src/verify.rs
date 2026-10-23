@@ -268,6 +268,7 @@ fn destructor_expression(e: &Expr) -> bool {
 }
 fn destructor_body(body: &[Statement]) -> bool {
     body.iter().all(|s| match s {
+        Statement::Destructure { .. } => false,
         Statement::Assign { target, value } => {
             destructor_expression(target) && destructor_expression(value)
         }
@@ -627,6 +628,54 @@ impl<'a> Context<'a> {
 
     fn statement(&mut self, s: &Statement) -> Result<()> {
         match s {
+            Statement::Destructure {
+                record,
+                fields,
+                value,
+            } => {
+                let def = self
+                    .structs
+                    .get(record)
+                    .ok_or_else(|| format!("line {}: unknown record {record}", value.line))?;
+                if self.drops.contains(record) {
+                    return Err(format!(
+                        "line {}: destructuring {record} would bypass its Drop implementation",
+                        value.line
+                    ));
+                }
+                let expected = def
+                    .fields
+                    .iter()
+                    .map(|(n, _)| n.as_str())
+                    .collect::<BTreeSet<_>>();
+                let actual = fields
+                    .iter()
+                    .map(|(n, _)| n.as_str())
+                    .collect::<BTreeSet<_>>();
+                let bindings = fields
+                    .iter()
+                    .map(|(_, n)| n.as_str())
+                    .collect::<BTreeSet<_>>();
+                if actual != expected
+                    || actual.len() != fields.len()
+                    || bindings.len() != fields.len()
+                {
+                    return Err(format!("line {}: a record pattern must bind every field exactly once with distinct names", value.line));
+                }
+                for (_, name) in fields {
+                    self.fresh_binding(name, value.line)?;
+                }
+                let Symbol::Record(_, mut values) =
+                    self.eval(value, Some(&Ty::Record(record.clone())))?
+                else {
+                    return Err("record pattern requires a record".into());
+                };
+                for (field, name) in fields {
+                    let v = values.remove(field).ok_or("missing pattern field")?;
+                    self.env.insert(name.clone(), v);
+                }
+                Ok(())
+            }
             Statement::Update {
                 places,
                 lifts,
@@ -1056,13 +1105,11 @@ impl<'a> Context<'a> {
     }
     fn finish_scope(&mut self, f: &Function) -> Result<()> {
         let mut names = f.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
-        names.extend(f.body.iter().filter_map(|s| {
-            if let Statement::Let { name, .. } = s {
-                Some(name.clone())
-            } else {
-                None
-            }
-        }));
+        names.extend(
+            f.body
+                .iter()
+                .flat_map(|s| s.bindings().into_iter().map(str::to_owned)),
+        );
         for name in names.into_iter().rev() {
             let value = if let Some(id) = self.roots.get(&name) {
                 if self.memory.get(*id).is_err() {
@@ -1831,6 +1878,40 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn complete_patterns_transfer_each_field_without_partial_moves() {
+        let source = include_str!("../examples/destructure.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        for replacement in [
+            "Pair {left: first}",
+            "Pair {left: first, left: second}",
+            "Pair {left: first, right: first}",
+            "Pair {unknown: first, right: second}",
+            "Permit {left: first, right: second}",
+        ] {
+            assert!(
+                verify(&source.replace("Pair {left: first, right: second}", replacement)).is_err()
+            );
+        }
+        assert!(
+            verify(&source.replace("let a = consume(first);", "let a = pair.left.tag;")).is_err()
+        );
+        assert!(
+            verify(&source.replace("let b = consume(second);", "let b = consume(first);")).is_err()
+        );
+        let destructor = "type Guard struct {tag: usize} impl Drop for Guard {fn drop(self) {}} fn main() -> usize {let g = Guard {tag: 7}; let Guard {tag} = g; tag}";
+        assert!(verify(destructor).unwrap_err().contains("bypass"));
+        let ideal = "ideal affine type Ticket struct {tag: nat} ideal type Pair struct {left: Ticket, right: Ticket} ideal fn split() -> nat {let pair = Pair {left: Ticket {tag: 2}, right: Ticket {tag: 3}}; let Pair {left, right} = pair; left.tag + right.tag}";
+        assert!(verify(ideal).is_ok());
+        let credits = include_str!("../proofs/affine_credits.evg");
+        assert!(verify(credits).is_ok());
+        let duplicate = format!(
+            "{credits}\n{}",
+            include_str!("../proofs/reject_duplicate_credit.evg")
+        );
+        assert!(verify(&duplicate).unwrap_err().contains("shape(T)"));
+    }
+
     #[test]
     fn affine_values_move_without_requiring_a_destructor() {
         let source = include_str!("../examples/affine_values.evg");

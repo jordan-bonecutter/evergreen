@@ -139,6 +139,23 @@ impl Evaluator<'_> {
         // Contracts were discharged by the verifier and are erased here.
         for statement in &f.body {
             match statement {
+                Statement::Destructure {
+                    record,
+                    fields,
+                    value,
+                } => {
+                    let Value::Record(_, mut values) =
+                        self.expr(value, &env, Some(&Type::Named(record.clone())))?
+                    else {
+                        return Err("record pattern requires a record".into());
+                    };
+                    for (field, name) in fields {
+                        env.insert(
+                            name.clone(),
+                            values.remove(field).ok_or("missing pattern field")?,
+                        );
+                    }
+                }
                 Statement::Assign { target, value } => self.assign(target, value, &mut env)?,
                 Statement::Update { body, .. } => {
                     let mut locals = Vec::new();
@@ -175,13 +192,11 @@ impl Evaluator<'_> {
         }
         let value = self.expr(&f.result, &env, Some(&f.ret))?;
         let mut names = f.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
-        names.extend(f.body.iter().filter_map(|s| {
-            if let Statement::Let { name, .. } = s {
-                Some(name.clone())
-            } else {
-                None
-            }
-        }));
+        names.extend(
+            f.body
+                .iter()
+                .flat_map(|s| s.bindings().into_iter().map(str::to_owned)),
+        );
         for name in names.into_iter().rev() {
             let live = if let Some(id) = self.roots.get(&name) {
                 if self.memory.get(*id).is_err() {
@@ -776,5 +791,18 @@ mod tests {
         let source = "type First struct {} impl Drop for First {fn drop(self){}} type Second struct {} impl Drop for Second {fn drop(self){}} fn main() -> usize {let a = First {}; let b = Second {}; 0}";
         let (_, events) = verify(source).unwrap().run_with_events().unwrap();
         assert_eq!(events, ["drop Second", "drop First"]);
+    }
+
+    #[test]
+    fn destructured_owned_fields_are_cleaned_up_once() {
+        let source = "type First struct {} impl Drop for First {fn drop(self){}} type Second struct {} impl Drop for Second {fn drop(self){}} type Pair struct {left: First, right: Second} fn main() -> usize {let p = Pair {left: First {}, right: Second {}}; let Pair {left, right} = p; 0}";
+        let (_, events) = verify(source).unwrap().run_with_events().unwrap();
+        assert_eq!(events, ["drop Second", "drop First"]);
+        let source = source.replace(
+            "let Pair {left, right} = p;",
+            "let Pair {left, right} = p; drop(left);",
+        );
+        let (_, events) = verify(&source).unwrap().run_with_events().unwrap();
+        assert_eq!(events, ["drop First", "drop Second"]);
     }
 }

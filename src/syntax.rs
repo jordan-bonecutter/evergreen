@@ -76,6 +76,11 @@ pub enum Kind {
 }
 #[derive(Clone, Debug)]
 pub enum Statement {
+    Destructure {
+        record: String,
+        fields: Vec<(String, String)>,
+        value: Expr,
+    },
     Let {
         name: String,
         ty: Option<Type>,
@@ -101,6 +106,17 @@ pub enum Statement {
         body: Vec<Statement>,
         line: usize,
     },
+}
+impl Statement {
+    pub fn bindings(&self) -> Vec<&str> {
+        match self {
+            Self::Let { name, .. } => vec![name],
+            Self::Destructure { fields, .. } => {
+                fields.iter().map(|(_, name)| name.as_str()).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
 }
 #[derive(Clone, Debug)]
 pub struct Struct {
@@ -592,6 +608,36 @@ impl Parser {
                 self.expect("let")?;
             }
             let name = self.name()?;
+            if !fact && self.eat("{") {
+                let mut fields = Vec::new();
+                if !self.eat("}") {
+                    loop {
+                        let field = self.name()?;
+                        let binding = if self.eat(":") {
+                            self.name()?
+                        } else {
+                            field.clone()
+                        };
+                        fields.push((field, binding));
+                        if self.eat("}") {
+                            break;
+                        }
+                        self.expect(",")?;
+                        if self.eat("}") {
+                            break;
+                        }
+                    }
+                }
+                self.expect("=")?;
+                let value = self.expr(0)?;
+                self.expect(";")?;
+                body.push(Statement::Destructure {
+                    record: name,
+                    fields,
+                    value,
+                });
+                continue;
+            }
             let ty = if !fact && self.eat(":") {
                 Some(self.ty()?)
             } else {

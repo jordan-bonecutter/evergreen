@@ -1,0 +1,5 @@
+// Check after affine_credits.evg. The first split consumes c.
+ideal fn duplicate(c: Credit) -> Split {
+    let first = split_credit(c, 0);
+    split_credit(c, 0)
+}

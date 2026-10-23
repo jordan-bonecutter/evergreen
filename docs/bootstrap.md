@@ -269,3 +269,25 @@ constructors private or establish that every ticket represents a real atomic
 reservation: anyone in the current compilation unit can construct a ticket.
 Module visibility, fresh resource identities, and a checked link between
 physical transitions and ideal witnesses remain necessary.
+
+## Complete record patterns
+
+`let Pair {left: first, right: second} = pair;` binds every field, with shorthand
+`let Pair {left, right} = pair;` when names match. An affine source is consumed
+as a whole and becomes `shape(Pair)`; each field then has its own binding and
+cleanup. Missing fields, repeated fields, repeated binding names, and using the
+consumed parent are rejected. Pattern bindings clean up in reverse binding order.
+This supports transferring owned fields without partially initialized records.
+
+Destructuring a type with its own `Drop` implementation is rejected because it
+would bypass that destructor. Fields with their own destructors are supported
+when the parent has none; tests check each runs exactly once. Patterns inside
+open invariant updates, nested patterns, and wildcard patterns remain unsupported.
+See `examples/destructure.evg`.
+
+`proofs/affine_credits.evg` combines the rules: split a weighted affine credit,
+destructure the result, join it again, and prove conservation. Checking it with
+`proofs/reject_duplicate_credit.evg` rejects a second use of the consumed input.
+The example proves conservation through its functions and prevents copying their
+inputs. Its public constructors remain forgeable; these credits do not yet
+carry authority over a physical allocation or atomic counter.

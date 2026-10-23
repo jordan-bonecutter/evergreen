@@ -166,7 +166,7 @@ pub(crate) fn invariant_independent(
                 }
             }
             Statement::Fact { .. } | Statement::Proof { .. } => {} // Checked proof code, erased at execution.
-            Statement::Update { .. } => return false,
+            Statement::Update { .. } | Statement::Destructure { .. } => return false,
         }
     }
     expression(&f.result, Some(&f.ret), &env, functions, safe).is_some()
