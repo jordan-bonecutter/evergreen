@@ -57,6 +57,25 @@ pub struct Expr {
     pub kind: Kind,
     pub line: usize,
 }
+impl Expr {
+    // Check actual tree depth as well as parser recursion: a flat sequence of
+    // left-associative operators or projections otherwise builds an unbounded
+    // tree, including recursively dropped boxes on a parse error.
+    fn bounded_depth(&self, remaining: usize) -> bool {
+        if remaining == 0 {
+            return false;
+        }
+        let child = |e: &Expr| e.bounded_depth(remaining - 1);
+        match &self.kind {
+            Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => child(e),
+            Kind::Binary(_, a, b) | Kind::Index(a, b) => child(a) && child(b),
+            Kind::If(c, a, b) => child(c) && child(a) && child(b),
+            Kind::Array(es) | Kind::Call(_, es) => es.iter().all(child),
+            Kind::Record(_, fields) => fields.iter().all(|(_, e)| child(e)),
+            _ => true,
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
     Number(i128),
@@ -381,6 +400,9 @@ impl Parser {
             Expr { kind, line }
         };
         loop {
+            if !lhs.bounded_depth(128) {
+                return Err(self.err("expression tree depth limit reached (128)"));
+            }
             if min <= 8 && self.eat("::") {
                 let name = self.name()?;
                 lhs = Expr {
@@ -841,6 +863,25 @@ mod tests {
             parse("fn main() -> nat { let a: [nat; 2] = [1, 2]; if true { f(a[0]) } else { 3 } }")
                 .unwrap();
         assert!(matches!(f.functions[0].result.kind, Kind::If(..)));
+    }
+    #[test]
+    fn rejects_flat_chains_before_the_expression_tree_can_overflow() {
+        for expression in [
+            std::iter::repeat_n("1", 300)
+                .collect::<Vec<_>>()
+                .join(" + "),
+            format!("x{}", ".field".repeat(300)),
+            format!("x{}", "[0]".repeat(300)),
+            format!("x{}", "::known".repeat(300)),
+        ] {
+            let error = parse(&format!("fn main() -> usize {{{expression}}}")).unwrap_err();
+            assert!(error.contains("expression tree depth limit"), "{error}");
+        }
+        assert!(parse(&format!(
+            "fn main() -> usize {{{}}}",
+            std::iter::repeat_n("1", 32).collect::<Vec<_>>().join(" + ")
+        ))
+        .is_ok());
     }
     #[test]
     fn rejects_truncated_proofs_and_deep_syntax() {

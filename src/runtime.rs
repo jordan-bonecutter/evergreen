@@ -170,7 +170,6 @@ impl Evaluator<'_> {
             .functions
             .iter()
             .find(|f| f.name == name)
-            .cloned()
             .ok_or("unknown function")?;
         if f.ideal {
             return Err("ideal functions have no runtime body".into());
@@ -483,7 +482,7 @@ impl Evaluator<'_> {
                     .ok_or_else(|| format!("unknown field {field}"))
             }
             Kind::Record(name, entries) => {
-                let def = self.structs.get(name).cloned().ok_or("unknown struct")?;
+                let def = self.structs.get(name).ok_or("unknown struct")?;
                 let mut fields = BTreeMap::new();
                 for (n, e) in entries {
                     let t = def
@@ -628,8 +627,7 @@ impl Evaluator<'_> {
                     .functions
                     .iter()
                     .find(|f| f.name == *name)
-                    .ok_or("unknown function")?
-                    .clone();
+                    .ok_or("unknown function")?;
                 let values = args
                     .iter()
                     .zip(&function.params)

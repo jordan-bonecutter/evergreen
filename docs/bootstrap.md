@@ -493,3 +493,10 @@ reverse binding order. A move transfers cleanup responsibility. Replacement
 cleans up the old live value, and borrowed owned temporaries survive until the
 end of their expression or statement scope. Return values are saved across
 cleanup calls. The emitted code uses no external runtime for these operations.
+
+Compiler work limits also apply before proof search: parsed expression trees
+have depth at most 128, unfolded named type graphs have at most 2048 nodes and
+depth 64, and each verification context bounds symbolic expansion and
+expression evaluation. Exceeding these bootstrap limits is a compile error,
+not a trusted assumption. These limits are conservative implementation limits;
+they are not a proof of a whole-process memory or time bound.

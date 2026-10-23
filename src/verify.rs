@@ -324,6 +324,8 @@ struct Context<'a> {
     proofs: BTreeMap<String, Formula>,
     paths: Vec<Vec<Linear>>,
     fresh: usize,
+    eval_depth: usize,
+    eval_steps: usize,
     obligations: usize,
     memory: Memory<Symbol>,
     roots: BTreeMap<String, PlaneId>,
@@ -358,6 +360,8 @@ impl<'a> Context<'a> {
             proofs: BTreeMap::new(),
             paths: vec![vec![]],
             fresh: 0,
+            eval_depth: 0,
+            eval_steps: 0,
             obligations: 0,
             memory: Memory::default(),
             roots: BTreeMap::new(),
@@ -514,6 +518,9 @@ impl<'a> Context<'a> {
         }
     }
     fn arbitrary(&mut self, t: &Ty) -> Result<Symbol> {
+        if self.fresh >= 8192 {
+            return Err("symbolic value expansion limit reached (8192)".into());
+        }
         let name = self.fresh_name();
         match t {
             Ty::Machine(t) => {
@@ -548,10 +555,10 @@ impl<'a> Context<'a> {
                 identity: name,
             }),
             Ty::Record(name) => {
-                let def = self.structs.get(name).cloned().ok_or("unknown struct")?;
-                let saved = self.env.clone();
-                let saved_roots = self.roots.clone();
-                let saved_facts = self.facts.clone();
+                let def = self.structs.get(name).ok_or("unknown struct")?;
+                let saved = std::mem::take(&mut self.env);
+                let saved_roots = std::mem::take(&mut self.roots);
+                let saved_facts = std::mem::take(&mut self.facts);
                 self.facts = def.facts.iter().cloned().collect();
                 self.roots.clear();
                 self.env.clear();
@@ -597,13 +604,13 @@ impl<'a> Context<'a> {
         let Symbol::Record(name, fields) = value else {
             return Ok(());
         };
-        let def = self.structs.get(name).cloned().ok_or("unknown struct")?;
+        let def = self.structs.get(name).ok_or("unknown struct")?;
         if def.fields.len() != fields.len() {
             return Err(format!("line {line}: wrong fields for {name}"));
         }
-        let saved = self.env.clone();
-        let saved_roots = self.roots.clone();
-        let saved_facts = self.facts.clone();
+        let saved = std::mem::take(&mut self.env);
+        let saved_roots = std::mem::take(&mut self.roots);
+        let saved_facts = std::mem::take(&mut self.facts);
         self.facts = def.facts.iter().cloned().collect();
         self.roots.clear();
         self.env.clear();
@@ -1216,6 +1223,19 @@ impl<'a> Context<'a> {
         self.prove(goal, label, line)
     }
     fn eval(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
+        if self.eval_depth >= 32 || self.eval_steps >= 100_000 {
+            return Err(format!(
+                "line {}: verification evaluation limit reached",
+                e.line
+            ));
+        }
+        self.eval_depth += 1;
+        self.eval_steps += 1;
+        let result = self.eval_checked(e, expected);
+        self.eval_depth -= 1;
+        result
+    }
+    fn eval_checked(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
         let value = self.eval_inner(e, expected).map_err(|s| {
             if s.starts_with("line ") {
                 s
@@ -1784,7 +1804,7 @@ impl<'a> Context<'a> {
                     self.validate_argument(&value, e.line)?;
                     return Ok(if name == "drop" { Symbol::Unit } else { value });
                 }
-                let f = self.functions.get(name).cloned().ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration; self recursion requires decreases"))?;
+                let f = self.functions.get(name).ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration; self recursion requires decreases"))?;
                 if !f.modifies.is_empty() && self.phase == Phase::Specification {
                     return Err("modifying calls are forbidden in proof expressions".into());
                 }
@@ -1829,10 +1849,10 @@ impl<'a> Context<'a> {
                     self.validate_argument(&value, e.line)?;
                     actuals.push(value);
                 }
-                let mut saved = self.env.clone();
-                let saved_roots = self.roots.clone();
-                let saved_old = self.old_values.clone();
-                let saved_ideal = self.ideal_bindings.clone();
+                let mut saved = std::mem::take(&mut self.env);
+                let saved_roots = std::mem::take(&mut self.roots);
+                let saved_old = std::mem::take(&mut self.old_values);
+                let saved_ideal = std::mem::take(&mut self.ideal_bindings);
                 self.ideal_bindings = f.ideal_params.iter().cloned().collect();
                 self.env.clear();
                 self.roots.clear();
@@ -2147,8 +2167,41 @@ pub fn verify_with_certificate(source: &str, bundle: &ProofBundle) -> Result<Ver
     session.finish()?;
     Ok(program)
 }
+// Bound the unfolded type graph before recursive property checks or symbolic
+// record construction. Costs are computed once per declaration using the
+// already checked prefix, so repeated fields cannot cause exponential work.
+fn check_type_expansion(structs: &[Struct]) -> Result<()> {
+    fn cost(t: &Type, known: &BTreeMap<String, (usize, usize)>) -> (usize, usize) {
+        let (nodes, depth) = match t {
+            Type::Named(n) => known.get(n).copied().unwrap_or((1, 1)),
+            Type::Ref(t) | Type::Array(t, _) => cost(t, known),
+            _ => (0, 0),
+        };
+        (nodes.saturating_add(1), depth.saturating_add(1))
+    }
+    let mut known = BTreeMap::new();
+    for s in structs {
+        let mut nodes = 1usize;
+        let mut depth = 1usize;
+        for (_, t) in &s.fields {
+            let (n, d) = cost(t, &known);
+            nodes = nodes.saturating_add(n);
+            depth = depth.max(d.saturating_add(1));
+        }
+        if nodes > 2048 || depth > 64 {
+            return Err(format!(
+                "line {}: type expansion limit reached for {} (2048 nodes, depth 64)",
+                s.line, s.name
+            ));
+        }
+        known.insert(s.name.clone(), (nodes, depth));
+    }
+    Ok(())
+}
+
 fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> {
     let parsed = syntax::parse(source)?;
+    check_type_expansion(&parsed.structs)?;
     let mut structs = BTreeMap::new();
     let empty_functions = BTreeMap::new();
     let empty_drops = BTreeSet::new();
@@ -2259,11 +2312,10 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         if functions.contains_key(&f.name) {
             return Err(format!("line {}: duplicate function {}", f.line, f.name));
         }
-        let mut available = functions.clone();
         if f.decreases.is_some() {
-            available.insert(f.name.clone(), f.clone());
+            functions.insert(f.name.clone(), f.clone());
         }
-        let mut ctx = Context::new(&available, &structs, &drops, &helpers, session);
+        let mut ctx = Context::new(&functions, &structs, &drops, &helpers, session);
         ctx.dropping = f.drop_target.is_some();
         let execution = if f.ideal {
             Phase::Ideal
@@ -2350,6 +2402,31 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn compact_type_graphs_and_fact_chains_have_checked_work_limits() {
+        let mut source = "type Node0 struct {value: usize}\n".to_owned();
+        for i in 1..20 {
+            source.push_str(&format!(
+                "type Node{i} struct {{left: Node{}, right: Node{}}}\n",
+                i - 1,
+                i - 1
+            ));
+        }
+        source.push_str("fn main() -> usize {42}");
+        assert!(verify(&source)
+            .unwrap_err()
+            .contains("type expansion limit"));
+        let mut source = "fn main() -> usize {fact f0 = true;".to_owned();
+        for i in 1..150 {
+            source.push_str(&format!("fact f{i} = f{};", i - 1));
+        }
+        source.push_str("42}");
+        assert!(verify(&source)
+            .unwrap_err()
+            .contains("verification evaluation limit"));
+        assert!(verify("type Pair struct {left: usize, right: usize} fn main() -> usize {let p = Pair {left: 7, right: 42}; p.right}").is_ok());
+    }
+
     #[test]
     fn borrowed_temporaries_keep_their_drop_receiver_valid_until_scope_exit() {
         let declarations = "type Owner struct {tag: usize} where (tag == 7); impl Drop for Owner {fn drop(self){}} type Holder struct {reference: &usize, tag: usize} where (fact live = *reference == 7; live); impl Drop for Holder {fn drop(self){proof receiver_valid: self::live;}} fn consume(owner: Owner) -> usize ensures (result == 0) {0}";
