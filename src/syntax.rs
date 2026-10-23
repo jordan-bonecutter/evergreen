@@ -109,6 +109,7 @@ pub struct Struct {
     pub invariant: Option<Expr>,
     pub line: usize,
     pub ideal: bool,
+    pub affine: bool,
     pub facts: Vec<(String, Expr)>,
 }
 #[derive(Clone, Debug)]
@@ -666,7 +667,7 @@ impl Parser {
         Ok((target, function))
     }
 
-    fn structure(&mut self, ideal: bool) -> Result<Struct, String> {
+    fn structure(&mut self, ideal: bool, affine: bool) -> Result<Struct, String> {
         let line = self.line();
         self.expect("type")?;
         let name = self.name()?;
@@ -715,6 +716,7 @@ impl Parser {
             invariant,
             line,
             ideal,
+            affine,
             facts,
         })
     }
@@ -734,14 +736,21 @@ pub fn parse(source: &str) -> Result<Program, String> {
     let mut destructors = Vec::new();
     while p.peek() != "<eof>" {
         let ideal = p.eat("ideal");
+        let affine = p.eat("affine");
         if p.peek() == "type" {
-            structs.push(p.structure(ideal)?);
+            structs.push(p.structure(ideal, affine)?);
         } else if p.peek() == "impl" {
+            if affine {
+                return Err(p.err("affine modifies a type declaration"));
+            }
             if ideal {
                 return Err(p.err("ideal data has no runtime destructor"));
             }
             destructors.push(p.destructor()?);
         } else {
+            if affine {
+                return Err(p.err("affine modifies a type declaration"));
+            }
             functions.push(p.function(None, ideal)?);
         }
     }

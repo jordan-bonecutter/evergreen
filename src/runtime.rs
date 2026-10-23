@@ -202,12 +202,12 @@ impl Evaluator<'_> {
         Ok(value)
     }
 
-    fn value_needs_drop(&self, value: &Value) -> bool {
+    fn value_is_affine(&self, value: &Value) -> bool {
         match value {
             Value::Record(n, _) => {
-                crate::verify::needs_drop(&Type::Named(n.clone()), self.structs, self.drops)
+                crate::verify::is_affine(&Type::Named(n.clone()), self.structs, self.drops)
             }
-            Value::Array(xs) => xs.iter().any(|v| self.value_needs_drop(v)),
+            Value::Array(xs) => xs.iter().any(|v| self.value_is_affine(v)),
             _ => false,
         }
     }
@@ -306,7 +306,7 @@ impl Evaluator<'_> {
             .roots
             .get(&root_name(target)?)
             .is_none_or(|id| self.memory.get(*id).is_ok());
-        if old_live && self.value_needs_drop(&old) {
+        if old_live && self.value_is_affine(&old) {
             self.drop_value(old.clone())?;
         }
         let replace_plane = !same_layout(&old, &new);
@@ -369,7 +369,7 @@ impl Evaluator<'_> {
                         .cloned()
                         .ok_or_else(|| format!("unknown value {n}"))
                 }?;
-                if self.value_needs_drop(&value) {
+                if self.value_is_affine(&value) {
                     let (r, _) = self.location(e, env)?;
                     let id = self.memory.plane(r)?;
                     self.memory.take(id)?;

@@ -224,7 +224,7 @@ fn clauses<'a>(expression: &'a Expr, out: &mut Vec<&'a Expr>) {
     out.push(expression);
 }
 
-pub(crate) fn needs_drop(
+pub(crate) fn is_affine(
     t: &Type,
     structs: &BTreeMap<String, Struct>,
     drops: &BTreeSet<String>,
@@ -232,11 +232,11 @@ pub(crate) fn needs_drop(
     match t {
         Type::Named(n) => {
             drops.contains(n)
-                || structs
-                    .get(n)
-                    .is_some_and(|s| s.fields.iter().any(|(_, t)| needs_drop(t, structs, drops)))
+                || structs.get(n).is_some_and(|s| {
+                    s.affine || s.fields.iter().any(|(_, t)| is_affine(t, structs, drops))
+                })
         }
-        Type::Array(t, _) => needs_drop(t, structs, drops),
+        Type::Array(t, _) => is_affine(t, structs, drops),
         _ => false,
     }
 }
@@ -545,7 +545,7 @@ impl<'a> Context<'a> {
                 return Err(format!("line {}: writes through reference parameters need an effect contract; unsupported", place.line));
             }
             let old = project(self.memory.read(reference)?, &fields)?.clone();
-            if self.symbol_needs_drop(&old) {
+            if self.symbol_is_affine(&old) {
                 return Err("overwriting owned fields through references requires ownership effect proofs; unsupported".into());
             }
             let new = self.eval(value, Some(&old.ty()))?;
@@ -597,7 +597,7 @@ impl<'a> Context<'a> {
             self.storage(place)?
         };
         let new = self.eval(value, Some(&old.ty()))?;
-        if self.dropping && self.symbol_needs_drop(&old) {
+        if self.dropping && self.symbol_is_affine(&old) {
             return Err(
                 "destructors cannot replace owning fields without cleanup/effect proofs".into(),
             );
@@ -607,7 +607,7 @@ impl<'a> Context<'a> {
             .roots
             .get(&name)
             .is_none_or(|id| self.memory.get(*id).is_ok());
-        if old_live && self.symbol_needs_drop(&old) {
+        if old_live && self.symbol_is_affine(&old) {
             self.validate_argument(&old, place.line)?;
         }
         let mut root = self
@@ -1013,7 +1013,7 @@ impl<'a> Context<'a> {
         })?;
         let projecting_owner = matches!(&e.kind, Kind::Field(..) | Kind::Index(..))
             || matches!(&e.kind, Kind::Unary(op, _) if op == "*");
-        if !self.specification && self.symbol_needs_drop(&value) && projecting_owner {
+        if !self.specification && self.symbol_is_affine(&value) && projecting_owner {
             return Err(format!("line {}: moving owning fields or borrowed values needs partial-initialization tracking; unsupported", e.line));
         }
         if let Some(t) = expected {
@@ -1037,20 +1037,20 @@ impl<'a> Context<'a> {
         }
         Ok(value)
     }
-    fn symbol_needs_drop(&self, value: &Symbol) -> bool {
+    fn symbol_is_affine(&self, value: &Symbol) -> bool {
         match value {
-            Symbol::Record(n, _) => needs_drop(&Type::Named(n.clone()), self.structs, self.drops),
+            Symbol::Record(n, _) => is_affine(&Type::Named(n.clone()), self.structs, self.drops),
             Symbol::Array {
                 items: Some(xs), ..
-            } => xs.iter().any(|v| self.symbol_needs_drop(v)),
-            Symbol::Array { element, .. } => self.ty_needs_drop(element),
+            } => xs.iter().any(|v| self.symbol_is_affine(v)),
+            Symbol::Array { element, .. } => self.ty_is_affine(element),
             _ => false,
         }
     }
-    fn ty_needs_drop(&self, t: &Ty) -> bool {
+    fn ty_is_affine(&self, t: &Ty) -> bool {
         match t {
-            Ty::Record(n) => needs_drop(&Type::Named(n.clone()), self.structs, self.drops),
-            Ty::Array(t, _) => self.ty_needs_drop(t),
+            Ty::Record(n) => is_affine(&Type::Named(n.clone()), self.structs, self.drops),
+            Ty::Array(t, _) => self.ty_is_affine(t),
             _ => false,
         }
     }
@@ -1075,7 +1075,7 @@ impl<'a> Context<'a> {
                     .cloned()
                     .ok_or("unknown cleanup binding")?
             };
-            if self.symbol_needs_drop(&value) {
+            if self.symbol_is_affine(&value) {
                 self.validate_argument(&value, f.result.line)?;
             }
         }
@@ -1241,7 +1241,7 @@ impl<'a> Context<'a> {
                         .cloned()
                         .ok_or_else(|| format!("unknown value {n}"))
                 }?;
-                if !self.specification && self.symbol_needs_drop(&value) {
+                if !self.specification && self.symbol_is_affine(&value) {
                     if self.dropping {
                         return Err("destructor receivers and owned fields cannot be moved in this initial destructor subset".into());
                     }
@@ -1831,6 +1831,31 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn affine_values_move_without_requiring_a_destructor() {
+        let source = include_str!("../examples/affine_values.evg");
+        let program = verify(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.drops.is_empty());
+        for body in [
+            "let p = Permit {tag: 1}; let q = p; p.tag",
+            "let p = Permit {tag: 1}; let q = transfer(p); consume(p)",
+            "let e = Envelope {permit: Permit {tag: 1}}; let q = e; e.permit.tag",
+            "let a = [Permit {tag: 1}]; let b = a; a[0].tag",
+            "let p = Permit {tag: 1}; drop(p); p.tag",
+        ] {
+            let declarations = source.split("fn main()").next().unwrap();
+            assert!(
+                verify(&format!("{declarations} fn main() -> usize {{{body}}}")).is_err(),
+                "{body}"
+            );
+        }
+        let duplicate = "ideal affine type Ticket struct {tag: nat} ideal fn forward(t: Ticket) -> Ticket {t} ideal fn duplicate() -> nat {let t = Ticket {tag: 7}; let u = forward(t); let v = forward(t); 0}";
+        assert!(verify(duplicate).is_err());
+        assert!(verify("affine fn main() -> usize {0}").is_err());
+        assert!(verify("ideal affine fn main() -> nat {0}").is_err());
+    }
+
     #[test]
     fn conditional_records_preserve_branch_relations_and_nested_types() {
         let source = include_str!("../examples/conditional_records.evg");

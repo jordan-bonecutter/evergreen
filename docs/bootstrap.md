@@ -251,3 +251,21 @@ This first cache still checks all source and regenerates its conditions. It is
 not separate compilation of library interfaces, a zero-knowledge proof, or a
 proof of generated machine code. Avoiding repeated frontend work for standard
 libraries will require checked module interfaces and their dependency manifests.
+
+## Affine values without destructors
+
+`affine type Permit struct {tag: usize}` declares a move-only value without
+requiring `impl Drop`. `ideal affine type Ticket struct {tag: nat}` applies the
+same ownership rule to erased proof data. Passing or assigning such a value
+moves it and leaves the old binding as `shape(T)`. Enclosing records and arrays
+are affine too. Scalar field inspection borrows the existing storage; moving
+individual owned fields still requires partial-initialization support.
+Values may be discarded, so this is affine rather than linear ownership.
+Existing types with destructors continue to be affine automatically.
+
+See `examples/affine_values.evg`. This supplies a general prerequisite for
+reservation witnesses without RC-specific compiler rules. It does not make
+constructors private or establish that every ticket represents a real atomic
+reservation: anyone in the current compilation unit can construct a ticket.
+Module visibility, fresh resource identities, and a checked link between
+physical transitions and ideal witnesses remain necessary.
