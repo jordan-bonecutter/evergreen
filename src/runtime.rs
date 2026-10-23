@@ -364,6 +364,9 @@ impl Evaluator<'_> {
         let replace_plane = !same_layout(&old, &new);
         let mut fields = Vec::new();
         let root = path(target, &mut fields)?;
+        if !fields.is_empty() && !old_live {
+            return Err("field assignment cannot restore a consumed owner's shape".into());
+        }
         if let Some(live) = self
             .roots
             .get(&root)

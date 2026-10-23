@@ -452,3 +452,10 @@ must still return a scalar exit-status value.
 For example, `evg build examples/structs.evg -o /tmp/structs` compiles the checked
 `Buffer` transformation and exits with status 2; `examples/conditional_records.evg`
 compiles nested record returns and exits with status 42.
+
+A field assignment cannot reinitialize a parent consumed while evaluating its
+right-hand side. For example, `pair.left = take_left(pair)` is rejected when
+`take_left` consumes the pair: restoring `left` would otherwise revive siblings
+already moved or dropped by the helper. Replacing the whole parent with a new,
+complete value remains valid. `examples/reject_partial_restore.evg` exercises
+this ownership boundary; cleanup tests check the valid complete replacement.

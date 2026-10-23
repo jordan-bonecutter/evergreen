@@ -691,6 +691,9 @@ impl<'a> Context<'a> {
             .roots
             .get(&name)
             .is_none_or(|id| self.memory.get(*id).is_ok());
+        if !fields.is_empty() && !old_live {
+            return Err(format!("line {}: field assignment cannot restore shape(T); replace consumed owner {name} as a whole", place.line));
+        }
         if old_live && self.symbol_is_affine(&old) {
             self.validate_argument(&old, place.line)?;
         }
@@ -2230,6 +2233,23 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn field_assignment_cannot_resurrect_siblings_consumed_by_its_rhs() {
+        let declarations = "type Left struct {} impl Drop for Left {fn drop(self){}} type Right struct {} impl Drop for Right {fn drop(self){}} type Pair struct {left: Left, right: Right} fn take(pair: Pair) -> Left {let Pair {left, right} = pair; left}";
+        let bad = "fn main() -> usize {let pair = Pair {left: Left {}, right: Right {}}; pair.left = take(pair); 0}";
+        assert!(verify(&format!("{declarations}\n{bad}"))
+            .unwrap_err()
+            .contains("field assignment cannot restore shape"));
+        let good = "fn main() -> usize {let pair = Pair {left: Left {}, right: Right {}}; pair = Pair {left: take(pair), right: Right {}}; 0}";
+        let (_, events) = verify(&format!("{declarations}\n{good}"))
+            .unwrap()
+            .run_with_events()
+            .unwrap();
+        assert_eq!(events, ["drop Right", "drop Left", "drop Right"]);
+        let explicit_move = "type Plain struct {left: usize, right: usize} fn take(p: Plain) -> usize {p.left} fn main() -> usize {let p = Plain {left: 1, right: 2}; p.left = take(move(p)); p.left}";
+        assert!(verify(explicit_move).is_err());
+    }
+
     #[test]
     fn ideal_parameters_are_checked_and_erased_without_runtime_access() {
         let source = include_str!("../examples/ideal_parameters.evg");
