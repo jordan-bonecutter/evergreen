@@ -22,14 +22,15 @@ named `fact` declarations, preconditions (`where`), postconditions (`ensures`),
 length-indexed arrays (`[T; n]`), array literals, calls to earlier verified
 functions, and conditional expressions. Array access requires a proof of its bound.
 Nominal structs support dependent fields and `where` invariants. Construction
-and uses of a complete nominal value must establish those invariants. Ordinary
-field assignments may pass through intermediate states: projections retain their
-actual field types, but the whole value cannot be passed, returned, borrowed as
-the nominal type, moved, or destroyed until its invariant is proved again.
-Scope exit also checks live aggregate values. Existing references to fields
-retain their storage identity; a call through a whole-object reference rechecks
-the current target invariant. There is no transaction construct. This is an
-initial sequential rule, not a concurrency memory model. Postconditions refer to
+and field assignments must establish those invariants. `update (place, ...)`
+explicitly opens the invariants of named local struct places. Its body allows
+checked scalar-field writes and pure facts; each invariant must hold again on
+exit. Calls, borrowing, dereferencing, allocation, moves, drops, early exits,
+and suspension are forbidden inside. Owned fields cannot be replaced. Opening
+an invariant does not destroy the object or relinquish its initialized fields.
+The update erases to ordinary stores, not a hardware transaction; concurrency
+will require separate visibility permissions. Outside this construct, assigning
+a value that violates its nominal type is rejected immediately. Postconditions refer to
 the entry values of parameters, even when the function reassigns its locals.
 Unknown obligations fail verification. Facts cannot introduce assumptions:
 each fact must itself have a proof. Only function preconditions are assumptions,
@@ -138,9 +139,9 @@ derivations while keeping search outside the kernel.
 of reserve, publish, retire, decrement, retain, and release. The stored-count
 model is bounded by the target's maximum count. Its arithmetic safety condition
 `count >= owners` is checked at intermediate program points; the stronger
-`count == owners + credits` relation is restored before nominal uses. Zero count
-implies zero owners and credits. There are no RC intrinsics, special type names,
-or transaction blocks in this implementation.
+`count == owners + credits` relation is restored when each generic update closes.
+Zero count implies zero owners and credits. There are no RC intrinsics or
+special type names in this implementation.
 
 This is a protocol model, not an RC library implementation or a memory-safety
 theorem. Its owners and credits are mathematical numbers, not unforgeable

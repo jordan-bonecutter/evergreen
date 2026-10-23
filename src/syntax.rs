@@ -90,6 +90,11 @@ pub enum Statement {
         value: Expr,
     },
     Effect(Expr),
+    Update {
+        places: Vec<String>,
+        body: Vec<Statement>,
+        line: usize,
+    },
 }
 #[derive(Clone, Debug)]
 pub struct Struct {
@@ -451,6 +456,46 @@ impl Parser {
         self.expect("{")?;
         let mut body = Vec::new();
         let result = loop {
+            if self.eat("update") {
+                let line = self.line();
+                self.expect("(")?;
+                let mut places = Vec::new();
+                loop {
+                    places.push(self.name()?);
+                    if self.eat(")") {
+                        break;
+                    }
+                    self.expect(",")?;
+                }
+                self.expect("{")?;
+                let mut updates = Vec::new();
+                while !self.eat("}") {
+                    if self.eat("fact") {
+                        let name = self.name()?;
+                        self.expect("=")?;
+                        let value = self.expr(0)?;
+                        let proof = if self.eat("by") {
+                            Some(self.proof()?)
+                        } else {
+                            None
+                        };
+                        self.expect(";")?;
+                        updates.push(Statement::Fact { name, value, proof });
+                    } else {
+                        let target = self.expr(0)?;
+                        self.expect("=")?;
+                        let value = self.expr(0)?;
+                        self.expect(";")?;
+                        updates.push(Statement::Assign { target, value });
+                    }
+                }
+                body.push(Statement::Update {
+                    places,
+                    body: updates,
+                    line,
+                });
+                continue;
+            }
             if self.eat("return") {
                 let value = self.expr(0)?;
                 self.eat(";");

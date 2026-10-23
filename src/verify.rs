@@ -4,7 +4,7 @@ use crate::{
     memory::{Memory, PlaneId, Projection, Reference},
     syntax::{self, Expr, Function, Kind, MachineInt, Statement, Struct, Type},
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -201,6 +201,7 @@ struct Context<'a> {
     specification: bool,
     current: Option<String>,
     measure: Option<Linear>,
+    opened: BTreeSet<String>,
 }
 
 impl<'a> Context<'a> {
@@ -221,6 +222,7 @@ impl<'a> Context<'a> {
             specification: false,
             current: None,
             measure: None,
+            opened: BTreeSet::new(),
         }
     }
     fn fresh_name(&mut self) -> String {
@@ -385,7 +387,7 @@ impl<'a> Context<'a> {
             let v = fields
                 .get(n)
                 .ok_or_else(|| format!("line {line}: missing field {n}"))?;
-            self.record_valid(v, line)?;
+            self.validate_argument(v, line)?;
             let t = self.resolve(t)?;
             self.compatible(&v.ty(), &t, line)?;
             self.env.insert(n.clone(), v.clone());
@@ -412,6 +414,7 @@ impl<'a> Context<'a> {
             let replace_plane = !self.same_layout(&old, &new);
             let mut root = self.memory.read(reference)?.clone();
             replace_projection(&mut root, &fields, new)?;
+            self.record_valid(&root, place.line)?;
             self.memory.write(id, root.clone(), replace_plane)?;
             for (n, plane) in &self.roots {
                 if *plane == id {
@@ -455,11 +458,7 @@ impl<'a> Context<'a> {
         } else {
             self.storage(place)?
         };
-        let new = if !fields.is_empty() && matches!(old, Symbol::Array { .. }) {
-            self.eval_inner(value, Some(&old.ty()))?
-        } else {
-            self.eval(value, Some(&old.ty()))?
-        };
+        let new = self.eval(value, Some(&old.ty()))?;
         let replace_plane = !self.same_layout(&old, &new);
         let mut root = self
             .env
@@ -467,6 +466,9 @@ impl<'a> Context<'a> {
             .cloned()
             .ok_or("unknown assignment target")?;
         replace(&mut root, &fields, new)?;
+        if !self.opened.contains(&name) {
+            self.record_valid(&root, place.line)?;
+        }
         if let Some(id) = self.roots.get(&name) {
             self.memory.write(*id, root.clone(), replace_plane)?;
         }
@@ -476,6 +478,7 @@ impl<'a> Context<'a> {
 
     fn statement(&mut self, s: &Statement) -> Result<()> {
         match s {
+            Statement::Update { places, body, line } => self.update(places, body, *line),
             Statement::Assign { target, value } => self.assign(target, value),
             Statement::Effect(e) => {
                 self.eval(e, None)?;
@@ -504,6 +507,72 @@ impl<'a> Context<'a> {
                 Ok(())
             }
         }
+    }
+
+    fn update(&mut self, places: &[String], body: &[Statement], line: usize) -> Result<()> {
+        fn root(e: &Expr) -> Option<&str> {
+            match &e.kind {
+                Kind::Name(n) => Some(n),
+                Kind::Field(b, _) => root(b),
+                _ => None,
+            }
+        }
+        fn pure(e: &Expr) -> bool {
+            match &e.kind {
+                Kind::Call(..) | Kind::Record(..) => false,
+                Kind::Unary(op, _) if op == "&" || op == "*" => false,
+                Kind::Unary(_, x) | Kind::Field(x, _) => pure(x),
+                Kind::Binary(_, a, b) | Kind::Index(a, b) => pure(a) && pure(b),
+                Kind::If(c, a, b) => pure(c) && pure(a) && pure(b),
+                Kind::Array(xs) => xs.iter().all(pure),
+                _ => true,
+            }
+        }
+        if !self.opened.is_empty() {
+            return Err("nested invariant updates are not supported yet".into());
+        }
+        let opened: BTreeSet<_> = places.iter().cloned().collect();
+        if opened.len() != places.len() {
+            return Err(format!("line {line}: duplicate update place"));
+        }
+        for name in places {
+            let v = self.eval(
+                &Expr {
+                    kind: Kind::Name(name.clone()),
+                    line,
+                },
+                None,
+            )?;
+            if !matches!(v, Symbol::Record(..)) {
+                return Err(format!(
+                    "line {line}: update requires a live local struct place"
+                ));
+            }
+        }
+        self.opened = opened;
+        for statement in body {
+            match statement {
+                Statement::Assign {target, value} if matches!(target.kind, Kind::Field(..)) && pure(value) => {
+                    let name = root(target).ok_or("update writes must target local struct fields")?;
+                    if !self.opened.contains(name) { return Err(format!("line {}: {name} was not opened by this update", target.line)); }
+                    let old = self.storage(target)?;
+                    if !matches!(old, Symbol::Number(..) | Symbol::Bool(_)) { return Err(format!("line {}: updates currently allow only scalar fields; replacing owned fields requires destructor/effect proofs", target.line)); }
+                    self.assign(target, value)?;
+                }
+                Statement::Fact {value, ..} if pure(value) => self.statement(statement)?,
+                _ => return Err(format!("line {line}: calls, borrowing, moves, drops, and exits are forbidden while invariants are open")),
+            }
+        }
+        for name in places {
+            let value = if let Some(id) = self.roots.get(name) {
+                self.memory.get(*id)?.clone()
+            } else {
+                self.env.get(name).cloned().ok_or("unknown update place")?
+            };
+            self.record_valid(&value, line)?;
+        }
+        self.opened.clear();
+        Ok(())
     }
 
     fn same_layout(&mut self, a: &Symbol, b: &Symbol) -> bool {
@@ -1345,12 +1414,12 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_assignments_can_restore_an_invariant_without_transactions() {
-        let s = "type Pair struct {left: usize, right: usize} where (left == right); fn read(p: &Pair) -> usize {*p.left} fn main() -> usize {let p = Pair {left: 1, right: 1}; p.left = 2; p.right = p.left; p.right}";
+    fn explicit_updates_restore_invariants_and_ordinary_writes_preserve_them() {
+        let s = "type Pair struct {left: usize, right: usize} where (left == right); fn read(p: &Pair) -> usize {*p.left} fn main() -> usize {let p = Pair {left: 1, right: 1}; update (p) {p.left = 2; p.right = p.left;} p.right}";
         // Field projection binds tighter than dereference.
         let s = s.replace("*p.left", "(*p).left");
         assert_eq!(verify(&s).unwrap().run().unwrap().to_string(), "2");
-        let s = "type Storage struct {len: usize, data: [usize; len]} fn main() -> usize {let s = Storage {len: 1, data: [10]}; s.len = 2; s.data = [10, 20]; s.data[1]}";
+        let s = "type Storage struct {len: usize, data: [usize; len]} fn main() -> usize {let s = Storage {len: 1, data: [10]}; s = Storage {len: 2, data: [10, 20]}; s.data[1]}";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "20");
     }
 
@@ -1367,7 +1436,7 @@ mod tests {
                 "{body}"
             );
         }
-        let body = "let p = Pair {left: 1, right: 1}; let r = &p; p.left = 2; p.right = 2; read(r)";
+        let body = "let p = Pair {left: 1, right: 1}; let r = &p; update (p) {p.left = 2; p.right = 2;} read(r)";
         assert_eq!(
             verify(&format!("{prefix} fn main() -> usize {{ {body} }}"))
                 .unwrap()
@@ -1386,5 +1455,43 @@ mod tests {
         assert!(verify(include_str!("../proofs/reject_rc_unbalanced.evg")).is_err());
         let double_publish = format!("{source}\nfn duplicate_credit(s: RcProtocol) -> RcProtocol where (s.credits == 1) {{publish(publish(s))}}");
         assert!(verify(&double_publish).is_err());
+    }
+
+    #[test]
+    fn updates_enforce_visibility_cleanup_and_restoration_boundaries() {
+        let prefix = "type Pair struct {left: usize, right: usize} where (left == right); fn observe(p: &Pair) -> usize {(*p).left} ";
+        for update in [
+            "update (p) {p.left = 2;}",
+            "update (p) {p.left = observe(r); p.right = 2;}",
+            "update (p) {p.left = *r; p.right = 2;}",
+            "update (p) {p.left = drop(p); p.right = 2;}",
+            "update (p) {p.left = move(p); p.right = 2;}",
+            "update (p) {p.left = &p; p.right = 2;}",
+            "update (p) {q.left = 2; q.right = 2;}",
+            "update (p, p) {p.left = 2; p.right = 2;}",
+            "update (p) {p = Pair {left: 2, right: 2};}",
+            "update (p) {p.left = usize::MAX + 1; p.right = 2;}",
+        ] {
+            let source = format!("{prefix} fn main() -> usize {{let p = Pair {{left: 1, right: 1}}; let q = Pair {{left: 1, right: 1}}; let r = &p; {update} p.left}}");
+            assert!(verify(&source).is_err(), "accepted {update}");
+        }
+    }
+
+    #[test]
+    fn updates_preserve_untouched_owned_fields() {
+        let source = "type Resource struct {tag: usize} where (tag == 7); type Pair struct {left: usize, right: usize, resource: Resource} where (left == right); fn main() -> usize {let p = Pair {left: 1, right: 1, resource: Resource {tag: 7}}; update (p) {p.left = 2; p.right = 2;} p.resource.tag}";
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "7");
+        let replace = source.replace(
+            "p.left = 2; p.right = 2;",
+            "p.resource = Resource {tag: 7};",
+        );
+        assert!(verify(&replace).is_err());
+        assert!(verify("type NonZero struct {value: usize} where (value != 0); fn main() -> usize {let x = NonZero {value: 1}; x.value = 0; 0}").is_err());
+    }
+
+    #[test]
+    fn borrowed_invariants_are_checked_through_record_fields() {
+        let source = "type Positive struct {n: usize} where (n > 0); type Holder struct {p: &Positive} fn read(h: Holder) -> usize ensures (result > 0) {(*h.p).n} fn main() -> usize {let p = Positive {n: 1}; let h = Holder {p: &p}; p.n = 0; let result = read(h); p.n = 1; result}";
+        assert!(verify(source).is_err());
     }
 }

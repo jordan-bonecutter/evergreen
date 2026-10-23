@@ -139,6 +139,13 @@ impl Evaluator<'_> {
         for statement in &f.body {
             match statement {
                 Statement::Assign { target, value } => self.assign(target, value, &mut env)?,
+                Statement::Update { body, .. } => {
+                    for update in body {
+                        if let Statement::Assign { target, value } = update {
+                            self.assign(target, value, &mut env)?;
+                        }
+                    }
+                }
                 Statement::Effect(e) => {
                     self.expr(e, &env, None)?;
                 }

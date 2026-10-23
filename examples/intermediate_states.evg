@@ -10,10 +10,11 @@ fn observe(pair: &Pair) -> usize ensures (result == (*pair).left) {
 fn main() -> usize ensures (result == 42) {
     let pair = Pair { left: 1, right: 1 };
     let reference = &pair;
-    pair.left = 42;
-    // Fields have known types, but the complete value is not yet a valid Pair.
-    // Calling observe(reference) here would fail verification.
-    pair.right = pair.left;
-    // The invariant is proved again before this call.
+    update (pair) {
+        pair.left = 42;
+        // The invariant is open here. Calls and borrowing are forbidden.
+        pair.right = pair.left;
+    }
+    // Closing the update proves Pair again; its storage was never moved.
     observe(reference)
 }
