@@ -74,14 +74,22 @@ pub enum Kind {
     Field(Box<Expr>, String),
 }
 #[derive(Clone, Debug)]
-pub struct Statement {
-    pub name: String,
-    pub ty: Option<Type>,
-    pub value: Expr,
-    pub proof: Option<Vec<String>>,
-    pub fact: bool,
-    pub target: Option<Expr>,
-    pub effect: bool,
+pub enum Statement {
+    Let {
+        name: String,
+        ty: Option<Type>,
+        value: Expr,
+    },
+    Fact {
+        name: String,
+        value: Expr,
+        proof: Option<Vec<String>>,
+    },
+    Assign {
+        target: Expr,
+        value: Expr,
+    },
+    Effect(Expr),
 }
 #[derive(Clone, Debug)]
 pub struct Struct {
@@ -453,27 +461,14 @@ impl Parser {
                 if self.eat("=") {
                     let rhs = self.expr(0)?;
                     self.expect(";")?;
-                    body.push(Statement {
-                        name: String::new(),
-                        ty: None,
+                    body.push(Statement::Assign {
+                        target: value,
                         value: rhs,
-                        proof: None,
-                        fact: false,
-                        target: Some(value),
-                        effect: false,
                     });
                     continue;
                 }
                 if self.eat(";") && self.peek() != "}" {
-                    body.push(Statement {
-                        name: String::new(),
-                        ty: None,
-                        value,
-                        proof: None,
-                        fact: false,
-                        target: None,
-                        effect: true,
-                    });
+                    body.push(Statement::Effect(value));
                     continue;
                 }
                 break value;
@@ -499,14 +494,10 @@ impl Parser {
                 None
             };
             self.expect(";")?;
-            body.push(Statement {
-                name,
-                ty,
-                value,
-                proof,
-                fact,
-                target: None,
-                effect: false,
+            body.push(if fact {
+                Statement::Fact { name, value, proof }
+            } else {
+                Statement::Let { name, ty, value }
             });
         };
         self.expect("}")?;

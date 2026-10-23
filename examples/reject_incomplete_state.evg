@@ -1,0 +1,10 @@
+type Pair struct { left: usize, right: usize } where (left == right);
+
+fn observe(pair: &Pair) -> usize { (*pair).left }
+
+fn main() -> usize {
+    let pair = Pair { left: 1, right: 1 };
+    let reference = &pair;
+    pair.left = 2;
+    observe(reference)
+}

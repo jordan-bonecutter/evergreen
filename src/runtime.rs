@@ -1,7 +1,7 @@
 //! Bounded reference evaluator; construction requires a verified program.
 use crate::{
     memory::{Memory, PlaneId, Projection, Reference},
-    syntax::{Expr, Function, Kind, MachineInt, Struct, Type},
+    syntax::{Expr, Function, Kind, MachineInt, Statement, Struct, Type},
     verify::VerifiedProgram,
 };
 use std::collections::BTreeMap;
@@ -137,78 +137,16 @@ impl Evaluator<'_> {
             }
         }
         for statement in &f.body {
-            if let Some(target) = &statement.target {
-                if matches!(&target.kind, Kind::Unary(op, _) if op == "*") {
-                    let (r, path) = self.location(target, &env)?;
-                    let old = project(self.memory.read(r)?, &path)?.clone();
-                    let new = self.expr(&statement.value, &env, old.hint().as_ref())?;
-                    let id = self.memory.plane(r)?;
-                    let mut root = self.memory.read(r)?.clone();
-                    replace_projection(&mut root, &path, new)?;
-                    let replace_plane = !same_layout(&old, project(&root, &path)?);
-                    self.memory.write(id, root.clone(), replace_plane)?;
-                    for (n, p) in &self.roots {
-                        if *p == id {
-                            env.insert(n.clone(), root.clone());
-                        }
-                    }
-                    continue;
+            match statement {
+                Statement::Assign { target, value } => self.assign(target, value, &mut env)?,
+                Statement::Effect(e) => {
+                    self.expr(e, &env, None)?;
                 }
-                fn path(e: &Expr, fields: &mut Vec<String>) -> Result<String> {
-                    match &e.kind {
-                        Kind::Name(n) => Ok(n.clone()),
-                        Kind::Field(b, n) => {
-                            let root = path(b, fields)?;
-                            fields.push(n.clone());
-                            Ok(root)
-                        }
-                        _ => Err("invalid assignment".into()),
-                    }
+                Statement::Fact { .. } => {}
+                Statement::Let { name, ty, value } => {
+                    let v = self.expr(value, &env, ty.as_ref())?;
+                    env.insert(name.clone(), v);
                 }
-                fn replace(root: &mut Value, fields: &[String], value: Value) -> Result<()> {
-                    if fields.is_empty() {
-                        *root = value;
-                        return Ok(());
-                    }
-                    let Value::Record(_, members) = root else {
-                        return Err("invalid field assignment".into());
-                    };
-                    replace(
-                        members.get_mut(&fields[0]).ok_or("unknown field")?,
-                        &fields[1..],
-                        value,
-                    )
-                }
-                let old = if let Kind::Name(n) = &target.kind {
-                    env.get(n).cloned().ok_or("unknown assignment target")?
-                } else {
-                    self.expr(target, &env, None)?
-                };
-                let new = self.expr(&statement.value, &env, old.hint().as_ref())?;
-                let replace_plane = !same_layout(&old, &new);
-                let mut fields = Vec::new();
-                let root = path(target, &mut fields)?;
-                replace(
-                    env.get_mut(&root).ok_or("unknown assignment target")?,
-                    &fields,
-                    new,
-                )?;
-                if let Some(id) = self.roots.get(&root) {
-                    self.memory.write(
-                        *id,
-                        env.get(&root).cloned().ok_or("unknown assignment root")?,
-                        replace_plane,
-                    )?;
-                }
-                continue;
-            }
-            if statement.effect {
-                self.expr(&statement.value, &env, None)?;
-                continue;
-            }
-            if !statement.fact {
-                let value = self.expr(&statement.value, &env, statement.ty.as_ref())?;
-                env.insert(statement.name.clone(), value);
             }
         }
         let value = self.expr(&f.result, &env, Some(&f.ret))?;
@@ -220,6 +158,78 @@ impl Evaluator<'_> {
         self.roots = saved_roots;
         self.depth -= 1;
         Ok(value)
+    }
+
+    fn assign(
+        &mut self,
+        target: &Expr,
+        value: &Expr,
+        env: &mut BTreeMap<String, Value>,
+    ) -> Result<()> {
+        if matches!(&target.kind, Kind::Unary(op, _) if op == "*") {
+            let (r, path) = self.location(target, env)?;
+            let old = project(self.memory.read(r)?, &path)?.clone();
+            let new = self.expr(value, env, old.hint().as_ref())?;
+            let id = self.memory.plane(r)?;
+            let mut root = self.memory.read(r)?.clone();
+            replace_projection(&mut root, &path, new)?;
+            let replace_plane = !same_layout(&old, project(&root, &path)?);
+            self.memory.write(id, root.clone(), replace_plane)?;
+            for (n, p) in &self.roots {
+                if *p == id {
+                    env.insert(n.clone(), root.clone());
+                }
+            }
+            return Ok(());
+        }
+        fn path(e: &Expr, fields: &mut Vec<String>) -> Result<String> {
+            match &e.kind {
+                Kind::Name(n) => Ok(n.clone()),
+                Kind::Field(b, n) => {
+                    let root = path(b, fields)?;
+                    fields.push(n.clone());
+                    Ok(root)
+                }
+                _ => Err("invalid assignment".into()),
+            }
+        }
+        fn replace(root: &mut Value, fields: &[String], value: Value) -> Result<()> {
+            if fields.is_empty() {
+                *root = value;
+                return Ok(());
+            }
+            let Value::Record(_, members) = root else {
+                return Err("invalid field assignment".into());
+            };
+            replace(
+                members.get_mut(&fields[0]).ok_or("unknown field")?,
+                &fields[1..],
+                value,
+            )
+        }
+        let old = if let Kind::Name(n) = &target.kind {
+            env.get(n).cloned().ok_or("unknown assignment target")?
+        } else {
+            self.expr(target, env, None)?
+        };
+        let new = self.expr(value, env, old.hint().as_ref())?;
+        let replace_plane = !same_layout(&old, &new);
+        let mut fields = Vec::new();
+        let root = path(target, &mut fields)?;
+        replace(
+            env.get_mut(&root).ok_or("unknown assignment target")?,
+            &fields,
+            new,
+        )?;
+        if let Some(id) = self.roots.get(&root) {
+            self.memory.write(
+                *id,
+                env.get(&root).cloned().ok_or("unknown assignment root")?,
+                replace_plane,
+            )?;
+        }
+
+        Ok(())
     }
     fn expr(
         &mut self,

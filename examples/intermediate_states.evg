@@ -1,0 +1,19 @@
+type Pair struct {
+    left: usize,
+    right: usize,
+} where (left == right);
+
+fn observe(pair: &Pair) -> usize {
+    (*pair).left
+}
+
+fn main() -> usize ensures (result == 42) {
+    let pair = Pair { left: 1, right: 1 };
+    let reference = &pair;
+    pair.left = 42;
+    // Fields have known types, but the complete value is not yet a valid Pair.
+    // Calling observe(reference) here would fail verification.
+    pair.right = pair.left;
+    // The invariant is proved again before this call.
+    observe(reference)
+}

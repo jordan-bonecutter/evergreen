@@ -2,7 +2,7 @@
 use crate::{
     kernel::{self, Linear},
     memory::{Memory, PlaneId, Projection, Reference},
-    syntax::{self, Expr, Function, Kind, MachineInt, Struct, Type},
+    syntax::{self, Expr, Function, Kind, MachineInt, Statement, Struct, Type},
 };
 use std::collections::BTreeMap;
 
@@ -361,6 +361,15 @@ impl<'a> Context<'a> {
     }
 
     fn record_valid(&mut self, value: &Symbol, line: usize) -> Result<()> {
+        if let Symbol::Array {
+            items: Some(items), ..
+        } = value
+        {
+            for v in items {
+                self.record_valid(v, line)?;
+            }
+            return Ok(());
+        }
         let Symbol::Record(name, fields) = value else {
             return Ok(());
         };
@@ -403,7 +412,6 @@ impl<'a> Context<'a> {
             let replace_plane = !self.same_layout(&old, &new);
             let mut root = self.memory.read(reference)?.clone();
             replace_projection(&mut root, &fields, new)?;
-            self.record_valid(&root, place.line)?;
             self.memory.write(id, root.clone(), replace_plane)?;
             for (n, plane) in &self.roots {
                 if *plane == id {
@@ -445,9 +453,13 @@ impl<'a> Context<'a> {
                 .cloned()
                 .ok_or("unknown assignment target")?
         } else {
-            self.eval(place, None)?
+            self.storage(place)?
         };
-        let new = self.eval(value, Some(&old.ty()))?;
+        let new = if !fields.is_empty() && matches!(old, Symbol::Array { .. }) {
+            self.eval_inner(value, Some(&old.ty()))?
+        } else {
+            self.eval(value, Some(&old.ty()))?
+        };
         let replace_plane = !self.same_layout(&old, &new);
         let mut root = self
             .env
@@ -455,12 +467,43 @@ impl<'a> Context<'a> {
             .cloned()
             .ok_or("unknown assignment target")?;
         replace(&mut root, &fields, new)?;
-        self.record_valid(&root, place.line)?;
         if let Some(id) = self.roots.get(&name) {
             self.memory.write(*id, root.clone(), replace_plane)?;
         }
         self.env.insert(name, root);
         Ok(())
+    }
+
+    fn statement(&mut self, s: &Statement) -> Result<()> {
+        match s {
+            Statement::Assign { target, value } => self.assign(target, value),
+            Statement::Effect(e) => {
+                self.eval(e, None)?;
+                Ok(())
+            }
+            Statement::Let { name, ty, value } => {
+                if self.env.contains_key(name) || self.facts.contains_key(name) {
+                    return Err(format!("line {}: duplicate binding {name}", value.line));
+                }
+                let ty = ty.as_ref().map(|t| self.resolve(t)).transpose()?;
+                let v = self.eval(value, ty.as_ref())?;
+                self.env.insert(name.clone(), v);
+                Ok(())
+            }
+            Statement::Fact { name, value, proof } => {
+                if self.env.contains_key(name) || self.facts.contains_key(name) {
+                    return Err(format!("line {}: duplicate binding {name}", value.line));
+                }
+                let p = self.proposition(value)?;
+                if let Some(steps) = proof {
+                    self.proof_names(steps, value.line)?;
+                }
+                self.prove(&p, &format!("fact {name}"), value.line)?;
+                self.assume(&p)?;
+                self.facts.insert(name.clone(), p);
+                Ok(())
+            }
+        }
     }
 
     fn same_layout(&mut self, a: &Symbol, b: &Symbol) -> bool {
@@ -611,6 +654,9 @@ impl<'a> Context<'a> {
         if let Some(t) = expected {
             self.compatible(&value.ty(), t, e.line)?;
         }
+        if matches!(value, Symbol::Record(..) | Symbol::Array { .. }) {
+            self.record_valid(&value, e.line)?;
+        }
         if let Symbol::Number(Ty::Machine(t), n) = &value {
             let (lo, hi) = t.bounds();
             self.prove(
@@ -625,6 +671,53 @@ impl<'a> Context<'a> {
             )?;
         }
         Ok(value)
+    }
+    fn storage(&mut self, e: &Expr) -> Result<Symbol> {
+        match &e.kind {
+            Kind::Name(_) => self.eval_inner(e, None),
+            Kind::Field(base, name) => {
+                let Symbol::Record(_, fields) = self.storage(base)? else {
+                    return Err("field access requires struct storage".into());
+                };
+                fields
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| format!("unknown field {name}"))
+            }
+            Kind::Unary(op, _) if op == "*" => {
+                let (r, path) = self.location(e)?;
+                project(self.memory.read(r)?, &path).cloned()
+            }
+            _ => self.eval(e, None),
+        }
+    }
+
+    fn validate_argument(&mut self, value: &Symbol, line: usize) -> Result<()> {
+        if let Symbol::Ref(_, r, path) = value {
+            let target = project(self.memory.read(*r)?, path)?.clone();
+            self.validate_argument(&target, line)?;
+        } else {
+            self.record_valid(value, line)?;
+        }
+        Ok(())
+    }
+
+    fn validate_live(&mut self, line: usize) -> Result<()> {
+        let values = self
+            .env
+            .iter()
+            .filter_map(|(name, value)| {
+                if let Some(id) = self.roots.get(name) {
+                    self.memory.get(*id).ok().cloned()
+                } else {
+                    Some(value.clone())
+                }
+            })
+            .collect::<Vec<_>>();
+        for value in values {
+            self.record_valid(&value, line)?;
+        }
+        Ok(())
     }
     fn eval_inner(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
         match &e.kind {
@@ -654,7 +747,7 @@ impl<'a> Context<'a> {
                 }
             }
             Kind::Field(base, name) => {
-                let Symbol::Record(_, fields) = self.eval(base, None)? else {
+                let Symbol::Record(_, fields) = self.storage(base)? else {
                     return Err("field access requires a struct".into());
                 };
                 fields
@@ -687,7 +780,18 @@ impl<'a> Context<'a> {
                         Type::Machine(t) => Some(Ty::Machine(*t)),
                         _ => None,
                     };
-                    fields.insert(n.clone(), self.eval(value, hint.as_ref())?);
+                    let evaluated = if let Type::Array(element, _) = ty {
+                        // Supply the element type now; the complete dependent
+                        // field type is checked once all literal fields exist.
+                        let element = self.resolve(element)?;
+                        self.eval_inner(
+                            value,
+                            Some(&Ty::Array(Box::new(element), Linear::number(0))),
+                        )?
+                    } else {
+                        self.eval(value, hint.as_ref())?
+                    };
+                    fields.insert(n.clone(), evaluated);
                 }
                 self.env = saved;
                 let record = Symbol::Record(name.clone(), fields);
@@ -696,7 +800,9 @@ impl<'a> Context<'a> {
             }
             Kind::Unary(op, x) if op == "&" => {
                 let (r, path) = self.location(x)?;
-                let ty = project(self.memory.read(r)?, &path)?.ty();
+                let target = project(self.memory.read(r)?, &path)?.clone();
+                self.record_valid(&target, e.line)?;
+                let ty = target.ty();
                 Ok(Symbol::Ref(Box::new(ty), r, path))
             }
             Kind::Unary(op, _) if op == "*" => {
@@ -852,6 +958,8 @@ impl<'a> Context<'a> {
                     if !self.roots.values().any(|p| *p == id) {
                         return Err("cannot move or drop a borrowed parameter plane".into());
                     }
+                    let stored = self.memory.read(r)?.clone();
+                    self.record_valid(&stored, e.line)?;
                     let value = self.memory.take(id)?;
                     return Ok(if name == "drop" { Symbol::Unit } else { value });
                 }
@@ -870,7 +978,9 @@ impl<'a> Context<'a> {
                         Type::Machine(t) => Some(Ty::Machine(*t)),
                         _ => None,
                     };
-                    actuals.push(self.eval(arg, hint.as_ref())?);
+                    let value = self.eval(arg, hint.as_ref())?;
+                    self.validate_argument(&value, e.line)?;
+                    actuals.push(value);
                 }
                 let saved = self.env.clone();
                 let saved_roots = self.roots.clone();
@@ -1023,41 +1133,10 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         }
         let contract_env = ctx.env.clone();
         for statement in &f.body {
-            if let Some(target) = &statement.target {
-                ctx.assign(target, &statement.value)?;
-                continue;
-            }
-            if statement.effect {
-                ctx.eval(&statement.value, None)?;
-                continue;
-            }
-            if ctx.env.contains_key(&statement.name) || ctx.facts.contains_key(&statement.name) {
-                return Err(format!(
-                    "line {}: duplicate binding {}",
-                    statement.value.line, statement.name
-                ));
-            }
-            if statement.fact {
-                ctx.specification = true;
-                let p = ctx.eval(&statement.value, Some(&Ty::Bool))?.proposition()?;
-                ctx.specification = false;
-                if let Some(steps) = &statement.proof {
-                    ctx.proof_names(steps, statement.value.line)?;
-                }
-                ctx.prove(
-                    &p,
-                    &format!("fact {}", statement.name),
-                    statement.value.line,
-                )?;
-                ctx.assume(&p)?;
-                ctx.facts.insert(statement.name.clone(), p);
-            } else {
-                let ty = statement.ty.as_ref().map(|t| ctx.resolve(t)).transpose()?;
-                let value = ctx.eval(&statement.value, ty.as_ref())?;
-                ctx.env.insert(statement.name.clone(), value);
-            }
+            ctx.statement(statement)?;
         }
         let value = ctx.eval(&f.result, Some(&ret))?;
+        ctx.validate_live(f.result.line)?;
         ctx.proof_names(&f.proof, f.result.line)?;
         if let Some(post) = &f.post {
             ctx.specification = true;
@@ -1263,5 +1342,39 @@ mod tests {
                 .is_err()
         );
         verify("fn at(a: [isize; 5], i: isize) -> isize where (i >= 0 && i < 5) {a[i]}").unwrap();
+    }
+
+    #[test]
+    fn ordinary_assignments_can_restore_an_invariant_without_transactions() {
+        let s = "type Pair struct {left: usize, right: usize} where (left == right); fn read(p: &Pair) -> usize {*p.left} fn main() -> usize {let p = Pair {left: 1, right: 1}; p.left = 2; p.right = p.left; p.right}";
+        // Use a simpler observer syntax: field projection binds tighter than *.
+        let s = s.replace("*p.left", "(*p).left");
+        assert_eq!(verify(&s).unwrap().run().unwrap().to_string(), "2");
+        let s = "type Storage struct {len: usize, data: [usize; len]} fn main() -> usize {let s = Storage {len: 1, data: [10]}; s.len = 2; s.data = [10, 20]; s.data[1]}";
+        assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "20");
+    }
+
+    #[test]
+    fn incomplete_states_cannot_be_observed_as_the_refined_type() {
+        let prefix = "type Pair struct {left: usize, right: usize} where (left == right); fn read(p: &Pair) -> usize {(*p).left} ";
+        for body in [
+            "let p = Pair {left: 1, right: 1}; let r = &p; p.left = 2; read(r)",
+            "let p = Pair {left: 1, right: 1}; p.left = 2; let r = &p; p.right = 2; 0",
+            "let p = Pair {left: 1, right: 1}; p.left = 2; drop(p); 0",
+        ] {
+            assert!(
+                verify(&format!("{prefix} fn main() -> usize {{ {body} }}")).is_err(),
+                "{body}"
+            );
+        }
+        let body = "let p = Pair {left: 1, right: 1}; let r = &p; p.left = 2; p.right = 2; read(r)";
+        assert_eq!(
+            verify(&format!("{prefix} fn main() -> usize {{ {body} }}"))
+                .unwrap()
+                .run()
+                .unwrap()
+                .to_string(),
+            "2"
+        );
     }
 }

@@ -68,6 +68,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/contracts.evg",
         "examples/composition.evg",
         "examples/references.evg",
+        "examples/intermediate_states.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")
@@ -86,6 +87,8 @@ fn internal_backend_needs_no_external_tools() {
         "examples/reject_bounds.evg",
         "examples/reject_contract.evg",
         "examples/reject_dangling.evg",
+        "examples/reject_incomplete_state.evg",
+        "examples/reject_overflow.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")

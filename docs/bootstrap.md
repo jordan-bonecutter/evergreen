@@ -21,9 +21,15 @@ The supported language contains typed functions, local `let` bindings,
 named `fact` declarations, preconditions (`where`), postconditions (`ensures`),
 length-indexed arrays (`[T; n]`), array literals, calls to earlier verified
 functions, and conditional expressions. Array access requires a proof of its bound.
-Nominal structs support dependent fields and `where` invariants. Construction,
-field assignment, and whole-value replacement must establish those invariants.
-Nested struct invariants are rechecked after updates. Postconditions refer to
+Nominal structs support dependent fields and `where` invariants. Construction
+and uses of a complete nominal value must establish those invariants. Ordinary
+field assignments may pass through intermediate states: projections retain their
+actual field types, but the whole value cannot be passed, returned, borrowed as
+the nominal type, moved, or destroyed until its invariant is proved again.
+Scope exit also checks live aggregate values. Existing references to fields
+retain their storage identity; a call through a whole-object reference rechecks
+the current target invariant. There is no transaction construct. This is an
+initial sequential rule, not a concurrency memory model. Postconditions refer to
 the entry values of parameters, even when the function reassigns its locals.
 Unknown obligations fail verification. Facts cannot introduce assumptions:
 each fact must itself have a proof. Only function preconditions are assumptions,
