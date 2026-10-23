@@ -188,6 +188,50 @@ fn equal(a: &Linear, b: &Linear) -> Result<Formula> {
     Ok(Formula::Ge(a.sub(b)?).and(Formula::Ge(b.sub(a)?)))
 }
 
+pub(crate) fn needs_drop(
+    t: &Type,
+    structs: &BTreeMap<String, Struct>,
+    drops: &BTreeSet<String>,
+) -> bool {
+    match t {
+        Type::Named(n) => {
+            drops.contains(n)
+                || structs
+                    .get(n)
+                    .is_some_and(|s| s.fields.iter().any(|(_, t)| needs_drop(t, structs, drops)))
+        }
+        Type::Array(t, _) => needs_drop(t, structs, drops),
+        _ => false,
+    }
+}
+
+fn destructor_expression(e: &Expr) -> bool {
+    match &e.kind {
+        Kind::Call(..) | Kind::Record(..) => false,
+        Kind::Unary(op, _) if op == "&" || op == "*" => false,
+        Kind::Unary(_, x) | Kind::Field(x, _) => destructor_expression(x),
+        Kind::Binary(_, a, b) | Kind::Index(a, b) => {
+            destructor_expression(a) && destructor_expression(b)
+        }
+        Kind::If(c, a, b) => {
+            destructor_expression(c) && destructor_expression(a) && destructor_expression(b)
+        }
+        Kind::Array(xs) => xs.iter().all(destructor_expression),
+        _ => true,
+    }
+}
+fn destructor_body(body: &[Statement]) -> bool {
+    body.iter().all(|s| match s {
+        Statement::Assign { target, value } => {
+            destructor_expression(target) && destructor_expression(value)
+        }
+        Statement::Let { value, .. } | Statement::Fact { value, .. } | Statement::Effect(value) => {
+            destructor_expression(value)
+        }
+        Statement::Update { body, .. } => destructor_body(body),
+    })
+}
+
 struct Context<'a> {
     functions: &'a BTreeMap<String, Function>,
     structs: &'a BTreeMap<String, Struct>,
@@ -202,12 +246,15 @@ struct Context<'a> {
     current: Option<String>,
     measure: Option<Linear>,
     opened: BTreeSet<String>,
+    drops: &'a BTreeSet<String>,
+    dropping: bool,
 }
 
 impl<'a> Context<'a> {
     fn new(
         functions: &'a BTreeMap<String, Function>,
         structs: &'a BTreeMap<String, Struct>,
+        drops: &'a BTreeSet<String>,
     ) -> Self {
         Self {
             functions,
@@ -223,6 +270,8 @@ impl<'a> Context<'a> {
             current: None,
             measure: None,
             opened: BTreeSet::new(),
+            drops,
+            dropping: false,
         }
     }
     fn fresh_name(&mut self) -> String {
@@ -410,6 +459,9 @@ impl<'a> Context<'a> {
                 return Err(format!("line {}: writes through reference parameters need an effect contract; unsupported", place.line));
             }
             let old = project(self.memory.read(reference)?, &fields)?.clone();
+            if self.symbol_needs_drop(&old) {
+                return Err("overwriting owned fields through references requires ownership effect proofs; unsupported".into());
+            }
             let new = self.eval(value, Some(&old.ty()))?;
             let replace_plane = !self.same_layout(&old, &new);
             let mut root = self.memory.read(reference)?.clone();
@@ -459,7 +511,19 @@ impl<'a> Context<'a> {
             self.storage(place)?
         };
         let new = self.eval(value, Some(&old.ty()))?;
+        if self.dropping && self.symbol_needs_drop(&old) {
+            return Err(
+                "destructors cannot replace owning fields without cleanup/effect proofs".into(),
+            );
+        }
         let replace_plane = !self.same_layout(&old, &new);
+        let old_live = self
+            .roots
+            .get(&name)
+            .is_none_or(|id| self.memory.get(*id).is_ok());
+        if old_live && self.symbol_needs_drop(&old) {
+            self.validate_argument(&old, place.line)?;
+        }
         let mut root = self
             .env
             .get(&name)
@@ -536,13 +600,11 @@ impl<'a> Context<'a> {
             return Err(format!("line {line}: duplicate update place"));
         }
         for name in places {
-            let v = self.eval(
-                &Expr {
-                    kind: Kind::Name(name.clone()),
-                    line,
-                },
-                None,
-            )?;
+            let v = self.storage(&Expr {
+                kind: Kind::Name(name.clone()),
+                line,
+            })?;
+            self.record_valid(&v, line)?;
             if !matches!(v, Symbol::Record(..)) {
                 return Err(format!(
                     "line {line}: update requires a live local struct place"
@@ -720,6 +782,11 @@ impl<'a> Context<'a> {
                 format!("line {}: {s}", e.line)
             }
         })?;
+        let projecting_owner = matches!(&e.kind, Kind::Field(..) | Kind::Index(..))
+            || matches!(&e.kind, Kind::Unary(op, _) if op == "*");
+        if !self.specification && self.symbol_needs_drop(&value) && projecting_owner {
+            return Err(format!("line {}: moving owning fields or borrowed values needs partial-initialization tracking; unsupported", e.line));
+        }
         if let Some(t) = expected {
             self.compatible(&value.ty(), t, e.line)?;
         }
@@ -741,9 +808,62 @@ impl<'a> Context<'a> {
         }
         Ok(value)
     }
+    fn symbol_needs_drop(&self, value: &Symbol) -> bool {
+        match value {
+            Symbol::Record(n, _) => needs_drop(&Type::Named(n.clone()), self.structs, self.drops),
+            Symbol::Array {
+                items: Some(xs), ..
+            } => xs.iter().any(|v| self.symbol_needs_drop(v)),
+            Symbol::Array { element, .. } => self.ty_needs_drop(element),
+            _ => false,
+        }
+    }
+    fn ty_needs_drop(&self, t: &Ty) -> bool {
+        match t {
+            Ty::Record(n) => needs_drop(&Type::Named(n.clone()), self.structs, self.drops),
+            Ty::Array(t, _) => self.ty_needs_drop(t),
+            _ => false,
+        }
+    }
+    fn finish_scope(&mut self, f: &Function) -> Result<()> {
+        let mut names = f.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
+        names.extend(f.body.iter().filter_map(|s| {
+            if let Statement::Let { name, .. } = s {
+                Some(name.clone())
+            } else {
+                None
+            }
+        }));
+        for name in names.into_iter().rev() {
+            let value = if let Some(id) = self.roots.get(&name) {
+                if self.memory.get(*id).is_err() {
+                    continue;
+                }
+                self.memory.take(*id)?
+            } else {
+                self.env
+                    .get(&name)
+                    .cloned()
+                    .ok_or("unknown cleanup binding")?
+            };
+            if self.symbol_needs_drop(&value) {
+                self.validate_argument(&value, f.result.line)?;
+            }
+        }
+        Ok(())
+    }
     fn storage(&mut self, e: &Expr) -> Result<Symbol> {
         match &e.kind {
-            Kind::Name(_) => self.eval_inner(e, None),
+            Kind::Name(n) => {
+                if let Some(id) = self.roots.get(n) {
+                    self.memory.get(*id).cloned()
+                } else {
+                    self.env
+                        .get(n)
+                        .cloned()
+                        .ok_or_else(|| format!("unknown storage place {n}"))
+                }
+            }
             Kind::Field(base, name) => {
                 let Symbol::Record(_, fields) = self.storage(base)? else {
                     return Err("field access requires struct storage".into());
@@ -756,6 +876,33 @@ impl<'a> Context<'a> {
             Kind::Unary(op, _) if op == "*" => {
                 let (r, path) = self.location(e)?;
                 project(self.memory.read(r)?, &path).cloned()
+            }
+            Kind::Index(base, index) => {
+                let array = self.storage(base)?;
+                let index = self.nonnegative(index, "nonnegative storage index")?;
+                let Symbol::Array {
+                    element,
+                    len,
+                    items,
+                    ..
+                } = array
+                else {
+                    return Err("index requires array storage".into());
+                };
+                self.prove(
+                    &Formula::Ge(len.sub(&index)?.add(&Linear::number(-1))?),
+                    "storage index < length",
+                    e.line,
+                )?;
+                if index.terms.is_empty() {
+                    if let Some(v) = items
+                        .as_ref()
+                        .and_then(|xs| usize::try_from(index.constant).ok().and_then(|i| xs.get(i)))
+                    {
+                        return Ok(v.clone());
+                    }
+                }
+                self.arbitrary(&element)
             }
             _ => self.eval(e, None),
         }
@@ -806,14 +953,23 @@ impl<'a> Context<'a> {
                 Formula::False
             })),
             Kind::Name(n) => {
-                if let Some(id) = self.roots.get(n) {
+                let value = if let Some(id) = self.roots.get(n) {
                     self.memory.get(*id).cloned()
                 } else {
                     self.env
                         .get(n)
                         .cloned()
                         .ok_or_else(|| format!("unknown value {n}"))
+                }?;
+                if !self.specification && self.symbol_needs_drop(&value) {
+                    if self.dropping {
+                        return Err("destructor receivers and owned fields cannot be moved in this initial destructor subset".into());
+                    }
+                    let (r, _) = self.location(e)?;
+                    let id = self.memory.plane(r)?;
+                    self.memory.take(id)?;
                 }
+                Ok(value)
             }
             Kind::Field(base, name) => {
                 let Symbol::Record(_, fields) = self.storage(base)? else {
@@ -1030,6 +1186,7 @@ impl<'a> Context<'a> {
                     let stored = self.memory.read(r)?.clone();
                     self.record_valid(&stored, e.line)?;
                     let value = self.memory.take(id)?;
+                    self.validate_argument(&value, e.line)?;
                     return Ok(if name == "drop" { Symbol::Unit } else { value });
                 }
                 let f = self.functions.get(name).cloned().ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration (recursion is not supported yet)"))?;
@@ -1134,17 +1291,19 @@ pub struct VerifiedProgram {
     pub(crate) functions: Vec<Function>,
     pub(crate) structs: BTreeMap<String, Struct>,
     pub obligations: usize,
+    pub(crate) drops: BTreeSet<String>,
 }
 
 pub fn verify(source: &str) -> Result<VerifiedProgram> {
     let parsed = syntax::parse(source)?;
     let mut structs = BTreeMap::new();
     let empty_functions = BTreeMap::new();
+    let empty_drops = BTreeSet::new();
     for s in &parsed.structs {
         if structs.contains_key(&s.name) {
             return Err(format!("line {}: duplicate struct {}", s.line, s.name));
         }
-        let mut ctx = Context::new(&empty_functions, &structs);
+        let mut ctx = Context::new(&empty_functions, &structs, &empty_drops);
         for (n, t) in &s.fields {
             if n == "self" || ctx.env.contains_key(n) {
                 return Err(format!("line {}: duplicate or reserved field {n}", s.line));
@@ -1163,8 +1322,22 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         structs.insert(s.name.clone(), s.clone());
     }
     let mut functions = BTreeMap::new();
+    let mut drops = BTreeSet::new();
+    for (target, f) in &parsed.destructors {
+        if !structs.contains_key(target) || !drops.insert(target.clone()) {
+            return Err(format!(
+                "line {}: unknown or duplicate Drop implementation for {target}",
+                f.line
+            ));
+        }
+        if !destructor_body(&f.body) || !destructor_expression(&f.result) {
+            return Err(format!("line {}: destructor effects require proofs; initial Drop bodies allow local scalar work and facts, without calls, borrowing, or allocation", f.line));
+        }
+    }
+    let mut all_functions = parsed.functions;
+    all_functions.extend(parsed.destructors.into_iter().map(|(_, f)| f));
     let mut obligations = 0;
-    for f in &parsed.functions {
+    for f in &all_functions {
         if matches!(f.name.as_str(), "move" | "drop") {
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));
         }
@@ -1178,7 +1351,8 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         if f.decreases.is_some() {
             available.insert(f.name.clone(), f.clone());
         }
-        let mut ctx = Context::new(&available, &structs);
+        let mut ctx = Context::new(&available, &structs, &drops);
+        ctx.dropping = f.drop_target.is_some();
         ctx.current = Some(f.name.clone());
         for (n, t) in &f.params {
             if ctx.env.contains_key(n) {
@@ -1206,6 +1380,7 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         }
         let value = ctx.eval(&f.result, Some(&ret))?;
         ctx.validate_live(f.result.line)?;
+        ctx.finish_scope(f)?;
         ctx.proof_names(&f.proof, f.result.line)?;
         if let Some(post) = &f.post {
             ctx.specification = true;
@@ -1219,9 +1394,10 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         functions.insert(f.name.clone(), f.clone());
     }
     Ok(VerifiedProgram {
-        functions: parsed.functions,
+        functions: all_functions,
         structs,
         obligations,
+        drops,
     })
 }
 
@@ -1493,5 +1669,42 @@ mod tests {
     fn borrowed_invariants_are_checked_through_record_fields() {
         let source = "type Positive struct {n: usize} where (n > 0); type Holder struct {p: &Positive} fn read(h: Holder) -> usize ensures (result > 0) {(*h.p).n} fn main() -> usize {let p = Positive {n: 1}; let h = Holder {p: &p}; p.n = 0; let result = read(h); p.n = 1; result}";
         assert!(verify(source).is_err());
+    }
+
+    #[test]
+    fn dropped_or_moved_owners_have_shape_type() {
+        let prefix = "type Resource struct {tag: usize} where (tag == 7); impl Drop for Resource {fn drop(self){}} ";
+        for body in [
+            "let a = Resource {tag: 7}; let b = a; a.tag",
+            "let a = Resource {tag: 7}; drop(a); a.tag",
+            "let a = Resource {tag: 7}; drop(a); drop(a); 0",
+            "let a = Resource {tag: 7}; let r = &a; let b = a; (*r).tag",
+        ] {
+            assert!(
+                verify(&format!("{prefix} fn main() -> usize {{ {body} }}")).is_err(),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn destructors_are_proved_and_effects_require_explicit_support() {
+        for body in [
+            "fact impossible = self.tag == 8;",
+            "drop(self);",
+            "let duplicate = self;",
+            "let new = Resource {tag: 7};",
+        ] {
+            let source = format!("type Resource struct {{tag: usize}} where (tag == 7); impl Drop for Resource {{fn drop(self) {{ {body} }} }} fn main() -> usize {{0}}");
+            assert!(verify(&source).is_err(), "{body}");
+        }
+    }
+
+    #[test]
+    fn cleanup_cannot_observe_a_borrow_of_an_already_dropped_plane() {
+        let source = "type Borrower struct {p: &usize} impl Drop for Borrower {fn drop(self){}} fn main() -> usize {let first: usize = 1; let h = Borrower {p: &first}; let later: usize = 2; h.p = &later; 0}";
+        assert!(verify(source).is_err());
+        let source = "type Borrower struct {p: &usize} impl Drop for Borrower {fn drop(self){}} fn main() -> usize {let first: usize = 1; let h = Borrower {p: &first}; 0}";
+        assert!(verify(source).is_ok());
     }
 }

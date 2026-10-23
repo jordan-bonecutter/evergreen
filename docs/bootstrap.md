@@ -73,6 +73,27 @@ replacement, `move(place)`, or `drop(place)` invalidates references to the plane
 Reassignment restores a moved
 slot without restoring old references. References into structs and known array
 elements are supported. Moves are currently explicit; ordinary values copy.
+Types with `impl Drop for T` (and aggregates containing them) move implicitly
+when used by value. Their source slot becomes `shape(T)` and cannot be read.
+Assignments restore that slot. Overwriting a live owner runs its destructor;
+scope cleanup runs in reverse binding order, with owned fields cleaned after
+the parent destructor. Partial moves and overwriting owners through borrowed
+references remain rejected until their cleanup/effect rules are implemented.
+
+```evg
+impl Drop for Resource {
+    fn drop(self) {
+        fact valid_at_destruction = self.tag == 7;
+    }
+}
+```
+
+Destructors are checked against every value of their receiver type and cannot
+add preconditions. The first subset permits local scalar work and facts, but
+rejects calls, borrowing, allocation, and moving/replacing owned fields; these
+need explicit effect and cleanup proofs. `examples/drop.evg` checks a refined
+parent that owns a resource with its own destructor. The debug API
+`run_with_events()` returns a detached result snapshot and destructor trace.
 
 The initial implementation conservatively treats an aggregate's storage as one
 plane, so replacing a nested aggregate may invalidate unrelated references in

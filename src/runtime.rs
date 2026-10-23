@@ -4,7 +4,7 @@ use crate::{
     syntax::{Expr, Function, Kind, MachineInt, Statement, Struct, Type},
     verify::VerifiedProgram,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 type Result<T> = std::result::Result<T, String>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,6 +79,8 @@ struct Evaluator<'a> {
     depth: usize,
     memory: Memory<Value>,
     roots: BTreeMap<String, PlaneId>,
+    drops: &'a BTreeSet<String>,
+    events: Vec<String>,
 }
 impl Evaluator<'_> {
     fn hint(&self, e: &Expr, env: &BTreeMap<String, Value>) -> Option<Type> {
@@ -157,14 +159,79 @@ impl Evaluator<'_> {
             }
         }
         let value = self.expr(&f.result, &env, Some(&f.ret))?;
-        for id in self.roots.values() {
-            if self.memory.get(*id).is_ok() {
-                self.memory.take(*id)?;
+        let mut names = f.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
+        names.extend(f.body.iter().filter_map(|s| {
+            if let Statement::Let { name, .. } = s {
+                Some(name.clone())
+            } else {
+                None
+            }
+        }));
+        for name in names.into_iter().rev() {
+            let live = if let Some(id) = self.roots.get(&name) {
+                if self.memory.get(*id).is_err() {
+                    continue;
+                }
+                self.memory.take(*id)?
+            } else {
+                env.get(&name).cloned().ok_or("unknown cleanup binding")?
+            };
+            if name == "self" && f.drop_target.is_some() {
+                self.drop_fields(live)?;
+            } else {
+                self.drop_value(live)?;
             }
         }
         self.roots = saved_roots;
         self.depth -= 1;
         Ok(value)
+    }
+
+    fn value_needs_drop(&self, value: &Value) -> bool {
+        match value {
+            Value::Record(n, _) => {
+                crate::verify::needs_drop(&Type::Named(n.clone()), self.structs, self.drops)
+            }
+            Value::Array(xs) => xs.iter().any(|v| self.value_needs_drop(v)),
+            _ => false,
+        }
+    }
+    fn drop_value(&mut self, value: Value) -> Result<()> {
+        if let Value::Record(name, _) = &value {
+            if self.drops.contains(name) {
+                let method = format!("evg_drop_{name}");
+                self.events.push(format!("drop {name}"));
+                self.call(&method, vec![value])?;
+                return Ok(());
+            }
+        }
+        self.drop_fields(value)
+    }
+    fn drop_fields(&mut self, value: Value) -> Result<()> {
+        match value {
+            Value::Record(name, mut fields) => {
+                let order = self
+                    .structs
+                    .get(&name)
+                    .ok_or("unknown drop layout")?
+                    .fields
+                    .iter()
+                    .map(|(n, _)| n.clone())
+                    .collect::<Vec<_>>();
+                for field in order {
+                    if let Some(value) = fields.remove(&field) {
+                        self.drop_value(value)?;
+                    }
+                }
+            }
+            Value::Array(items) => {
+                for value in items {
+                    self.drop_value(value)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     fn assign(
@@ -217,9 +284,16 @@ impl Evaluator<'_> {
         let old = if let Kind::Name(n) = &target.kind {
             env.get(n).cloned().ok_or("unknown assignment target")?
         } else {
-            self.expr(target, env, None)?
+            self.storage(target, env)?
         };
         let new = self.expr(value, env, old.hint().as_ref())?;
+        let old_live = self
+            .roots
+            .get(&root_name(target)?)
+            .is_none_or(|id| self.memory.get(*id).is_ok());
+        if old_live && self.value_needs_drop(&old) {
+            self.drop_value(old.clone())?;
+        }
         let replace_plane = !same_layout(&old, &new);
         let mut fields = Vec::new();
         let root = path(target, &mut fields)?;
@@ -272,16 +346,22 @@ impl Evaluator<'_> {
             }),
             Kind::Bool(b) => Ok(Value::Bool(*b)),
             Kind::Name(n) => {
-                if let Some(id) = self.roots.get(n) {
+                let value = if let Some(id) = self.roots.get(n) {
                     self.memory.get(*id).cloned()
                 } else {
                     env.get(n)
                         .cloned()
                         .ok_or_else(|| format!("unknown value {n}"))
+                }?;
+                if self.value_needs_drop(&value) {
+                    let (r, _) = self.location(e, env)?;
+                    let id = self.memory.plane(r)?;
+                    self.memory.take(id)?;
                 }
+                Ok(value)
             }
             Kind::Field(base, field) => {
-                let Value::Record(_, fields) = self.expr(base, env, None)? else {
+                let Value::Record(_, fields) = self.storage(base, env)? else {
                     return Err("expected struct".into());
                 };
                 fields
@@ -413,7 +493,12 @@ impl Evaluator<'_> {
                     }
                     let id = self.memory.plane(r)?;
                     let value = self.memory.take(id)?;
-                    return Ok(if name == "drop" { Value::Unit } else { value });
+                    return if name == "drop" {
+                        self.drop_value(value)?;
+                        Ok(Value::Unit)
+                    } else {
+                        Ok(value)
+                    };
                 }
                 let types = self
                     .functions
@@ -482,6 +567,51 @@ impl Evaluator<'_> {
             _ => Err("expected referenceable place".into()),
         }
     }
+
+    fn storage(&mut self, e: &Expr, env: &BTreeMap<String, Value>) -> Result<Value> {
+        match &e.kind {
+            Kind::Name(n) => {
+                if let Some(id) = self.roots.get(n) {
+                    self.memory.get(*id).cloned()
+                } else {
+                    env.get(n).cloned().ok_or("unknown storage place".into())
+                }
+            }
+            Kind::Field(base, field) => {
+                let Value::Record(_, fields) = self.storage(base, env)? else {
+                    return Err("expected struct storage".into());
+                };
+                fields
+                    .get(field)
+                    .cloned()
+                    .ok_or("unknown storage field".into())
+            }
+            Kind::Unary(op, _) if op == "*" => {
+                let (r, path) = self.location(e, env)?;
+                project(self.memory.read(r)?, &path).cloned()
+            }
+            Kind::Index(base, index) => {
+                let Value::Array(items) = self.storage(base, env)? else {
+                    return Err("expected array storage".into());
+                };
+                let index = usize::try_from(self.expr(index, env, Some(&Type::Nat))?.number()?)
+                    .map_err(|_| "invalid storage index")?;
+                items
+                    .get(index)
+                    .cloned()
+                    .ok_or("storage index out of bounds".into())
+            }
+            _ => self.expr(e, env, None),
+        }
+    }
+}
+
+fn root_name(e: &Expr) -> Result<String> {
+    match &e.kind {
+        Kind::Name(n) => Ok(n.clone()),
+        Kind::Field(b, _) => root_name(b),
+        _ => Err("not a local place".into()),
+    }
 }
 
 fn same_layout(a: &Value, b: &Value) -> bool {
@@ -537,6 +667,10 @@ fn replace_projection(value: &mut Value, path: &[Projection], new: Value) -> Res
 
 impl VerifiedProgram {
     pub fn run(&self) -> Result<Value> {
+        self.run_with_events().map(|(value, _)| value)
+    }
+    /// Returns a detached result snapshot and an execution trace for debugging.
+    pub fn run_with_events(&self) -> Result<(Value, Vec<String>)> {
         let mut evaluator = Evaluator {
             functions: &self.functions,
             structs: &self.structs,
@@ -544,8 +678,12 @@ impl VerifiedProgram {
             depth: 0,
             memory: Memory::default(),
             roots: BTreeMap::new(),
+            drops: &self.drops,
+            events: Vec::new(),
         };
-        evaluator.call("main", vec![])
+        let value = evaluator.call("main", vec![])?;
+        evaluator.drop_value(value.clone())?;
+        Ok((value, evaluator.events))
     }
 }
 
@@ -579,5 +717,41 @@ mod tests {
             i128::MAX
         );
         assert!(verify(&source).unwrap().run().is_err());
+    }
+
+    #[test]
+    fn updates_do_not_drop_the_parent_or_its_owned_fields() {
+        let (value, events) = verify(include_str!("../examples/drop.evg"))
+            .unwrap()
+            .run_with_events()
+            .unwrap();
+        assert_eq!(value.to_string(), "42");
+        assert_eq!(events, ["drop Pair", "drop Resource"]);
+    }
+
+    #[test]
+    fn moves_and_reassignment_drop_each_resource_once() {
+        let prefix = "type Resource struct {tag: usize} where (tag == 7); impl Drop for Resource {fn drop(self) {fact valid = self.tag == 7;}} ";
+        for body in [
+            "let a = Resource {tag: 7}; let b = a; a = Resource {tag: 7}; drop(b); 0",
+            "let a = Resource {tag: 7}; a = Resource {tag: 7}; 0",
+        ] {
+            let (_, events) = verify(&format!("{prefix} fn main() -> usize {{ {body} }}"))
+                .unwrap()
+                .run_with_events()
+                .unwrap();
+            assert_eq!(events, ["drop Resource", "drop Resource"]);
+        }
+        let source = format!("{prefix} fn make() -> Resource {{Resource {{tag: 7}}}} fn consume(r: Resource) -> usize {{r.tag}} fn main() -> usize {{let r = make(); consume(r)}}");
+        let (value, events) = verify(&source).unwrap().run_with_events().unwrap();
+        assert_eq!(value.to_string(), "7");
+        assert_eq!(events, ["drop Resource"]);
+    }
+
+    #[test]
+    fn scope_cleanup_runs_in_reverse_binding_order() {
+        let source = "type First struct {} impl Drop for First {fn drop(self){}} type Second struct {} impl Drop for Second {fn drop(self){}} fn main() -> usize {let a = First {}; let b = Second {}; 0}";
+        let (_, events) = verify(source).unwrap().run_with_events().unwrap();
+        assert_eq!(events, ["drop Second", "drop First"]);
     }
 }

@@ -1,0 +1,32 @@
+type Resource struct { tag: usize } where (tag == 7);
+
+impl Drop for Resource {
+    fn drop(self) {
+        fact tag_is_valid = self.tag == 7;
+    }
+}
+
+type Pair struct {
+    left: usize,
+    right: usize,
+    resource: Resource,
+} where (left == right);
+
+impl Drop for Pair {
+    fn drop(self) {
+        // The destructor can rely on Pair's invariant.
+        fact closed = self.left == self.right;
+    }
+}
+
+fn main() -> usize ensures (result == 42) {
+    let resource = Resource { tag: 7 };
+    let pair = Pair { left: 1, right: 1, resource: resource };
+    update (pair) {
+        pair.left = 42;
+        pair.right = pair.left;
+    }
+    // Neither destructor ran while the invariant was open. Scope cleanup
+    // runs Pair::drop, followed by the owned Resource field's destructor.
+    pair.left
+}

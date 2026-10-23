@@ -107,6 +107,7 @@ pub struct Struct {
 pub struct Program {
     pub structs: Vec<Struct>,
     pub functions: Vec<Function>,
+    pub destructors: Vec<(String, Function)>,
 }
 #[derive(Clone, Debug)]
 pub struct Function {
@@ -120,6 +121,7 @@ pub struct Function {
     pub result: Expr,
     pub proof: Vec<String>,
     pub line: usize,
+    pub drop_target: Option<String>,
 }
 
 struct Parser {
@@ -410,7 +412,7 @@ impl Parser {
         }
         Ok(steps)
     }
-    fn function(&mut self) -> Result<Function, String> {
+    fn function(&mut self, receiver: Option<&str>) -> Result<Function, String> {
         let line = self.line();
         self.expect("fn")?;
         let name = self.name()?;
@@ -419,16 +421,25 @@ impl Parser {
         if !self.eat(")") {
             loop {
                 let n = self.name()?;
-                self.expect(":")?;
-                params.push((n, self.ty()?));
+                let t = match receiver {
+                    Some(target) if n == "self" && self.peek() != ":" => Type::Named(target.into()),
+                    _ => {
+                        self.expect(":")?;
+                        self.ty()?
+                    }
+                };
+                params.push((n, t));
                 if self.eat(")") {
                     break;
                 }
                 self.expect(",")?;
             }
         }
-        self.expect("->")?;
-        let ret = self.ty()?;
+        let ret = if self.eat("->") {
+            self.ty()?
+        } else {
+            Type::Unit
+        };
         let pre = if self.eat("where") {
             self.expect("(")?;
             let p = self.expr(0)?;
@@ -456,6 +467,12 @@ impl Parser {
         self.expect("{")?;
         let mut body = Vec::new();
         let result = loop {
+            if self.peek() == "}" {
+                break Expr {
+                    kind: Kind::Unit,
+                    line: self.line(),
+                };
+            }
             if self.eat("update") {
                 let line = self.line();
                 self.expect("(")?;
@@ -562,7 +579,30 @@ impl Parser {
             result,
             proof,
             line,
+            drop_target: receiver.map(str::to_owned),
         })
+    }
+
+    fn destructor(&mut self) -> Result<(String, Function), String> {
+        self.expect("impl")?;
+        self.expect("Drop")?;
+        self.expect("for")?;
+        let target = self.name()?;
+        self.expect("{")?;
+        let mut function = self.function(Some(&target))?;
+        if function.name != "drop"
+            || function.params != vec![("self".into(), Type::Named(target.clone()))]
+            || function.ret != Type::Unit
+            || function.pre.is_some()
+            || function.decreases.is_some()
+        {
+            return Err(
+                self.err("Drop requires fn drop(self) -> () without preconditions or recursion")
+            );
+        }
+        self.expect("}")?;
+        function.name = format!("evg_drop_{target}");
+        Ok((target, function))
     }
 
     fn structure(&mut self) -> Result<Struct, String> {
@@ -618,17 +658,24 @@ pub fn parse(source: &str) -> Result<Program, String> {
     };
     let mut functions = Vec::new();
     let mut structs = Vec::new();
+    let mut destructors = Vec::new();
     while p.peek() != "<eof>" {
         if p.peek() == "type" {
             structs.push(p.structure()?);
+        } else if p.peek() == "impl" {
+            destructors.push(p.destructor()?);
         } else {
-            functions.push(p.function()?);
+            functions.push(p.function(None)?);
         }
     }
-    if functions.is_empty() {
+    if functions.is_empty() && destructors.is_empty() {
         return Err("expected at least one function".into());
     }
-    Ok(Program { structs, functions })
+    Ok(Program {
+        structs,
+        functions,
+        destructors,
+    })
 }
 
 #[cfg(test)]
