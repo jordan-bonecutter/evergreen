@@ -77,6 +77,7 @@ struct Evaluator<'a> {
     structs: &'a BTreeMap<String, Struct>,
     fuel: usize,
     depth: usize,
+    expression_depth: usize,
     memory: Memory<Value>,
     roots: BTreeMap<String, PlaneId>,
     drops: &'a BTreeSet<String>,
@@ -432,8 +433,14 @@ impl Evaluator<'_> {
         if self.fuel == 0 {
             return Err("execution step limit reached (100000)".into());
         }
+        if self.expression_depth >= 256 {
+            return Err("execution expression depth limit reached (256)".into());
+        }
         self.fuel -= 1;
-        self.inner(e, env, expected).map_err(|s| {
+        self.expression_depth += 1;
+        let result = self.inner(e, env, expected);
+        self.expression_depth -= 1;
+        result.map_err(|s| {
             if s.starts_with("line ") {
                 s
             } else {
@@ -801,11 +808,25 @@ impl VerifiedProgram {
     /// Returns a detached result snapshot and an execution trace for debugging.
     pub fn run_with_events(&self) -> Result<(Value, Vec<String>)> {
         self.check_entry()?;
+        // The caller may have a small thread stack. Isolate recursive bootstrap
+        // evaluation on one bounded stack; depth/step guards remain mandatory.
+        std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .name("evergreen-evaluator".into())
+                .stack_size(16 * 1024 * 1024)
+                .spawn_scoped(scope, || self.evaluate())
+                .map_err(|e| format!("cannot start bounded evaluator: {e}"))?
+                .join()
+                .map_err(|_| "bounded evaluator panicked".to_owned())?
+        })
+    }
+    fn evaluate(&self) -> Result<(Value, Vec<String>)> {
         let mut evaluator = Evaluator {
             functions: &self.functions,
             structs: &self.structs,
             fuel: 100_000,
             depth: 0,
+            expression_depth: 0,
             memory: Memory::default(),
             roots: BTreeMap::new(),
             drops: &self.drops,
@@ -887,6 +908,16 @@ mod tests {
                 .unwrap()
                 .to_string(),
             "42"
+        );
+    }
+    #[test]
+    fn recursive_execution_fails_before_exhausting_the_host_stack() {
+        let source = "fn count(n: usize) -> usize ensures(result == n) decreases(n) {if n == 0 {0} else {count(n - 1) + 1}} fn main() -> usize {count(1000)}";
+        let error = verify(source).unwrap().run().unwrap_err();
+        assert!(
+            error.contains("execution expression depth limit")
+                || error.contains("execution call depth limit"),
+            "{error}"
         );
     }
     #[test]

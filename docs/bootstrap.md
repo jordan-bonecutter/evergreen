@@ -185,7 +185,9 @@ and native backend remain trusted Rust code. The kernel is not a full dependent 
 theory yet. There is no theorem of compiler correctness. Arithmetic is
 mathematical in verification; the reference evaluator uses checked i128 and
 reports an error for values beyond its range. It never wraps silently.
-Execution has a 100,000-step budget and 128-call depth limit.
+Execution has a 100,000-step budget, a 128-call depth limit, and a combined
+expression-depth limit of 256. It uses one worker with a bounded 16 MiB stack
+so these diagnostics do not depend on the calling thread’s stack size.
 
 Lean remains an optional reference backend and specification tool. The intent
 is to grow the internal proof language toward dependent types and explicit
@@ -404,7 +406,13 @@ Comparison instructions respect signed versus unsigned machine types.
 The entry function's scalar result supplies the low eight bits of the process
 exit status. The executable uses a private 64 KiB writable stack, with separate
 read/execute code pages. Emission checks the entire static call-tree stack bound.
-Recursive native calls and inline dependent layouts are rejected. Unsupported or unproved input does not replace
+Native self-recursion with a checked `decreases` clause is supported with a
+128-activation budget shared by functions declaring `decreases`. Exceeding that budget
+terminates with exit status 125. The static stack estimate reserves space for
+all permitted recursive frames before accepting the executable. This estimate
+is conservative and can reject large frames or nested recursive callees even
+when a particular run would fit. Inline dependent
+layouts are rejected. Unsupported or unproved input does not replace
 an existing output; input sources cannot be overwritten.
 
 Native tests execute generated programs and compare their results with the

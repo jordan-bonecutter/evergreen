@@ -11,6 +11,7 @@ const BASE: u64 = 0x400000;
 const HEADER: usize = 64 + 2 * 56;
 const STACK: usize = 65536;
 const MAX_CODE: usize = 8 * 1024 * 1024;
+const RECURSION_LIMIT: usize = 128;
 
 fn scalar(t: &Type) -> Result<()> {
     if matches!(t, Type::Machine(_) | Type::Bool | Type::Unit) {
@@ -878,6 +879,7 @@ fn emit_mode(program: &VerifiedProgram, trace: TraceMode) -> Result<Vec<u8>> {
     let mut known = BTreeMap::new();
     let mut code = vec![0x48, 0xbc];
     code.extend([0; 8]); // mov rsp, private stack end
+    code.extend([0x45, 0x31, 0xf6]); // reserved r14: recursive activation count
     if trace != TraceMode::Value {
         code.extend([0x4d, 0x31, 0xff]);
     }
@@ -909,6 +911,21 @@ fn emit_mode(program: &VerifiedProgram, trace: TraceMode) -> Result<Vec<u8>> {
             .map(|(_, ty)| layout::of(ty, &program.structs).map(|l| l.size))
             .collect::<Result<Vec<_>>>()?;
         let offset = code.len();
+        let recursive = function.decreases.is_some();
+        if recursive {
+            // The source proves termination; this guard enforces the bootstrap
+            // execution budget before another frame can consume stack storage.
+            code.extend([0x49, 0x81, 0xfe]); // cmp r14, limit
+            code.extend((RECURSION_LIMIT as u32).to_le_bytes());
+            code.extend([0x72, 14]); // jb over exit(125), ud2
+            code.extend([
+                0xbf, 125, 0, 0, 0, 0xb8, 60, 0, 0, 0, 0x0f, 0x05, 0x0f, 0x0b,
+            ]);
+            code.extend([0x49, 0xff, 0xc6]); // inc r14
+                                             // A self edge contributes no callee estimate here. The entire local
+                                             // frame and maximum outgoing call cost are multiplied below.
+            known.insert(function.name.clone(), Compiled { offset, stack: 0 });
+        }
         code.extend([0x55, 0x48, 0x89, 0xe5, 0x48, 0x81, 0xec]);
         let frame_fixup = code.len();
         code.extend([0; 4]);
@@ -993,9 +1010,14 @@ fn emit_mode(program: &VerifiedProgram, trace: TraceMode) -> Result<Vec<u8>> {
         }
         let frame = emitter.frame;
         emitter.code[frame_fixup..frame_fixup + 4].copy_from_slice(&(frame as u32).to_le_bytes());
-        let stack = 8 + frame + emitter.peak;
+        let stack = (8 + frame + emitter.peak)
+            .checked_mul(if recursive { RECURSION_LIMIT } else { 1 })
+            .ok_or("native recursion stack estimate overflow")?;
         if stack + 8 > STACK {
             return Err("native call tree exceeds 64 KiB private stack budget".into());
+        }
+        if recursive {
+            emitter.code.extend([0x49, 0xff, 0xce]); // dec r14
         }
         emitter.code.extend([0x48, 0x89, 0xec, 0x5d, 0xc3]);
         if emitter.code.len() > MAX_CODE {
@@ -1048,11 +1070,10 @@ mod tests {
     use crate::verify::verify;
 
     #[test]
-    fn native_rejects_unsupported_memory_recursion_and_entry_assumptions() {
+    fn native_rejects_unsupported_layouts_and_entry_assumptions() {
         for source in [
             "fn read(n: usize, a: [usize; n]) -> usize {n} fn main() -> usize {0}",
             "type Dynamic struct {len: usize, data: [usize; len]} fn main() -> usize {let d = Dynamic {len: 1, data: [42]}; d.data[0]}",
-            include_str!("../examples/recursion.evg"),
             "fn main() -> usize where (false) {0}",
             "fn main() -> [usize; 1] {[0]}",
         ] {
@@ -1094,6 +1115,45 @@ mod tests {
         ));
         let program = verify(&source).unwrap();
         assert!(emit(&program).unwrap_err().contains("stack budget"));
+        let recursive = "fn recurse(n: usize) -> usize ensures(result == n) decreases(n) {let a: [usize; 128] = [VALUES]; if n == 0 {0} else {recurse(n - 1) + 1}} fn main() -> usize {recurse(1)}".replace("VALUES", &vec!["0"; 128].join(","));
+        assert!(emit(&verify(&recursive).unwrap())
+            .unwrap_err()
+            .contains("stack budget"));
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    fn execute_test_binary(
+        path: &std::path::Path,
+        binary: &[u8],
+        source: &str,
+    ) -> std::process::ExitStatus {
+        use std::{
+            fs,
+            os::unix::fs::PermissionsExt,
+            process::{Command, Stdio},
+            time::{Duration, Instant},
+        };
+        fs::write(path, binary).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut child = Command::new(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("native test timed out: {source}");
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        status
     }
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -1101,9 +1161,7 @@ mod tests {
     fn native_execution_agrees_with_the_interpreter() {
         use std::{
             fs,
-            os::unix::fs::PermissionsExt,
-            process::{Command, Stdio},
-            time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+            time::{SystemTime, UNIX_EPOCH},
         };
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1113,6 +1171,7 @@ mod tests {
             std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
         fs::create_dir(&directory).unwrap();
         let mut cases = [
+            include_str!("../examples/recursion.evg"),
             include_str!("../examples/drop.evg"),
             include_str!("../examples/temporary_cleanup.evg"),
             include_str!("../examples/borrowed_temporaries.evg"),
@@ -1151,6 +1210,7 @@ mod tests {
             "fn main() -> usize {(9 - 2) * 6}",
             "fn main() -> bool {true && (false || true)}",
             "fn main() -> () {()}",
+            "type Resource struct {tag: usize} where(tag == 7); impl Drop for Resource {fn drop(self){}} fn consume(r: Resource) -> usize ensures(result == 7) {r.tag} fn recurse(n: usize, r: Resource) -> usize ensures(result == 7) decreases(n) {if n == 0 {consume(r)} else {recurse(n - 1, r)}} fn main() -> usize {let r = Resource {tag: 7}; recurse(5, r)}",
             "fn choose(a: usize, b: usize, flag: bool) -> usize ensures ((flag && result == a) || (!flag && result == b)) {if flag {a} else {b}} fn main() -> usize {choose(7, 42, false)}",
             "fn add(a: usize, b: usize) -> usize where (a <= 10 && b <= 10) ensures (result == a + b) {a + b} fn main() -> usize {add(1, add(2, 3))}",
             "fn sum(a: usize,b: usize,c: usize,d: usize,e: usize,f: usize,g: usize,h: usize) -> usize where (a <= 10 && b <= 10 && c <= 10 && d <= 10 && e <= 10 && f <= 10 && g <= 10 && h <= 10) {a+b+c+d+e+f+g+h} fn main() -> usize {sum(1,2,3,4,5,6,7,8)}",
@@ -1225,26 +1285,7 @@ mod tests {
                 assert_eq!(binary, emit_mode(&program, mode).unwrap());
                 assert_eq!(&binary[..4], b"\x7fELF");
                 let path = directory.join(format!("{index}-{mode_index}"));
-                fs::write(&path, binary).unwrap();
-                fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-                let mut child = Command::new(&path)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .unwrap();
-                let deadline = Instant::now() + Duration::from_secs(3);
-                let status = loop {
-                    if let Some(status) = child.try_wait().unwrap() {
-                        break status;
-                    }
-                    if Instant::now() >= deadline {
-                        child.kill().unwrap();
-                        child.wait().unwrap();
-                        panic!("native test timed out: {source}");
-                    }
-                    std::thread::sleep(Duration::from_millis(5));
-                };
+                let status = execute_test_binary(&path, &binary, source);
                 assert_eq!(
                     status.code(),
                     Some(expected),
@@ -1252,6 +1293,23 @@ mod tests {
                 );
             }
         }
+        // These exceed the interpreter's separate host-stack budget; execute
+        // bounded native images directly and check the exact guard boundary.
+        let recursive = "fn count(n: usize) -> usize ensures(result == n) decreases(n) {if n == 0 {0} else {count(n - 1) + 1}}";
+        for (n, expected) in [(127, 127), (128, 125), (1000, 125)] {
+            let source = format!("{recursive} fn main() -> usize {{count({n})}}");
+            let program = verify(&source).unwrap();
+            let binary = emit(&program).unwrap();
+            let status =
+                execute_test_binary(&directory.join(format!("limit-{n}")), &binary, &source);
+            assert_eq!(status.code(), Some(expected));
+        }
+        let source = format!("{recursive} fn main() -> usize {{count(127) + count(127)}}");
+        let binary = emit(&verify(&source).unwrap()).unwrap();
+        assert_eq!(
+            execute_test_binary(&directory.join("repeated-recursion"), &binary, &source).code(),
+            Some(254)
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 }
