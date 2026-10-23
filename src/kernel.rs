@@ -148,6 +148,57 @@ pub fn solve(assumptions: &[Linear]) -> ArithmeticResult<Certificate> {
             check(assumptions, &row.certificate)?;
             return Ok(row.certificate.clone());
         }
+        // An equality lets us substitute once into every row, rather than
+        // forming every positive/negative pair. Search remains untrusted:
+        // the same independent checker validates the resulting certificate.
+        let lookup: BTreeMap<Linear, usize> = rows
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (r.value.clone(), i))
+            .collect();
+        let mut equality = None;
+        for (i, row) in rows.iter().enumerate() {
+            if let Some(variable) = row.value.terms.keys().next() {
+                if let Some(&j) = lookup.get(&row.value.scale(-1)?) {
+                    equality = Some((i, j, variable.clone()));
+                    break;
+                }
+            }
+        }
+        if let Some((i, j, variable)) = equality {
+            let (positive, negative) = if rows[i].value.terms[&variable] > 0 {
+                (rows[i].clone(), rows[j].clone())
+            } else {
+                (rows[j].clone(), rows[i].clone())
+            };
+            let p = positive.value.terms[&variable];
+            let n = negative.value.terms[&variable]
+                .checked_neg()
+                .ok_or("proof arithmetic overflow")?;
+            let mut next = Vec::new();
+            let mut seen = std::collections::BTreeSet::new();
+            for row in rows {
+                let coefficient = row.value.terms.get(&variable).copied().unwrap_or(0);
+                let row = if coefficient > 0 {
+                    row.combine(n, &negative, coefficient)?
+                } else if coefficient < 0 {
+                    row.combine(
+                        p,
+                        &positive,
+                        coefficient
+                            .checked_neg()
+                            .ok_or("proof arithmetic overflow")?,
+                    )?
+                } else {
+                    row
+                };
+                if seen.insert(row.value.clone()) {
+                    next.push(row);
+                }
+            }
+            rows = next;
+            continue;
+        }
         // Eliminate the cheapest variable to keep common bounds proofs small.
         let mut variables = BTreeMap::<String, (usize, usize)>::new();
         for row in &rows {
