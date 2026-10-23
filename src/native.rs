@@ -792,6 +792,7 @@ mod tests {
         let mut cases = [
             include_str!("../examples/native.evg"),
             include_str!("../examples/native_aggregates.evg"),
+            include_str!("../examples/array_contracts.evg"),
             include_str!("../examples/destructure.evg"),
             include_str!("../examples/affine_values.evg"),
             include_str!("../examples/structs.evg"),

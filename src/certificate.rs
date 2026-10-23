@@ -445,6 +445,7 @@ mod tests {
             include_str!("../examples/conditional_writes.evg"),
             include_str!("../stdlib/counter.evg"),
             include_str!("../examples/ideal_parameters.evg"),
+            include_str!("../examples/array_contracts.evg"),
             include_str!("../proofs/rc_protocol.evg"),
         ] {
             let (original, bundle) = prove(source).unwrap();

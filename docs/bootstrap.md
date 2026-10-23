@@ -459,3 +459,12 @@ right-hand side. For example, `pair.left = take_left(pair)` is rejected when
 already moved or dropped by the helper. Replacing the whole parent with a new,
 complete value remains valid. `examples/reject_partial_restore.evg` exercises
 this ownership boundary; cleanup tests check the valid complete replacement.
+
+`examples/array_contracts.evg` proves element-level contracts across array
+parameters and returns, then composes them to prove the final result is 42.
+Logical reads are keyed by immutable contents identity and normalized index,
+separately from local bindings. Their type properties survive branch and call
+scope changes; branch-specific facts do not. Writes still create a new contents
+identity. Record-field and nested-array reads use the same logical read table.
+Plain array literals at calls infer their element type from the parameter;
+dependent length checks occur in the callee's parameter environment.

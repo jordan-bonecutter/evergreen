@@ -338,6 +338,7 @@ struct Context<'a> {
     writable: BTreeSet<PlaneId>,
     old_values: BTreeMap<String, Symbol>,
     ideal_bindings: BTreeSet<String>,
+    array_reads: BTreeMap<String, Symbol>,
 }
 
 impl<'a> Context<'a> {
@@ -370,6 +371,7 @@ impl<'a> Context<'a> {
             writable: BTreeSet::new(),
             old_values: BTreeMap::new(),
             ideal_bindings: BTreeSet::new(),
+            array_reads: BTreeMap::new(),
         }
     }
     fn fresh_name(&mut self) -> String {
@@ -479,6 +481,16 @@ impl<'a> Context<'a> {
                 self.phase = saved_spec;
                 Ok(Ty::Array(Box::new(element), n))
             }
+        }
+    }
+    fn literal_element_hint(&mut self, t: &Type) -> Result<Option<Ty>> {
+        match t {
+            // Nested dependent lengths need the callee's parameter environment.
+            Type::Array(..) => Ok(None),
+            Type::Ref(inner) => Ok(self
+                .literal_element_hint(inner)?
+                .map(|t| Ty::Ref(Box::new(t)))),
+            _ => self.resolve(t).map(Some),
         }
     }
     fn compatible(&mut self, got: &Ty, expected: &Ty, line: usize) -> Result<()> {
@@ -1220,6 +1232,45 @@ impl<'a> Context<'a> {
             _ => false,
         }
     }
+    fn assume_element_type(&mut self, value: &Symbol) -> Result<()> {
+        let bounds = match value {
+            Symbol::Number(Ty::Machine(t), n) => {
+                let (lo, hi) = t.bounds();
+                vec![n.sub(&Linear::number(lo))?, Linear::number(hi).sub(n)?]
+            }
+            Symbol::Number(Ty::Nat, n) => vec![n.clone()],
+            Symbol::Array { len, .. } => vec![len.clone()],
+            _ => Vec::new(),
+        };
+        for bound in bounds {
+            if self.paths.iter().any(|path| !path.contains(&bound)) {
+                self.assume(&Formula::Ge(bound))?;
+            }
+        }
+        if let Symbol::Record(name, fields) = value {
+            for value in fields.values() {
+                self.assume_element_type(value)?;
+            }
+            let definition = self
+                .structs
+                .get(name)
+                .cloned()
+                .ok_or("unknown array element type")?;
+            if let Some(invariant) = definition.invariant {
+                let env = std::mem::replace(&mut self.env, fields.clone());
+                let roots = std::mem::take(&mut self.roots);
+                let facts =
+                    std::mem::replace(&mut self.facts, definition.facts.into_iter().collect());
+                self.env.insert("self".into(), value.clone());
+                let invariant = self.proposition(&invariant)?;
+                self.assume(&invariant)?;
+                self.env = env;
+                self.roots = roots;
+                self.facts = facts;
+            }
+        }
+        Ok(())
+    }
     fn finish_scope(&mut self, f: &Function) -> Result<()> {
         let mut names = f.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
         names.extend(
@@ -1244,6 +1295,22 @@ impl<'a> Context<'a> {
             }
         }
         Ok(())
+    }
+    fn array_read(&mut self, element: &Ty, identity: &str, index: &Linear) -> Result<Symbol> {
+        // Stable contents identities give extensional reads across scopes. A
+        // reference-bearing selection needs an alias rule, not a fresh plane.
+        if self.ty_has_reference(element) {
+            return Err("symbolic reads of reference-containing array elements need an alias contract; unsupported".into());
+        }
+        let key = format!("evg_read_{identity}_{index:?}");
+        if let Some(value) = self.array_reads.get(&key).cloned() {
+            // Replay type facts, never facts specific to the first read's path.
+            self.assume_element_type(&value)?;
+            return Ok(value);
+        }
+        let value = self.arbitrary(element)?;
+        self.array_reads.insert(key, value.clone());
+        Ok(value)
     }
     fn storage(&mut self, e: &Expr) -> Result<Symbol> {
         match &e.kind {
@@ -1278,7 +1345,7 @@ impl<'a> Context<'a> {
                     element,
                     len,
                     items,
-                    ..
+                    identity,
                 } = array
                 else {
                     return Err("index requires array storage".into());
@@ -1296,10 +1363,7 @@ impl<'a> Context<'a> {
                         return Ok(v.clone());
                     }
                 }
-                if self.ty_has_reference(&element) {
-                    return Err("symbolic reads of reference-containing array elements need an alias contract; unsupported".into());
-                }
-                self.arbitrary(&element)
+                self.array_read(&element, &identity, &index)
             }
             _ => self.eval(e, None),
         }
@@ -1612,17 +1676,7 @@ impl<'a> Context<'a> {
                         return Ok(value.clone());
                     }
                 }
-                // Repeated reads of the same symbolic element have the same value.
-                if self.ty_has_reference(&element) {
-                    return Err("symbolic reads of reference-containing array elements need an alias contract; unsupported".into());
-                }
-                let key = format!("evg_read_{identity}_{index:?}");
-                if let Some(v) = self.env.get(&key) {
-                    return Ok(v.clone());
-                }
-                let v = self.arbitrary(&element)?;
-                self.env.insert(key, v.clone());
-                Ok(v)
+                self.array_read(&element, &identity, &index)
             }
             Kind::Call(name, args) => {
                 if name == "old" {
@@ -1682,7 +1736,7 @@ impl<'a> Context<'a> {
                     self.validate_argument(&value, e.line)?;
                     return Ok(if name == "drop" { Symbol::Unit } else { value });
                 }
-                let f = self.functions.get(name).cloned().ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration (recursion is not supported yet)"))?;
+                let f = self.functions.get(name).cloned().ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration; self recursion requires decreases"))?;
                 if !f.modifies.is_empty() && self.phase == Phase::Specification {
                     return Err("modifying calls are forbidden in proof expressions".into());
                 }
@@ -1709,7 +1763,20 @@ impl<'a> Context<'a> {
                     if f.ideal_params.contains(parameter) {
                         self.phase = Phase::Specification;
                     }
-                    let value = self.eval(arg, hint.as_ref())?;
+                    let value = if let (Type::Array(element, _), Kind::Array(_)) = (t, &arg.kind) {
+                        if let Some(element) = self.literal_element_hint(element)? {
+                            // Infer literal elements now; defer its length check
+                            // to the isolated, fully bound callee environment.
+                            self.eval_inner(
+                                arg,
+                                Some(&Ty::Array(Box::new(element), Linear::number(0))),
+                            )?
+                        } else {
+                            self.eval(arg, hint.as_ref())?
+                        }
+                    } else {
+                        self.eval(arg, hint.as_ref())?
+                    };
                     self.phase = saved_specification;
                     self.validate_argument(&value, e.line)?;
                     actuals.push(value);
@@ -2233,6 +2300,27 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn array_read_facts_survive_contracts_and_branch_scope_changes() {
+        let source = include_str!("../examples/array_contracts.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        assert!(verify(&source.replace("{data}", "{[data[1], data[0]]}")).is_err());
+        let branch = "fn select(data: [usize; 2], index: usize, flag: bool) -> usize where (index < 2) ensures (result == data[index]) {if flag {data[index]} else {data[index]}}";
+        assert!(verify(branch).is_ok());
+        let record = "type Positive struct {value: usize} where (value > 0); fn select(data: [Positive; 1], flag: bool) -> Positive ensures (result.value == data[0].value) {if flag {data[0]} else {data[0]}} fn main() -> usize ensures (result == 42) {let input: [Positive; 1] = [Positive {value: 42}]; let answer = select(input, false); answer.value}";
+        assert_eq!(verify(record).unwrap().run().unwrap().to_string(), "42");
+        let nested = "fn read(data: [[usize; 2]; 1]) -> usize ensures (result == data[0][1]) {data[0][1]} fn main() -> usize ensures (result == 42) {let data: [[usize; 2]; 1] = [[7, 42]]; read(data)}";
+        assert_eq!(verify(nested).unwrap().run().unwrap().to_string(), "42");
+        let false_fact = "type Item struct {value: usize} where (fact lie = 1 == 2; true); fn bad(data: [Item; 1]) -> usize ensures (result == 1) {let first = data[0]; let second = data[0]; 0}";
+        assert!(verify(false_fact).is_err());
+        let branch_fact = "fn bad(data: [usize; 1]) -> usize ensures (result == 0) {if data[0] == 0 {data[0]} else {data[0]}}";
+        assert!(verify(branch_fact).is_err());
+        let literal = "fn first(n: usize, data: [u8; n]) -> u8 where (n > 0) ensures (result == data[0]) {data[0]} fn main() -> u8 ensures (result == 7) {let n: usize = 1; first(2, [7, 42])}";
+        assert_eq!(verify(literal).unwrap().run().unwrap().to_string(), "7");
+        assert!(verify(&literal.replace("first(2, [7, 42])", "first(2, [7])")).is_err());
+        assert!(verify(&literal.replace("first(2, [7, 42])", "first(2, [256, 42])")).is_err());
+    }
+
     #[test]
     fn field_assignment_cannot_resurrect_siblings_consumed_by_its_rhs() {
         let declarations = "type Left struct {} impl Drop for Left {fn drop(self){}} type Right struct {} impl Drop for Right {fn drop(self){}} type Pair struct {left: Left, right: Right} fn take(pair: Pair) -> Left {let Pair {left, right} = pair; left}";
