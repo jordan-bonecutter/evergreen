@@ -1,6 +1,6 @@
 //! Bounded reference evaluator; construction requires a verified program.
 use crate::{
-    syntax::{Expr, Function, Kind, Type},
+    syntax::{Expr, Function, Kind, Struct, Type},
     verify::VerifiedProgram,
 };
 use std::collections::BTreeMap;
@@ -12,6 +12,7 @@ pub enum Value {
     Nat(i128),
     Bool(bool),
     Array(Vec<Value>),
+    Record(String, BTreeMap<String, Value>),
 }
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -28,6 +29,7 @@ impl std::fmt::Display for Value {
                 }
                 write!(f, "]")
             }
+            Self::Record(n, fields) => write!(f, "{n} {fields:?}"),
         }
     }
 }
@@ -50,12 +52,14 @@ impl Value {
             Self::Int(_) => Some(Type::Int),
             Self::Nat(_) => Some(Type::Nat),
             Self::Bool(_) => Some(Type::Bool),
+            Self::Record(n, _) => Some(Type::Named(n.clone())),
             _ => None,
         }
     }
 }
 struct Evaluator<'a> {
     functions: &'a [Function],
+    structs: &'a BTreeMap<String, Struct>,
     fuel: usize,
     depth: usize,
 }
@@ -64,6 +68,14 @@ impl Evaluator<'_> {
         match &e.kind {
             Kind::Name(n) => env.get(n).and_then(Value::hint),
             Kind::Unary(_, x) => self.hint(x, env),
+            Kind::Field(base, field) => {
+                if let Kind::Name(n) = &base.kind {
+                    if let Some(Value::Record(_, fields)) = env.get(n) {
+                        return fields.get(field).and_then(Value::hint);
+                    }
+                }
+                None
+            }
             Kind::Binary(_, a, b) => self.hint(a, env).or_else(|| self.hint(b, env)),
             Kind::Call(n, _) => self
                 .functions
@@ -99,6 +111,47 @@ impl Evaluator<'_> {
             }
         }
         for statement in &f.body {
+            if let Some(target) = &statement.target {
+                fn path(e: &Expr, fields: &mut Vec<String>) -> Result<String> {
+                    match &e.kind {
+                        Kind::Name(n) => Ok(n.clone()),
+                        Kind::Field(b, n) => {
+                            let root = path(b, fields)?;
+                            fields.push(n.clone());
+                            Ok(root)
+                        }
+                        _ => Err("invalid assignment".into()),
+                    }
+                }
+                fn replace(root: &mut Value, fields: &[String], value: Value) -> Result<()> {
+                    if fields.is_empty() {
+                        *root = value;
+                        return Ok(());
+                    }
+                    let Value::Record(_, members) = root else {
+                        return Err("invalid field assignment".into());
+                    };
+                    replace(
+                        members.get_mut(&fields[0]).ok_or("unknown field")?,
+                        &fields[1..],
+                        value,
+                    )
+                }
+                let old = self.expr(target, &env, None)?;
+                let new = self.expr(&statement.value, &env, old.hint().as_ref())?;
+                let mut fields = Vec::new();
+                let root = path(target, &mut fields)?;
+                replace(
+                    env.get_mut(&root).ok_or("unknown assignment target")?,
+                    &fields,
+                    new,
+                )?;
+                continue;
+            }
+            if statement.effect {
+                self.expr(&statement.value, &env, None)?;
+                continue;
+            }
             if !statement.fact {
                 let value = self.expr(&statement.value, &env, statement.ty.as_ref())?;
                 env.insert(statement.name.clone(), value);
@@ -143,6 +196,29 @@ impl Evaluator<'_> {
                 .get(n)
                 .cloned()
                 .ok_or_else(|| format!("unknown value {n}")),
+            Kind::Field(base, field) => {
+                let Value::Record(_, fields) = self.expr(base, env, None)? else {
+                    return Err("expected struct".into());
+                };
+                fields
+                    .get(field)
+                    .cloned()
+                    .ok_or_else(|| format!("unknown field {field}"))
+            }
+            Kind::Record(name, entries) => {
+                let def = self.structs.get(name).cloned().ok_or("unknown struct")?;
+                let mut fields = BTreeMap::new();
+                for (n, e) in entries {
+                    let t = def
+                        .fields
+                        .iter()
+                        .find(|(field, _)| field == n)
+                        .map(|(_, t)| t)
+                        .ok_or("unknown field")?;
+                    fields.insert(n.clone(), self.expr(e, env, Some(t))?);
+                }
+                Ok(Value::Record(name.clone(), fields))
+            }
             Kind::Unary(op, x) => {
                 if op == "!" {
                     Ok(Value::Bool(
@@ -251,6 +327,7 @@ impl VerifiedProgram {
     pub fn run(&self) -> Result<Value> {
         let mut evaluator = Evaluator {
             functions: &self.functions,
+            structs: &self.structs,
             fuel: 100_000,
             depth: 0,
         };

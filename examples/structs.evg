@@ -1,0 +1,16 @@
+type Buffer struct {
+    len: usize,
+    cap: usize,
+} where (len <= cap);
+
+fn grow(b: Buffer) -> Buffer
+ensures (result.len == b.len + 1 && result.cap == b.cap + 1) {
+    Buffer { len: b.len + 1, cap: b.cap + 1 }
+}
+
+fn main() -> usize ensures (result == 2) {
+    let buffer = Buffer { len: 1, cap: 1 };
+    // The completed replacement is checked atomically.
+    buffer = grow(buffer);
+    buffer.len
+}

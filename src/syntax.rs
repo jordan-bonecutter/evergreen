@@ -6,6 +6,7 @@ pub enum Type {
     Int,
     Nat,
     Bool,
+    Named(String),
     Array(Box<Type>, Box<Expr>),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,6 +25,8 @@ pub enum Kind {
     Call(String, Vec<Expr>),
     Array(Vec<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
+    Record(String, Vec<(String, Expr)>),
+    Field(Box<Expr>, String),
 }
 #[derive(Clone, Debug)]
 pub struct Statement {
@@ -32,6 +35,20 @@ pub struct Statement {
     pub value: Expr,
     pub proof: Option<Vec<String>>,
     pub fact: bool,
+    pub target: Option<Expr>,
+    pub effect: bool,
+}
+#[derive(Clone, Debug)]
+pub struct Struct {
+    pub name: String,
+    pub fields: Vec<(String, Type)>,
+    pub invariant: Option<Expr>,
+    pub line: usize,
+}
+#[derive(Clone, Debug)]
+pub struct Program {
+    pub structs: Vec<Struct>,
+    pub functions: Vec<Function>,
 }
 #[derive(Clone, Debug)]
 pub struct Function {
@@ -130,7 +147,10 @@ impl Parser {
                     self.pos += 1;
                     Ok(Type::Bool)
                 }
-                _ => Err(self.err("expected isize, usize, bool, or [T; n]")),
+                _ if self.peek().starts_with(|c: char| c.is_ascii_uppercase()) => {
+                    Ok(Type::Named(self.name()?))
+                }
+                _ => Err(self.err("expected isize, usize, bool, [T; n], or a struct name")),
             }
         };
         self.depth -= 1;
@@ -197,7 +217,25 @@ impl Parser {
                 Kind::Name("result".into())
             } else {
                 let n = self.name()?;
-                if self.eat("(") {
+                if n.starts_with(|c: char| c.is_ascii_uppercase()) && self.eat("{") {
+                    let mut fields = Vec::new();
+                    if !self.eat("}") {
+                        loop {
+                            let field = self.name()?;
+                            self.expect(":")?;
+                            let value = self.expr(0)?;
+                            fields.push((field, value));
+                            if self.eat("}") {
+                                break;
+                            }
+                            self.expect(",")?;
+                            if self.eat("}") {
+                                break;
+                            }
+                        }
+                    }
+                    Kind::Record(n, fields)
+                } else if self.eat("(") {
                     let mut args = Vec::new();
                     if !self.eat(")") {
                         loop {
@@ -216,6 +254,14 @@ impl Parser {
             Expr { kind, line }
         };
         loop {
+            if min <= 8 && self.eat(".") {
+                let field = self.name()?;
+                lhs = Expr {
+                    kind: Kind::Field(Box::new(lhs), field),
+                    line,
+                };
+                continue;
+            }
             if self.peek() == "[" && min <= 8 {
                 self.pos += 1;
                 let idx = self.expr(0)?;
@@ -312,7 +358,42 @@ impl Parser {
         };
         self.expect("{")?;
         let mut body = Vec::new();
-        while self.peek() == "let" || self.peek() == "fact" {
+        let result = loop {
+            if self.eat("return") {
+                let value = self.expr(0)?;
+                self.eat(";");
+                break value;
+            }
+            if self.peek() != "let" && self.peek() != "fact" {
+                let value = self.expr(0)?;
+                if self.eat("=") {
+                    let rhs = self.expr(0)?;
+                    self.expect(";")?;
+                    body.push(Statement {
+                        name: String::new(),
+                        ty: None,
+                        value: rhs,
+                        proof: None,
+                        fact: false,
+                        target: Some(value),
+                        effect: false,
+                    });
+                    continue;
+                }
+                if self.eat(";") && self.peek() != "}" {
+                    body.push(Statement {
+                        name: String::new(),
+                        ty: None,
+                        value,
+                        proof: None,
+                        fact: false,
+                        target: None,
+                        effect: true,
+                    });
+                    continue;
+                }
+                break value;
+            }
             let fact = self.eat("fact");
             if !fact {
                 self.expect("let")?;
@@ -340,11 +421,10 @@ impl Parser {
                 value,
                 proof,
                 fact,
+                target: None,
+                effect: false,
             });
-        }
-        self.eat("return");
-        let result = self.expr(0)?;
-        self.eat(";");
+        };
         self.expect("}")?;
         let proof = if self.eat("proof") {
             self.proof()?
@@ -363,9 +443,50 @@ impl Parser {
             line,
         })
     }
+
+    fn structure(&mut self) -> Result<Struct, String> {
+        let line = self.line();
+        self.expect("type")?;
+        let name = self.name()?;
+        if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return Err(self.err("struct names must start with an uppercase letter"));
+        }
+        self.expect("struct")?;
+        self.expect("{")?;
+        let mut fields = Vec::new();
+        if !self.eat("}") {
+            loop {
+                let n = self.name()?;
+                self.expect(":")?;
+                fields.push((n, self.ty()?));
+                if self.eat("}") {
+                    break;
+                }
+                self.expect(",")?;
+                if self.eat("}") {
+                    break;
+                }
+            }
+        }
+        let invariant = if self.eat("where") {
+            self.expect("(")?;
+            let p = self.expr(0)?;
+            self.expect(")")?;
+            Some(p)
+        } else {
+            None
+        };
+        self.eat(";");
+        Ok(Struct {
+            name,
+            fields,
+            invariant,
+            line,
+        })
+    }
 }
 
-pub fn parse(source: &str) -> Result<Vec<Function>, String> {
+pub fn parse(source: &str) -> Result<Program, String> {
     if source.len() > 1_000_000 {
         return Err("source exceeds 1 MB bootstrap limit".into());
     }
@@ -375,13 +496,18 @@ pub fn parse(source: &str) -> Result<Vec<Function>, String> {
         depth: 0,
     };
     let mut functions = Vec::new();
+    let mut structs = Vec::new();
     while p.peek() != "<eof>" {
-        functions.push(p.function()?);
+        if p.peek() == "type" {
+            structs.push(p.structure()?);
+        } else {
+            functions.push(p.function()?);
+        }
     }
     if functions.is_empty() {
         return Err("expected at least one function".into());
     }
-    Ok(functions)
+    Ok(Program { structs, functions })
 }
 
 #[cfg(test)]
@@ -393,7 +519,7 @@ mod tests {
             "fn main() -> usize { let a: [usize; 2] = [1, 2]; if true { f(a[0]) } else { 3 } }",
         )
         .unwrap();
-        assert!(matches!(f[0].result.kind, Kind::If(..)));
+        assert!(matches!(f.functions[0].result.kind, Kind::If(..)));
     }
     #[test]
     fn rejects_truncated_proofs_and_deep_syntax() {

@@ -19,6 +19,10 @@ The supported language contains pure typed functions, immutable `let` bindings,
 named `fact` declarations, preconditions (`where`), postconditions (`ensures`),
 length-indexed arrays (`[T; n]`), array literals, calls to earlier verified
 functions, and conditional expressions. Array access requires a proof of its bound.
+Nominal structs support dependent fields and `where` invariants. Construction,
+field assignment, and whole-value replacement must establish those invariants.
+Nested struct invariants are rechecked after updates. Postconditions refer to
+the entry values of parameters, even when the function reassigns its locals.
 Unknown obligations fail verification. Facts cannot introduce assumptions:
 each fact must itself have a proof. Only function preconditions are assumptions,
 and are universally quantified in the function's type.
@@ -43,7 +47,7 @@ machine integers. Natural subtraction saturates at zero. This is an explicit
 bootstrap semantics, not a claim that overflow has been verified. Logical
 operators in propositions are `&&`, `||`, and `!`.
 
-Not yet supported: recursion, mutation, structs, patterns, references,
+Not yet supported: recursion, patterns, references,
 allocation, FFI, machine layouts, or native code generation. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
 

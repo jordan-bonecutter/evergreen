@@ -1,7 +1,7 @@
 //! Internal elaboration and verification-condition generation.
 use crate::{
     kernel::{self, Linear},
-    syntax::{self, Expr, Function, Kind, Type},
+    syntax::{self, Expr, Function, Kind, Struct, Type},
 };
 use std::collections::BTreeMap;
 
@@ -34,6 +34,7 @@ enum Ty {
     Nat,
     Bool,
     Array(Box<Ty>, Linear),
+    Record(String),
 }
 #[derive(Clone, Debug)]
 enum Symbol {
@@ -45,6 +46,7 @@ enum Symbol {
         items: Option<Vec<Symbol>>,
         identity: String,
     },
+    Record(String, BTreeMap<String, Symbol>),
 }
 impl Symbol {
     fn ty(&self) -> Ty {
@@ -52,6 +54,7 @@ impl Symbol {
             Self::Number(t, _) => t.clone(),
             Self::Bool(_) => Ty::Bool,
             Self::Array { element, len, .. } => Ty::Array(element.clone(), len.clone()),
+            Self::Record(name, _) => Ty::Record(name.clone()),
         }
     }
     fn number(&self) -> Result<Linear> {
@@ -126,6 +129,7 @@ fn equal(a: &Linear, b: &Linear) -> Result<Formula> {
 
 struct Context<'a> {
     functions: &'a BTreeMap<String, Function>,
+    structs: &'a BTreeMap<String, Struct>,
     env: BTreeMap<String, Symbol>,
     facts: BTreeMap<String, Formula>,
     paths: Vec<Vec<Linear>>,
@@ -134,9 +138,13 @@ struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    fn new(functions: &'a BTreeMap<String, Function>) -> Self {
+    fn new(
+        functions: &'a BTreeMap<String, Function>,
+        structs: &'a BTreeMap<String, Struct>,
+    ) -> Self {
         Self {
             functions,
+            structs,
             env: BTreeMap::new(),
             facts: BTreeMap::new(),
             paths: vec![vec![]],
@@ -166,6 +174,14 @@ impl<'a> Context<'a> {
             Type::Int => Ok(Ty::Int),
             Type::Nat => Ok(Ty::Nat),
             Type::Bool => Ok(Ty::Bool),
+            Type::Named(n) => {
+                if !self.structs.contains_key(n) {
+                    return Err(format!(
+                        "unknown struct {n}; recursive types are not supported yet"
+                    ));
+                }
+                Ok(Ty::Record(n.clone()))
+            }
             Type::Array(element, len) => {
                 let element = self.resolve(element)?;
                 let n = self.eval(len, Some(&Ty::Nat))?.number()?;
@@ -176,6 +192,7 @@ impl<'a> Context<'a> {
     fn compatible(&mut self, got: &Ty, expected: &Ty, line: usize) -> Result<()> {
         match (got, expected) {
             (Ty::Int, Ty::Int) | (Ty::Nat, Ty::Nat) | (Ty::Bool, Ty::Bool) => Ok(()),
+            (Ty::Record(a), Ty::Record(b)) if a == b => Ok(()),
             (Ty::Array(a, n), Ty::Array(b, m)) => {
                 self.compatible(a, b, line)?;
                 self.prove(&equal(n, m)?, "array length equality", line)
@@ -206,12 +223,109 @@ impl<'a> Context<'a> {
                 items: None,
                 identity: name,
             }),
+            Ty::Record(name) => {
+                let def = self.structs.get(name).cloned().ok_or("unknown struct")?;
+                let saved = self.env.clone();
+                self.env.clear();
+                let mut fields = BTreeMap::new();
+                for (n, t) in &def.fields {
+                    let t = self.resolve(t)?;
+                    let v = self.arbitrary(&t)?;
+                    fields.insert(n.clone(), v.clone());
+                    self.env.insert(n.clone(), v);
+                }
+                let value = Symbol::Record(name.clone(), fields);
+                self.env.insert("self".into(), value.clone());
+                if let Some(p) = &def.invariant {
+                    let p = self.eval(p, Some(&Ty::Bool))?.proposition()?;
+                    self.assume(&p)?;
+                }
+                self.env = saved;
+                Ok(value)
+            }
         }
+    }
+
+    fn record_valid(&mut self, value: &Symbol, line: usize) -> Result<()> {
+        let Symbol::Record(name, fields) = value else {
+            return Ok(());
+        };
+        let def = self.structs.get(name).cloned().ok_or("unknown struct")?;
+        if def.fields.len() != fields.len() {
+            return Err(format!("line {line}: wrong fields for {name}"));
+        }
+        let saved = self.env.clone();
+        self.env.clear();
+        for (n, t) in &def.fields {
+            let v = fields
+                .get(n)
+                .ok_or_else(|| format!("line {line}: missing field {n}"))?;
+            self.record_valid(v, line)?;
+            let t = self.resolve(t)?;
+            self.compatible(&v.ty(), &t, line)?;
+            self.env.insert(n.clone(), v.clone());
+        }
+        self.env.insert("self".into(), value.clone());
+        if let Some(p) = &def.invariant {
+            let p = self.eval(p, Some(&Ty::Bool))?.proposition()?;
+            self.prove(&p, &format!("invariant of {name}"), line)?;
+        }
+        self.env = saved;
+        Ok(())
+    }
+
+    fn assign(&mut self, place: &Expr, value: &Expr) -> Result<()> {
+        fn path(e: &Expr, fields: &mut Vec<String>) -> Result<String> {
+            match &e.kind {
+                Kind::Name(n) => Ok(n.clone()),
+                Kind::Field(base, n) => {
+                    let root = path(base, fields)?;
+                    fields.push(n.clone());
+                    Ok(root)
+                }
+                _ => Err(format!(
+                    "line {}: assignment requires a variable or struct field",
+                    e.line
+                )),
+            }
+        }
+        fn replace(root: &mut Symbol, fields: &[String], value: Symbol) -> Result<()> {
+            if fields.is_empty() {
+                *root = value;
+                return Ok(());
+            }
+            let Symbol::Record(_, members) = root else {
+                return Err("field assignment requires a struct".into());
+            };
+            let member = members.get_mut(&fields[0]).ok_or("unknown field")?;
+            replace(member, &fields[1..], value)
+        }
+        let mut fields = Vec::new();
+        let name = path(place, &mut fields)?;
+        let old = self.eval(place, None)?;
+        let new = self.eval(value, Some(&old.ty()))?;
+        let mut root = self
+            .env
+            .get(&name)
+            .cloned()
+            .ok_or("unknown assignment target")?;
+        replace(&mut root, &fields, new)?;
+        self.record_valid(&root, place.line)?;
+        self.env.insert(name, root);
+        Ok(())
     }
     fn hint(&self, e: &Expr) -> Option<Ty> {
         match &e.kind {
             Kind::Name(n) => self.env.get(n).map(Symbol::ty),
             Kind::Unary(_, x) => self.hint(x),
+            Kind::Field(base, field) => {
+                if let Kind::Name(n) = &base.kind {
+                    if let Some(Symbol::Record(_, fields)) = self.env.get(n) {
+                        return fields.get(field).map(Symbol::ty);
+                    }
+                }
+                None
+            }
             Kind::Binary(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
             Kind::Call(n, _) => self.functions.get(n).and_then(|f| match f.ret {
                 Type::Int => Some(Ty::Int),
@@ -265,6 +379,46 @@ impl<'a> Context<'a> {
                 .get(n)
                 .cloned()
                 .ok_or_else(|| format!("unknown value {n}")),
+            Kind::Field(base, name) => {
+                let Symbol::Record(_, fields) = self.eval(base, None)? else {
+                    return Err("field access requires a struct".into());
+                };
+                fields
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| format!("unknown field {name}"))
+            }
+            Kind::Record(name, entries) => {
+                let def = self
+                    .structs
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| format!("unknown struct {name}"))?;
+                let saved = self.env.clone();
+                let mut fields = BTreeMap::new();
+                for (n, value) in entries {
+                    if fields.contains_key(n) {
+                        return Err(format!("duplicate field {n}"));
+                    }
+                    let ty = def
+                        .fields
+                        .iter()
+                        .find(|(field, _)| field == n)
+                        .map(|(_, t)| t)
+                        .ok_or_else(|| format!("unknown field {n}"))?;
+                    let hint = match ty {
+                        Type::Nat => Some(Ty::Nat),
+                        Type::Int => Some(Ty::Int),
+                        Type::Bool => Some(Ty::Bool),
+                        _ => None,
+                    };
+                    fields.insert(n.clone(), self.eval(value, hint.as_ref())?);
+                }
+                self.env = saved;
+                let record = Symbol::Record(name.clone(), fields);
+                self.record_valid(&record, e.line)?;
+                Ok(record)
+            }
             Kind::Unary(op, x) if op == "!" => Ok(Symbol::Bool(
                 self.eval(x, Some(&Ty::Bool))?.proposition()?.not(),
             )),
@@ -462,18 +616,43 @@ impl<'a> Context<'a> {
 #[derive(Debug)]
 pub struct VerifiedProgram {
     pub(crate) functions: Vec<Function>,
+    pub(crate) structs: BTreeMap<String, Struct>,
     pub obligations: usize,
 }
 
 pub fn verify(source: &str) -> Result<VerifiedProgram> {
     let parsed = syntax::parse(source)?;
+    let mut structs = BTreeMap::new();
+    let empty_functions = BTreeMap::new();
+    for s in &parsed.structs {
+        if structs.contains_key(&s.name) {
+            return Err(format!("line {}: duplicate struct {}", s.line, s.name));
+        }
+        let mut ctx = Context::new(&empty_functions, &structs);
+        for (n, t) in &s.fields {
+            if n == "self" || ctx.env.contains_key(n) {
+                return Err(format!("line {}: duplicate or reserved field {n}", s.line));
+            }
+            let t = ctx.resolve(t)?;
+            let value = ctx.arbitrary(&t)?;
+            ctx.env.insert(n.clone(), value);
+        }
+        ctx.env.insert(
+            "self".into(),
+            Symbol::Record(s.name.clone(), ctx.env.clone()),
+        );
+        if let Some(p) = &s.invariant {
+            ctx.eval(p, Some(&Ty::Bool))?;
+        }
+        structs.insert(s.name.clone(), s.clone());
+    }
     let mut functions = BTreeMap::new();
     let mut obligations = 0;
-    for f in &parsed {
+    for f in &parsed.functions {
         if functions.contains_key(&f.name) {
             return Err(format!("line {}: duplicate function {}", f.line, f.name));
         }
-        let mut ctx = Context::new(&functions);
+        let mut ctx = Context::new(&functions, &structs);
         for (n, t) in &f.params {
             if ctx.env.contains_key(n) {
                 return Err(format!("line {}: duplicate parameter {n}", f.line));
@@ -487,7 +666,16 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
             ctx.assume(&p)?;
         }
         let ret = ctx.resolve(&f.ret)?;
+        let contract_env = ctx.env.clone();
         for statement in &f.body {
+            if let Some(target) = &statement.target {
+                ctx.assign(target, &statement.value)?;
+                continue;
+            }
+            if statement.effect {
+                ctx.eval(&statement.value, None)?;
+                continue;
+            }
             if ctx.env.contains_key(&statement.name) || ctx.facts.contains_key(&statement.name) {
                 return Err(format!(
                     "line {}: duplicate binding {}",
@@ -513,9 +701,10 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
             }
         }
         let value = ctx.eval(&f.result, Some(&ret))?;
-        ctx.env.insert("result".into(), value);
         ctx.proof_names(&f.proof, f.result.line)?;
         if let Some(post) = &f.post {
+            ctx.env = contract_env;
+            ctx.env.insert("result".into(), value);
             let p = ctx.eval(post, Some(&Ty::Bool))?.proposition()?;
             ctx.prove(&p, &format!("postcondition of {}", f.name), post.line)?;
         }
@@ -523,7 +712,8 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         functions.insert(f.name.clone(), f.clone());
     }
     Ok(VerifiedProgram {
-        functions: parsed,
+        functions: parsed.functions,
+        structs,
         obligations,
     })
 }
@@ -586,5 +776,38 @@ mod tests {
         verify("fn f(n: usize) -> usize where (n < 3 || n > 10) ensures (result != 5) { n }")
             .unwrap();
         verify("fn f(n: usize) -> usize where (n < 0) ensures (result > 100) { n }").unwrap();
+    }
+
+    #[test]
+    fn struct_invariants_and_atomic_replacement() {
+        let prefix = "type Buffer struct { len: usize, cap: usize } where (len <= cap); ";
+        let valid = format!("{prefix} fn main() -> usize {{ let b = Buffer {{ len: 1, cap: 2 }}; b = Buffer {{ len: b.len + 2, cap: b.cap + 2 }}; b.len }}");
+        assert_eq!(verify(&valid).unwrap().run().unwrap().to_string(), "3");
+        for body in [
+            "let b = Buffer {len: 3, cap: 2}; b.len",
+            "let b = Buffer {len: 1, cap: 2}; b.len = 3; b.len",
+            "let b = Buffer {len: 1}; b.len",
+            "let b = Buffer {len: 1, cap: 2, extra: 0}; b.len",
+        ] {
+            assert!(
+                verify(&format!("{prefix} fn main() -> usize {{ {body} }}")).is_err(),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn dependent_struct_fields_and_nested_invariants() {
+        let s = "type Storage struct { len: usize, data: [isize; len] } type Outer struct { storage: Storage } fn main() -> isize { let s = Storage {len: 2, data: [10, 20]}; let o = Outer {storage: s}; o.storage.data[1] }";
+        assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "20");
+        assert!(verify("type Storage struct {len: usize, data: [isize; len]} fn main() -> usize {let s = Storage {len: 2, data: [1, 2]}; s.len = 3; 0}").is_err());
+        assert!(verify("type Inner struct {x: usize} where (x > 0); type Outer struct {inner: Inner} fn main() -> usize {let o = Outer {inner: Inner {x: 1}}; o.inner.x = 0; 0}").is_err());
+    }
+
+    #[test]
+    fn contracts_capture_entry_parameters() {
+        assert!(verify("fn bad(n: usize) -> usize ensures (result == n) { n = 0; n }").is_err());
+        let s = "fn reset(n: usize) -> usize ensures (result == 0) { n = 0; n } fn main() -> usize ensures (result == 0) {reset(10)}";
+        assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "0");
     }
 }
