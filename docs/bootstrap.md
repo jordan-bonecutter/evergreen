@@ -39,24 +39,33 @@ The update erases to ordinary stores, not a hardware transaction; concurrency
 will require separate visibility permissions. Outside this construct, assigning
 a value that violates its nominal type is rejected immediately. Postconditions refer to
 the entry values of parameters, even when the function reassigns its locals.
-Unknown obligations fail verification. Facts cannot introduce assumptions:
-each fact must itself have a proof. Only function preconditions are assumptions,
-and are universally quantified in the function's type.
+Unknown obligations fail verification. A `fact name = proposition;` declaration
+names a proposition and may be false. It does not introduce an assumption.
+`proof witness: proposition by { ... };` must establish that proposition before
+its witness can be used. Preconditions are explicit assumptions in a universally
+quantified function contract and become obligations at calls.
 
 ```evg
 fn increment(n: usize) -> usize where (n < usize::MAX) ensures (result > n) {
-    fact grows = n + 1 > n by { omega };
+    fact grows = n + 1 > n;
+    proof successor_grows: grows by { omega };
     n + 1
 } proof { omega }
 ```
 
 The initial proof vocabulary is `omega`, `rfl`, `simp_all`, `decide`,
-`assumption`, and `exact local_name`, separated by semicolons. The default is
+`assumption`, and `exact proof_name`. The default is
 `omega`. Arbitrary Lean source and unproven axioms are not accepted. Lean warnings
 are errors; proof escape hatches such as `sorry` are unavailable. In the internal
-backend these steps are proof-search hints: the arithmetic checker must still
-prove the obligation, and `exact` must name an already proven fact. They are not
-yet an implementation of Lean's tactic semantics.
+backend the search tactics currently use the bounded arithmetic prover rather
+than implementing Lean's individual tactic semantics. `exact proof_name` is a
+checked proof reference: the named witness must prove the same normalized
+proposition, not merely another true statement. A fact name denotes its
+proposition in proof code, never a runtime boolean. Local fact definitions are
+re-evaluated against the current places; an old witness cannot certify a changed
+state. `examples/named_facts.evg` includes an unused false fact and actual proof
+reuse; `examples/reject_false_proof.evg` rejects a false proof. Exported and
+parameterized proposition declarations are not implemented yet.
 
 The bootstrap target is 64-bit: `usize` is `u64`, and `isize` is `i64`.
 Explicit `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, and `i64` types are
@@ -90,7 +99,8 @@ references remain rejected until their cleanup/effect rules are implemented.
 ```evg
 impl Drop for Resource {
     fn drop(self) {
-        fact valid_at_destruction = self.tag == 7;
+        fact valid_tag = self.tag == 7;
+        proof valid_at_destruction: valid_tag;
     }
 }
 ```

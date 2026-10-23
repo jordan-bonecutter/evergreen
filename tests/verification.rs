@@ -71,6 +71,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/intermediate_states.evg",
         "examples/update_helpers.evg",
         "examples/drop.evg",
+        "examples/named_facts.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")
@@ -91,6 +92,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/reject_dangling.evg",
         "examples/reject_incomplete_state.evg",
         "examples/reject_overflow.evg",
+        "examples/reject_false_proof.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")

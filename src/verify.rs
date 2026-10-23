@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Formula {
     True,
     False,
@@ -228,6 +228,7 @@ fn destructor_body(body: &[Statement]) -> bool {
         Statement::Let { value, .. } | Statement::Fact { value, .. } | Statement::Effect(value) => {
             destructor_expression(value)
         }
+        Statement::Proof { proposition, .. } => destructor_expression(proposition),
         Statement::Update { body, .. } => destructor_body(body),
     })
 }
@@ -236,7 +237,8 @@ struct Context<'a> {
     functions: &'a BTreeMap<String, Function>,
     structs: &'a BTreeMap<String, Struct>,
     env: BTreeMap<String, Symbol>,
-    facts: BTreeMap<String, Formula>,
+    facts: BTreeMap<String, Expr>,
+    proofs: BTreeMap<String, Formula>,
     paths: Vec<Vec<Linear>>,
     fresh: usize,
     obligations: usize,
@@ -263,6 +265,7 @@ impl<'a> Context<'a> {
             structs,
             env: BTreeMap::new(),
             facts: BTreeMap::new(),
+            proofs: BTreeMap::new(),
             paths: vec![vec![]],
             fresh: 0,
             obligations: 0,
@@ -552,28 +555,40 @@ impl<'a> Context<'a> {
                 Ok(())
             }
             Statement::Let { name, ty, value } => {
-                if self.env.contains_key(name) || self.facts.contains_key(name) {
-                    return Err(format!("line {}: duplicate binding {name}", value.line));
-                }
+                self.fresh_binding(name, value.line)?;
                 let ty = ty.as_ref().map(|t| self.resolve(t)).transpose()?;
                 let v = self.eval(value, ty.as_ref())?;
                 self.env.insert(name.clone(), v);
                 Ok(())
             }
-            Statement::Fact { name, value, proof } => {
-                if self.env.contains_key(name) || self.facts.contains_key(name) {
-                    return Err(format!("line {}: duplicate binding {name}", value.line));
-                }
-                let p = self.proposition(value)?;
-                if let Some(steps) = proof {
-                    self.proof_names(steps, value.line)?;
-                }
-                self.prove(&p, &format!("fact {name}"), value.line)?;
+            Statement::Fact { name, value } => {
+                self.fresh_binding(name, value.line)?;
+                self.proposition(value)?; // Well-formedness only; NOT a proof or an assumption.
+                self.facts.insert(name.clone(), value.clone());
+                Ok(())
+            }
+            Statement::Proof {
+                name,
+                proposition,
+                steps,
+            } => {
+                self.fresh_binding(name, proposition.line)?;
+                let p = self.proposition(proposition)?;
+                self.prove_with(&p, &format!("proof {name}"), proposition.line, Some(steps))?;
                 self.assume(&p)?;
-                self.facts.insert(name.clone(), p);
+                self.proofs.insert(name.clone(), p);
                 Ok(())
             }
         }
+    }
+    fn fresh_binding(&self, name: &str, line: usize) -> Result<()> {
+        if self.env.contains_key(name)
+            || self.facts.contains_key(name)
+            || self.proofs.contains_key(name)
+        {
+            return Err(format!("line {line}: duplicate binding {name}"));
+        }
+        Ok(())
     }
 
     fn update_expression(&self, e: &Expr) -> bool {
@@ -625,6 +640,7 @@ impl<'a> Context<'a> {
         self.opened = opened;
         let mut locals = Vec::new();
         let mut local_facts = Vec::new();
+        let mut local_proofs = Vec::new();
         for statement in body {
             match statement {
                 Statement::Assign {target, value} if matches!(target.kind, Kind::Field(..)) && self.update_expression(value) => {
@@ -644,6 +660,7 @@ impl<'a> Context<'a> {
                 Statement::Fact {name, value, ..} if self.update_expression(value) => {
                     self.statement(statement)?; local_facts.push(name.clone());
                 }
+                Statement::Proof {name, proposition, ..} if self.update_expression(proposition) => {self.statement(statement)?; local_proofs.push(name.clone());},
                 _ => return Err(format!("line {line}: this operation needs invariant-independent effects; moves, drops, exits, and unknown effects are forbidden while invariants are open")),
             }
         }
@@ -664,6 +681,9 @@ impl<'a> Context<'a> {
         }
         for name in local_facts {
             self.facts.remove(&name);
+        }
+        for name in local_proofs {
+            self.proofs.remove(&name);
         }
         Ok(())
     }
@@ -795,15 +815,29 @@ impl<'a> Context<'a> {
             _ => None,
         }
     }
-    fn proof_names(&self, steps: &[String], line: usize) -> Result<()> {
-        for step in steps {
-            if let Some(n) = step.strip_prefix("exact ") {
-                if !self.facts.contains_key(n) {
-                    return Err(format!("line {line}: exact {n} is not a proven local fact"));
+    fn prove_with(
+        &mut self,
+        goal: &Formula,
+        label: &str,
+        line: usize,
+        steps: Option<&[String]>,
+    ) -> Result<()> {
+        if let Some(steps) = steps {
+            if let Some(name) = steps.iter().find_map(|s| s.strip_prefix("exact ")) {
+                if steps.len() != 1 {
+                    return Err(format!(
+                        "line {line}: exact must be a single proof term in this subset"
+                    ));
                 }
+                let proven = self.proofs.get(name).ok_or_else(|| format!("line {line}: {name} is not a checked proof; fact declarations are propositions, not assumptions"))?;
+                if proven != goal {
+                    return Err(format!("line {line}: exact {name} proves a different proposition or an earlier state"));
+                }
+                self.obligations += 1;
+                return Ok(());
             }
         }
-        Ok(())
+        self.prove(goal, label, line)
     }
     fn eval(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
         let value = self.eval_inner(e, expected).map_err(|s| {
@@ -984,6 +1018,22 @@ impl<'a> Context<'a> {
                 Formula::False
             })),
             Kind::Name(n) => {
+                // A struct's field bindings shadow caller-side logical names.
+                // Never let an unrelated fact redefine a type invariant.
+                if !self.env.contains_key(n) {
+                    if let Some(definition) = self.facts.get(n).cloned() {
+                        if !self.specification {
+                            return Err(format!(
+                                "fact {n} is a proof-only proposition, not a runtime boolean"
+                            ));
+                        }
+                        return self.eval(&definition, Some(&Ty::Bool));
+                    }
+                    if self.proofs.contains_key(n) {
+                        return Err(format!("{n} is a proof witness; reference it with exact"));
+                    }
+                }
+
                 let value = if let Some(id) = self.roots.get(n) {
                     self.memory.get(*id).cloned()
                 } else {
@@ -1413,14 +1463,25 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         let value = ctx.eval(&f.result, Some(&ret))?;
         ctx.validate_live(f.result.line)?;
         ctx.finish_scope(f)?;
-        ctx.proof_names(&f.proof, f.result.line)?;
         if let Some(post) = &f.post {
             ctx.specification = true;
             ctx.env = contract_env;
             ctx.roots.clear();
             ctx.env.insert("result".into(), value);
+            let local_facts = std::mem::take(&mut ctx.facts);
             let p = ctx.eval(post, Some(&Ty::Bool))?.proposition()?;
-            ctx.prove(&p, &format!("postcondition of {}", f.name), post.line)?;
+            ctx.facts = local_facts;
+            ctx.prove_with(
+                &p,
+                &format!("postcondition of {}", f.name),
+                post.line,
+                f.proof.as_deref(),
+            )?;
+        } else if f.proof.is_some() {
+            return Err(format!(
+                "line {}: a function proof block requires an ensures proposition",
+                f.line
+            ));
         }
         obligations += ctx.obligations;
         if crate::effects::invariant_independent(f, &functions, &helpers) {
@@ -1471,8 +1532,8 @@ mod tests {
     }
     #[test]
     fn facts_are_proved_before_use() {
-        assert!(verify("fn bad(n: nat) -> nat { fact lie = n < 0; n }").is_err());
-        assert!(verify("fn bad() -> nat { fact h = true by { exact missing }; 0 }").is_err());
+        assert!(verify("fn bad(n: nat) -> nat { proof lie: n < 0; n }").is_err());
+        assert!(verify("fn bad() -> nat { proof h: true by { exact missing }; 0 }").is_err());
         assert!(verify("fn bad() -> nat { result }").is_err());
     }
     #[test]
@@ -1725,7 +1786,7 @@ mod tests {
     #[test]
     fn destructors_are_proved_and_effects_require_explicit_support() {
         for body in [
-            "fact impossible = self.tag == 8;",
+            "proof impossible: self.tag == 8;",
             "drop(self);",
             "let duplicate = self;",
             "let new = Resource {tag: 7};",
@@ -1762,5 +1823,36 @@ mod tests {
         assert!(verify(source).is_err());
         let source = "type Resource struct {} impl Drop for Resource {fn drop(self){}} type Pair struct {left: usize, right: usize} where (left == right); fn cleanup(value: usize) -> usize {let r = Resource {}; value} fn main() -> usize {let p = Pair {left: 1, right: 1}; update (p) {p.left = cleanup(p.left); p.right = p.left;} p.right}";
         assert!(verify(source).is_err());
+    }
+
+    #[test]
+    fn fact_definitions_are_not_proofs_or_assumptions() {
+        let source = include_str!("../examples/named_facts.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        assert!(verify(include_str!("../examples/reject_false_proof.evg")).is_err());
+        assert!(
+            verify("fn main() -> usize {fact false_claim = 1 == 2; proof exploit: 2 == 3; 0}")
+                .is_err()
+        );
+        assert!(verify("fn main() -> usize {fact true_claim = 1 == 1; proof p: true_claim by {exact true_claim}; 0}").is_err());
+        assert!(verify("fn main() -> usize {fact p = 1 == 1; if p {1} else {0}}").is_err());
+    }
+
+    #[test]
+    fn exact_uses_the_named_proof_of_the_current_proposition() {
+        let source = "fn identity(n: usize) -> usize ensures (result == n) {proof positive: n >= 0; n} proof {exact positive}";
+        assert!(verify(source).is_err()); // True goal, but this is the wrong witness.
+        let source = "fn main() -> usize {let x: usize = 1; fact p = x == 1; proof old: p; x = 2; proof stale: p by {exact old}; x}";
+        assert!(verify(source).is_err());
+        let source = "fn main() -> usize {let x: usize = 1; fact p = x == 1; proof old: p; x = 2; proof stale: p; x}";
+        assert!(verify(source).is_err());
+    }
+
+    #[test]
+    fn caller_facts_cannot_redefine_struct_invariants() {
+        let source = "type Checked struct {valid: bool} where (valid); fn main() -> usize {fact valid = true; let c = Checked {valid: false}; 0}";
+        assert!(verify(source).is_err());
+        let source = "type Checked struct {valid: bool} where (valid); fn main() -> usize {fact valid = false; let c = Checked {valid: true}; 0}";
+        assert!(verify(source).is_ok());
     }
 }

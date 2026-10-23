@@ -166,7 +166,7 @@ pub(crate) fn invariant_independent(
                     return false;
                 }
             }
-            Statement::Fact { .. } => {} // Checked proof code, erased at execution.
+            Statement::Fact { .. } | Statement::Proof { .. } => {} // Checked proof code, erased at execution.
             Statement::Update { .. } => return false,
         }
     }

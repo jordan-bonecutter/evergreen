@@ -1,7 +1,7 @@
 // Parameters are universally quantified; this is not testing example inputs.
 fn increment(n: nat) -> nat
 ensures (result > n) {
-    fact successor_grows = n + 1 > n by { omega };
+    proof successor_grows: n + 1 > n by { omega };
     n + 1
 } proof { omega }
 

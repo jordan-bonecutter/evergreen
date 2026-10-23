@@ -153,7 +153,7 @@ impl Evaluator<'_> {
                                 env.insert(name.clone(), value);
                                 locals.push(name.clone());
                             }
-                            Statement::Fact { .. } => {}
+                            Statement::Fact { .. } | Statement::Proof { .. } => {}
                             _ => return Err("unverified operation in update".into()),
                         }
                     }
@@ -167,7 +167,7 @@ impl Evaluator<'_> {
                 Statement::Effect(e) => {
                     self.expr(e, &env, None)?;
                 }
-                Statement::Fact { .. } => {}
+                Statement::Fact { .. } | Statement::Proof { .. } => {}
                 Statement::Let { name, ty, value } => {
                     let v = self.expr(value, &env, ty.as_ref())?;
                     env.insert(name.clone(), v);
@@ -747,7 +747,7 @@ mod tests {
 
     #[test]
     fn moves_and_reassignment_drop_each_resource_once() {
-        let prefix = "type Resource struct {tag: usize} where (tag == 7); impl Drop for Resource {fn drop(self) {fact valid = self.tag == 7;}} ";
+        let prefix = "type Resource struct {tag: usize} where (tag == 7); impl Drop for Resource {fn drop(self) {proof valid: self.tag == 7;}} ";
         for body in [
             "let a = Resource {tag: 7}; let b = a; a = Resource {tag: 7}; drop(b); 0",
             "let a = Resource {tag: 7}; a = Resource {tag: 7}; 0",

@@ -15,7 +15,7 @@ ensures (result.count == state.count + 1 && result.owners == state.owners && res
         next.count = next.count + 1;
         // This is the exact intermediate point discussed in the design:
         // exact accounting is open, but the lifetime inequality remains true.
-        fact lifetime_safe = next.count >= next.owners;
+        proof lifetime_safe: next.count >= next.owners;
         next.credits = next.credits + 1;
     }
     next
@@ -27,7 +27,7 @@ ensures (result.count == state.count && result.owners == state.owners + 1 && res
     let next = state;
     update (next) {
         next.owners = next.owners + 1;
-        fact lifetime_safe = next.count >= next.owners;
+        proof lifetime_safe: next.count >= next.owners;
         next.credits = next.credits - 1;
     }
     next
@@ -45,7 +45,7 @@ ensures (result.count == state.count && result.owners + 1 == state.owners && res
     let next = state;
     update (next) {
         next.owners = next.owners - 1;
-        fact lifetime_safe = next.count >= next.owners;
+        proof lifetime_safe: next.count >= next.owners;
         next.credits = next.credits + 1;
     }
     next
@@ -57,7 +57,7 @@ ensures (result.count + 1 == state.count && result.owners == state.owners && res
     let next = state;
     update (next) {
         next.count = next.count - 1;
-        fact lifetime_safe = next.count >= next.owners;
+        proof lifetime_safe: next.count >= next.owners;
         next.credits = next.credits - 1;
     }
     next

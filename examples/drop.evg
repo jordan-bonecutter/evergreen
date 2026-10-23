@@ -1,9 +1,10 @@
 type Resource struct { tag: usize } where (tag == 7);
 
 impl Drop for Resource {
-    fn drop(self) {
-        fact tag_is_valid = self.tag == 7;
-    }
+    fn drop(self) ensures (self.tag == 7) {
+        fact valid_tag = self.tag == 7;
+        proof tag_is_valid: valid_tag by { omega };
+    } proof { exact tag_is_valid }
 }
 
 type Pair struct {
@@ -15,7 +16,7 @@ type Pair struct {
 impl Drop for Pair {
     fn drop(self) {
         // The destructor can rely on Pair's invariant.
-        fact closed = self.left == self.right;
+        proof closed: self.left == self.right;
     }
 }
 

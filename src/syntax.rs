@@ -83,7 +83,11 @@ pub enum Statement {
     Fact {
         name: String,
         value: Expr,
-        proof: Option<Vec<String>>,
+    },
+    Proof {
+        name: String,
+        proposition: Expr,
+        steps: Vec<String>,
     },
     Assign {
         target: Expr,
@@ -119,7 +123,7 @@ pub struct Function {
     pub decreases: Option<Expr>,
     pub body: Vec<Statement>,
     pub result: Expr,
-    pub proof: Vec<String>,
+    pub proof: Option<Vec<String>>,
     pub line: usize,
     pub drop_target: Option<String>,
 }
@@ -498,17 +502,14 @@ impl Parser {
                         let value = self.expr(0)?;
                         self.expect(";")?;
                         updates.push(Statement::Let { name, ty, value });
+                    } else if self.eat("proof") {
+                        updates.push(self.proof_statement()?);
                     } else if self.eat("fact") {
                         let name = self.name()?;
                         self.expect("=")?;
                         let value = self.expr(0)?;
-                        let proof = if self.eat("by") {
-                            Some(self.proof()?)
-                        } else {
-                            None
-                        };
                         self.expect(";")?;
-                        updates.push(Statement::Fact { name, value, proof });
+                        updates.push(Statement::Fact { name, value });
                     } else {
                         let target = self.expr(0)?;
                         self.expect("=")?;
@@ -528,6 +529,10 @@ impl Parser {
                 let value = self.expr(0)?;
                 self.eat(";");
                 break value;
+            }
+            if self.eat("proof") {
+                body.push(self.proof_statement()?);
+                continue;
             }
             if self.peek() != "let" && self.peek() != "fact" {
                 let value = self.expr(0)?;
@@ -558,26 +563,18 @@ impl Parser {
             };
             self.expect("=")?;
             let value = self.expr(0)?;
-            let proof = if self.eat("by") {
-                if !fact {
-                    return Err(self.err("only facts accept by blocks"));
-                }
-                Some(self.proof()?)
-            } else {
-                None
-            };
             self.expect(";")?;
             body.push(if fact {
-                Statement::Fact { name, value, proof }
+                Statement::Fact { name, value }
             } else {
                 Statement::Let { name, ty, value }
             });
         };
         self.expect("}")?;
         let proof = if self.eat("proof") {
-            self.proof()?
+            Some(self.proof()?)
         } else {
-            vec!["omega".into()]
+            None
         };
         Ok(Function {
             name,
@@ -591,6 +588,23 @@ impl Parser {
             proof,
             line,
             drop_target: receiver.map(str::to_owned),
+        })
+    }
+
+    fn proof_statement(&mut self) -> Result<Statement, String> {
+        let name = self.name()?;
+        self.expect(":")?;
+        let proposition = self.expr(0)?;
+        let steps = if self.eat("by") {
+            self.proof()?
+        } else {
+            vec!["omega".into()]
+        };
+        self.expect(";")?;
+        Ok(Statement::Proof {
+            name,
+            proposition,
+            steps,
         })
     }
 
