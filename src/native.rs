@@ -13,13 +13,10 @@ const STACK: usize = 65536;
 const MAX_CODE: usize = 8 * 1024 * 1024;
 
 fn scalar(t: &Type) -> Result<()> {
-    if matches!(t, Type::Ref(_)) {
-        return Ok(());
-    }
     if matches!(t, Type::Machine(_) | Type::Bool | Type::Unit) {
         Ok(())
     } else {
-        Err("native function ABI currently requires scalar values or references; by-value aggregate parameters and returns are unsupported".into())
+        Err("native main must return a machine integer, Boolean, or unit value".into())
     }
 }
 fn machine() -> Type {
@@ -154,6 +151,21 @@ impl Emitter<'_> {
         if offset != 0 {
             self.code.extend([0x48, 0x05]);
             self.code.extend((offset as u32).to_le_bytes());
+        }
+    }
+    fn compatible(a: &Type, b: &Type) -> Result<bool> {
+        if a == b {
+            return Ok(true);
+        }
+        match (a, b) {
+            // Source verification already checked pointee compatibility. The
+            // native reference ABI is one address even for dependent pointees.
+            (Type::Ref(_), Type::Ref(_)) => Ok(true),
+            (Type::Array(a, al), Type::Array(b, bl)) => {
+                Ok(Self::compatible(a, b)?
+                    && layout::array_length(al)? == layout::array_length(bl)?)
+            }
+            _ => Ok(false),
         }
     }
     fn index_address(&mut self, base: &Expr, index: &Expr, place: bool) -> Result<Type> {
@@ -466,28 +478,42 @@ impl Emitter<'_> {
                 if function.params.len() != args.len() {
                     return Err("native argument count mismatch".into());
                 }
-                let mut count = 0usize;
+                let saved_temporary = self.temporary;
                 for ((parameter, ty), arg) in function.params.iter().zip(args) {
                     if function.ideal_params.contains(parameter) {
                         continue;
                     }
                     self.expr(arg, Some(ty))?;
+                    if layout::aggregate(ty) {
+                        self.code.extend([0x48, 0x89, 0xc2]);
+                        for offset in (0..layout::of(ty, self.structs)?.size).step_by(8).rev() {
+                            self.code.extend([0x48, 0x8b, 0x82]);
+                            self.code.extend((offset as i32).to_le_bytes());
+                            self.push();
+                        }
+                    } else {
+                        self.push();
+                    }
+                }
+                if layout::aggregate(&function.ret) {
+                    let output = self.allocate(&function.ret)?;
+                    self.frame_address(output);
                     self.push();
-                    count += 1;
                 }
                 self.peak = self.peak.max(self.temporary + 8 + callee.stack);
                 self.code.push(0xe8);
                 let displacement = self.code.len();
                 self.code.extend([0; 4]);
                 patch(self.code, displacement, callee.offset)?;
-                if count > 0 {
+                let argument_bytes = self.temporary - saved_temporary;
+                if argument_bytes > 0 {
                     self.code.extend([0x48, 0x81, 0xc4]);
                     self.code.extend(
-                        u32::try_from(count * 8)
+                        u32::try_from(argument_bytes)
                             .map_err(|_| "native argument stack overflow")?
                             .to_le_bytes(),
                     );
-                    self.temporary -= count * 8;
+                    self.temporary = saved_temporary;
                 }
                 function.ret.clone()
             }
@@ -499,8 +525,10 @@ impl Emitter<'_> {
             }
         };
         layout::of(&ty, self.structs)?;
-        if expected.is_some_and(|t| t != &ty && !matches!((t, &ty), (Type::Ref(_), Type::Ref(_)))) {
-            return Err(format!("line {}: native type mismatch", e.line));
+        if let Some(expected) = expected {
+            if !Self::compatible(expected, &ty)? {
+                return Err(format!("line {}: native type mismatch", e.line));
+            }
         }
         if self.code.len() > MAX_CODE {
             return Err("native code exceeds 8 MiB limit".into());
@@ -579,15 +607,20 @@ pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
         if function.ideal {
             continue;
         }
-        scalar(&function.ret)?;
+        if function.name == "main" {
+            scalar(&function.ret)?;
+        }
+        layout::of(&function.ret, &program.structs)?;
+        let output_pointer = usize::from(layout::aggregate(&function.ret)) * 8;
         let params = function
             .params
             .iter()
             .filter(|(n, _)| !function.ideal_params.contains(n))
             .collect::<Vec<_>>();
-        for (_, ty) in &params {
-            scalar(ty)?;
-        }
+        let sizes = params
+            .iter()
+            .map(|(_, ty)| layout::of(ty, &program.structs).map(|l| l.size))
+            .collect::<Result<Vec<_>>>()?;
         let offset = code.len();
         code.extend([0x55, 0x48, 0x89, 0xe5, 0x48, 0x81, 0xec]);
         let frame_fixup = code.len();
@@ -602,9 +635,21 @@ pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
             temporary: 0,
             peak: 0,
         };
+        let mut incoming_offsets = vec![0usize; sizes.len()];
+        let mut incoming_bytes = 16 + output_pointer;
+        for index in (0..sizes.len()).rev() {
+            incoming_offsets[index] = incoming_bytes;
+            incoming_bytes = incoming_bytes
+                .checked_add(sizes[index])
+                .ok_or("native parameter layout overflow")?;
+        }
         for (index, (name, ty)) in params.iter().enumerate() {
-            emitter.code.extend([0x48, 0x8b, 0x85]);
-            let incoming = u32::try_from(16 + (params.len() - index - 1) * 8)
+            emitter.code.extend(if layout::aggregate(ty) {
+                [0x48, 0x8d, 0x85]
+            } else {
+                [0x48, 0x8b, 0x85]
+            });
+            let incoming = u32::try_from(incoming_offsets[index])
                 .map_err(|_| "native parameter offset overflow")?;
             emitter.code.extend(incoming.to_le_bytes());
             emitter.slot(name, ty.clone())?;
@@ -613,6 +658,12 @@ pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
             emitter.statement(statement)?;
         }
         emitter.expr(&function.result, Some(&function.ret))?;
+        if output_pointer != 0 {
+            emitter.code.extend([0x48, 0x8b, 0x8d]);
+            emitter.code.extend(16i32.to_le_bytes());
+            emitter.copy_address(&function.ret)?;
+            emitter.code.extend([0x48, 0x89, 0xc8]);
+        }
         if emitter.temporary != 0 {
             return Err("unbalanced native expression stack".into());
         }
@@ -677,9 +728,10 @@ mod tests {
         for source in [
             "fn read(n: usize, a: [usize; n]) -> usize {n} fn main() -> usize {0}",
             "type Dynamic struct {len: usize, data: [usize; len]} fn main() -> usize {let d = Dynamic {len: 1, data: [42]}; d.data[0]}",
-            include_str!("../examples/destructure.evg"),
+            include_str!("../examples/drop.evg"),
             include_str!("../examples/recursion.evg"),
             "fn main() -> usize where (false) {0}",
+            "fn main() -> [usize; 1] {[0]}",
         ] {
             let program = verify(source).unwrap();
             assert!(
@@ -706,6 +758,19 @@ mod tests {
         source.push_str("fn main() -> usize {f33()}");
         let program = verify(&source).unwrap();
         assert!(emit(&program).unwrap_err().contains("stack budget"));
+        let mut source = "fn f0(a: [usize; 512]) -> usize {a[0]}".to_string();
+        for index in 1..6 {
+            source.push_str(&format!(
+                "fn f{index}(a: [usize; 512]) -> usize {{f{}(a)}}",
+                index - 1
+            ));
+        }
+        let values = vec!["0"; 512].join(",");
+        source.push_str(&format!(
+            "fn main() -> usize {{let a: [usize; 512] = [{values}]; f5(a)}}"
+        ));
+        let program = verify(&source).unwrap();
+        assert!(emit(&program).unwrap_err().contains("stack budget"));
     }
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -727,6 +792,13 @@ mod tests {
         let mut cases = [
             include_str!("../examples/native.evg"),
             include_str!("../examples/native_aggregates.evg"),
+            include_str!("../examples/destructure.evg"),
+            include_str!("../examples/affine_values.evg"),
+            include_str!("../examples/structs.evg"),
+            include_str!("../examples/conditional_records.evg"),
+            "fn identity(a: [usize; 2]) -> [usize; 1 + 1] {a} fn main() -> usize {let input: [usize; 2] = [7, 42]; let a: [usize; 2] = identity(input); a[1]}",
+            "fn empty() -> [usize; 0] {[]} fn main() -> usize {let a = empty(); 42}",
+            "type Pair struct {left: usize, right: usize} fn pick(p: Pair, marker: usize) -> usize ensures (result == p.left) {p.left} fn set(r: &usize) -> usize modifies(r) ensures (*r == 99 && result == 0) {*r = 99; 0} fn main() -> usize ensures (result == 42) {let p = Pair {left: 42, right: 0}; pick(p, set(&p.left))}",
             include_str!("../examples/intermediate_states.evg"),
             include_str!("../examples/conditional_writes.evg"),
             "fn head(ideal n: nat, data: &[usize; n]) -> usize where (n > 0) {(*data)[0]} fn main() -> usize {let a: [usize; 1] = [42]; head(1, &a)}",
@@ -773,7 +845,7 @@ mod tests {
             .join("\n"),
         );
         for (index, source) in cases.iter().enumerate() {
-            let program = verify(source).unwrap();
+            let program = verify(source).unwrap_or_else(|error| panic!("{error}: {source}"));
             let expected = match program.run().unwrap() {
                 crate::runtime::Value::Machine(_, n) => i32::from(n as u8),
                 crate::runtime::Value::Bool(b) => i32::from(b),

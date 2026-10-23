@@ -404,8 +404,7 @@ Comparison instructions respect signed versus unsigned machine types.
 The entry function's scalar result supplies the low eight bits of the process
 exit status. The executable uses a private 64 KiB writable stack, with separate
 read/execute code pages. Emission checks the entire static call-tree stack bound.
-Recursive native calls, by-value aggregate function parameters/returns, inline
-dependent layouts, and destructors are rejected. Unsupported or unproved input does not replace
+Recursive native calls, inline dependent layouts, and destructors are rejected. Unsupported or unproved input does not replace
 an existing output; input sources cannot be overwritten.
 
 Native tests execute generated programs and compare their results with the
@@ -440,5 +439,16 @@ natural length arithmetic follows the frontend's truncated subtraction rules.
 field borrows, fixed arrays, and stable-layout replacement. Value reads preserve
 snapshot semantics when later expression evaluation can mutate the source.
 Pure stored indexing can read directly; effectful index expressions retain the
-value copy. Native tests cover this ordering and nested arrays. Aggregate calls
-and destructor cleanup still need their own lowering rules.
+value copy. Native tests cover this ordering and nested arrays. Destructor cleanup still needs its own lowering rules.
+
+Fixed aggregates can also be passed and returned by value. Arguments are copied
+before later arguments are evaluated; returned values are copied into storage
+owned by the caller. Native tests cover nested records, affine transfers,
+constant-size array returns, empty arrays, equivalent constant length expressions,
+and mutations in later arguments. The private stack bound includes argument
+blocks, return buffers, callee frames, and expression temporaries. `main` itself
+must still return a scalar exit-status value.
+
+For example, `evg build examples/structs.evg -o /tmp/structs` compiles the checked
+`Buffer` transformation and exits with status 2; `examples/conditional_records.evg`
+compiles nested record returns and exits with status 42.
