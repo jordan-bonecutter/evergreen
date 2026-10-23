@@ -1,6 +1,11 @@
 //! Evergreen's proof-producing bootstrap frontend. Lean is currently the backend.
 use std::collections::HashSet;
 
+pub mod kernel;
+pub mod runtime;
+pub mod syntax;
+pub mod verify;
+
 #[derive(Clone, Debug)]
 struct Token {
     text: String,
@@ -212,6 +217,9 @@ impl Parser {
         self.expect("{")?;
         let mut steps = Vec::new();
         loop {
+            if self.peek() == "<eof>" {
+                return Err(self.err("unterminated proof block"));
+            }
             let tactic = self.peek().to_owned();
             self.pos += 1;
             let step = match tactic.as_str() {

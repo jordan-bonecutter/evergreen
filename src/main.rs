@@ -7,11 +7,28 @@ use std::{
 
 fn execute() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
-    if args.len() != 2 || !matches!(args[0].as_str(), "emit" | "check" | "run") {
-        return Err("usage: evg <emit|check|run> <file.evg>\ncheck/run require Lean 4 on PATH (or EVG_LEAN=/path/to/lean)".into());
+    if args.len() != 2
+        || !matches!(
+            args[0].as_str(),
+            "emit" | "check" | "run" | "lean-check" | "lean-run"
+        )
+    {
+        return Err("usage: evg <emit|check|run|lean-check|lean-run> <file.evg>\ncheck/run use the internal kernel; lean-check/lean-run optionally use Lean 4".into());
     }
     let source = fs::read_to_string(&args[1]).map_err(|e| format!("{}: {e}", args[1]))?;
-    let lean = evergreen::emit(&source, args[0] == "run")?;
+    if args[0] == "check" || args[0] == "run" {
+        let program = evergreen::verify::verify(&source)?;
+        if args[0] == "check" {
+            println!(
+                "verified {} ({} obligations, internal kernel)",
+                args[1], program.obligations
+            );
+        } else {
+            println!("{}", program.run()?);
+        }
+        return Ok(());
+    }
+    let lean = evergreen::emit(&source, args[0] == "lean-run")?;
     if args[0] == "emit" {
         print!("{lean}");
         return Ok(());
@@ -25,7 +42,7 @@ fn execute() -> Result<(), String> {
     let result = verify(&dir, &lean);
     let _ = fs::remove_dir_all(&dir);
     let output = result?;
-    if args[0] == "check" {
+    if args[0] == "lean-check" {
         println!("verified {}", args[1]);
     } else {
         print!("{output}");

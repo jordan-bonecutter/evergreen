@@ -1,0 +1,14 @@
+fn increment(n: usize) -> usize
+where (n < 100)
+ensures (result == n + 1) {
+    n + 1
+}
+
+fn absolute(n: isize) -> isize ensures (result >= 0) {
+    if n >= 0 { n } else { -n }
+}
+
+fn main() -> usize ensures (result == 42) {
+    let values: [usize; 2] = [40, 41];
+    increment(values[1])
+}

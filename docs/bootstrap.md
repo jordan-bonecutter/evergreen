@@ -8,14 +8,17 @@ cargo run -- check examples/contracts.evg
 cargo run -- run examples/contracts.evg
 ```
 
-At this stage `check` and `run` require the Lean version in `lean-toolchain`.
-Install that toolchain with elan, or set `EVG_LEAN` to its `lean` executable.
-`emit` prints the generated proof obligations without claiming verification.
-`run` checks every declaration before returning evaluation output.
+`check` and `run` use the internal certificate checker and need no external
+tools or downloads. `run` checks every declaration before evaluating `main`.
+The optional `lean-check` and `lean-run` commands use the Lean version in
+`lean-toolchain`; set `EVG_LEAN` to its executable if necessary. `emit` prints
+Lean source without claiming verification. The Lean frontend currently covers
+the original smaller subset and rejects calls and branching.
 
 The supported language contains pure typed functions, immutable `let` bindings,
 named `fact` declarations, preconditions (`where`), postconditions (`ensures`),
-and length-indexed arrays (`[T; n]`). Array access requires a proof of its bound.
+length-indexed arrays (`[T; n]`), array literals, calls to earlier verified
+functions, and conditional expressions. Array access requires a proof of its bound.
 Unknown obligations fail verification. Facts cannot introduce assumptions:
 each fact must itself have a proof. Only function preconditions are assumptions,
 and are universally quantified in the function's type.
@@ -30,14 +33,17 @@ fn increment(n: usize) -> usize ensures (result > n) {
 The initial proof vocabulary is `omega`, `rfl`, `simp_all`, `decide`,
 `assumption`, and `exact local_name`, separated by semicolons. The default is
 `omega`. Arbitrary Lean source and unproven axioms are not accepted. Lean warnings
-are errors; proof escape hatches such as `sorry` are unavailable.
+are errors; proof escape hatches such as `sorry` are unavailable. In the internal
+backend these steps are proof-search hints: the arithmetic checker must still
+prove the obligation, and `exact` must name an already proven fact. They are not
+yet an implementation of Lean's tactic semantics.
 
 `isize` and `usize` currently mean mathematical integers and naturals, not
 machine integers. Natural subtraction saturates at zero. This is an explicit
 bootstrap semantics, not a claim that overflow has been verified. Logical
 operators in propositions are `&&`, `||`, and `!`.
 
-Not yet supported: calls, recursion, mutation, structs, patterns, references,
+Not yet supported: recursion, mutation, structs, patterns, references,
 allocation, FFI, machine layouts, or native code generation. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
 
@@ -60,10 +66,23 @@ never a successful verification.
 
 ## Direction
 
-The intended architecture is a Rust parser and elaborator, explicit verification
-conditions, an internal proof kernel, and replaceable proof search. Lean is the
-first reference backend, rather than part of the intended permanent runtime.
-The frontend translation and Lean currently belong to the trust boundary.
-Kernel checking proves the generated proposition; it does not by itself prove
-the correctness of the translation. Future work must shrink and formalize that
-boundary before making systems-level safety claims.
+The internal pipeline is syntax → symbolic elaboration → verification
+conditions → certificate search → independent certificate checking. The small
+checker in `src/kernel.rs` accepts nonnegative weighted sums of integer linear
+inequalities that establish a contradiction. Proof search uses bounded
+Fourier–Motzkin elimination. Search failure, overflow, and resource limits all
+fail verification. Integer strict inequalities are normalized with a unit gap.
+The solver is incomplete for general integer arithmetic and rejects nonlinear
+products of symbolic values. Boolean conditions split into at most 64 paths;
+search is limited to 2,048 constraints and 64 elimination steps.
+
+The parser, type elaborator, condition generator, certificate checker, and
+evaluator remain trusted Rust code. The kernel is not a full dependent type
+theory yet. There is no theorem of compiler correctness. Arithmetic is
+mathematical in verification; the reference evaluator uses checked i128 and
+reports an error for values beyond its range. It never wraps silently.
+Execution has a 100,000-step budget and 128-call depth limit.
+
+Lean remains an optional reference backend and specification tool. The intent
+is to grow the internal proof language toward dependent types and explicit
+derivations while keeping search outside the kernel.
