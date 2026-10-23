@@ -148,6 +148,7 @@ pub struct Function {
     pub line: usize,
     pub drop_target: Option<String>,
     pub ideal: bool,
+    pub modifies: Vec<String>,
 }
 
 struct Parser {
@@ -490,6 +491,17 @@ impl Parser {
         } else {
             None
         };
+        let mut modifies = Vec::new();
+        if self.eat("modifies") {
+            self.expect("(")?;
+            loop {
+                modifies.push(self.name()?);
+                if self.eat(")") {
+                    break;
+                }
+                self.expect(",")?;
+            }
+        }
         let post = if self.eat("ensures") {
             self.expect("(")?;
             let p = self.expr(0)?;
@@ -671,6 +683,7 @@ impl Parser {
             line,
             drop_target: receiver.map(str::to_owned),
             ideal,
+            modifies,
         })
     }
 
@@ -703,6 +716,7 @@ impl Parser {
             || function.ret != Type::Unit
             || function.pre.is_some()
             || function.decreases.is_some()
+            || !function.modifies.is_empty()
         {
             return Err(
                 self.err("Drop requires fn drop(self) -> () without preconditions or recursion")

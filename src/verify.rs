@@ -300,6 +300,9 @@ struct Context<'a> {
     helpers: &'a BTreeSet<String>,
     ideal: bool,
     session: &'a mut Session,
+    writable: BTreeSet<PlaneId>,
+    old_values: BTreeMap<String, Symbol>,
+    conditional_depth: usize,
 }
 
 impl<'a> Context<'a> {
@@ -330,11 +333,35 @@ impl<'a> Context<'a> {
             helpers,
             ideal: false,
             session,
+            writable: BTreeSet::new(),
+            old_values: BTreeMap::new(),
+            conditional_depth: 0,
         }
     }
     fn fresh_name(&mut self) -> String {
         self.fresh += 1;
         format!("evg_{}", self.fresh)
+    }
+    fn capture_old(&mut self) -> Result<()> {
+        self.old_values.clear();
+        for (name, value) in &self.env {
+            self.old_values.insert(name.clone(), value.clone());
+            if let Symbol::Ref(_, reference, fields) = value {
+                let target = project(self.memory.read(*reference)?, fields)?.clone();
+                self.old_values.insert(format!("*{name}"), target);
+            }
+        }
+        Ok(())
+    }
+    fn old_key(e: &Expr) -> Result<String> {
+        match &e.kind {
+            Kind::Name(n) => Ok(n.clone()),
+            Kind::Unary(op, x) if op == "*" => match &x.kind {
+                Kind::Name(n) => Ok(format!("*{n}")),
+                _ => Err("old currently accepts a parameter or its direct dereference".into()),
+            },
+            _ => Err("old currently accepts a parameter or its direct dereference".into()),
+        }
     }
     fn number_type(&self) -> Ty {
         if self.ideal || self.specification {
@@ -542,7 +569,7 @@ impl<'a> Context<'a> {
         if matches!(&place.kind, Kind::Unary(op, _) if op == "*") {
             let (reference, fields) = self.location(place)?;
             let id = self.memory.plane(reference)?;
-            if !self.roots.values().any(|p| *p == id) {
+            if !self.roots.values().any(|p| *p == id) && !self.writable.contains(&id) {
                 return Err(format!("line {}: writes through reference parameters need an effect contract; unsupported", place.line));
             }
             let old = project(self.memory.read(reference)?, &fields)?.clone();
@@ -977,6 +1004,10 @@ impl<'a> Context<'a> {
     }
     fn hint(&self, e: &Expr) -> Option<Ty> {
         match &e.kind {
+            Kind::Bool(_) => Some(Ty::Bool),
+            Kind::Call(name, args) if name == "old" && args.len() == 1 => Self::old_key(&args[0])
+                .ok()
+                .and_then(|key| self.old_values.get(&key).map(Symbol::ty)),
             Kind::Call(name, _) if name == "nat" => Some(Ty::Nat),
             Kind::Call(name, _) if name == "int" => Some(Ty::Int),
             Kind::Constant(t, _) => Some(Ty::Machine(*t)),
@@ -1004,6 +1035,14 @@ impl<'a> Context<'a> {
                     Symbol::Record(_, fields) => fields.get(field).map(Symbol::ty),
                     _ => None,
                 }
+            }
+            Kind::Binary(op, _, _)
+                if matches!(
+                    op.as_str(),
+                    "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||"
+                ) =>
+            {
+                Some(Ty::Bool)
             }
             Kind::Binary(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
             Kind::Call(n, _) => self.functions.get(n).and_then(|f| match f.ret {
@@ -1397,6 +1436,12 @@ impl<'a> Context<'a> {
                 .or_else(|| self.hint(a))
                 .or_else(|| self.hint(b))
                 .unwrap_or_else(|| self.number_type());
+                if matches!(ty, Ty::Bool) && matches!(op.as_str(), "==" | "!=") {
+                    let a = self.eval(a, Some(&Ty::Bool))?;
+                    let b = self.eval(b, Some(&Ty::Bool))?;
+                    let equal = self.symbol_equal(&a, &b)?;
+                    return Ok(Symbol::Bool(if op == "==" { equal } else { equal.not() }));
+                }
                 if !matches!(ty, Ty::Int | Ty::Nat | Ty::Machine(_)) {
                     return Err("arithmetic and comparisons require integer operands".into());
                 }
@@ -1494,6 +1539,20 @@ impl<'a> Context<'a> {
                 Ok(v)
             }
             Kind::Call(name, args) => {
+                if name == "old" {
+                    if !self.specification || args.len() != 1 {
+                        return Err(
+                            "old is proof-only and takes one entry-state parameter expression"
+                                .into(),
+                        );
+                    }
+                    let key = Self::old_key(&args[0])?;
+                    return self
+                        .old_values
+                        .get(&key)
+                        .cloned()
+                        .ok_or_else(|| format!("{key} is not a function entry parameter"));
+                }
                 if name == "int" || name == "nat" {
                     if !self.ideal && !self.specification {
                         return Err("mathematical views are proof-only".into());
@@ -1538,6 +1597,9 @@ impl<'a> Context<'a> {
                     return Ok(if name == "drop" { Symbol::Unit } else { value });
                 }
                 let f = self.functions.get(name).cloned().ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration (recursion is not supported yet)"))?;
+                if !f.modifies.is_empty() && (self.specification || self.conditional_depth > 0) {
+                    return Err("modifying calls are forbidden in proof expressions and require branch-state joins inside conditionals; unsupported".into());
+                }
                 if f.ideal && !self.ideal && !self.specification {
                     return Err(format!(
                         "{name} is ideal code and cannot be called at runtime"
@@ -1561,8 +1623,9 @@ impl<'a> Context<'a> {
                     self.validate_argument(&value, e.line)?;
                     actuals.push(value);
                 }
-                let saved = self.env.clone();
+                let mut saved = self.env.clone();
                 let saved_roots = self.roots.clone();
+                let saved_old = self.old_values.clone();
                 self.env.clear();
                 self.roots.clear();
                 for ((n, t), value) in f.params.iter().zip(actuals) {
@@ -1570,6 +1633,7 @@ impl<'a> Context<'a> {
                     self.compatible(&value.ty(), &t, e.line)?;
                     self.env.insert(n.clone(), value);
                 }
+                self.capture_old()?;
                 if let Some(pre) = &f.pre {
                     let p = self.proposition(pre)?;
                     self.prove(&p, &format!("precondition of {name}"), e.line)?;
@@ -1592,6 +1656,25 @@ impl<'a> Context<'a> {
                 }
                 let ret = self.resolve(&f.ret)?;
                 let value = self.arbitrary(&ret)?;
+                for parameter in &f.modifies {
+                    let Some(Symbol::Ref(ty, reference, fields)) = self.env.get(parameter).cloned()
+                    else {
+                        return Err("modifies requires a scalar reference parameter".into());
+                    };
+                    let id = self.memory.plane(reference)?;
+                    if !saved_roots.values().any(|p| *p == id) && !self.writable.contains(&id) {
+                        return Err(format!("line {}: call to {name} writes through a parameter without a modifies contract", e.line));
+                    }
+                    let new = self.arbitrary(&ty)?;
+                    let mut root = self.memory.read(reference)?.clone();
+                    replace_projection(&mut root, &fields, new)?;
+                    self.memory.write(id, root.clone(), false)?;
+                    for (binding, plane) in &saved_roots {
+                        if *plane == id {
+                            saved.insert(binding.clone(), root.clone());
+                        }
+                    }
+                }
                 self.env.insert("result".into(), value.clone());
                 if let Some(post) = &f.post {
                     let p = self.proposition(post)?;
@@ -1599,6 +1682,10 @@ impl<'a> Context<'a> {
                 }
                 self.env = saved;
                 self.roots = saved_roots;
+                self.old_values = saved_old;
+                if !f.modifies.is_empty() {
+                    self.validate_live(e.line)?;
+                }
                 Ok(value)
             }
             Kind::If(condition, yes, no) => {
@@ -1606,11 +1693,13 @@ impl<'a> Context<'a> {
                 let base = self.paths.clone();
                 let env = self.env.clone();
                 self.paths = extend(&base, &p, false)?;
+                self.conditional_depth += 1;
                 let a = self.eval(yes, expected)?;
                 let a_paths = self.paths.clone();
                 self.paths = extend(&base, &p, true)?;
                 self.env = env.clone();
                 let b = self.eval(no, Some(&a.ty()))?;
+                self.conditional_depth -= 1;
                 let b_paths = self.paths.clone();
                 self.paths = base;
                 self.env = env;
@@ -1790,13 +1879,28 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
     all_functions.extend(parsed.destructors.into_iter().map(|(_, f)| f));
     let mut obligations = 0;
     for f in &all_functions {
+        if !f.modifies.is_empty() {
+            let references = f
+                .params
+                .iter()
+                .filter(|(_, t)| type_has_reference(t, &structs))
+                .collect::<Vec<_>>();
+            if f.ideal
+                || f.modifies.len() != 1
+                || references.len() != 1
+                || references[0].0 != f.modifies[0]
+                || !matches!(&references[0].1, Type::Ref(t) if matches!(**t, Type::Machine(_) | Type::Bool))
+            {
+                return Err(format!("line {}: initial modifies contracts require exactly one scalar reference parameter and no other borrowed parameters; alias contracts are not implemented", f.line));
+            }
+        }
         if !f.ideal
             && (!runtime_type(&f.ret, &structs)
                 || f.params.iter().any(|(_, t)| !runtime_type(t, &structs)))
         {
             return Err(format!("line {}: runtime signatures require fixed-layout types; int/nat and ideal records are proof-only", f.line));
         }
-        if matches!(f.name.as_str(), "move" | "drop" | "int" | "nat") {
+        if matches!(f.name.as_str(), "move" | "drop" | "int" | "nat" | "old") {
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));
         }
         if type_has_reference(&f.ret, &structs) {
@@ -1820,6 +1924,12 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             let ty = ctx.resolve(t)?;
             let value = ctx.arbitrary(&ty)?;
             ctx.env.insert(n.clone(), value);
+        }
+        ctx.capture_old()?;
+        for parameter in &f.modifies {
+            if let Some(Symbol::Ref(_, reference, _)) = ctx.env.get(parameter) {
+                ctx.writable.insert(ctx.memory.plane(*reference)?);
+            }
         }
         if let Some(pre) = &f.pre {
             ctx.specification = true;
@@ -1878,6 +1988,48 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scalar_write_contracts_update_aliases_and_frame_other_fields() {
+        let source = include_str!("../examples/write_contracts.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        assert!(verify(&source.replace("modifies(r)", "")).is_err());
+        assert!(verify(&source.replace("where (*r < usize::MAX)", "")).is_err());
+        assert!(verify(&source.replace("old(*r) + 2", "old(*r) + 3")).is_err());
+        let declarations = source.split("type Counters").next().unwrap();
+        for body in [
+            "fn wrapper(r: &usize) {increment(r);}",
+            "fn wrapper(r: &usize, other: &usize) modifies(r) {*r = 1;}",
+            "fn main() -> usize {let n: usize = 0; let x = if true {increment(&n)} else {()}; n}",
+            "fn main() -> usize {let n: usize = 0; proof p: old(n) == 0; n}",
+            "fn main() -> usize {let n: usize = 0; proof p: n == 0; increment(&n); proof stale: n == 0 by {exact p}; n}",
+            "type Balanced struct {left: usize, right: usize} where (left == right); fn main() -> usize {let p = Balanced {left: 0, right: 0}; increment(&p.left); p.left}",
+        ] {
+            assert!(verify(&format!("{declarations}\n{body}")).is_err(), "{body}");
+        }
+        let bounded = "type Bounded struct {value: usize} where (value <= 10); fn main() -> usize ensures (result == 10) {let p = Bounded {value: 9}; increment(&p.value); p.value}";
+        assert_eq!(
+            verify(&format!("{declarations}\n{bounded}"))
+                .unwrap()
+                .run()
+                .unwrap()
+                .to_string(),
+            "10"
+        );
+        let runtime_old = "fn f(n: usize) -> usize {old(n)}";
+        assert!(verify(runtime_old).is_err());
+        let proof_effect = "fn main() -> usize {let n: usize = 0; proof p: increment(&n) == 0; n}";
+        assert!(verify(&format!("{declarations}\n{proof_effect}")).is_err());
+    }
+
+    #[test]
+    fn boolean_write_contracts_use_entry_snapshots() {
+        let source = "fn flip(r: &bool) -> () modifies(r) ensures (*r == !old(*r)) {*r = !*r;} fn main() -> bool ensures (result == true) {let value = false; flip(&value); value == (1 < 2)}";
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "true");
+        assert!(
+            verify(&source.replace("ensures (*r == !old(*r))", "ensures (*r == old(*r))")).is_err()
+        );
+    }
+
     #[test]
     fn complete_patterns_transfer_each_field_without_partial_moves() {
         let source = include_str!("../examples/destructure.evg");

@@ -85,6 +85,7 @@ struct Evaluator<'a> {
 impl Evaluator<'_> {
     fn hint(&self, e: &Expr, env: &BTreeMap<String, Value>) -> Option<Type> {
         match &e.kind {
+            Kind::Bool(_) => Some(Type::Bool),
             Kind::Constant(t, _) => Some(Type::Machine(*t)),
             Kind::Name(n) => env.get(n).and_then(Value::hint),
             Kind::Unary(op, x) if op == "*" => {
@@ -96,12 +97,28 @@ impl Evaluator<'_> {
             }
             Kind::Unary(_, x) => self.hint(x, env),
             Kind::Field(base, field) => {
-                if let Kind::Name(n) = &base.kind {
-                    if let Some(Value::Record(_, fields)) = env.get(n) {
-                        return fields.get(field).and_then(Value::hint);
+                fn stored<'a>(e: &Expr, env: &'a BTreeMap<String, Value>) -> Option<&'a Value> {
+                    match &e.kind {
+                        Kind::Name(n) => env.get(n),
+                        Kind::Field(base, field) => match stored(base, env)? {
+                            Value::Record(_, fields) => fields.get(field),
+                            _ => None,
+                        },
+                        _ => None,
                     }
                 }
-                None
+                match stored(base, env)? {
+                    Value::Record(_, fields) => fields.get(field).and_then(Value::hint),
+                    _ => None,
+                }
+            }
+            Kind::Binary(op, _, _)
+                if matches!(
+                    op.as_str(),
+                    "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||"
+                ) =>
+            {
+                Some(Type::Bool)
             }
             Kind::Binary(_, a, b) => self.hint(a, env).or_else(|| self.hint(b, env)),
             Kind::Call(n, _) => self
@@ -312,7 +329,12 @@ impl Evaluator<'_> {
             )
         }
         let old = if let Kind::Name(n) = &target.kind {
-            env.get(n).cloned().ok_or("unknown assignment target")?
+            self.roots
+                .get(n)
+                .and_then(|id| self.memory.get(*id).ok())
+                .cloned()
+                .or_else(|| env.get(n).cloned())
+                .ok_or("unknown assignment target")?
         } else {
             self.storage(target, env)?
         };
@@ -327,6 +349,14 @@ impl Evaluator<'_> {
         let replace_plane = !same_layout(&old, &new);
         let mut fields = Vec::new();
         let root = path(target, &mut fields)?;
+        if let Some(live) = self
+            .roots
+            .get(&root)
+            .and_then(|id| self.memory.get(*id).ok())
+            .cloned()
+        {
+            env.insert(root.clone(), live);
+        }
         replace(
             env.get_mut(&root).ok_or("unknown assignment target")?,
             &fields,
@@ -464,6 +494,11 @@ impl Evaluator<'_> {
                 .unwrap_or(Type::Machine(
                     MachineInt::parse("isize").expect("isize type"),
                 ));
+                if ty == Type::Bool && matches!(op.as_str(), "==" | "!=") {
+                    let a = self.expr(a, env, Some(&Type::Bool))?.boolean()?;
+                    let b = self.expr(b, env, Some(&Type::Bool))?.boolean()?;
+                    return Ok(Value::Bool(if op == "==" { a == b } else { a != b }));
+                }
                 let a = self.expr(a, env, Some(&ty))?.number()?;
                 let b = self.expr(b, env, Some(&ty))?.number()?;
                 let number = match op.as_str() {

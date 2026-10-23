@@ -134,9 +134,9 @@ parent that owns a resource with its own destructor. The debug API
 
 The initial implementation conservatively treats an aggregate's storage as one
 plane, so replacing a nested aggregate may invalidate unrelated references in
-the same root. Symbolic-index reference projections, partial moves, reference
-returns, and writes through reference parameters are rejected until their plane
-and effect contracts are implemented. Read-only reference parameters work.
+the same root. Symbolic-index reference projections, partial moves, and reference
+returns remain unsupported. Read-only reference parameters work; scalar writes
+require the explicit contracts described below.
 
 Self recursion requires `decreases (measure)` after the postcondition. The
 measure must be an integer proved nonnegative; every recursive call must prove that its value
@@ -291,3 +291,32 @@ destructure the result, join it again, and prove conservation. Checking it with
 The example proves conservation through its functions and prevents copying their
 inputs. Its public constructors remain forgeable; these credits do not yet
 carry authority over a physical allocation or atomic counter.
+
+## Scalar write contracts
+
+```evg
+fn increment(r: &usize) -> ()
+where (*r < usize::MAX)
+modifies(r)
+ensures (*r == old(*r) + 1) {
+    *r = *r + 1;
+}
+```
+
+`modifies(r)` grants permission to change the scalar reached through `r`.
+`old(*r)` is its entry-state value, and `old(n)` captures an entry parameter.
+These snapshots are proof-only. At a call, the checker proves the precondition,
+replaces the target with a fresh symbolic value, and uses the checked
+postcondition to constrain that value. Other storage is preserved, aliases
+observe the updated target, and enclosing record invariants must still hold.
+A wrapper must declare its own permission before forwarding a borrowed target
+to a modifying helper. `examples/write_contracts.evg` checks composition,
+aliases, overflow bounds, and preservation of an unrelated sibling field.
+
+The initial contract supports exactly one machine-scalar or Boolean reference
+parameter and no other reference-containing parameters. Multiple borrowed
+parameters need alias-aware contracts; treating them as independent would be
+unsound. Modifying calls inside conditional branches await state joins, and
+inside invariant updates await suitable checked effect summaries. Modifying
+calls in proof expressions and ideal functions are rejected. There are no
+concurrency or atomic-operation guarantees in this rule.

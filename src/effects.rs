@@ -133,6 +133,7 @@ pub(crate) fn invariant_independent(
     safe: &BTreeSet<String>,
 ) -> bool {
     if f.ideal
+        || !f.modifies.is_empty()
         || !scalar(&f.ret)
         || f.params.iter().any(|(_, t)| !leaf(t))
         || f.drop_target.is_some()

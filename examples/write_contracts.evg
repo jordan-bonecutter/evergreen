@@ -1,0 +1,24 @@
+fn increment(r: &usize) -> ()
+where (*r < usize::MAX)
+modifies(r)
+ensures (*r == old(*r) + 1) {
+    *r = *r + 1;
+}
+
+fn twice(r: &usize) -> ()
+where (*r < usize::MAX - 1)
+modifies(r)
+ensures (*r == old(*r) + 2) {
+    increment(r);
+    increment(r);
+}
+
+type Counters struct {left: usize, right: usize}
+fn main() -> usize ensures (result == 42) {
+    let counters = Counters {left: 39, right: 0};
+    let alias = &counters.left;
+    twice(alias);
+    counters.right = 1;
+    proof updated: counters.left == 41;
+    counters.left + counters.right
+}
