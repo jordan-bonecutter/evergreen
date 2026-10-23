@@ -45,13 +45,28 @@ impl Formula {
         }
     }
     fn and(self, other: Self) -> Self {
-        Self::And(Box::new(self), Box::new(other))
+        match (self, other) {
+            (Self::False, _) | (_, Self::False) => Self::False,
+            (Self::True, p) | (p, Self::True) => p,
+            (a, b) if a == b => a,
+            (a, b) => Self::And(Box::new(a), Box::new(b)),
+        }
     }
     fn or(self, other: Self) -> Self {
-        Self::Or(Box::new(self), Box::new(other))
+        match (self, other) {
+            (Self::True, _) | (_, Self::True) => Self::True,
+            (Self::False, p) | (p, Self::False) => p,
+            (a, b) if a == b => a,
+            (a, b) => Self::Or(Box::new(a), Box::new(b)),
+        }
     }
     fn not(self) -> Self {
-        Self::Not(Box::new(self))
+        match self {
+            Self::True => Self::False,
+            Self::False => Self::True,
+            Self::Not(p) => *p,
+            p => Self::Not(Box::new(p)),
+        }
     }
 }
 
@@ -1777,6 +1792,17 @@ impl<'a> Context<'a> {
                 let relation_b = state_b.and(self.symbol_equal(&result, &b)?);
                 let mut paths = extend(&a_paths, &relation_a, false)?;
                 paths.extend(extend(&b_paths, &relation_b, false)?);
+                // Drop infeasible branch combinations only with a checked
+                // contradiction certificate; a failed probe keeps the path.
+                if paths.len() > 1 {
+                    let mut feasible = Vec::new();
+                    for path in paths {
+                        if !self.session.probe(&path)? {
+                            feasible.push(path);
+                        }
+                    }
+                    paths = feasible;
+                }
                 if paths.len() > 64 {
                     return Err("verification path limit reached (64)".into());
                 }
@@ -2130,6 +2156,49 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn evergreen_counter_library_checks_boundaries_and_refines_rc_counts() {
+        let library = include_str!("../stdlib/counter.evg");
+        for initial in [0u64, 1, u64::MAX - 1, u64::MAX] {
+            let expected = initial.saturating_add(1);
+            let success = initial < u64::MAX;
+            let source = format!("{library}\nfn main() -> usize ensures (result == {expected}) {{let count: usize = {initial}; let success = counter_try_increment(&count); proof flag: success == {success}; count}}");
+            assert_eq!(
+                verify(&source).unwrap().run().unwrap().to_string(),
+                expected.to_string()
+            );
+            if initial > 0 {
+                let expected = initial - 1;
+                let zero = expected == 0;
+                let source = format!("{library}\nfn main() -> usize ensures (result == {expected}) {{let count: usize = {initial}; let zero = counter_decrement(&count); proof flag: zero == {zero}; count}}");
+                assert_eq!(
+                    verify(&source).unwrap().run().unwrap().to_string(),
+                    expected.to_string()
+                );
+            }
+        }
+        for bad in [
+            include_str!("../examples/reject_counter_underflow.evg"),
+            include_str!("../examples/reject_counter_overflow.evg"),
+        ] {
+            assert!(verify(&format!("{library}\n{bad}")).is_err());
+        }
+        let source = [
+            include_str!("../proofs/rc_protocol.evg"),
+            library,
+            include_str!("../proofs/rc_count_refinement.evg"),
+        ]
+        .join("\n");
+        assert!(verify(&source).is_ok());
+        let alternative = source.replace(
+            "let success = counter_increment(count);",
+            "let success = counter_try_increment(count);",
+        );
+        assert!(verify(&alternative).is_ok());
+        let broken = source.replace("*count = *count - 1;", "*count = *count;");
+        assert!(verify(&broken).is_err());
+    }
+
     #[test]
     fn symbolic_array_reads_are_versioned_after_writes() {
         let prefix = "fn increment(r: &usize) where (*r < usize::MAX) modifies(r) ensures (*r == old(*r) + 1) {*r = *r + 1;}";

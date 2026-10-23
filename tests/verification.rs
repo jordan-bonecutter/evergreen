@@ -133,6 +133,28 @@ fn ordered_proof_units_share_checked_contracts() {
     assert!(!bad.status.success());
     assert!(bad.stdout.is_empty());
     assert!(String::from_utf8_lossy(&bad.stderr).contains("precondition of reserve"));
+    let output = Command::new(env!("CARGO_BIN_EXE_evg"))
+        .env("PATH", "")
+        .args([
+            "--deny-trust",
+            "run",
+            "stdlib/counter.evg",
+            "examples/counter.evg",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+    let reversed = Command::new(env!("CARGO_BIN_EXE_evg"))
+        .args(["run", "examples/counter.evg", "stdlib/counter.evg"])
+        .output()
+        .unwrap();
+    assert!(!reversed.status.success());
+    assert!(reversed.stdout.is_empty());
 }
 
 #[test]

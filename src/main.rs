@@ -39,7 +39,10 @@ enum Action {
         output: PathBuf,
     },
     /// Verify and evaluate main with bounded execution.
-    Run { file: PathBuf },
+    Run {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
     /// Emit Lean source for the reference backend (does not verify).
     Emit {
         file: PathBuf,
@@ -55,11 +58,12 @@ enum Action {
 fn execute() -> Result<(), String> {
     let cli = Cli::parse();
     let files: Vec<&PathBuf> = match &cli.command {
-        Action::Check { files, .. } | Action::Prove { files, .. } => files.iter().collect(),
-        Action::Run { file }
-        | Action::Emit { file, .. }
-        | Action::LeanCheck { file }
-        | Action::LeanRun { file } => vec![file],
+        Action::Check { files, .. } | Action::Prove { files, .. } | Action::Run { files } => {
+            files.iter().collect()
+        }
+        Action::Emit { file, .. } | Action::LeanCheck { file } | Action::LeanRun { file } => {
+            vec![file]
+        }
     };
     let file = files.first().ok_or("at least one input file is required")?;
     let source = files

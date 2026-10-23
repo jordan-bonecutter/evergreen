@@ -317,8 +317,7 @@ The initial contract supports exactly one machine-scalar or Boolean reference
 parameter and no other reference-containing parameters. Multiple borrowed
 parameters need alias-aware contracts; treating them as independent would be
 unsound. Modifying calls inside invariant updates await suitable checked effect
-summaries. Modifying
-calls in proof expressions and ideal functions are rejected. There are no
+summaries. Modifying calls in proof expressions and ideal functions are rejected. There are no
 concurrency or atomic-operation guarantees in this rule.
 
 Scalar modifying calls also work inside conditional expressions. Verification
@@ -335,3 +334,27 @@ old read facts cannot certify the changed contents and existing references stay
 valid. Symbolic indexing into reference-containing elements is rejected until
 an alias-aware selection rule exists. A statically known index into a concrete
 reference array retains the actual reference and works.
+
+## Executable counter library and count refinement
+
+```sh
+cargo run -- run stdlib/counter.evg examples/counter.evg
+cargo run -- check proofs/rc_protocol.evg stdlib/counter.evg proofs/rc_count_refinement.evg
+```
+
+`run`, `check`, and `prove` accept ordered source files. The counter library is
+ordinary Evergreen code: checked increment, overflow-handling try-increment,
+decrement with a zero-result flag, and an increment/decrement roundtrip. Tests
+cover zero, one, `usize::MAX - 1`, and `usize::MAX`, and reject unchecked
+underflow/overflow callers. No `trustme` is used.
+
+The refinement wrappers prove that the physical sequential store realizes the
+count component of the ideal reserve/release transitions. Their explicit numeric
+owner/credit arguments are metadata for this experiment, not ownership tokens.
+This still does not establish a complete RC library's allocation, authority,
+payload lifetime, destruction, or concurrent atomic behavior.
+
+At branch joins, impossible path combinations are discarded only after the
+kernel checks a contradiction certificate. Failed probes retain the path.
+Those probes are included in replay artifacts; path and search limits remain
+bounded instead of being raised to accommodate counter branches.

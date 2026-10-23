@@ -1,0 +1,5 @@
+// Check after stdlib/counter.evg. Zero has no count to release.
+fn main() -> bool {
+    let count: usize = 0;
+    counter_decrement(&count)
+}

@@ -1,0 +1,34 @@
+// Ordinary sequential scalar counter helpers. These are not ownership tokens,
+// atomic operations, or a complete RC implementation.
+fn counter_increment(count: &usize) -> bool
+where (*count < usize::MAX)
+modifies(count)
+ensures (result && nat(*count) == nat(old(*count)) + 1) {
+    *count = *count + 1;
+    true
+}
+
+fn counter_try_increment(count: &usize) -> bool
+modifies(count)
+ensures (
+    (result && nat(*count) == nat(old(*count)) + 1) ||
+    (!result && *count == old(*count) && old(*count) == usize::MAX)
+) {
+    if *count == usize::MAX {false} else {counter_increment(count)}
+}
+
+fn counter_decrement(count: &usize) -> bool
+where (*count > 0)
+modifies(count)
+ensures (nat(*count) + 1 == nat(old(*count)) && (result == (*count == 0))) {
+    *count = *count - 1;
+    *count == 0
+}
+
+fn counter_roundtrip(count: &usize) -> ()
+where (*count < usize::MAX)
+modifies(count)
+ensures (*count == old(*count)) {
+    let added = counter_increment(count);
+    let zero = counter_decrement(count);
+}

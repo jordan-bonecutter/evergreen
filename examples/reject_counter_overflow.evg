@@ -1,0 +1,5 @@
+// Check after stdlib/counter.evg. Use counter_try_increment to handle MAX.
+fn main() -> bool {
+    let count: usize = usize::MAX;
+    counter_increment(&count)
+}

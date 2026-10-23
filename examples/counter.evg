@@ -1,0 +1,8 @@
+// Run with: evg run stdlib/counter.evg examples/counter.evg
+fn main() -> usize ensures (result == 42) {
+    let count: usize = 41;
+    counter_roundtrip(&count);
+    let success = counter_try_increment(&count);
+    proof incremented: success;
+    count
+}
