@@ -1,0 +1,74 @@
+// Arithmetic protocol model, NOT an RC implementation or a pointer-safety proof.
+// owners/credits are mathematical proof state. Linking them to unforgeable
+// ownership capabilities and actual heap instructions is still required.
+type RcProtocol struct {
+    count: nat,
+    owners: nat,
+    credits: nat,
+} where (count == owners + credits && count <= 18446744073709551615);
+
+fn reserve(state: RcProtocol) -> RcProtocol
+where (state.count < 18446744073709551615)
+ensures (result.count == state.count + 1 && result.owners == state.owners && result.credits == state.credits + 1) {
+    let next = state;
+    next.count = next.count + 1;
+    // This is the exact intermediate point discussed in the design:
+    // exact accounting is open, but the lifetime inequality remains true.
+    fact lifetime_safe = next.count >= next.owners;
+    next.credits = next.credits + 1;
+    next
+}
+
+fn publish(state: RcProtocol) -> RcProtocol
+where (state.credits > 0)
+ensures (result.count == state.count && result.owners == state.owners + 1 && result.credits + 1 == state.credits) {
+    let next = state;
+    next.owners = next.owners + 1;
+    fact lifetime_safe = next.count >= next.owners;
+    next.credits = next.credits - 1;
+    next
+}
+
+fn retain(state: RcProtocol) -> RcProtocol
+where (state.count < 18446744073709551615)
+ensures (result.count == state.count + 1 && result.owners == state.owners + 1 && result.credits == state.credits) {
+    publish(reserve(state))
+}
+
+fn retire(state: RcProtocol) -> RcProtocol
+where (state.owners > 0)
+ensures (result.count == state.count && result.owners + 1 == state.owners && result.credits == state.credits + 1) {
+    let next = state;
+    next.owners = next.owners - 1;
+    fact lifetime_safe = next.count >= next.owners;
+    next.credits = next.credits + 1;
+    next
+}
+
+fn decrement(state: RcProtocol) -> RcProtocol
+where (state.credits > 0)
+ensures (result.count + 1 == state.count && result.owners == state.owners && result.credits + 1 == state.credits) {
+    let next = state;
+    next.count = next.count - 1;
+    fact lifetime_safe = next.count >= next.owners;
+    next.credits = next.credits - 1;
+    next
+}
+
+fn release(state: RcProtocol) -> RcProtocol
+where (state.owners > 0)
+ensures (result.count + 1 == state.count && result.owners + 1 == state.owners && result.credits == state.credits) {
+    decrement(retire(state))
+}
+
+fn zero_count_has_no_owners(state: RcProtocol) -> ()
+where (state.count == 0)
+ensures (state.owners == 0 && state.credits == 0) {
+    ()
+}
+
+fn final_release(state: RcProtocol) -> RcProtocol
+where (state.count == 1 && state.owners > 0)
+ensures (result.count == 0 && result.owners == 0 && result.credits == 0) {
+    release(state)
+}

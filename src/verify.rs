@@ -1347,7 +1347,7 @@ mod tests {
     #[test]
     fn ordinary_assignments_can_restore_an_invariant_without_transactions() {
         let s = "type Pair struct {left: usize, right: usize} where (left == right); fn read(p: &Pair) -> usize {*p.left} fn main() -> usize {let p = Pair {left: 1, right: 1}; p.left = 2; p.right = p.left; p.right}";
-        // Use a simpler observer syntax: field projection binds tighter than *.
+        // Field projection binds tighter than dereference.
         let s = s.replace("*p.left", "(*p).left");
         assert_eq!(verify(&s).unwrap().run().unwrap().to_string(), "2");
         let s = "type Storage struct {len: usize, data: [usize; len]} fn main() -> usize {let s = Storage {len: 1, data: [10]}; s.len = 2; s.data = [10, 20]; s.data[1]}";
@@ -1376,5 +1376,15 @@ mod tests {
                 .to_string(),
             "2"
         );
+    }
+
+    #[test]
+    fn library_rc_protocol_is_verified_without_compiler_special_cases() {
+        let source = include_str!("../proofs/rc_protocol.evg");
+        assert!(verify(source).unwrap().obligations >= 50);
+        assert!(verify(&source.replace("RcProtocol", "OrdinaryUserState")).is_ok());
+        assert!(verify(include_str!("../proofs/reject_rc_unbalanced.evg")).is_err());
+        let double_publish = format!("{source}\nfn duplicate_credit(s: RcProtocol) -> RcProtocol where (s.credits == 1) {{publish(publish(s))}}");
+        assert!(verify(&double_publish).is_err());
     }
 }

@@ -131,3 +131,23 @@ Execution has a 100,000-step budget and 128-call depth limit.
 Lean remains an optional reference backend and specification tool. The intent
 is to grow the internal proof language toward dependent types and explicit
 derivations while keeping search outside the kernel.
+
+## RC proof experiment
+
+`cargo run -- check proofs/rc_protocol.evg` verifies an ordinary Evergreen model
+of reserve, publish, retire, decrement, retain, and release. The stored-count
+model is bounded by the target's maximum count. Its arithmetic safety condition
+`count >= owners` is checked at intermediate program points; the stronger
+`count == owners + credits` relation is restored before nominal uses. Zero count
+implies zero owners and credits. There are no RC intrinsics, special type names,
+or transaction blocks in this implementation.
+
+This is a protocol model, not an RC library implementation or a memory-safety
+theorem. Its owners and credits are mathematical numbers, not unforgeable
+capabilities. Connecting that arithmetic to unique ownership witnesses,
+physical heap steps, borrowing, and destruction is still necessary. The
+compiler must provide general rules for those concepts rather than RC policy.
+The unbalanced update in `proofs/reject_rc_unbalanced.evg` and reusing a single
+credit twice both fail verification. Ghost erasure and restricting mathematical
+types to proof code remain planned work; the reference evaluator still supports
+mathematical values during this bootstrap stage.

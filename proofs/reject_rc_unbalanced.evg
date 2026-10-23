@@ -1,0 +1,9 @@
+type RcProtocol struct { count: nat, owners: nat, credits: nat }
+where (count == owners + credits);
+
+fn incorrect_reserve(state: RcProtocol) -> RcProtocol {
+    let next = state;
+    next.count = next.count + 1;
+    // Missing the matching ghost-state update: the nominal result is invalid.
+    next
+}

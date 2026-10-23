@@ -3,7 +3,7 @@ type Pair struct {
     right: usize,
 } where (left == right);
 
-fn observe(pair: &Pair) -> usize {
+fn observe(pair: &Pair) -> usize ensures (result == (*pair).left) {
     (*pair).left
 }
 
