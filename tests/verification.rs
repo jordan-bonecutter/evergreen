@@ -64,7 +64,11 @@ fn emission_is_inspectable_without_backend() {
 
 #[test]
 fn internal_backend_needs_no_external_tools() {
-    for file in ["examples/contracts.evg", "examples/composition.evg"] {
+    for file in [
+        "examples/contracts.evg",
+        "examples/composition.evg",
+        "examples/references.evg",
+    ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")
             .env("EVG_LEAN", "/nonexistent/lean")
@@ -78,7 +82,11 @@ fn internal_backend_needs_no_external_tools() {
         );
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
     }
-    for file in ["examples/reject_bounds.evg", "examples/reject_contract.evg"] {
+    for file in [
+        "examples/reject_bounds.evg",
+        "examples/reject_contract.evg",
+        "examples/reject_dangling.evg",
+    ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")
             .args(["check", file])

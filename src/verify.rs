@@ -1,6 +1,7 @@
 //! Internal elaboration and verification-condition generation.
 use crate::{
     kernel::{self, Linear},
+    memory::{Memory, PlaneId, Projection, Reference},
     syntax::{self, Expr, Function, Kind, Struct, Type},
 };
 use std::collections::BTreeMap;
@@ -33,6 +34,8 @@ enum Ty {
     Int,
     Nat,
     Bool,
+    Unit,
+    Ref(Box<Ty>),
     Array(Box<Ty>, Linear),
     Record(String),
 }
@@ -47,6 +50,8 @@ enum Symbol {
         identity: String,
     },
     Record(String, BTreeMap<String, Symbol>),
+    Unit,
+    Ref(Box<Ty>, Reference, Vec<Projection>),
 }
 impl Symbol {
     fn ty(&self) -> Ty {
@@ -55,6 +60,8 @@ impl Symbol {
             Self::Bool(_) => Ty::Bool,
             Self::Array { element, len, .. } => Ty::Array(element.clone(), len.clone()),
             Self::Record(name, _) => Ty::Record(name.clone()),
+            Self::Unit => Ty::Unit,
+            Self::Ref(t, _, _) => Ty::Ref(t.clone()),
         }
     }
     fn number(&self) -> Result<Linear> {
@@ -70,6 +77,59 @@ impl Symbol {
         } else {
             Err("expected a proposition or boolean".into())
         }
+    }
+}
+
+fn project<'a>(value: &'a Symbol, path: &[Projection]) -> Result<&'a Symbol> {
+    if path.is_empty() {
+        return Ok(value);
+    }
+    let value = match (&path[0], value) {
+        (Projection::Field(n), Symbol::Record(_, fields)) => {
+            fields.get(n).ok_or("unknown reference field")?
+        }
+        (
+            Projection::Index(i),
+            Symbol::Array {
+                items: Some(items), ..
+            },
+        ) => items.get(*i).ok_or("reference index out of bounds")?,
+        _ => {
+            return Err(
+                "reference projection requires a known struct field or array element".into(),
+            )
+        }
+    };
+    project(value, &path[1..])
+}
+fn replace_projection(value: &mut Symbol, path: &[Projection], new: Symbol) -> Result<()> {
+    if path.is_empty() {
+        *value = new;
+        return Ok(());
+    }
+    let value = match (&path[0], value) {
+        (Projection::Field(n), Symbol::Record(_, fields)) => {
+            fields.get_mut(n).ok_or("unknown reference field")?
+        }
+        (
+            Projection::Index(i),
+            Symbol::Array {
+                items: Some(items), ..
+            },
+        ) => items.get_mut(*i).ok_or("reference index out of bounds")?,
+        _ => return Err("invalid reference projection".into()),
+    };
+    replace_projection(value, &path[1..], new)
+}
+
+fn type_has_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
+    match t {
+        Type::Ref(_) => true,
+        Type::Array(t, _) => type_has_reference(t, structs),
+        Type::Named(n) => structs
+            .get(n)
+            .is_some_and(|s| s.fields.iter().any(|(_, t)| type_has_reference(t, structs))),
+        _ => false,
     }
 }
 
@@ -135,6 +195,9 @@ struct Context<'a> {
     paths: Vec<Vec<Linear>>,
     fresh: usize,
     obligations: usize,
+    memory: Memory<Symbol>,
+    roots: BTreeMap<String, PlaneId>,
+    specification: bool,
 }
 
 impl<'a> Context<'a> {
@@ -150,6 +213,9 @@ impl<'a> Context<'a> {
             paths: vec![vec![]],
             fresh: 0,
             obligations: 0,
+            memory: Memory::default(),
+            roots: BTreeMap::new(),
+            specification: false,
         }
     }
     fn fresh_name(&mut self) -> String {
@@ -159,6 +225,13 @@ impl<'a> Context<'a> {
     fn assume(&mut self, p: &Formula) -> Result<()> {
         self.paths = extend(&self.paths, p, false)?;
         Ok(())
+    }
+    fn proposition(&mut self, e: &Expr) -> Result<Formula> {
+        let saved = self.specification;
+        self.specification = true;
+        let result = self.eval(e, Some(&Ty::Bool)).and_then(|v| v.proposition());
+        self.specification = saved;
+        result
     }
     fn prove(&mut self, p: &Formula, label: &str, line: usize) -> Result<()> {
         self.obligations += 1;
@@ -174,6 +247,8 @@ impl<'a> Context<'a> {
             Type::Int => Ok(Ty::Int),
             Type::Nat => Ok(Ty::Nat),
             Type::Bool => Ok(Ty::Bool),
+            Type::Unit => Ok(Ty::Unit),
+            Type::Ref(t) => Ok(Ty::Ref(Box::new(self.resolve(t)?))),
             Type::Named(n) => {
                 if !self.structs.contains_key(n) {
                     return Err(format!(
@@ -184,14 +259,21 @@ impl<'a> Context<'a> {
             }
             Type::Array(element, len) => {
                 let element = self.resolve(element)?;
+                let saved_spec = self.specification;
+                self.specification = true;
                 let n = self.eval(len, Some(&Ty::Nat))?.number()?;
+                self.specification = saved_spec;
                 Ok(Ty::Array(Box::new(element), n))
             }
         }
     }
     fn compatible(&mut self, got: &Ty, expected: &Ty, line: usize) -> Result<()> {
         match (got, expected) {
-            (Ty::Int, Ty::Int) | (Ty::Nat, Ty::Nat) | (Ty::Bool, Ty::Bool) => Ok(()),
+            (Ty::Int, Ty::Int)
+            | (Ty::Nat, Ty::Nat)
+            | (Ty::Bool, Ty::Bool)
+            | (Ty::Unit, Ty::Unit) => Ok(()),
+            (Ty::Ref(a), Ty::Ref(b)) => self.compatible(a, b, line),
             (Ty::Record(a), Ty::Record(b)) if a == b => Ok(()),
             (Ty::Array(a, n), Ty::Array(b, m)) => {
                 self.compatible(a, b, line)?;
@@ -205,6 +287,12 @@ impl<'a> Context<'a> {
     fn arbitrary(&mut self, t: &Ty) -> Result<Symbol> {
         let name = self.fresh_name();
         match t {
+            Ty::Unit => Ok(Symbol::Unit),
+            Ty::Ref(t) => {
+                let v = self.arbitrary(t)?;
+                let id = self.memory.allocate(v)?;
+                Ok(Symbol::Ref(t.clone(), self.memory.borrow(id)?, vec![]))
+            }
             Ty::Int => Ok(Symbol::Number(Ty::Int, Linear::variable(name))),
             Ty::Nat => {
                 let n = Linear::variable(name);
@@ -226,6 +314,8 @@ impl<'a> Context<'a> {
             Ty::Record(name) => {
                 let def = self.structs.get(name).cloned().ok_or("unknown struct")?;
                 let saved = self.env.clone();
+                let saved_roots = self.roots.clone();
+                self.roots.clear();
                 self.env.clear();
                 let mut fields = BTreeMap::new();
                 for (n, t) in &def.fields {
@@ -237,10 +327,11 @@ impl<'a> Context<'a> {
                 let value = Symbol::Record(name.clone(), fields);
                 self.env.insert("self".into(), value.clone());
                 if let Some(p) = &def.invariant {
-                    let p = self.eval(p, Some(&Ty::Bool))?.proposition()?;
+                    let p = self.proposition(p)?;
                     self.assume(&p)?;
                 }
                 self.env = saved;
+                self.roots = saved_roots;
                 Ok(value)
             }
         }
@@ -255,6 +346,8 @@ impl<'a> Context<'a> {
             return Err(format!("line {line}: wrong fields for {name}"));
         }
         let saved = self.env.clone();
+        let saved_roots = self.roots.clone();
+        self.roots.clear();
         self.env.clear();
         for (n, t) in &def.fields {
             let v = fields
@@ -267,14 +360,35 @@ impl<'a> Context<'a> {
         }
         self.env.insert("self".into(), value.clone());
         if let Some(p) = &def.invariant {
-            let p = self.eval(p, Some(&Ty::Bool))?.proposition()?;
+            let p = self.proposition(p)?;
             self.prove(&p, &format!("invariant of {name}"), line)?;
         }
         self.env = saved;
+        self.roots = saved_roots;
         Ok(())
     }
 
     fn assign(&mut self, place: &Expr, value: &Expr) -> Result<()> {
+        if matches!(&place.kind, Kind::Unary(op, _) if op == "*") {
+            let (reference, fields) = self.location(place)?;
+            let id = self.memory.plane(reference)?;
+            if !self.roots.values().any(|p| *p == id) {
+                return Err(format!("line {}: writes through reference parameters need an effect contract; unsupported", place.line));
+            }
+            let old = project(self.memory.read(reference)?, &fields)?.clone();
+            let new = self.eval(value, Some(&old.ty()))?;
+            let replace_plane = matches!(old, Symbol::Record(..) | Symbol::Array { .. });
+            let mut root = self.memory.read(reference)?.clone();
+            replace_projection(&mut root, &fields, new)?;
+            self.record_valid(&root, place.line)?;
+            self.memory.write(id, root.clone(), replace_plane)?;
+            for (n, plane) in &self.roots {
+                if *plane == id {
+                    self.env.insert(n.clone(), root.clone());
+                }
+            }
+            return Ok(());
+        }
         fn path(e: &Expr, fields: &mut Vec<String>) -> Result<String> {
             match &e.kind {
                 Kind::Name(n) => Ok(n.clone()),
@@ -302,7 +416,14 @@ impl<'a> Context<'a> {
         }
         let mut fields = Vec::new();
         let name = path(place, &mut fields)?;
-        let old = self.eval(place, None)?;
+        let old = if let Kind::Name(n) = &place.kind {
+            self.env
+                .get(n)
+                .cloned()
+                .ok_or("unknown assignment target")?
+        } else {
+            self.eval(place, None)?
+        };
         let new = self.eval(value, Some(&old.ty()))?;
         let mut root = self
             .env
@@ -311,12 +432,74 @@ impl<'a> Context<'a> {
             .ok_or("unknown assignment target")?;
         replace(&mut root, &fields, new)?;
         self.record_valid(&root, place.line)?;
+        if let Some(id) = self.roots.get(&name) {
+            self.memory.write(
+                *id,
+                root.clone(),
+                matches!(old, Symbol::Record(..) | Symbol::Array { .. }),
+            )?;
+        }
         self.env.insert(name, root);
         Ok(())
+    }
+
+    fn location(&mut self, e: &Expr) -> Result<(Reference, Vec<Projection>)> {
+        match &e.kind {
+            Kind::Name(n) => {
+                let id = if let Some(id) = self.roots.get(n) {
+                    *id
+                } else {
+                    let v = self
+                        .env
+                        .get(n)
+                        .cloned()
+                        .ok_or_else(|| format!("unknown place {n}"))?;
+                    let id = self.memory.allocate(v)?;
+                    self.roots.insert(n.clone(), id);
+                    id
+                };
+                Ok((self.memory.borrow(id)?, vec![]))
+            }
+            Kind::Field(base, n) => {
+                let (r, mut path) = self.location(base)?;
+                path.push(Projection::Field(n.clone()));
+                project(self.memory.read(r)?, &path)?;
+                Ok((r, path))
+            }
+            Kind::Index(base, i) => {
+                let (r, mut path) = self.location(base)?;
+                let index = self.eval(i, Some(&Ty::Nat))?.number()?;
+                if !index.terms.is_empty() {
+                    return Err(
+                        "reference projections currently need a statically known index".into(),
+                    );
+                }
+                let index =
+                    usize::try_from(index.constant).map_err(|_| "invalid reference index")?;
+                path.push(Projection::Index(index));
+                project(self.memory.read(r)?, &path)?;
+                Ok((r, path))
+            }
+            Kind::Unary(op, x) if op == "*" => {
+                let Symbol::Ref(_, r, path) = self.eval(x, None)? else {
+                    return Err("dereference requires a reference".into());
+                };
+                self.memory.read(r)?;
+                Ok((r, path))
+            }
+            _ => Err(format!("line {}: expected a referenceable place", e.line)),
+        }
     }
     fn hint(&self, e: &Expr) -> Option<Ty> {
         match &e.kind {
             Kind::Name(n) => self.env.get(n).map(Symbol::ty),
+            Kind::Unary(op, x) if op == "*" => {
+                if let Some(Ty::Ref(t)) = self.hint(x) {
+                    Some(*t)
+                } else {
+                    None
+                }
+            }
             Kind::Unary(_, x) => self.hint(x),
             Kind::Field(base, field) => {
                 if let Kind::Name(n) = &base.kind {
@@ -361,6 +544,7 @@ impl<'a> Context<'a> {
     }
     fn eval_inner(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
         match &e.kind {
+            Kind::Unit => Ok(Symbol::Unit),
             Kind::Number(n) => Ok(Symbol::Number(
                 if matches!(expected, Some(Ty::Nat)) {
                     Ty::Nat
@@ -374,11 +558,16 @@ impl<'a> Context<'a> {
             } else {
                 Formula::False
             })),
-            Kind::Name(n) => self
-                .env
-                .get(n)
-                .cloned()
-                .ok_or_else(|| format!("unknown value {n}")),
+            Kind::Name(n) => {
+                if let Some(id) = self.roots.get(n) {
+                    self.memory.get(*id).cloned()
+                } else {
+                    self.env
+                        .get(n)
+                        .cloned()
+                        .ok_or_else(|| format!("unknown value {n}"))
+                }
+            }
             Kind::Field(base, name) => {
                 let Symbol::Record(_, fields) = self.eval(base, None)? else {
                     return Err("field access requires a struct".into());
@@ -418,6 +607,15 @@ impl<'a> Context<'a> {
                 let record = Symbol::Record(name.clone(), fields);
                 self.record_valid(&record, e.line)?;
                 Ok(record)
+            }
+            Kind::Unary(op, x) if op == "&" => {
+                let (r, path) = self.location(x)?;
+                let ty = project(self.memory.read(r)?, &path)?.ty();
+                Ok(Symbol::Ref(Box::new(ty), r, path))
+            }
+            Kind::Unary(op, _) if op == "*" => {
+                let (r, path) = self.location(e)?;
+                project(self.memory.read(r)?, &path).cloned()
             }
             Kind::Unary(op, x) if op == "!" => Ok(Symbol::Bool(
                 self.eval(x, Some(&Ty::Bool))?.proposition()?.not(),
@@ -538,6 +736,27 @@ impl<'a> Context<'a> {
                 Ok(v)
             }
             Kind::Call(name, args) => {
+                if name == "move" || name == "drop" {
+                    if self.specification {
+                        return Err("specifications and facts cannot move or drop values".into());
+                    }
+                    if args.len() != 1 {
+                        return Err(format!("{name} expects one place"));
+                    }
+                    let (r, path) = self.location(&args[0])?;
+                    if !path.is_empty() {
+                        return Err(
+                            "moving individual fields requires partial-shape tracking; unsupported"
+                                .into(),
+                        );
+                    }
+                    let id = self.memory.plane(r)?;
+                    if !self.roots.values().any(|p| *p == id) {
+                        return Err("cannot move or drop a borrowed parameter plane".into());
+                    }
+                    let value = self.memory.take(id)?;
+                    return Ok(if name == "drop" { Symbol::Unit } else { value });
+                }
                 let f = self.functions.get(name).cloned().ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration (recursion is not supported yet)"))?;
                 if args.len() != f.params.len() {
                     return Err(format!("{name} expects {} arguments", f.params.len()));
@@ -555,24 +774,27 @@ impl<'a> Context<'a> {
                     actuals.push(self.eval(arg, hint.as_ref())?);
                 }
                 let saved = self.env.clone();
+                let saved_roots = self.roots.clone();
                 self.env.clear();
+                self.roots.clear();
                 for ((n, t), value) in f.params.iter().zip(actuals) {
                     let t = self.resolve(t)?;
                     self.compatible(&value.ty(), &t, e.line)?;
                     self.env.insert(n.clone(), value);
                 }
                 if let Some(pre) = &f.pre {
-                    let p = self.eval(pre, Some(&Ty::Bool))?.proposition()?;
+                    let p = self.proposition(pre)?;
                     self.prove(&p, &format!("precondition of {name}"), e.line)?;
                 }
                 let ret = self.resolve(&f.ret)?;
                 let value = self.arbitrary(&ret)?;
                 self.env.insert("result".into(), value.clone());
                 if let Some(post) = &f.post {
-                    let p = self.eval(post, Some(&Ty::Bool))?.proposition()?;
+                    let p = self.proposition(post)?;
                     self.assume(&p)?;
                 }
                 self.env = saved;
+                self.roots = saved_roots;
                 Ok(value)
             }
             Kind::If(condition, yes, no) => {
@@ -642,13 +864,16 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
             Symbol::Record(s.name.clone(), ctx.env.clone()),
         );
         if let Some(p) = &s.invariant {
-            ctx.eval(p, Some(&Ty::Bool))?;
+            ctx.proposition(p)?;
         }
         structs.insert(s.name.clone(), s.clone());
     }
     let mut functions = BTreeMap::new();
     let mut obligations = 0;
     for f in &parsed.functions {
+        if type_has_reference(&f.ret, &structs) {
+            return Err(format!("line {}: returning references needs an explicit lifetime/plane contract; unsupported", f.line));
+        }
         if functions.contains_key(&f.name) {
             return Err(format!("line {}: duplicate function {}", f.line, f.name));
         }
@@ -662,8 +887,10 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
             ctx.env.insert(n.clone(), value);
         }
         if let Some(pre) = &f.pre {
+            ctx.specification = true;
             let p = ctx.eval(pre, Some(&Ty::Bool))?.proposition()?;
             ctx.assume(&p)?;
+            ctx.specification = false;
         }
         let ret = ctx.resolve(&f.ret)?;
         let contract_env = ctx.env.clone();
@@ -683,7 +910,9 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
                 ));
             }
             if statement.fact {
+                ctx.specification = true;
                 let p = ctx.eval(&statement.value, Some(&Ty::Bool))?.proposition()?;
+                ctx.specification = false;
                 if let Some(steps) = &statement.proof {
                     ctx.proof_names(steps, statement.value.line)?;
                 }
@@ -703,7 +932,9 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
         let value = ctx.eval(&f.result, Some(&ret))?;
         ctx.proof_names(&f.proof, f.result.line)?;
         if let Some(post) = &f.post {
+            ctx.specification = true;
             ctx.env = contract_env;
+            ctx.roots.clear();
             ctx.env.insert("result".into(), value);
             let p = ctx.eval(post, Some(&Ty::Bool))?.proposition()?;
             ctx.prove(&p, &format!("postcondition of {}", f.name), post.line)?;
@@ -809,5 +1040,43 @@ mod tests {
         assert!(verify("fn bad(n: usize) -> usize ensures (result == n) { n = 0; n }").is_err());
         let s = "fn reset(n: usize) -> usize ensures (result == 0) { n = 0; n } fn main() -> usize ensures (result == 0) {reset(10)}";
         assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "0");
+    }
+
+    #[test]
+    fn aliased_references_share_scalar_updates() {
+        let s = "fn read(r: &usize) -> usize ensures (result == *r) { *r } fn main() -> usize ensures (result == 7) { let x: usize = 1; let a = &x; let b = &x; *a = 7; read(b) }";
+        assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "7");
+        let s = "fn main() -> usize ensures (result == 11) { let data: [usize; 2] = [1, 2]; let a = &data[0]; let b = &data[1]; *a = 9; *b = 11; *b }";
+        assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "11");
+    }
+
+    #[test]
+    fn stale_references_are_compile_errors() {
+        for body in [
+            "let x: usize = 1; let r = &x; drop(x); *r",
+            "let x: usize = 1; let r = &x; let y = move(x); *r",
+            "let a: [usize; 1] = [1]; let r = &a[0]; a = [2]; *r",
+            "let x: usize = 1; let r = &x; drop(x); x = 2; *r",
+            "let x: usize = 1; let y = move(x); x",
+        ] {
+            assert!(
+                verify(&format!("fn main() -> usize {{ {body} }}")).is_err(),
+                "{body}"
+            );
+        }
+        let s = "fn main() -> usize { let x: usize = 1; let y = move(x); x = 2; x + y }";
+        assert_eq!(verify(s).unwrap().run().unwrap().to_string(), "3");
+    }
+
+    #[test]
+    fn reference_updates_recheck_invariants_and_cannot_escape() {
+        let prefix = "type Small struct {n: usize} where (n < 4); ";
+        assert!(verify(&format!(
+            "{prefix} fn main() -> usize {{let x = Small {{n: 1}}; let r = &x.n; *r = 9; x.n }}"
+        ))
+        .is_err());
+        assert!(verify("fn escape() -> &usize {let x: usize = 1; &x}").is_err());
+        assert!(verify("fn write(r: &usize) -> () { *r = 1; () }").is_err());
+        assert!(verify("fn f(n: usize) -> usize ensures (result == move(n)) { n }").is_err());
     }
 }

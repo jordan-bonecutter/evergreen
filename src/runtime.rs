@@ -1,5 +1,6 @@
 //! Bounded reference evaluator; construction requires a verified program.
 use crate::{
+    memory::{Memory, PlaneId, Projection, Reference},
     syntax::{Expr, Function, Kind, Struct, Type},
     verify::VerifiedProgram,
 };
@@ -13,6 +14,8 @@ pub enum Value {
     Bool(bool),
     Array(Vec<Value>),
     Record(String, BTreeMap<String, Value>),
+    Unit,
+    Ref(Box<Type>, Reference, Vec<Projection>),
 }
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -30,6 +33,8 @@ impl std::fmt::Display for Value {
                 write!(f, "]")
             }
             Self::Record(n, fields) => write!(f, "{n} {fields:?}"),
+            Self::Unit => write!(f, "()"),
+            Self::Ref(_, _, _) => write!(f, "<reference>"),
         }
     }
 }
@@ -53,6 +58,8 @@ impl Value {
             Self::Nat(_) => Some(Type::Nat),
             Self::Bool(_) => Some(Type::Bool),
             Self::Record(n, _) => Some(Type::Named(n.clone())),
+            Self::Ref(t, _, _) => Some(Type::Ref(t.clone())),
+            Self::Unit => Some(Type::Unit),
             _ => None,
         }
     }
@@ -62,11 +69,20 @@ struct Evaluator<'a> {
     structs: &'a BTreeMap<String, Struct>,
     fuel: usize,
     depth: usize,
+    memory: Memory<Value>,
+    roots: BTreeMap<String, PlaneId>,
 }
 impl Evaluator<'_> {
     fn hint(&self, e: &Expr, env: &BTreeMap<String, Value>) -> Option<Type> {
         match &e.kind {
             Kind::Name(n) => env.get(n).and_then(Value::hint),
+            Kind::Unary(op, x) if op == "*" => {
+                if let Some(Type::Ref(t)) = self.hint(x, env) {
+                    Some(*t)
+                } else {
+                    None
+                }
+            }
             Kind::Unary(_, x) => self.hint(x, env),
             Kind::Field(base, field) => {
                 if let Kind::Name(n) = &base.kind {
@@ -104,6 +120,7 @@ impl Evaluator<'_> {
             .map(|(n, _)| n.clone())
             .zip(actuals)
             .collect();
+        let saved_roots = std::mem::take(&mut self.roots);
         self.depth += 1;
         if let Some(pre) = &f.pre {
             if !self.expr(pre, &env, Some(&Type::Bool))?.boolean()? {
@@ -112,6 +129,25 @@ impl Evaluator<'_> {
         }
         for statement in &f.body {
             if let Some(target) = &statement.target {
+                if matches!(&target.kind, Kind::Unary(op, _) if op == "*") {
+                    let (r, path) = self.location(target, &env)?;
+                    let old = project(self.memory.read(r)?, &path)?.clone();
+                    let new = self.expr(&statement.value, &env, old.hint().as_ref())?;
+                    let id = self.memory.plane(r)?;
+                    let mut root = self.memory.read(r)?.clone();
+                    replace_projection(&mut root, &path, new)?;
+                    self.memory.write(
+                        id,
+                        root.clone(),
+                        matches!(old, Value::Record(..) | Value::Array(..)),
+                    )?;
+                    for (n, p) in &self.roots {
+                        if *p == id {
+                            env.insert(n.clone(), root.clone());
+                        }
+                    }
+                    continue;
+                }
                 fn path(e: &Expr, fields: &mut Vec<String>) -> Result<String> {
                     match &e.kind {
                         Kind::Name(n) => Ok(n.clone()),
@@ -137,7 +173,11 @@ impl Evaluator<'_> {
                         value,
                     )
                 }
-                let old = self.expr(target, &env, None)?;
+                let old = if let Kind::Name(n) = &target.kind {
+                    env.get(n).cloned().ok_or("unknown assignment target")?
+                } else {
+                    self.expr(target, &env, None)?
+                };
                 let new = self.expr(&statement.value, &env, old.hint().as_ref())?;
                 let mut fields = Vec::new();
                 let root = path(target, &mut fields)?;
@@ -146,6 +186,13 @@ impl Evaluator<'_> {
                     &fields,
                     new,
                 )?;
+                if let Some(id) = self.roots.get(&root) {
+                    self.memory.write(
+                        *id,
+                        env.get(&root).cloned().ok_or("unknown assignment root")?,
+                        matches!(old, Value::Record(..) | Value::Array(..)),
+                    )?;
+                }
                 continue;
             }
             if statement.effect {
@@ -158,6 +205,12 @@ impl Evaluator<'_> {
             }
         }
         let value = self.expr(&f.result, &env, Some(&f.ret))?;
+        for id in self.roots.values() {
+            if self.memory.get(*id).is_ok() {
+                self.memory.take(*id)?;
+            }
+        }
+        self.roots = saved_roots;
         self.depth -= 1;
         Ok(value)
     }
@@ -186,16 +239,22 @@ impl Evaluator<'_> {
         expected: Option<&Type>,
     ) -> Result<Value> {
         match &e.kind {
+            Kind::Unit => Ok(Value::Unit),
             Kind::Number(n) => Ok(if matches!(expected, Some(Type::Nat)) {
                 Value::Nat(*n)
             } else {
                 Value::Int(*n)
             }),
             Kind::Bool(b) => Ok(Value::Bool(*b)),
-            Kind::Name(n) => env
-                .get(n)
-                .cloned()
-                .ok_or_else(|| format!("unknown value {n}")),
+            Kind::Name(n) => {
+                if let Some(id) = self.roots.get(n) {
+                    self.memory.get(*id).cloned()
+                } else {
+                    env.get(n)
+                        .cloned()
+                        .ok_or_else(|| format!("unknown value {n}"))
+                }
+            }
             Kind::Field(base, field) => {
                 let Value::Record(_, fields) = self.expr(base, env, None)? else {
                     return Err("expected struct".into());
@@ -220,7 +279,16 @@ impl Evaluator<'_> {
                 Ok(Value::Record(name.clone(), fields))
             }
             Kind::Unary(op, x) => {
-                if op == "!" {
+                if op == "&" {
+                    let (r, path) = self.location(x, env)?;
+                    let ty = project(self.memory.read(r)?, &path)?
+                        .hint()
+                        .unwrap_or(Type::Unit);
+                    Ok(Value::Ref(Box::new(ty), r, path))
+                } else if op == "*" {
+                    let (r, path) = self.location(e, env)?;
+                    project(self.memory.read(r)?, &path).cloned()
+                } else if op == "!" {
                     Ok(Value::Bool(
                         !self.expr(x, env, Some(&Type::Bool))?.boolean()?,
                     ))
@@ -296,6 +364,15 @@ impl Evaluator<'_> {
                 })
             }
             Kind::Call(name, args) => {
+                if name == "move" || name == "drop" {
+                    let (r, path) = self.location(&args[0], env)?;
+                    if !path.is_empty() {
+                        return Err("cannot move partial plane".into());
+                    }
+                    let id = self.memory.plane(r)?;
+                    let value = self.memory.take(id)?;
+                    return Ok(if name == "drop" { Value::Unit } else { value });
+                }
                 let types = self
                     .functions
                     .iter()
@@ -321,6 +398,78 @@ impl Evaluator<'_> {
             }
         }
     }
+
+    fn location(
+        &mut self,
+        e: &Expr,
+        env: &BTreeMap<String, Value>,
+    ) -> Result<(Reference, Vec<Projection>)> {
+        match &e.kind {
+            Kind::Name(n) => {
+                let id = if let Some(id) = self.roots.get(n) {
+                    *id
+                } else {
+                    let v = env.get(n).cloned().ok_or("unknown place")?;
+                    let id = self.memory.allocate(v)?;
+                    self.roots.insert(n.clone(), id);
+                    id
+                };
+                Ok((self.memory.borrow(id)?, vec![]))
+            }
+            Kind::Field(base, n) => {
+                let (r, mut p) = self.location(base, env)?;
+                p.push(Projection::Field(n.clone()));
+                project(self.memory.read(r)?, &p)?;
+                Ok((r, p))
+            }
+            Kind::Index(base, i) => {
+                let (r, mut p) = self.location(base, env)?;
+                let index = usize::try_from(self.expr(i, env, Some(&Type::Nat))?.number()?)
+                    .map_err(|_| "invalid index")?;
+                p.push(Projection::Index(index));
+                project(self.memory.read(r)?, &p)?;
+                Ok((r, p))
+            }
+            Kind::Unary(op, x) if op == "*" => {
+                let Value::Ref(_, r, p) = self.expr(x, env, None)? else {
+                    return Err("expected reference".into());
+                };
+                self.memory.read(r)?;
+                Ok((r, p))
+            }
+            _ => Err("expected referenceable place".into()),
+        }
+    }
+}
+
+fn project<'a>(value: &'a Value, path: &[Projection]) -> Result<&'a Value> {
+    if path.is_empty() {
+        return Ok(value);
+    }
+    let value = match (&path[0], value) {
+        (Projection::Field(n), Value::Record(_, fields)) => fields.get(n).ok_or("unknown field")?,
+        (Projection::Index(i), Value::Array(items)) => {
+            items.get(*i).ok_or("index out of bounds")?
+        }
+        _ => return Err("invalid reference projection".into()),
+    };
+    project(value, &path[1..])
+}
+fn replace_projection(value: &mut Value, path: &[Projection], new: Value) -> Result<()> {
+    if path.is_empty() {
+        *value = new;
+        return Ok(());
+    }
+    let value = match (&path[0], value) {
+        (Projection::Field(n), Value::Record(_, fields)) => {
+            fields.get_mut(n).ok_or("unknown field")?
+        }
+        (Projection::Index(i), Value::Array(items)) => {
+            items.get_mut(*i).ok_or("index out of bounds")?
+        }
+        _ => return Err("invalid reference projection".into()),
+    };
+    replace_projection(value, &path[1..], new)
 }
 
 impl VerifiedProgram {
@@ -330,6 +479,8 @@ impl VerifiedProgram {
             structs: &self.structs,
             fuel: 100_000,
             depth: 0,
+            memory: Memory::default(),
+            roots: BTreeMap::new(),
         };
         evaluator.call("main", vec![])
     }

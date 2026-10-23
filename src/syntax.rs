@@ -6,6 +6,8 @@ pub enum Type {
     Int,
     Nat,
     Bool,
+    Unit,
+    Ref(Box<Type>),
     Named(String),
     Array(Box<Type>, Box<Expr>),
 }
@@ -18,6 +20,7 @@ pub struct Expr {
 pub enum Kind {
     Number(i128),
     Bool(bool),
+    Unit,
     Name(String),
     Unary(String, Box<Expr>),
     Binary(String, Box<Expr>, Box<Expr>),
@@ -127,7 +130,12 @@ impl Parser {
             return Err(self.err("syntax nesting limit reached"));
         }
         self.depth += 1;
-        let result = if self.eat("[") {
+        let result = if self.eat("&") {
+            Ok(Type::Ref(Box::new(self.ty()?)))
+        } else if self.eat("(") {
+            self.expect(")")?;
+            Ok(Type::Unit)
+        } else if self.eat("[") {
             let t = self.ty()?;
             self.expect(";")?;
             let n = self.expr(0)?;
@@ -163,10 +171,17 @@ impl Parser {
         self.depth += 1;
         let line = self.line();
         let mut lhs = if self.eat("(") {
-            let e = self.expr(0)?;
-            self.expect(")")?;
-            e
-        } else if self.peek() == "-" || self.peek() == "!" {
+            if self.eat(")") {
+                Expr {
+                    kind: Kind::Unit,
+                    line,
+                }
+            } else {
+                let e = self.expr(0)?;
+                self.expect(")")?;
+                e
+            }
+        } else if matches!(self.peek(), "-" | "!" | "&" | "*") {
             let op = self.peek().to_owned();
             self.pos += 1;
             Expr {

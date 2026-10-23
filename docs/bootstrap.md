@@ -47,13 +47,29 @@ machine integers. Natural subtraction saturates at zero. This is an explicit
 bootstrap semantics, not a claim that overflow has been verified. Logical
 operators in propositions are `&&`, `||`, and `!`.
 
-Not yet supported: recursion, patterns, references,
+References use `&place`, dereference uses `*reference`, and reference types use
+`&T`. Multiple mutable aliases are allowed. Scalar writes preserve identity and
+are visible through all aliases. Replacing an aggregate, `move(place)`, or
+`drop(place)` invalidates references to its plane. Reassignment restores a moved
+slot without restoring old references. References into structs and known array
+elements are supported. Moves are currently explicit; ordinary values copy.
+
+The initial implementation conservatively treats an aggregate's storage as one
+plane, so replacing a nested aggregate may invalidate unrelated references in
+the same root. Symbolic-index reference projections, partial moves, reference
+returns, and writes through reference parameters are rejected until their plane
+and effect contracts are implemented. Read-only reference parameters work.
+
+Not yet supported: recursion, patterns,
 allocation, FFI, machine layouts, or native code generation. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
 
-`proofs/Planes.lean` separately specifies plane identity, epochs, invalidation,
-aliasing, and publication of invariant-carrying states. It is not connected to
-an allocator or the frontend yet. It does not yet model descendant planes,
+`src/memory.rs` provides the internal generation-checked plane store used by
+both verification and execution. Arena identities prevent handles from crossing
+stores. Allocation has a 100,000-plane limit. `proofs/Planes.lean` separately
+specifies plane identity, epochs, invalidation,
+aliasing, and publication of invariant-carrying states. The Lean model is not a
+proof of the Rust implementation. It does not yet model descendant planes,
 pointer provenance, concurrent access, or physical storage reuse.
 
 ## Validation

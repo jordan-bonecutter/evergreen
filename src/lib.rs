@@ -2,6 +2,7 @@
 use std::collections::HashSet;
 
 pub mod kernel;
+pub mod memory;
 pub mod runtime;
 pub mod syntax;
 pub mod verify;

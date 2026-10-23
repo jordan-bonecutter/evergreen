@@ -1,0 +1,7 @@
+fn main() -> usize {
+    let data: [usize; 2] = [1, 2];
+    let reference = &data[0];
+    // Replacing the owning plane invalidates references into it.
+    data = [3, 4];
+    *reference
+}
