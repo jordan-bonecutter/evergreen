@@ -8,7 +8,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
 
+// Bound compiler-expanded inline values independently of runtime heap storage.
 pub const MAX_LAYOUT_BYTES: usize = 65536;
+
+// x86-64 object offsets must fit the target's signed pointer-sized integer.
+pub const MAX_ALLOCATION_BYTES: u64 = i64::MAX as u64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Field {

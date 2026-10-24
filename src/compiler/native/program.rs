@@ -63,7 +63,6 @@ impl<'a> ProgramEmitter<'a> {
         let stack_pointer = self.code.len();
         self.code.extend([0; 8]);
         self.code.extend([0x45, 0x31, 0xf6]); // r14: recursive activations
-        self.code.extend([0x45, 0x31, 0xed]); // r13: live mapped heap bytes
         if self.trace != TraceMode::Value {
             self.code.extend([0x4d, 0x31, 0xff]);
         }

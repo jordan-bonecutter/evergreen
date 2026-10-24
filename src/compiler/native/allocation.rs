@@ -10,14 +10,6 @@ impl Emitter<'_> {
     pub(super) fn map_payload(&mut self) {
         self.code.extend([0x48, 0x83, 0xc0, HEADER]);
         self.code.extend([0x48, 0x89, 0xc6]); // rsi = mapping bytes, including header
-        self.code.extend([0x48, 0x05]);
-        self.code.extend(4095u32.to_le_bytes());
-        self.code.extend([0x48, 0x25]);
-        self.code.extend((-4096i32).to_le_bytes());
-        self.code.extend([0x49, 0x01, 0xc5]); // r13 += mapped pages
-        self.code.extend([0x49, 0x81, 0xfd]);
-        self.code.extend(HEAP_LIMIT.to_le_bytes());
-        self.heap_guard(0x76);
         self.code.extend([0x31, 0xff]); // null address hint
         self.code.extend([0xba, 3, 0, 0, 0]); // read/write
         self.code.extend([0x41, 0xba, 0x22, 0, 0, 0]); // private anonymous
@@ -38,12 +30,6 @@ impl Emitter<'_> {
         self.code.extend([0xb8, 11, 0, 0, 0, 0x0f, 0x05]);
         self.code.extend([0x48, 0x85, 0xc0]);
         self.heap_guard(0x79);
-        self.code.extend([0x48, 0x89, 0xf0]);
-        self.code.extend([0x48, 0x05]);
-        self.code.extend(4095u32.to_le_bytes());
-        self.code.extend([0x48, 0x25]);
-        self.code.extend((-4096i32).to_le_bytes());
-        self.code.extend([0x49, 0x29, 0xc5]); // r13 -= released pages
     }
 }
 

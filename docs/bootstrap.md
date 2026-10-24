@@ -293,11 +293,11 @@ Allocation and ownership transfer require runtime execution with closed
 invariants. Proof calls observe heap owners through borrowed interfaces; they
 cannot take owners or produce owning results. Ideal code cannot allocate, hide,
 or consume an owner. Interpreter allocation uses the generation-checked store.
-Native allocation uses anonymous private Linux `mmap` and `munmap`, with a
-16 MiB limit on live mapped pages. Allocation failure, budget exhaustion, or a
-failed release exits with status 126 rather than returning a language value.
-The private word ABI still gives each owner an eight-byte home; payload layouts
-have their existing 64 KiB limit. These allocator/backend rules remain trusted
+Native allocation uses anonymous private Linux `mmap` and `munmap`. Allocation
+failure or a failed release exits with status 126 rather than returning a
+language value. There is no fixed native heap quota. The private word ABI gives
+each owner an eight-byte home. Inline layouts retain a 64 KiB compiler limit;
+filled heap arrays instead prove that their byte size fits `isize::MAX`. These allocator/backend rules remain trusted
 implementation code. The Lean owner-slot model separately proves that an owner
 move preserves payload references and a free invalidates them; it does not prove
 affine enforcement, the allocator, or compilation correctness.
@@ -1707,14 +1707,16 @@ filled allocator supports scalar values and flat scalar records without
 references or affine ownership. Repeating an owner or destructor-bearing value
 is rejected instead of silently duplicating it.
 
-The checker proves nonnegative extents, index bounds, and that the payload fits
-the existing 64 KiB object limit. Incoming owned array types carry that allocation
-bound. The native implementation uses a bounded initialization loop and a private
+The checker proves nonnegative extents, index bounds, and that the allocation's
+byte size fits the x86-64 target's signed pointer range (`isize::MAX`). Incoming
+owned array types carry that addressability bound. The 64 KiB inline-layout limit
+applies to each repeated element, not the entire heap buffer. The native implementation uses a bounded initialization loop and a private
 eight-byte mapping-size header, allowing cleanup without reevaluating a mutable
 length variable. The header is not part of `T`'s layout or the source owner value.
-Page-rounded bytes, including that header, count against the 16 MiB native heap
-budget. Empty allocations retain distinct identities and are still releasable.
-The interpreter retains its execution/value-work limits.
+Linux rounds mappings to pages; there is no separate native heap quota. Empty
+allocations retain distinct identities and are still releasable. The interpreter
+retains its execution/value-work limits and rejects allocations exceeding its
+remaining work before reserving host storage.
 
 A formed view keeps its proved extent: assigning a larger value to a length
 variable does not enlarge existing storage or justify a formerly out-of-bounds
@@ -1740,8 +1742,10 @@ cargo run -- build examples/vec.evg -o /tmp/vec
 `new(capacity)` allocates initialized `usize` storage; `push(&value, item)` requires
 spare capacity, `pop(&value)` requires a nonempty vector, and `get(&value, index)`
 returns a checked reference to an element below length. `length` and `capacity`
-expose those quantities without exposing the representation. Allocation is still
-bounded by the bootstrap's 64 KiB payload limit.
+expose those quantities without exposing the representation. Capacity is bounded
+by addressability: `int(capacity) * 8 <= int(isize::MAX)` for machine-word elements.
+Native allocation can still fail at runtime; the interpreter has a separate work
+budget. Neither imposes a 8192-element language limit.
 
 `value = vec::reallocate(&value, new_capacity)` copies the live prefix to a fresh
 allocation and releases the previous buffer on assignment. Existing references
@@ -1758,3 +1762,20 @@ termination, subject to the bootstrap execution limits. Interpreter/native
 comparisons exercise its behavior; its contract does not yet prove preservation
 of every copied element. No vector-specific compiler primitive or trusted proof
 was added.
+
+
+### Field autodereferencing
+
+Field access automatically follows built-in references and owning planes until
+it reaches a record. `person.age` therefore works for `Person`, `&Person`,
+`plane(Person)`, and references to those pointer types. Nested paths such as
+`outer.inner.value` follow pointers at each field boundary. No user-defined
+`Deref` protocol or automatic method dispatch is introduced.
+
+This is elaborated into explicit `*` expressions before verification. The same
+rules apply to reads, assignments, `&person.age`, dependent type extents, and
+contracts such as `modifies(&person.age)` or `old(person.age)`. Opaque field
+visibility, liveness, ownership, invariant, and effect checks remain mandatory.
+The elaboration does not copy or consume an owning pointer merely to access a
+field. `examples/field_access.evg` exercises a borrowed update and a field read
+through an owner reference.

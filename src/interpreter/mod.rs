@@ -759,10 +759,20 @@ impl Evaluator<'_> {
                         .or_else(|| initial.hint())
                         .ok_or("missing allocation element type")?;
                     let size = crate::compiler::layout::of(&element, self.structs)?.size;
-                    if count > crate::compiler::layout::MAX_LAYOUT_BYTES / size {
-                        return Err("allocation exceeds object budget".into());
+                    if count as u128 * size as u128
+                        > crate::compiler::layout::MAX_ALLOCATION_BYTES as u128
+                    {
+                        return Err("allocation exceeds target addressable object range".into());
                     }
-                    let mut items = Vec::with_capacity(count);
+                    // The evaluator materializes cells; reject before reserving
+                    // host memory if even the minimum work exceeds its fuel.
+                    if count > self.fuel {
+                        return Err("execution value-work limit reached before allocation".into());
+                    }
+                    let mut items = Vec::new();
+                    items
+                        .try_reserve_exact(count)
+                        .map_err(|_| "interpreter allocation failed")?;
                     for _ in 0..count {
                         items.push(copy_value(&initial, &mut self.fuel)?);
                     }

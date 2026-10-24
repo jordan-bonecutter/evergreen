@@ -127,7 +127,13 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        include_str!("../../../examples/field_access.evg"),
+        "type Item struct {value: usize} fn choose(count: &usize, item: &Item) -> &Item where(*count < usize::MAX) modifies(count) borrows(item) ensures(*count == old(*count) + 1) {*count = *count + 1; item} fn main() -> usize {let n: usize = 0; let item = Item {value: 42}; let chosen = choose(&n, &item).value; if n == 1 {chosen} else {0}}",
+        "type Size struct {len: usize} fn first(size: &Size, data: linear_plane(usize, size.len)) -> usize where(size.len > 0) {(*data)[0]} fn main() -> usize {let size = Size {len: 1}; let data: array(usize, 1) = [42]; first(&size, &data)}",
+        "type Inner struct {value: usize} type Outer struct {inner: plane(Inner)} fn main() -> usize {let outer = alloc(Outer {inner: alloc(Inner {value: 41})}); let a = &outer; let b = &a; b.inner.value = 42; b.inner.value}",
         include_str!("../../../examples/vec.evg"),
+        "fn main() -> usize {let a: plane(usize, 9000) = alloc(9000, 42); (*a)[8999]}",
+        "fn main() -> usize {let v = vec::new(9000); vec::push(&v, 42); vec::pop(&v)}",
         "fn consume(owner: plane(usize, count), count: usize) -> usize where(count > 0) {(*owner)[0]} fn main() -> usize {let count: usize = 7; let owner: plane(usize, 2) = alloc(2, 42); consume(owner, 2)}",
         "fn main() -> usize {let v = vec::new(0); v = vec::reallocate(&v, 2); vec::push(&v, 42); let p = vec::get(&v, 0); vec::push(&v, 7); *p}",
         include_str!("../../../examples/runtime_planes.evg"),
@@ -549,4 +555,17 @@ fn native_syscalls_write_exact_bytes_and_preserve_results() {
         assert_eq!(fs::read(&output).unwrap(), expected, "{source}");
     }
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn native_heap_storage_is_independent_of_inline_and_interpreter_budgets() {
+    let source =
+        "fn main() -> u8 {let a: plane(u8, 17825792) = alloc(17825792, 42); (*a)[17825791]}";
+    let program = verify(source).unwrap();
+    assert!(program.run().unwrap_err().contains("before allocation"));
+    let path = std::env::temp_dir().join(format!("evergreen-large-heap-{}", std::process::id()));
+    let status = execute_test_binary(&path, &emit(&program).unwrap(), source);
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(status.code(), Some(42));
 }

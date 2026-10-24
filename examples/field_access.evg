@@ -1,0 +1,13 @@
+type Person struct {age: usize}
+fn birthday(person: &Person)
+where(person.age < usize::MAX)
+modifies(&person.age)
+ensures(person.age == old(person.age) + 1) {
+    person.age = person.age + 1;
+}
+fn main() -> usize ensures(result == 42) {
+    let person = alloc(Person {age: 41});
+    let reference = &person;
+    birthday(&*person);
+    reference.age
+}

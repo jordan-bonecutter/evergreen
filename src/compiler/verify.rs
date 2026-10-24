@@ -1578,7 +1578,7 @@ impl<'a> Context<'a> {
                     let stride = crate::compiler::layout::of(&syntax, self.structs)?.size;
                     self.assume(&Formula::Ge(
                         Linear::number(
-                            (crate::compiler::layout::MAX_LAYOUT_BYTES / stride) as i128,
+                            (crate::compiler::layout::MAX_ALLOCATION_BYTES / stride as u64) as i128,
                         )
                         .sub(length)?,
                     ))?;
@@ -3812,8 +3812,9 @@ fn verify_using(parsed: syntax::Program, session: &mut Session) -> Result<Verifi
     crate::shared::worker::run("evergreen-verifier", || verify_inner(parsed, session))
 }
 
-fn verify_inner(parsed: syntax::Program, session: &mut Session) -> Result<VerifiedProgram> {
+fn verify_inner(mut parsed: syntax::Program, session: &mut Session) -> Result<VerifiedProgram> {
     check_type_expansion(&parsed.structs)?;
+    super::field_sugar::expand(&mut parsed);
     let mut structs = BTreeMap::new();
     let empty_functions = BTreeMap::new();
     let empty_drops = BTreeSet::new();

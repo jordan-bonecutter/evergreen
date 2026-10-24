@@ -105,11 +105,11 @@ pub(super) fn syntax_type(ty: &Ty, line: usize) -> Result<Type> {
 }
 
 pub(super) fn payload_layout(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<()> {
-    if let Type::Array(element, count) = ty {
-        if crate::compiler::layout::array_length(count).is_err() {
-            crate::compiler::layout::of(element, structs)?;
-            return Ok(());
-        }
+    if let Type::Array(element, _) = ty {
+        // Only the repeated element needs an inline layout. The total heap
+        // extent is checked symbolically by the owning allocation constructor.
+        crate::compiler::layout::of(element, structs)?;
+        return Ok(());
     }
     crate::compiler::layout::of(ty, structs).map(|_| ())
 }
@@ -172,15 +172,15 @@ impl Context<'_> {
             return Err("filled allocation requires copyable scalar or flat scalar-record elements without references".into());
         }
         let stride = crate::compiler::layout::of(&syntax, self.structs)?.size;
-        let maximum = crate::compiler::layout::MAX_LAYOUT_BYTES / stride;
+        let maximum = (crate::compiler::layout::MAX_ALLOCATION_BYTES / stride as u64) as i128;
         self.prove(
             &Formula::Ge(count.clone()),
             "nonnegative allocation count",
             line,
         )?;
         self.prove(
-            &Formula::Ge(Linear::number(maximum as i128).sub(&count)?),
-            "allocation fits the 64 KiB object budget",
+            &Formula::Ge(Linear::number(maximum).sub(&count)?),
+            "allocation byte size fits target addressable object range",
             line,
         )?;
         self.validate_argument(&initial, line)?;
@@ -278,6 +278,15 @@ mod filled_tests {
                 .proof_search_count(),
             0
         );
+        let large = "fn main() -> usize {let a: plane(usize, 9000) = alloc(9000, 42); (*a)[8999]}";
+        assert_eq!(verify(large).unwrap().run().unwrap().to_string(), "42");
+        let enormous =
+            "fn main() -> usize {let a: plane(u8, 1000000000) = alloc(1000000000, 0); 42}";
+        assert!(verify(enormous)
+            .unwrap()
+            .run()
+            .unwrap_err()
+            .contains("before allocation"));
         let empty = "fn main() -> usize {let a: plane(usize, 0) = alloc(0, 7); let b: plane(usize, 0) = alloc(0, 9); if &*a != &*b {42} else {1}}";
         assert_eq!(verify(empty).unwrap().run().unwrap().to_string(), "42");
     }
@@ -286,7 +295,7 @@ mod filled_tests {
     fn runtime_allocation_checks_bounds_ownership_and_liveness() {
         for source in [
             "fn make(n: usize) -> plane(usize, n) {alloc(n, 0)} fn main() -> usize {42}",
-            "fn main() -> usize {let a: plane(usize, 8193) = alloc(8193, 0); 42}",
+            "fn main() -> usize {let a: plane(usize, usize::MAX) = alloc(usize::MAX, 0); 42}",
             "fn main() -> usize {let a: plane(usize, 2) = alloc(2, 0); (*a)[2]}",
             "fn main() -> usize {let x: usize = 42; let a = alloc(2, &x); 42}",
             "fn main() -> usize {let a = alloc(2, alloc(42)); 42}",

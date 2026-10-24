@@ -20,7 +20,6 @@ mod syscall;
 const STACK: usize = 65536;
 const MAX_CODE: usize = 8 * 1024 * 1024;
 const RECURSION_LIMIT: usize = 128;
-const HEAP_LIMIT: u32 = 16 * 1024 * 1024;
 
 fn scalar(t: &Type) -> Result<()> {
     if matches!(t, Type::Machine(_) | Type::Bool | Type::Unit) {

@@ -3214,7 +3214,7 @@ fn owned_word_vectors_check_capacity_and_reference_lifetimes() {
         "fn main() -> usize {let v = vec::new(2); *vec::get(&v, 0)}",
         "fn main() -> usize {let v = vec::new(1); vec::push(&v, 42); let p = vec::get(&v, 0); v = vec::reallocate(&v, 2); *p}",
         "fn main() -> usize {let v = vec::new(2); vec::push(&v, 42); v = vec::reallocate(&v, 0); 0}",
-        "fn main() -> usize {let v = vec::new(8193); 0}",
+        "fn main() -> usize {let v = vec::new(usize::MAX); 0}",
     ] {
         assert!(verify(source).is_err(), "accepted invalid vector operation: {source}");
     }
@@ -3235,4 +3235,38 @@ fn owned_dependent_parameters_resolve_in_the_callee_scope() {
         )
         .replace("consume(2, owner)", "consume(owner, 2)");
     assert_eq!(verify(&forward).unwrap().run().unwrap().to_string(), "42");
+}
+
+#[test]
+fn field_autoderef_uses_the_existing_ownership_and_effect_checks() {
+    let source = include_str!("../../../examples/field_access.evg");
+    let (program, bundle) = prove(source).unwrap();
+    let explicit = source
+        .replace("person.age", "(*person).age")
+        .replace("reference.age", "(**reference).age");
+    assert_eq!(
+        crate::compiler::native::emit(&program).unwrap(),
+        crate::compiler::native::emit(&verify(&explicit).unwrap()).unwrap()
+    );
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    assert!(verify(&source.replace("modifies(&person.age)", "")).is_err());
+    assert!(
+        verify(&source.replace("    reference.age", "    drop(person); reference.age")).is_err()
+    );
+    assert!(verify("type Person struct {age: usize} fn main() -> usize {let p = alloc(Person {age: 42}); let moved = p; p.age}").is_err());
+    assert!(verify("fn main() -> usize {let v = vec::new(2); let r = &v; r.len}").is_err());
+    let nested = "type Inner struct {value: usize} type Outer struct {inner: plane(Inner)} fn main() -> usize {let outer = alloc(Outer {inner: alloc(Inner {value: 42})}); let a = &outer; let b = &a; b.inner.value}";
+    assert_eq!(verify(nested).unwrap().run().unwrap().to_string(), "42");
+    let field_borrow = "type Item struct {value: usize} fn read(x: &Item) -> &usize borrows(&x.value) {*&x.value; &x.value} fn main() -> usize {let x = alloc(Item {value: 42}); *read(&*x)}";
+    assert_eq!(
+        verify(field_borrow).unwrap().run().unwrap().to_string(),
+        "42"
+    );
 }
