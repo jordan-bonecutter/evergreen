@@ -1,0 +1,15 @@
+fn make(count: usize) -> plane(usize, count)
+where(count > 0 && count <= 8192)
+ensures((*result)[0] == 7) {
+    let owner: plane(usize, count) = alloc(count, 7);
+    owner
+}
+fn first(count: usize, data: linear_plane(usize, count)) -> usize
+where(count > 0) ensures(result == (*data)[0]) {(*data)[0]}
+fn main() -> usize {
+    let count: usize = 5;
+    let owner = make(count);
+    let data = &*owner;
+    (*data)[count - 1] = 42;
+    first(count, data) + (*data)[count - 1] - 7
+}

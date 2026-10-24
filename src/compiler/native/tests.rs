@@ -127,6 +127,13 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        include_str!("../../../examples/runtime_planes.evg"),
+        "fn main() -> usize {let a: plane(usize, 0) = alloc(0, 7); let b: plane(usize, 0) = alloc(0, 9); if &*a != &*b {42} else {1}}",
+        "fn first(n: usize, data: linear_plane(u8, n), fixed: array(u16, 2)) -> u8 where(n > 0) {(*data)[0]} fn main() -> u8 {let data: array(u8, 1) = [42]; first(1, &data, [7, 9])}",
+        "fn make(n: usize) -> plane(u8, n) where(n > 0 && n <= 65536) {alloc(n, 255)} fn main() -> usize {let data = make(7); if (*data)[0] == 255 && (*data)[6] == 255 {42} else {1}}",
+        "fn main() -> usize {let data: plane(i8, 3) = alloc(3, -128); (*data)[1] = -42; if (*data)[0] == -128 && (*data)[1] == -42 && (*data)[2] == -128 {42} else {1}}",
+        "type Pair struct {a: u8, b: u16, c: bool} fn main() -> usize {let data: plane(Pair, 3) = alloc(3, Pair {a: 255, b: 65535, c: true}); (*data)[1].b = 42; if (*data)[0].b == 65535 && (*data)[1].a == 255 && (*data)[1].b == 42 && (*data)[2].c {42} else {1}}",
+        "fn tick(n: &usize) -> usize where(*n < usize::MAX) modifies(n) ensures(*n == old(*n) + 1 && result == 7) {*n = *n + 1; 7} fn main() -> usize {let n: usize = 3; let before = n; let data: plane(usize, before) = alloc(n, tick(&n)); if n == 4 && (*data)[2] == 7 {42} else {1}}",
         "fn sum(ideal n: nat, a: &[u8; n], ideal m: nat, b: &[u8; m]) -> u16 where(n > 0 && m > 0) {u16((*a)[0]) + u16((*b)[0])} fn main() -> u16 {let a: [u8; 1] = [40]; let b: [u8; 2] = [2, 3]; sum(&a, &b)}",
         "fn main() -> usize {let data: [usize; 2] = [7, 1]; arrays::set(&data, 1, 42); data[1]}",
         include_str!("../../../examples/owned_return_cleanup.evg"),

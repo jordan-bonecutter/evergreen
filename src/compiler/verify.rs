@@ -464,7 +464,10 @@ fn place_index_expression(e: &Expr) -> bool {
                 && place_index_expression(yes)
                 && place_index_expression(no)
         }
-        Kind::Call(name, args) if matches!(name.as_str(), "int" | "nat") && args.len() == 1 => {
+        Kind::Call(name, args)
+            if (matches!(name.as_str(), "int" | "nat") || MachineInt::parse(name).is_some())
+                && args.len() == 1 =>
+        {
             place_index_expression(&args[0])
         }
         _ => false,
@@ -651,6 +654,7 @@ struct EntryMemory {
 
 #[derive(Clone)]
 enum ArrayHistory {
+    Fill(Symbol),
     Store {
         base: String,
         index: Linear,
@@ -1496,7 +1500,7 @@ impl<'a> Context<'a> {
                 if !runtime_type(t, self.structs) || !heap::payload_type(t, self.structs) {
                     return Err("owned planes require runtime payloads without borrowed references".into());
                 }
-                crate::compiler::layout::of(t, self.structs)?;
+                heap::payload_layout(t, self.structs)?;
                 Ok(Ty::Plane(Box::new(self.resolve(t)?)))
             }
             Type::Named(n) => {
@@ -1566,6 +1570,16 @@ impl<'a> Context<'a> {
             }
             Ty::Unit => Ok(Symbol::Unit),
             Ty::Plane(t) => {
+                if let Ty::Array(element, length) = t.as_ref() {
+                    let syntax = heap::syntax_type(element, 0)?;
+                    let stride = crate::compiler::layout::of(&syntax, self.structs)?.size;
+                    self.assume(&Formula::Ge(
+                        Linear::number(
+                            (crate::compiler::layout::MAX_LAYOUT_BYTES / stride) as i128,
+                        )
+                        .sub(length)?,
+                    ))?;
+                }
                 let value = self.arbitrary(t)?;
                 let plane = self.memory.allocate(value)?;
                 Ok(Symbol::Plane(t.clone(), self.memory.borrow(plane)?))

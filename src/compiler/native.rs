@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
 
+mod allocation;
 mod atomic;
 mod elf;
 mod program;
@@ -37,6 +38,7 @@ fn machine() -> Type {
 // change its contents. Calls are kept on the snapshot path, including helpers.
 fn no_calls(e: &Expr) -> bool {
     match &e.kind {
+        Kind::Call(name, args) if MachineInt::parse(name).is_some() => args.iter().all(no_calls),
         Kind::Call(..) => false,
         Kind::Unary(_, x) | Kind::Field(x, _) | Kind::FactAt(x, _) => no_calls(x),
         Kind::Binary(_, a, b) | Kind::Index(a, b) => no_calls(a) && no_calls(b),
@@ -259,20 +261,13 @@ impl Emitter<'_> {
             return Ok(());
         }
         if let Type::Plane(payload) = ty {
-            self.frame_address(offset);
-            self.code.extend([0x48, 0x8b, 0x00]);
-            self.snapshot(payload)?;
-            self.drop_value(payload)?;
-            self.code.extend([0x48, 0x8b, 0xbd]); // rdi = allocation address
-            self.code.extend(offset.to_le_bytes());
-            let size = layout::of(payload, self.structs)?.size as u32;
-            self.code.push(0xbe); // esi = byte length
-            self.code.extend(size.to_le_bytes());
-            self.code.extend([0xb8, 11, 0, 0, 0, 0x0f, 0x05]); // munmap
-            self.code.extend([0x48, 0x85, 0xc0]);
-            self.heap_guard(0x79); // jns success
-            self.code.extend([0x49, 0x81, 0xed]); // sub r13, mapped pages
-            self.code.extend(size.next_multiple_of(4096).to_le_bytes());
+            if self.has_drop(payload) {
+                self.frame_address(offset);
+                self.code.extend([0x48, 0x8b, 0x00]);
+                self.snapshot(payload)?;
+                self.drop_value(payload)?;
+            }
+            self.unmap_payload(offset);
             return Ok(());
         }
         if let Type::Named(name) = ty {
@@ -324,16 +319,28 @@ impl Emitter<'_> {
         match &e.kind {
             Kind::Name(name) => self.load(name),
             Kind::Field(base, name) => {
-                let ty = self.storage_value(base)?;
+                let direct = stored(base);
+                let ty = if direct {
+                    self.address(base)?
+                } else {
+                    self.storage_value(base)?
+                };
                 let field = self.field(&ty, name)?;
                 self.add_offset(field.offset);
                 if !layout::aggregate(&field.ty) {
                     self.load_scalar(&field.ty)?;
+                } else if direct {
+                    self.snapshot(&field.ty)?;
                 }
                 Ok(field.ty)
             }
             Kind::Index(base, index) => {
-                let ty = self.index_address(base, index, ReadMode::Storage)?;
+                let mode = if stored(base) && no_calls(index) {
+                    ReadMode::Place
+                } else {
+                    ReadMode::Storage
+                };
+                let ty = self.index_address(base, index, mode)?;
                 if !layout::aggregate(&ty) {
                     self.load_scalar(&ty)?;
                 }
@@ -382,7 +389,7 @@ impl Emitter<'_> {
         match (a, b) {
             // Source verification already checked pointee compatibility. The
             // native reference ABI is one address even for dependent pointees.
-            (Type::Ref(_), Type::Ref(_)) => Ok(true),
+            (Type::Ref(_), Type::Ref(_)) | (Type::Plane(_), Type::Plane(_)) => Ok(true),
             (Type::Array(a, al), Type::Array(b, bl)) => {
                 Ok(Self::compatible(a, b)?
                     && layout::array_length(al)? == layout::array_length(bl)?)
@@ -738,6 +745,9 @@ impl Emitter<'_> {
                     ty
                 }
             }
+            Kind::Call(name, args) if name == "alloc" && args.len() == 2 => {
+                self.allocate_filled(args, expected)?
+            }
             Kind::Call(name, args) if name == "alloc" => {
                 let hint = match expected {
                     Some(Type::Plane(inner)) => Some(inner.as_ref()),
@@ -746,22 +756,9 @@ impl Emitter<'_> {
                 let payload = self.expr(&args[0], hint)?;
                 let saved = self.allocate(&payload)?;
                 self.copy_frame(saved, &payload)?;
-                let size = layout::of(&payload, self.structs)?.size as u32;
-                self.code.extend([0x49, 0x81, 0xc5]); // add r13, mapped bytes
-                self.code.extend(size.next_multiple_of(4096).to_le_bytes());
-                self.code.extend([0x49, 0x81, 0xfd]); // cmp r13, heap budget
-                self.code.extend(HEAP_LIMIT.to_le_bytes());
-                self.heap_guard(0x76); // jbe success
-                self.code.extend([0x31, 0xff]); // rdi = null address hint
-                self.code.push(0xbe);
-                self.code.extend(size.to_le_bytes());
-                self.code.extend([0xba, 3, 0, 0, 0]); // PROT_READ | PROT_WRITE
-                self.code.extend([0x41, 0xba, 0x22, 0, 0, 0]); // MAP_PRIVATE | MAP_ANONYMOUS
-                self.code.extend([0x49, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff]); // fd = -1
-                self.code.extend([0x45, 0x31, 0xc9]); // offset = 0
-                self.code.extend([0xb8, 9, 0, 0, 0, 0x0f, 0x05]); // mmap
-                self.code.extend([0x48, 0x85, 0xc0]);
-                self.heap_guard(0x79); // jns success
+                let size = layout::of(&payload, self.structs)?.size;
+                self.immediate(size as u64);
+                self.map_payload();
                 let home = self.allocate(&Type::Plane(Box::new(payload.clone())))?;
                 self.copy_frame(home, &Type::Ref(Box::new(payload.clone())))?;
                 self.code.extend([0x48, 0x89, 0xc1]); // destination rcx

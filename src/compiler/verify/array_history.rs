@@ -85,6 +85,7 @@ impl Context<'_> {
             return Ok(());
         };
         let cost = match history {
+            ArrayHistory::Fill(value) => symbol_weight(value)?,
             ArrayHistory::Store { index, value, .. } => {
                 index.terms.len().saturating_add(symbol_weight(value)?)
             }
@@ -99,6 +100,7 @@ impl Context<'_> {
             .cloned()
             .ok_or("array history disappeared")?;
         match history {
+            ArrayHistory::Fill(initial) => self.assume(&self.symbol_equal(value, &initial)?),
             ArrayHistory::Store {
                 base,
                 index: target,

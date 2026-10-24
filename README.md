@@ -91,7 +91,7 @@ be implemented in Evergreen:
 type Vec<T> struct {
     cap: isize,
     len: isize,
-    data: &linear_plane(len, T) | null where len == 0 <=> typeof(data) == null // compiler checks this is true at all times or code doesn't compile. if it can't easily check this it must be proven by the programmer
+    data: linear_plane(T, len) | null where len == 0 <=> typeof(data) == null // compiler checks this is true at all times or code doesn't compile. if it can't easily check this it must be proven by the programmer
 } where (pub fact len_at_most_cap = len <= cap; len_at_most_cap);
 
 impl<T> Vec<T> {
@@ -120,11 +120,11 @@ impl<T> Index<isize> for Vec<T> {
         ; // we need to prove this because the built in linear plane type (which describes an array layout in memory) requires it to be true to call get
         // the footprint of linear_plane.get is:
         //
-        // type linear_plane<Len: depends(const isize), T> builtin; // depends == dependent types! types can depend on values! here we've said the value is const. which doesn't mean the value must be a constant it just means that if it changes then the linear plane is dropped/invalidated
+        // type linear_plane<T, Len: depends(const isize)> builtin; // depends == dependent types! types can depend on values! here we've said the value is const. which doesn't mean the value must be a constant it just means that if it changes then the linear plane is dropped/invalidated
         // impl<Len, T> linear_plane<Len, T> {
         //   fn get(&self, idx: isize) -> &T where idx < Len {...}
         //}
-        self.linear_plane.get(index)
+        self.data.get(index)
     } where index_in_range;
 
     // we could also provide a method that takes in a non-proven index but it'd
@@ -137,8 +137,9 @@ I think you get it now. Some other thoughts:
 - Memory model is in a tree of "planes". The stack is a tree. Each function is
   a node. Each variable is another node. If it's a struct then it's also a node.
   Down to the most atomic types, which are just the integers.
-- linear_plane is a user-defined plane. Rather, people should use the built in
-  const generic array type.
+- `array(T, N)` is inline homogeneous storage with compile-time extent `N`.
+  `linear_plane(T, n)` is a pointer to contiguous storage bounded by the runtime
+  value `n`; the dependent type ties that pointer view to its length delineator.
 - When a plane is dropped then anything in that plane is now not referencable 
   which fixes the vec problem from above, the type of anything in a dropped
   plane is never. So the variable's type changes.

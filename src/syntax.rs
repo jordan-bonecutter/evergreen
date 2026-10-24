@@ -383,6 +383,15 @@ impl Parser {
         Ok(fields)
     }
 
+    fn array_arguments(&mut self) -> Result<(Type, Expr), String> {
+        self.expect("(")?;
+        let element = self.ty()?;
+        self.expect(",")?;
+        let count = self.expr(0)?;
+        self.expect(")")?;
+        Ok((element, count))
+    }
+
     fn ty(&mut self) -> Result<Type, String> {
         if self.depth >= 128 {
             return Err(self.err("syntax nesting limit reached"));
@@ -401,9 +410,25 @@ impl Parser {
             }
         } else if self.eat("&") {
             Ok(Type::Ref(Box::new(self.ty()?)))
+        } else if self.eat("array") {
+            let (element, count) = self.array_arguments()?;
+            if !constant_extent(&count) {
+                return Err(self.err("array(T, N) requires a compile-time extent; use linear_plane(T, n) for a runtime-bound pointer"));
+            }
+            Ok(Type::Array(Box::new(element), Box::new(count)))
+        } else if self.eat("linear_plane") {
+            let (element, count) = self.array_arguments()?;
+            Ok(Type::Ref(Box::new(Type::Array(
+                Box::new(element),
+                Box::new(count),
+            ))))
         } else if self.eat("plane") {
             self.expect("(")?;
-            let inner = self.ty()?;
+            let mut inner = self.ty()?;
+            if self.eat(",") {
+                let count = self.expr(0)?;
+                inner = Type::Array(Box::new(inner), Box::new(count));
+            }
             self.expect(")")?;
             Ok(Type::Plane(Box::new(inner)))
         } else if self.eat("(") {
@@ -760,6 +785,17 @@ impl Parser {
             opaque: false,
             module: None,
         })
+    }
+}
+
+fn constant_extent(expression: &Expr) -> bool {
+    match &expression.kind {
+        Kind::Number(_) | Kind::Constant(..) => true,
+        Kind::Unary(op, value) if op == "-" => constant_extent(value),
+        Kind::Binary(op, left, right) if matches!(op.as_str(), "+" | "-" | "*") => {
+            constant_extent(left) && constant_extent(right)
+        }
+        _ => false,
     }
 }
 

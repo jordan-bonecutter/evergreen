@@ -741,6 +741,41 @@ impl Evaluator<'_> {
                     }
                     return Ok(Value::Machine(target, value));
                 }
+                if name == "alloc" && args.len() == 2 {
+                    let count_type = Type::Machine(MachineInt::parse("usize").unwrap());
+                    let count =
+                        usize::try_from(self.expr(&args[0], env, Some(&count_type))?.number()?)
+                            .map_err(|_| "invalid allocation count")?;
+                    let hint = match expected {
+                        Some(Type::Plane(inner)) => match inner.as_ref() {
+                            Type::Array(element, _) => Some(element.as_ref()),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let initial = self.expr(&args[1], env, hint)?;
+                    let element = hint
+                        .cloned()
+                        .or_else(|| initial.hint())
+                        .ok_or("missing allocation element type")?;
+                    let size = crate::compiler::layout::of(&element, self.structs)?.size;
+                    if count > crate::compiler::layout::MAX_LAYOUT_BYTES / size {
+                        return Err("allocation exceeds object budget".into());
+                    }
+                    let mut items = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        items.push(copy_value(&initial, &mut self.fuel)?);
+                    }
+                    let ty = Type::Array(
+                        Box::new(element),
+                        Box::new(Expr {
+                            kind: Kind::Number(count as i128),
+                            line: e.line,
+                        }),
+                    );
+                    let plane = self.memory.allocate(Value::Array(items))?;
+                    return Ok(Value::Plane(Box::new(ty), self.memory.borrow(plane)?));
+                }
                 if name == "alloc" {
                     let hint = match expected {
                         Some(Type::Plane(inner)) => Some(inner.as_ref()),

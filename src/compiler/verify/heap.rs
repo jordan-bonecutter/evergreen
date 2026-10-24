@@ -83,7 +83,7 @@ pub(super) fn function_uses_planes(
         || expression(&function.result)
 }
 
-fn syntax_type(ty: &Ty, line: usize) -> Result<Type> {
+pub(super) fn syntax_type(ty: &Ty, line: usize) -> Result<Type> {
     Ok(match ty {
         Ty::Int => Type::Int,
         Ty::Nat => Type::Nat,
@@ -104,6 +104,16 @@ fn syntax_type(ty: &Ty, line: usize) -> Result<Type> {
     })
 }
 
+pub(super) fn payload_layout(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<()> {
+    if let Type::Array(element, count) = ty {
+        if crate::compiler::layout::array_length(count).is_err() {
+            crate::compiler::layout::of(element, structs)?;
+            return Ok(());
+        }
+    }
+    crate::compiler::layout::of(ty, structs).map(|_| ())
+}
+
 impl Context<'_> {
     pub(super) fn allocate_owned(
         &mut self,
@@ -114,8 +124,11 @@ impl Context<'_> {
         if self.phase != Phase::Runtime || self.dropping || !self.opened_planes.is_empty() {
             return Err("allocation requires runtime execution with closed invariants".into());
         }
+        if args.len() == 2 {
+            return self.allocate_filled(args, expected, line);
+        }
         if args.len() != 1 {
-            return Err("alloc expects one payload value".into());
+            return Err("alloc expects a payload, or a count and initial element".into());
         }
         let hint = match expected {
             Some(Ty::Plane(inner)) => Some(inner.as_ref()),
@@ -131,6 +144,62 @@ impl Context<'_> {
         self.validate_argument(&value, line)?;
         let plane = self.memory.allocate(value)?;
         Ok(Symbol::Plane(Box::new(ty), self.memory.borrow(plane)?))
+    }
+
+    fn allocate_filled(
+        &mut self,
+        args: &[Expr],
+        expected: Option<&Ty>,
+        line: usize,
+    ) -> Result<Symbol> {
+        let count_type = Ty::Machine(MachineInt::parse("usize").unwrap());
+        let count = self.eval(&args[0], Some(&count_type))?.number()?;
+        let hint = match expected {
+            Some(Ty::Plane(inner)) => match inner.as_ref() {
+                Ty::Array(element, _) => Some(element.as_ref()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let initial = self.eval(&args[1], hint)?;
+        let element = initial.ty();
+        let syntax = syntax_type(&element, line)?;
+        if self.symbol_is_affine(&initial)
+            || !payload_type(&syntax, self.structs)
+            || !self.history_element(&element)
+            || !runtime_type(&syntax, self.structs)
+        {
+            return Err("filled allocation requires copyable scalar or flat scalar-record elements without references".into());
+        }
+        let stride = crate::compiler::layout::of(&syntax, self.structs)?.size;
+        let maximum = crate::compiler::layout::MAX_LAYOUT_BYTES / stride;
+        self.prove(
+            &Formula::Ge(count.clone()),
+            "nonnegative allocation count",
+            line,
+        )?;
+        self.prove(
+            &Formula::Ge(Linear::number(maximum as i128).sub(&count)?),
+            "allocation fits the 64 KiB object budget",
+            line,
+        )?;
+        self.validate_argument(&initial, line)?;
+        let identity = self.fresh_name();
+        self.charge_value_work(symbol_weight(&initial)?)?;
+        self.array_history
+            .insert(identity.clone(), ArrayHistory::Fill(initial));
+        let value = Symbol::Array {
+            element: Box::new(element.clone()),
+            len: count.clone(),
+            items: None,
+            cells: BTreeMap::new(),
+            identity,
+        };
+        let plane = self.memory.allocate(value)?;
+        Ok(Symbol::Plane(
+            Box::new(Ty::Array(Box::new(element), count)),
+            self.memory.borrow(plane)?,
+        ))
     }
 
     pub(super) fn owns_plane(&mut self, plane: PlaneId) -> Result<bool> {
@@ -190,5 +259,42 @@ impl Context<'_> {
             }
         }
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod filled_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_planes_initialize_every_cell_and_replay() {
+        let source = include_str!("../../../examples/runtime_planes.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let empty = "fn main() -> usize {let a: plane(usize, 0) = alloc(0, 7); let b: plane(usize, 0) = alloc(0, 9); if &*a != &*b {42} else {1}}";
+        assert_eq!(verify(empty).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn runtime_allocation_checks_bounds_ownership_and_liveness() {
+        for source in [
+            "fn make(n: usize) -> plane(usize, n) {alloc(n, 0)} fn main() -> usize {42}",
+            "fn main() -> usize {let a: plane(usize, 8193) = alloc(8193, 0); 42}",
+            "fn main() -> usize {let a: plane(usize, 2) = alloc(2, 0); (*a)[2]}",
+            "fn main() -> usize {let x: usize = 42; let a = alloc(2, &x); 42}",
+            "fn main() -> usize {let a = alloc(2, alloc(42)); 42}",
+            "type Resource struct {tag: usize} impl Drop for Resource {fn drop(self) {}} fn main() -> usize {let a = alloc(2, Resource {tag: 7}); 42}",
+            "fn main() -> usize {let a: plane(usize, 2) = alloc(2, 0); let view = &*a; drop(a); (*view)[0]}",
+            "fn main() -> usize {let n: usize = 2; let a: plane(usize, n) = alloc(n, 0); let view = &*a; n = 3; (*view)[n - 1]}",
+        ] {
+            assert!(verify(source).is_err(), "accepted {source}");
+        }
     }
 }

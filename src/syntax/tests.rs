@@ -60,3 +60,18 @@ fn rejects_truncated_proofs_and_deep_syntax() {
     );
     assert!(parse(&s).is_err());
 }
+
+#[test]
+fn inline_array_and_runtime_plane_spellings_are_distinct() {
+    let source = "fn first(n: usize, data: linear_plane(u8, n), fixed: array(u16, 2)) -> u8 where(n > 0) {(*data)[0]} fn main() -> u8 {let data: array(u8, 1) = [42]; first(1, &data, [7, 9])}";
+    let parsed = parse(source).unwrap();
+    assert!(
+        matches!(&parsed.functions[0].params[1].1, Type::Ref(inner) if matches!(inner.as_ref(), Type::Array(..)))
+    );
+    assert!(
+        parse("fn bad(n: usize, data: array(u8, n)) {} fn main() {}")
+            .unwrap_err()
+            .contains("compile-time extent")
+    );
+    assert!(parse("fn main() {let owner: plane(u8, 3) = alloc(3, 0);}").is_ok());
+}

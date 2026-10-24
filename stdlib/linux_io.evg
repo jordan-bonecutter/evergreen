@@ -2,7 +2,7 @@
 module linux_io {
     extern syscall(1) fn write(
         fd: usize,
-        bytes: &[u8; capacity],
+        bytes: linear_plane(u8, capacity),
         count: usize,
         ideal capacity: nat
     ) -> isize
@@ -13,7 +13,7 @@ module linux_io {
     fn write_byte(fd: usize, byte: &u8, count: usize) -> isize
     where(count <= 1)
     ensures(result <= 1) {
-        let bytes: [u8; 1] = [*byte];
+        let bytes: array(u8, 1) = [*byte];
         write(fd, &bytes, count)
     }
 
@@ -22,7 +22,7 @@ module linux_io {
     }
 
     // One write attempt. Preserve short counts and negative error codes.
-    fn print_bytes(length: usize, bytes: &[u8; length]) -> isize
+    fn print_bytes(length: usize, bytes: linear_plane(u8, length)) -> isize
     ensures(int(result) <= int(length)) {
         write(1, bytes, length)
     }

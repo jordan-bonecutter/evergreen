@@ -1688,3 +1688,39 @@ extents, including nested references and ideals in different parameter positions
 It rejects inconsistent lengths and asks for an explicit value when an ideal
 parameter is not determined by an argument type. This is type-based inference,
 not a runtime capacity argument or a proof-search guess.
+
+### Inline arrays and runtime-sized planes
+
+`array(T, N)` names inline homogeneous storage and requires a compile-time
+integer extent (currently literals, machine constants, and constant `+`, `-`,
+`*` expressions). Passing it by value passes its elements. `&array(T, N)` borrows
+that inline value. `linear_plane(T, n)` is a pointer type bounded by the value
+`n`, which may be a runtime argument. Its address is one machine word; a function
+that needs its extent during execution passes the delineator separately.
+The older bracket/reference spellings remain accepted during bootstrap.
+
+`plane(T, n)` is the owning pointer form. `alloc(count, initial)` allocates a
+runtime-sized plane and initializes each element with the given copyable value;
+`alloc(value)` retains its original single-payload meaning. Count is evaluated
+before the initial value, and the initial expression executes once. The current
+filled allocator supports scalar values and flat scalar records without
+references or affine ownership. Repeating an owner or destructor-bearing value
+is rejected instead of silently duplicating it.
+
+The checker proves nonnegative extents, index bounds, and that the payload fits
+the existing 64 KiB object limit. Incoming owned array types carry that allocation
+bound. The native implementation uses a bounded initialization loop and a private
+eight-byte mapping-size header, allowing cleanup without reevaluating a mutable
+length variable. The header is not part of `T`'s layout or the source owner value.
+Page-rounded bytes, including that header, count against the 16 MiB native heap
+budget. Empty allocations retain distinct identities and are still releasable.
+The interpreter retains its execution/value-work limits.
+
+A formed view keeps its proved extent: assigning a larger value to a length
+variable does not enlarge existing storage or justify a formerly out-of-bounds
+index. Replacing/freeing its allocation invalidates old references as before.
+`examples/runtime_planes.evg` exercises a runtime allocation bound, initialization,
+mutation, borrowed views, and returned ownership in both backends without trust.
+The full relationship between mutable dependent fields and logical Vec length is
+being worked through with the vector implementation; this does not claim support
+for uninitialized generic element storage or arbitrary resizing in place.
