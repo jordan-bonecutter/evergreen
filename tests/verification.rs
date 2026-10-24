@@ -102,6 +102,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/aliasing_calls.evg",
         "examples/propositional_proofs.evg",
         "examples/proof_cases.evg",
+        "examples/reference_identity.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")

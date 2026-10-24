@@ -97,7 +97,10 @@ fn expression(
                 let t = if arithmetic { expected.cloned() } else { None }
                     .or_else(|| hint(a, env, functions))
                     .or_else(|| hint(b, env, functions))?;
-                if !matches!(t, Type::Machine(_)) {
+                let equality = matches!(op.as_str(), "==" | "!=");
+                if !matches!(t, Type::Machine(_))
+                    && !(equality && matches!(t, Type::Bool | Type::Ref(_)))
+                {
                     return None;
                 }
                 expression(a, Some(&t), env, functions, safe)?;

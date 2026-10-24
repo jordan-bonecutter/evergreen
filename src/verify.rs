@@ -11,6 +11,7 @@ type Result<T> = std::result::Result<T, String>;
 mod bodies;
 mod cleanup;
 mod proofs;
+mod references;
 mod returns;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2719,6 +2720,12 @@ impl<'a> Context<'a> {
                 .or_else(|| self.hint(a))
                 .or_else(|| self.hint(b))
                 .unwrap_or_else(|| self.number_type());
+                if matches!(ty, Ty::Ref(_)) && matches!(op.as_str(), "==" | "!=") {
+                    let a = self.eval(a, Some(&ty))?;
+                    let b = self.eval(b, Some(&ty))?;
+                    let equal = self.reference_equality(&a, &b)?;
+                    return Ok(Symbol::Bool(if op == "==" { equal } else { equal.not() }));
+                }
                 if matches!(ty, Ty::Bool) && matches!(op.as_str(), "==" | "!=") {
                     let a = self.eval(a, Some(&Ty::Bool))?;
                     let b = self.eval(b, Some(&Ty::Bool))?;
@@ -2990,26 +2997,19 @@ impl<'a> Context<'a> {
                     let p = self.proposition(pre)?;
                     self.prove(&p, &format!("precondition of {name}"), e.line)?;
                 }
-                let inputs = if f.modifies.is_empty() {
-                    Vec::new()
+                let inputs = if f
+                    .params
+                    .iter()
+                    .any(|(_, ty)| type_has_reference(ty, self.structs))
+                {
+                    self.incoming_references(f, !f.modifies.is_empty())?
                 } else {
-                    self.incoming_references(f, true)?
+                    Vec::new()
                 };
                 let writes = self.write_places(f, &inputs)?;
-                let mut overlaps = false;
-                for write in &writes {
-                    for input in &inputs {
-                        self.charge_value_work(1)?;
-                        if input.origin == write.origin {
-                            continue;
-                        }
-                        if input.reference == write.reference
-                            && !self.paths_disjoint(&write.path, &input.path)?
-                        {
-                            overlaps = true;
-                        }
-                    }
-                }
+                // Even read-only contracts may observe reference identity.
+                // An independent-port summary cannot describe aliased inputs.
+                let overlaps = self.reference_ports_overlap(&inputs)?;
                 if self.current.as_ref() == Some(name) && !f.partial {
                     let entry = self
                         .measure
@@ -3059,7 +3059,7 @@ impl<'a> Context<'a> {
                         self.replace_projection(&mut root, &write.path, new)?;
                         self.memory.write(id, root, false)?;
                     }
-                    for input in &inputs {
+                    for input in inputs.iter().filter(|_| !f.modifies.is_empty()) {
                         // Each input's declared type is an implicit return contract.
                         // The body is checked to preserve these views even if the
                         // local parameter is rebound. Caller-only enclosing types
@@ -3733,6 +3733,62 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reference_equality_checks_identity_and_symbolic_projections() {
+        let source = include_str!("../examples/reference_identity.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let indexed = "fn same(a: &usize, b: &usize) -> bool ensures(result == (a == b)) {a == b} fn at(data: &[usize; 2], i: usize, j: usize) -> bool where(i < 2 && j < 2) ensures(result == (i == j)) {same(&(*data)[i], &(*data)[j])} fn main() -> usize ensures(result == 42) {let data: [usize; 2] = [7, 7]; proof equal: at(&data, 1, 1); proof distinct: !at(&data, 0, 1); if at(&data, 0, 0) {42} else {0}}";
+        assert_eq!(verify(indexed).unwrap().run().unwrap().to_string(), "42");
+        let ideal = "ideal fn same(a: &usize, b: &usize) -> bool ensures(result == (a == b)) {a == b} fn main() -> usize {let n: usize = 7; proof alias: same(&n, &n); 42}";
+        assert_eq!(verify(ideal).unwrap().run().unwrap().to_string(), "42");
+        let nominal = "type Empty struct {} fn main() -> usize {let a = Empty {}; let b = Empty {}; proof distinct: &a != &b; proof identity: &a == &a; 42}";
+        assert_eq!(verify(nominal).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn readonly_contracts_cannot_assume_independent_reference_identity() {
+        for source in [
+            "fn separate(a: &usize, b: &usize) -> bool ensures(!result) {a == b} fn main() {let n: usize = 0; separate(&n, &n);}",
+            "fn impossible(a: &usize, b: &usize) -> usize where(a == b) {proof lie: false; 42} fn main() -> usize {let n: usize = 0; impossible(&n, &n)}",
+            "type Two struct {a: &usize, b: &usize} fn separate(view: Two) -> bool ensures(!result) {view.a == view.b} fn main() {let n: usize = 0; separate(Two {a: &n, b: &n});}",
+            "type Container struct {value: usize, pointer: &usize} fn separate(c: &Container) -> bool ensures(!result) {(*c).pointer == &(*c).value} fn main() {let n: usize = 0; let c = Container {value: 7, pointer: &n}; c.pointer = &c.value; separate(&c);}",
+        ] {
+            assert!(verify(source).unwrap_err().contains("body recheck failed"), "accepted {source}");
+        }
+        let same_pre = "fn same(a: &usize, b: &usize) -> usize where(a == b) ensures(result == 42) {42} fn main() -> usize {let n: usize = 0; same(&n, &n)}";
+        assert_eq!(verify(same_pre).unwrap().run().unwrap().to_string(), "42");
+        assert!(verify(
+            &same_pre
+                .replace("same(&n, &n)", "same(&n, &other)")
+                .replace(
+                    "let n: usize = 0;",
+                    "let n: usize = 0; let other: usize = 0;"
+                )
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn reference_identity_cannot_observe_stale_storage_or_compare_different_types() {
+        for source in [
+            "fn main() {let n: usize = 0; let r = &n; drop(n); proof stale: r == r;}",
+            "fn main() {let n: usize = 0; let r = &n; drop(n); n = 0; proof stale: r != &n;}",
+            "fn bad(a: &usize, b: &usize) -> bool {a < b}",
+            "fn bad(a: &usize, b: &isize) -> bool {a == b}",
+            "fn bad(a: &usize, b: usize) -> bool {a == b}",
+            "fn bad(a: &usize) {proof invalid: old(&a) == &a;}",
+        ] {
+            assert!(verify(source).is_err(), "accepted {source}");
+        }
+    }
+
     #[test]
     fn propositional_proof_scripts_check_rules_and_replay_without_search() {
         let source = include_str!("../examples/propositional_proofs.evg");

@@ -454,11 +454,11 @@ supports certificate replay and native compilation.
 Write contracts support references stored in record parameters and behind other
 references, including `modifies(view.count)`, `modifies((*view).counter.count)`,
 and `modifies(*count)` for `count: &&usize`. Each incoming reference is identified
-by its structural argument path. A modular summary requires every write target
-to be disjoint from every other incoming reference, including nested fields and
-an enclosing reference from the same parameter. Read-only references may alias
-each other. Several projections from the same reference path form a permission
-union and may coincide.
+by its structural argument path. An independent-input summary requires the
+incoming reference regions to be disjoint, including nested fields and enclosing
+references. Read-only references may alias too; those calls require a body
+recheck because code can observe their identity. Several projections from the
+same reference path form a permission union and may coincide.
 
 If these disjointness checks fail, the verifier rechecks the function body using
 the actual incoming planes and projection paths. It grants only the declared
@@ -501,6 +501,30 @@ Constructing two handles over count one instead is rejected at batch release.
 This catches that invalid transition but still does not prevent numeric handle
 construction from overstating ownership; unforgeable plane authority remains
 unimplemented.
+
+References of compatible types support `==` and `!=` as location identity,
+not pointee-value comparison. Valid plane identity, generation, and projection
+paths determine equality. Two separate variables remain distinct even if their
+contents are equal. For cells in one scalar array, equality becomes the checked
+index-equality proposition, so symbolic indices work in proofs and runtime
+branches. Both references must still be valid: comparing a stale reference,
+even with itself, fails. No ordering, address-to-integer conversion, or pointer
+arithmetic is supplied by these operators. Equality grants no ownership or write
+permission.
+
+`examples/reference_identity.evg` checks direct and forwarded comparisons,
+equal-valued separate variables, and symbolic array paths, with VM/native
+execution and certificate replay. Read-only functions must also respect aliases:
+a summary checked with independent inputs cannot assert that aliased arguments
+are distinct. Calls with overlapping input reference regions recheck the body
+even when `modifies` is empty, including calls made by proof code or ideal code.
+Preconditions still have to hold before that recheck, and its postcondition must
+be proved for the actual alias configuration. References stored inside records
+and fixed arrays participate in the same check. Independent input summaries
+remain conditional on their checked disjointness; this is not an unconditional
+proof of a function for every possible alias configuration. Recursive overlapping
+calls retain the bounded recheck limitation described above. Comparing locations
+does not supply allocation authority or a complete Rc implementation.
 
 Function bodies must preserve their original incoming typed reference views,
 even if local parameters are rebound. Calls can use that checked type-preservation
@@ -795,8 +819,10 @@ The optional Lean suite checks independent specifications:
   disjunction branches and confines their hypotheses to their respective
   contexts. It also proves the classical
   implication/disjunction identity and that false has no closed derivation.
-- `proofs/Planes.lean` also proves that same-layout writes preserve references
-  and restoring dropped storage does not revive old generations.
+- `proofs/Planes.lean` also proves that same-layout writes preserve references,
+  restoring dropped storage does not revive old generations, and valid handles
+  into one current plane share its identity and generation. The indexed-address
+  model separately proves that array cell identity agrees with index equality.
 
 These proofs use the pinned Lean toolchain and no admitted propositions. They
 are specifications of the rules, not proofs that the Rust implementation,

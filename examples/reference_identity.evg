@@ -1,0 +1,27 @@
+fn same(left: &usize, right: &usize) -> bool
+ensures(result == (left == right)) {
+    left == right
+}
+
+fn forward(left: &usize, right: &usize) -> bool
+ensures(result == (left == right)) {
+    same(left, right)
+}
+
+fn same_element(data: &[usize; 2], i: usize, j: usize) -> bool
+where(i < 2 && j < 2)
+ensures(result == (i == j)) {
+    forward(&(*data)[i], &(*data)[j])
+}
+
+fn main() -> usize ensures(result == 42) {
+    let first: usize = 7;
+    let second: usize = 7;
+    let data: [usize; 2] = [7, 7];
+    proof equal_elements: same_element(&data, 1, 1);
+    proof distinct_elements: !same_element(&data, 0, 1);
+    proof separate: &first != &second;
+    proof aliased: forward(&first, &first);
+    proof different: !forward(&first, &second);
+    if forward(&first, &first) {42} else {0}
+}

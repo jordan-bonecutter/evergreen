@@ -596,6 +596,18 @@ impl Evaluator<'_> {
                 .unwrap_or(Type::Machine(
                     MachineInt::parse("isize").expect("isize type"),
                 ));
+                if matches!(ty, Type::Ref(_)) && matches!(op.as_str(), "==" | "!=") {
+                    let Value::Ref(_, a, a_path) = self.expr(a, env, Some(&ty))? else {
+                        return Err("reference equality requires reference operands".into());
+                    };
+                    let Value::Ref(_, b, b_path) = self.expr(b, env, Some(&ty))? else {
+                        return Err("reference equality requires reference operands".into());
+                    };
+                    project(self.memory.read(a)?, &a_path)?;
+                    project(self.memory.read(b)?, &b_path)?;
+                    let same = a == b && a_path == b_path;
+                    return Ok(Value::Bool(if op == "==" { same } else { !same }));
+                }
                 if ty == Type::Bool && matches!(op.as_str(), "==" | "!=") {
                     let a = self.expr(a, env, Some(&Type::Bool))?.boolean()?;
                     let b = self.expr(b, env, Some(&Type::Bool))?.boolean()?;

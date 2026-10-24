@@ -24,12 +24,17 @@ impl Context<'_> {
         let dropping = std::mem::replace(&mut self.dropping, false);
         let declaring = self.declaring.take();
         let ideal_execution = std::mem::replace(&mut self.ideal_execution, function.ideal);
-        let phase = std::mem::replace(&mut self.phase, Phase::Runtime);
+        let execution = if function.ideal {
+            Phase::Ideal
+        } else {
+            Phase::Runtime
+        };
+        let phase = std::mem::replace(&mut self.phase, execution);
         let checked = (|| {
             if let Some(decreases) = &function.decreases {
                 self.phase = Phase::Specification;
                 self.measure = Some(self.nonnegative(decreases, "nonnegative recursion measure")?);
-                self.phase = Phase::Runtime;
+                self.phase = execution;
             }
             let inputs = self.input_references.clone();
             let (value, post) = self.check_function_body(function, result_type, &inputs)?;

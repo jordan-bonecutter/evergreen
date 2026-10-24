@@ -49,6 +49,14 @@ theorem restore_does_not_revive (p : Plane) (r : Reference)
     if_true] at *
   omega
 
+-- Once both generations are valid in one current plane, handle identity is
+-- fixed. Projection paths distinguish locations within that plane separately.
+theorem valid_reference_handles_unique (p : Plane) (a b : Reference)
+    (ha : Valid p a) (hb : Valid p b) : a = b := by
+  cases a
+  cases b
+  simp_all [Valid]
+
 -- Aliasing itself is allowed: validity contains no uniqueness requirement.
 theorem aliases_allowed (p : Plane) (a b : Reference)
     (ha : Valid p a) (hb : Valid p b) : Valid p a ∧ Valid p b := by
