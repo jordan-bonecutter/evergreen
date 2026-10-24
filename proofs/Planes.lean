@@ -32,6 +32,23 @@ theorem replacement_invalidates (p : Plane) (r : Reference)
   simp only [Valid, replacePlane] at *
   omega
 
+-- Same-layout writes preserve live storage identity. Writing into shape(T)
+-- restores initialization with a fresh epoch; it cannot revive old references.
+def writePlane (p : Plane) (replace : Bool) : Plane :=
+  if replace || !p.live then
+    { id := p.id, epoch := p.epoch + 1, live := true }
+  else { p with live := true }
+
+theorem same_layout_write_preserves (p : Plane) (r : Reference)
+    (h : Valid p r) : Valid (writePlane p false) r := by
+  simp [writePlane, Valid, h.1, h.2.1, h.2.2]
+
+theorem restore_does_not_revive (p : Plane) (r : Reference)
+    (h : Valid p r) : ¬ Valid (writePlane (dropPlane p) false) r := by
+  simp only [Valid, dropPlane, writePlane, Bool.not_false, Bool.false_or,
+    if_true] at *
+  omega
+
 -- Aliasing itself is allowed: validity contains no uniqueness requirement.
 theorem aliases_allowed (p : Plane) (a b : Reference)
     (ha : Valid p a) (hb : Valid p b) : Valid p a ∧ Valid p b := by

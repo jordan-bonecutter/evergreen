@@ -544,3 +544,21 @@ combining reference returns with `modifies` remain unsupported. These need
 stronger summaries rather than fabricated fresh reference storage. All call
 arguments are rechecked together after evaluation, preventing a later argument
 from consuming storage borrowed by an earlier one.
+
+The optional Lean suite now checks three independent specifications:
+
+- `proofs/LinearCertificates.lean` defines weighted combination of original
+  integer rows and proves that accepted certificates imply unsatisfiability.
+  Negative weights, missing row indices, and nonzero remaining coefficients
+  fail in the executable model.
+- `proofs/MemoryContracts.lean` models fixed-layout scalar addresses and proves
+  that disjoint writes commute, writes preserve other addresses, and the swap
+  postcondition and involution hold. Distinct fields of one plane are disjoint.
+- `proofs/Planes.lean` also proves that same-layout writes preserve references
+  and restoring dropped storage does not revive old generations.
+
+These proofs use the pinned Lean toolchain and no admitted propositions. They
+are specifications of the rules, not proofs that the Rust implementation,
+i128 overflow handling, parser, or native instructions refine those rules.
+Run them with the optional ignored integration test described above. Ordinary
+Evergreen verification continues to use the internal checker alone.

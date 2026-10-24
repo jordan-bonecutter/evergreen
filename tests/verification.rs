@@ -25,16 +25,19 @@ fn proof_kernel_accepts_and_rejects() {
         assert!(output.stdout.is_empty());
     }
     let lean = std::env::var_os("EVG_LEAN").unwrap_or_else(|| "lean".into());
-    let output = Command::new(lean)
-        .arg("proofs/Planes.lean")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    for specification in [
+        "proofs/Planes.lean",
+        "proofs/LinearCertificates.lean",
+        "proofs/MemoryContracts.lean",
+    ] {
+        let output = Command::new(&lean).arg(specification).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{specification}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[test]
