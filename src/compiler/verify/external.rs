@@ -1,4 +1,4 @@
-//! Trusted external contracts. The kernel checks their use, not OS behavior.
+//! Trusted external contracts. The kernel checks their use, not machine behavior.
 
 use super::*;
 
@@ -9,41 +9,31 @@ impl Context<'_> {
             || function.drop_target.is_some()
             || function.name == "main"
             || !function.borrows.is_empty()
-            || function
-                .params
-                .iter()
-                .filter(|(name, _)| !function.ideal_params.contains(name))
-                .count()
-                > 6
-            || function.ret != Type::Machine(MachineInt::parse("isize").unwrap())
         {
-            return Err("syscall declarations require at most six runtime arguments and an isize result, without decreases, borrows, Drop, or ideal execution".into());
+            return Err(
+                "external declarations cannot be ideal, main, Drop, recursive, or return borrows"
+                    .into(),
+            );
         }
         if !matches!(function.proof.as_deref(), Some([step]) if step == "trustme") {
-            return Err("external syscall contracts require an explicit proof {trustme}".into());
+            return Err("external contracts require an explicit proof {trustme}".into());
         }
-        for (name, ty) in &function.params {
-            if function.ideal_params.contains(name) {
-                continue;
+        let runtime = function
+            .params
+            .iter()
+            .filter(|(name, _)| !function.ideal_params.contains(name))
+            .collect::<Vec<_>>();
+        match function.external {
+            Some(syntax::External::Syscall(_)) => {
+                self.check_syscall_interface(function, &runtime)?
             }
-            match ty {
-                Type::Machine(integer) if integer.bits == 64 => {}
-                Type::Ref(inner)
-                    if !type_has_reference(inner, self.structs)
-                        && !heap::owns_planes_type(inner, self.structs) => {
-                    // Borrowed arrays carry a checked symbolic extent; only
-                    // their element stride needs a static physical layout.
-                    let storage = match inner.as_ref() {
-                        Type::Array(element, _) => element,
-                        other => other,
-                    };
-                    crate::compiler::layout::of(storage, self.structs)?;
-                }
-                _ => return Err("syscall arguments require 64-bit integers or borrows of fixed-layout data without pointers or owners".into()),
+            Some(syntax::External::CompareExchange64) => {
+                Self::check_compare_exchange_interface(function, &runtime)?
             }
+            None => return Err("missing external operation".into()),
         }
         // Check the contract's expressions normally, but make no claim to have
-        // proved that the operating system implements it. Audit the entire
+        // proved that the target implements it. Audit the entire
         // declaration even when no caller uses its postcondition.
         self.phase = Phase::Specification;
         // A postcondition describes the state after the declared writes, not
@@ -64,11 +54,67 @@ impl Context<'_> {
         }
         self.session.trust(
             &[],
-            format!("linux-x86_64 syscall declaration {function:?}").as_bytes(),
+            format!("x86_64 external declaration {function:?}").as_bytes(),
             function.line,
-            &format!("external syscall contract for {}", function.name),
+            &format!("external contract for {}", function.name),
         )?;
         self.obligations += 1;
+        Ok(())
+    }
+
+    fn check_syscall_interface(
+        &self,
+        function: &Function,
+        runtime: &[&(String, Type)],
+    ) -> Result<()> {
+        if runtime.len() > 6 || function.ret != Type::Machine(MachineInt::parse("isize").unwrap()) {
+            return Err(
+                "syscall declarations require at most six runtime arguments and an isize result"
+                    .into(),
+            );
+        }
+        for (_, ty) in runtime {
+            match ty {
+                Type::Machine(integer) if integer.bits == 64 => {}
+                Type::Ref(inner) if !type_has_reference(inner, self.structs)
+                    && !heap::owns_planes_type(inner, self.structs) => {
+                    let storage = match inner.as_ref() {
+                        Type::Array(element, _) => element,
+                        other => other,
+                    };
+                    crate::compiler::layout::of(storage, self.structs)?;
+                }
+                _ => return Err("syscall arguments require 64-bit integers or borrows without embedded pointers or owners".into()),
+            }
+        }
+        Ok(())
+    }
+
+    fn check_compare_exchange_interface(
+        function: &Function,
+        runtime: &[&(String, Type)],
+    ) -> Result<()> {
+        let [(pointer, Type::Ref(inner)), (_, expected), (_, desired)] = runtime else {
+            return Err(
+                "compare_exchange64 requires a reference, expected value, and desired value".into(),
+            );
+        };
+        if !matches!(inner.as_ref(), Type::Machine(integer) if integer.bits == 64)
+            || inner.as_ref() != expected
+            || expected != desired
+            || function.ret != *expected
+        {
+            return Err(
+                "compare_exchange64 operands and result must use the same 64-bit integer type"
+                    .into(),
+            );
+        }
+        if !matches!(function.modifies.as_slice(), [expression] if matches!(&expression.kind, Kind::Name(name) if name == pointer))
+        {
+            return Err(
+                "compare_exchange64 requires a modifies footprint for its pointer operand".into(),
+            );
+        }
         Ok(())
     }
 }
@@ -167,5 +213,47 @@ mod tests {
         assert!(verify(alias).unwrap_err().contains("overlapping reference"));
         let opened = "type Data struct {n: usize} where(fact positive = n > 0; positive); extern syscall(39) fn process_id() -> isize; proof {trustme} fn main() -> usize {let data = Data {n: 1}; update(data) lifts positive {let id = process_id();} data.n}";
         assert!(verify(opened).unwrap_err().contains("invariants are open"));
+    }
+}
+
+#[cfg(test)]
+mod atomic_tests {
+    use super::*;
+
+    const ATOMIC: &str = include_str!("../../../stdlib/x86_64_atomics.evg");
+
+    #[test]
+    fn compare_exchange_contracts_execute_and_replay() {
+        let source = format!(
+            "{ATOMIC} {}",
+            include_str!("../../../examples/compare_exchange.evg")
+        );
+        let (program, bundle) = prove(&source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(program.trusted_assumptions().len(), 1);
+        assert_eq!(
+            verify_with_certificate(&source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+    }
+
+    #[test]
+    fn atomic_interface_and_effect_errors_are_rejected() {
+        for declaration in [
+            "extern compare_exchange64 fn cas(v: &u8, e: u8, d: u8) -> u8 modifies(v); proof {trustme}",
+            "extern compare_exchange64 fn cas(v: &usize, e: usize, d: usize) -> isize modifies(v); proof {trustme}",
+            "extern compare_exchange64 fn cas(v: &usize, e: isize, d: usize) -> usize modifies(v); proof {trustme}",
+            "extern compare_exchange64 fn cas(v: &usize, e: usize, d: usize) -> usize; proof {trustme}",
+            "extern compare_exchange64 fn cas(v: &usize, e: usize, d: usize) -> usize modifies(v);",
+            "extern compare_exchange64 fn cas(v: &usize, e: usize) -> usize modifies(v); proof {trustme}",
+        ] {
+            assert!(verify(&format!("{declaration} fn main() -> usize {{42}}")).is_err(), "accepted {declaration}");
+        }
+        let undeclared = format!("{ATOMIC} fn change(value: &usize) -> usize {{x86_64_atomics::compare_exchange(value, 7, 42)}} fn main() -> usize {{42}}");
+        assert!(verify(&undeclared).unwrap_err().contains("modifies"));
+        let erased = format!("{ATOMIC} fn main() -> usize {{let value: usize = 7; proof erased: x86_64_atomics::compare_exchange(&value, 7, 42) == 7; 42}}");
+        assert!(verify(&erased).is_err());
     }
 }

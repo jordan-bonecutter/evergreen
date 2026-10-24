@@ -110,8 +110,11 @@ impl<'a> ProgramEmitter<'a> {
             drop_ids: &self.drop_ids,
         };
         parameters.bind(&mut emitter)?;
-        if let Some(number) = function.syscall {
-            emitter.syscall(function, number)?;
+        if let Some(external) = function.external {
+            match external {
+                External::Syscall(number) => emitter.syscall(function, number)?,
+                External::CompareExchange64 => emitter.compare_exchange64(function)?,
+            }
         } else {
             for statement in &function.body {
                 emitter.statement(statement)?;

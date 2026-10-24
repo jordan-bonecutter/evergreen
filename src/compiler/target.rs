@@ -38,7 +38,7 @@ impl Target {
             if !function.ideal
                 || !function.params.is_empty()
                 || !function.body.is_empty()
-                || function.syscall.is_some()
+                || function.external.is_some()
                 || function.proof.is_some()
                 || function.pre.is_some()
                 || function.decreases.is_some()

@@ -1551,3 +1551,49 @@ capacity inconsistent with the actual borrowed array. Capacity is a proof
 argument; Linux receives only the file descriptor, buffer address, and count.
 The library neither validates nor assumes UTF-8; encoding validity belongs in an
 Evergreen library refinement over the bytes, not in the compiler.
+
+### First target atomic operation
+
+`stdlib/x86_64_atomics.evg` declares an explicitly trusted 64-bit
+compare-exchange operation. The declaration is generic over three operands,
+not tied to reference counts:
+
+```evg
+extern compare_exchange64 fn compare_exchange(
+    value: &usize, expected: usize, desired: usize
+) -> usize
+modifies(value)
+ensures(result == old(*value)
+    && (old(*value) == expected => *value == desired)
+    && (old(*value) != expected => *value == old(*value)));
+proof {trustme}
+```
+
+It returns the observed old value. On success the stored word becomes desired;
+on failure it remains unchanged. The interface requires a matching 64-bit
+integer type for the referenced value, expected/desired operands, and result,
+and a write footprint for the referenced word. Erased proof parameters follow
+the existing external-call rules. The native backend additionally requires
+eight-byte alignment and emits `lock cmpxchg`. The interpreter implements the
+same sequential state transition. No OS call is involved.
+
+```sh
+cargo run -- run stdlib/x86_64_atomics.evg examples/compare_exchange.evg
+cargo run -- build stdlib/x86_64_atomics.evg examples/compare_exchange.evg -o /tmp/compare-exchange
+/tmp/compare-exchange; echo $?
+```
+
+Both executions produce 42. Differential tests also cover unsigned maxima,
+signed minima, array-element references, heap payloads, and failed exchanges.
+The contract is an audited assumption, replay records it, and `--deny-trust`
+rejects it. Like other external operations it is conservatively classified as
+potentially divergent, excluded from erased/proof calls, and not currently
+admitted inside lifted-invariant updates or destructors.
+
+This is a target primitive and a sequential specification, not concurrent Arc.
+In particular, `old(*value)` currently means the existing sequential entry
+snapshot. A future concurrent invariant rule must relate the operation to the
+value at its linearization point, and must not preserve arbitrary prior loads
+as facts about shared memory. No thread API, memory-order parameters, release
+sequence proof, or concurrent payload-access guarantee is implemented yet. See
+[the shared ownership obligations](shared-ownership.md).

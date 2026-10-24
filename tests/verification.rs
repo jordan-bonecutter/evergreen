@@ -456,6 +456,30 @@ fn runtime_divergence_is_reported_and_cannot_escape_into_logic() {
 #[test]
 fn syscall_declarations_cannot_bypass_deny_trust() {
     let cli = env!("CARGO_BIN_EXE_evg");
+    let denied_atomic = Command::new(cli)
+        .args([
+            "--deny-trust",
+            "check",
+            "stdlib/x86_64_atomics.evg",
+            "examples/compare_exchange.evg",
+        ])
+        .output()
+        .unwrap();
+    assert!(!denied_atomic.status.success());
+    let atomic = Command::new(cli)
+        .args([
+            "run",
+            "stdlib/x86_64_atomics.evg",
+            "examples/compare_exchange.evg",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        atomic.status.success(),
+        "{}",
+        String::from_utf8_lossy(&atomic.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&atomic.stdout).trim(), "42");
     let output = Command::new(cli)
         .args([
             "--deny-trust",

@@ -3,10 +3,11 @@
 use crate::{
     compiler::verify::VerifiedProgram,
     shared::planes::{Memory, PlaneId, Projection, Reference},
-    syntax::{Expr, Function, Kind, MachineInt, Statement, Struct, Type},
+    syntax::{Expr, External, Function, Kind, MachineInt, Statement, Struct, Type},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+mod atomic;
 mod compat;
 
 type Result<T> = std::result::Result<T, String>;
@@ -220,8 +221,12 @@ impl Evaluator<'_> {
         if f.ideal {
             return Err("ideal functions have no runtime body".into());
         }
-        if f.syscall.is_some() {
-            return Err("external syscalls require a native executable; use build".into());
+        match f.external {
+            Some(External::Syscall(_)) => {
+                return Err("external syscalls require a native executable; use build".into())
+            }
+            Some(External::CompareExchange64) => return self.compare_exchange64(actuals),
+            None => {}
         }
         if f.params
             .iter()

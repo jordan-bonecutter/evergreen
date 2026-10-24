@@ -354,6 +354,14 @@ fn native_execution_agrees_with_the_interpreter() {
     ] {
         cases.push(format!("fn forward(a: [{ty}; 3], b: {ty}) -> [{ty}; 3] {{a}} fn main() -> u8 {{let original: [{ty}; 3] = [{first}, 0, {last}]; let a = forward(original, {first}); let middle = &a[1]; *middle = {first}; if a[0] == {first} && a[1] == {first} && a[2] == {last} {{42}} else {{1}}}}"));
     }
+    let atomic = include_str!("../../../stdlib/x86_64_atomics.evg");
+    cases.push(format!(
+        "{atomic} {}",
+        include_str!("../../../examples/compare_exchange.evg")
+    ));
+    cases.push(format!("{atomic} fn main() -> usize {{let data: [usize; 2] = [7, usize::MAX]; let old = x86_64_atomics::compare_exchange(&data[1], usize::MAX, 42); if old == usize::MAX && data[0] == 7 && data[1] == 42 {{42}} else {{1}}}}"));
+    cases.push(format!("{atomic} fn main() -> usize {{let owner: plane(usize) = alloc(7); let old = x86_64_atomics::compare_exchange(&*owner, 7, 42); if old == 7 {{*owner}} else {{1}}}}"));
+    cases.push("extern compare_exchange64 fn cas(value: &isize, expected: isize, desired: isize) -> isize modifies(value); proof {trustme} fn main() -> usize {let value: isize = isize::MIN; let old = cas(&value, isize::MIN, -42); if old == isize::MIN && value == -42 {42} else {1}}".into());
     let indexed = include_str!("../../../examples/indexed_borrows.evg")
         .split("fn main")
         .next()

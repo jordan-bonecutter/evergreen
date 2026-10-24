@@ -4,12 +4,13 @@
 use crate::{
     compiler::layout,
     compiler::verify::VerifiedProgram,
-    syntax::{Expr, Function, Kind, MachineInt, Statement, Struct, Type},
+    syntax::{Expr, External, Function, Kind, MachineInt, Statement, Struct, Type},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
 
+mod atomic;
 mod elf;
 mod program;
 mod storage;

@@ -1,0 +1,9 @@
+// Check/run/build together with stdlib/x86_64_atomics.evg.
+fn main() -> usize {
+    let value: usize = 7;
+    let observed = x86_64_atomics::compare_exchange(&value, 7, 42);
+    proof success: observed == 7 && value == 42;
+    let stale = x86_64_atomics::compare_exchange(&value, 7, 99);
+    proof failed_attempt: stale == 42 && value == 42;
+    value
+}

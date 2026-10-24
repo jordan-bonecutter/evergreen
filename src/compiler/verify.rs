@@ -3160,7 +3160,7 @@ impl<'a> Context<'a> {
                 // Even read-only contracts may observe reference identity.
                 // An independent-port summary cannot describe aliased inputs.
                 let overlaps = self.reference_ports_overlap(&inputs)?;
-                if overlaps && f.syscall.is_some() {
+                if overlaps && f.external.is_some() {
                     return Err("external calls with overlapping reference ports require an alias-aware contract; unsupported".into());
                 }
                 if self.current.as_ref() == Some(name) && !f.partial {
@@ -3870,7 +3870,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
     let mut obligations = 0;
     for f in &mut all_functions {
         f.entry_memory = needs_old_memory(f);
-        f.partial = f.syscall.is_some()
+        f.partial = f.external.is_some()
             || !f.ideal && f.decreases.is_none() && crate::compiler::effects::recursive(f);
         for (name, ty) in &f.params {
             if f.ideal_params.contains(name) && !erased_type(ty, &structs) {
@@ -3967,7 +3967,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             ctx.measure = Some(ctx.nonnegative(measure, "nonnegative recursion measure")?);
             ctx.phase = execution;
         }
-        if f.syscall.is_some() {
+        if f.external.is_some() {
             ctx.check_external(f, &ret)?;
         } else {
             ctx.check_function_body(f, &ret, &inputs, true)?;

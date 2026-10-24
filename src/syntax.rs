@@ -221,11 +221,17 @@ pub struct ReturnBorrow {
     pub reference: Expr,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum External {
+    Syscall(u32),
+    CompareExchange64,
+}
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub name: String,
-    /// Explicit trusted Linux x86-64 syscall declaration; no Evergreen body.
-    pub syscall: Option<u32>,
+    /// Explicit trusted target operation; no Evergreen body.
+    pub external: Option<External>,
     pub params: Vec<(String, Type)>,
     pub ret: Type,
     pub pre: Option<Expr>,

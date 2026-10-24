@@ -81,13 +81,33 @@ acquire fence before final payload destruction. The implementation must prove
 that preceding releases become visible to the final destructor under the chosen
 memory model. Publishing a handle to another thread also needs a proven
 synchronization edge; a relaxed count increment alone does not publish data.
-These are proposed contracts, not currently implemented atomics or a proved
-weak-memory result.
+These ordering contracts are not implemented or proved under a weak-memory model.
+The first generic `extern compare_exchange64` target operation now emits a
+locked x86-64 compare-exchange and has a sequential interpreter specification.
+Its contract lives in `stdlib/x86_64_atomics.evg` and remains explicitly trusted;
+this is not yet an implementation of the concurrent resource transition.
 
 The Lean ledger abstracts each counter operation as indivisible. It does not
 model caches, reads-from edges, release sequences, hardware instructions,
 thread scheduling, or payload accesses. Those must be connected by a refinement
 proof before this becomes an Arc safety argument.
+
+## Facts across interference
+
+The existing checker reasons about sequential execution. An ordinary `old(...)`
+snapshot denotes function entry; it does not automatically denote an atomic
+operation's linearization point. A shared counter can change between an earlier
+load and the compare-exchange. The concurrent rule must therefore open the
+shared invariant at the atomic step, use the observed word from that step, and
+close the invariant with the appropriate token transition.
+
+Afterward, stable resource facts such as ownership of a reservation can persist;
+a raw equality saying the shared counter still equals an earlier observation
+cannot persist without protection. Failed compare-exchange attempts do not
+publish a reservation, even if an earlier load appeared to permit incrementing.
+A helper's ordinary sequential postcondition is not automatically a concurrent
+specification. The thread checker must reject sharing until those interference
+and resource obligations have been discharged.
 
 ## Thread transfer and shared access
 
