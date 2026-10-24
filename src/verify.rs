@@ -123,6 +123,69 @@ impl Symbol {
     }
 }
 
+// Count expanded logical data before snapshots or recursive validation can
+// multiply it. References count as handles; their target storage is metered
+// separately. These are bootstrap availability limits, not logical assumptions.
+const MAX_VALUE_NODES: usize = 32768;
+const MAX_VALUE_WORK: usize = 262144;
+fn symbol_weight(value: &Symbol) -> Result<usize> {
+    enum Node<'a> {
+        Value(&'a Symbol, usize),
+        Formula(&'a Formula, usize),
+    }
+    let mut pending = vec![Node::Value(value, 0)];
+    let mut weight = 0usize;
+    while let Some(node) = pending.pop() {
+        weight = weight.saturating_add(1);
+        let depth = match &node {
+            Node::Value(_, depth) | Node::Formula(_, depth) => *depth,
+        };
+        if depth >= 128 || weight > MAX_VALUE_NODES {
+            return Err("symbolic value expansion limit reached (32768 nodes, depth 128)".into());
+        }
+        match node {
+            Node::Value(Symbol::Number(_, n), _) => weight = weight.saturating_add(n.terms.len()),
+            Node::Value(Symbol::Bool(p), depth) => pending.push(Node::Formula(p, depth + 1)),
+            Node::Value(
+                Symbol::Array {
+                    items, cells, len, ..
+                },
+                depth,
+            ) => {
+                weight = weight.saturating_add(len.terms.len());
+                pending.extend(items.iter().flatten().map(|v| Node::Value(v, depth + 1)));
+                pending.extend(cells.values().map(|v| Node::Value(v, depth + 1)));
+            }
+            Node::Value(Symbol::Record(name, fields), depth) => {
+                weight = weight.saturating_add(name.len() / 32);
+                pending.extend(fields.values().map(|v| Node::Value(v, depth + 1)));
+            }
+            Node::Value(Symbol::Ref(_, _, path), _) => weight = weight.saturating_add(path.len()),
+            Node::Formula(Formula::Ge(n), _) => weight = weight.saturating_add(n.terms.len()),
+            Node::Formula(Formula::Not(p), depth) => pending.push(Node::Formula(p, depth + 1)),
+            Node::Formula(Formula::And(a, b) | Formula::Or(a, b), depth) => {
+                pending.push(Node::Formula(a, depth + 1));
+                pending.push(Node::Formula(b, depth + 1));
+            }
+            _ => {}
+        }
+    }
+    if weight > MAX_VALUE_NODES {
+        return Err("symbolic value expansion limit reached (32768 nodes)".into());
+    }
+    Ok(weight)
+}
+fn values_weight<'a>(values: impl IntoIterator<Item = &'a Symbol>) -> Result<usize> {
+    let mut cost = 0usize;
+    for value in values {
+        cost = cost.saturating_add(symbol_weight(value)?);
+        if cost > MAX_VALUE_WORK {
+            return Err("symbolic snapshot work limit reached".into());
+        }
+    }
+    Ok(cost)
+}
+
 fn constant_index(index: &Linear) -> Option<usize> {
     index
         .terms
@@ -377,6 +440,7 @@ struct Context<'a> {
     fresh: usize,
     eval_depth: usize,
     eval_steps: usize,
+    value_work: usize,
     obligations: usize,
     memory: Memory<Symbol>,
     roots: BTreeMap<String, PlaneId>,
@@ -396,6 +460,34 @@ struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
+    fn charge_value_work(&mut self, cost: usize) -> Result<()> {
+        self.value_work = self.value_work.saturating_add(cost);
+        if self.value_work > MAX_VALUE_WORK {
+            return Err("symbolic value work limit reached (262144 nodes)".into());
+        }
+        Ok(())
+    }
+    fn clone_env(&mut self) -> Result<BTreeMap<String, Symbol>> {
+        self.charge_value_work(values_weight(self.env.values())?)?;
+        Ok(self.env.clone())
+    }
+    fn snapshot_memory(&mut self) -> Result<Memory<Symbol>> {
+        let cost = values_weight(
+            self.memory
+                .states()
+                .iter()
+                .filter_map(|(_, _, value)| *value),
+        )?;
+        self.charge_value_work(cost)?;
+        Ok(self.memory.snapshot())
+    }
+    fn clone_store(&mut self, store: &Memory<Symbol>) -> Result<Memory<Symbol>> {
+        self.charge_value_work(values_weight(
+            store.states().iter().filter_map(|(_, _, value)| *value),
+        )?)?;
+        Ok(store.snapshot())
+    }
+
     fn erased_value(&self, value: &Symbol) -> bool {
         match value.ty() {
             Ty::Record(name) => erased_type(&Type::Named(name), self.structs),
@@ -500,6 +592,7 @@ impl<'a> Context<'a> {
         path: &[Projection<Linear>],
         new: Symbol,
     ) -> Result<()> {
+        self.charge_value_work(symbol_weight(value)?)?;
         if path.is_empty() {
             *value = new;
             return Ok(());
@@ -589,6 +682,7 @@ impl<'a> Context<'a> {
             fresh: 0,
             eval_depth: 0,
             eval_steps: 0,
+            value_work: 0,
             obligations: 0,
             memory: Memory::default(),
             roots: BTreeMap::new(),
@@ -620,6 +714,7 @@ impl<'a> Context<'a> {
         Ok(())
     }
     fn capture_old(&mut self) -> Result<()> {
+        self.charge_value_work(values_weight(self.env.values())?)?;
         self.old_values.clear();
         for (name, value) in &self.env {
             self.old_values.insert(name.clone(), value.clone());
@@ -745,6 +840,7 @@ impl<'a> Context<'a> {
         }
     }
     fn arbitrary(&mut self, t: &Ty) -> Result<Symbol> {
+        self.charge_value_work(1)?;
         if self.fresh >= 8192 {
             return Err("symbolic value expansion limit reached (8192)".into());
         }
@@ -822,6 +918,7 @@ impl<'a> Context<'a> {
         line: usize,
         lifted: &BTreeSet<String>,
     ) -> Result<()> {
+        self.charge_value_work(1)?;
         if let Symbol::Array {
             items: Some(items), ..
         } = value
@@ -1346,6 +1443,7 @@ impl<'a> Context<'a> {
             Kind::Index(base, i) => {
                 let (r, mut path) = self.location(base)?;
                 let index = self.nonnegative(i, "nonnegative reference index")?;
+                self.charge_value_work(symbol_weight(self.memory.read(r)?)?)?;
                 let mut root = self.memory.read(r)?.clone();
                 let array = project(&root, &path)?.clone();
                 let Symbol::Array {
@@ -1528,6 +1626,8 @@ impl<'a> Context<'a> {
                 format!("line {}: {s}", e.line)
             }
         })?;
+        self.charge_value_work(symbol_weight(&value)?)
+            .map_err(|error| format!("line {}: {error}", e.line))?;
         let projecting_owner = matches!(&e.kind, Kind::Field(..) | Kind::Index(..))
             || matches!(&e.kind, Kind::Unary(op, _) if op == "*");
         if self.phase != Phase::Specification && self.symbol_is_affine(&value) && projecting_owner {
@@ -1717,6 +1817,11 @@ impl<'a> Context<'a> {
         Ok(value)
     }
     fn storage(&mut self, e: &Expr) -> Result<Symbol> {
+        let value = self.storage_inner(e)?;
+        self.charge_value_work(symbol_weight(&value)?)?;
+        Ok(value)
+    }
+    fn storage_inner(&mut self, e: &Expr) -> Result<Symbol> {
         match &e.kind {
             Kind::Name(n) => {
                 self.runtime_name(n)?;
@@ -1808,7 +1913,7 @@ impl<'a> Context<'a> {
             .find(|(name, _)| name == fact)
             .map(|(_, p)| p.clone())
             .ok_or_else(|| format!("unknown fact {typename}::{fact}"))?;
-        let saved = self.env.clone();
+        let saved = self.clone_env()?;
         let roots = self.roots.clone();
         let facts = self.facts.clone();
         self.env = fields.clone();
@@ -1826,6 +1931,7 @@ impl<'a> Context<'a> {
 
     fn validate_argument(&mut self, value: &Symbol, line: usize) -> Result<()> {
         if let Symbol::Ref(_, r, path) = value {
+            self.charge_value_work(symbol_weight(project(self.memory.read(*r)?, path)?)?)?;
             let target = project(self.memory.read(*r)?, path)?.clone();
             self.validate_argument(&target, line)?;
         } else {
@@ -1936,7 +2042,7 @@ impl<'a> Context<'a> {
                         "{name} is ideal data and cannot be constructed at runtime"
                     ));
                 }
-                let saved = self.env.clone();
+                let saved = self.clone_env()?;
                 let mut fields = BTreeMap::new();
                 for (n, value) in entries {
                     if fields.contains_key(n) {
@@ -1975,6 +2081,7 @@ impl<'a> Context<'a> {
             }
             Kind::Unary(op, x) if op == "&" => {
                 let (r, path) = self.location(x)?;
+                self.charge_value_work(symbol_weight(project(self.memory.read(r)?, &path)?)?)?;
                 let target = project(self.memory.read(r)?, &path)?.clone();
                 self.record_valid(&target, e.line)?;
                 let ty = target.ty();
@@ -2364,29 +2471,30 @@ impl<'a> Context<'a> {
                     .proposition()?;
                 let base = self.paths.clone();
                 // Give caller bindings stable storage identities before forking.
-                for (name, value) in self.env.clone() {
+                for (name, value) in self.clone_env()? {
                     if !self.roots.contains_key(&name) {
                         self.roots.insert(name, self.memory.allocate(value)?);
                     }
                 }
-                let env = self.env.clone();
+                let env = self.clone_env()?;
                 let roots = self.roots.clone();
-                let store = self.memory.snapshot();
+                let store = self.snapshot_memory()?;
                 self.paths = extend(&base, &p, false)?;
                 let a = self.scoped_eval(yes, expected)?;
                 let a_paths = self.paths.clone();
-                let a_store = self.memory.snapshot();
+                let a_store = self.snapshot_memory()?;
                 self.paths = extend(&base, &p, true)?;
+                self.charge_value_work(values_weight(env.values())?)?;
                 self.env = env.clone();
                 self.roots = roots.clone();
-                self.memory = store.snapshot();
+                self.memory = self.clone_store(&store)?;
                 let b = self.scoped_eval(no, Some(&a.ty()))?;
                 let b_paths = self.paths.clone();
-                let b_store = self.memory.snapshot();
+                let b_store = self.snapshot_memory()?;
                 self.paths = base;
                 self.env = env;
                 self.roots = roots;
-                self.memory = store.snapshot();
+                self.memory = self.clone_store(&store)?;
                 let mut state_a = Formula::True;
                 let mut state_b = Formula::True;
                 let a_states = a_store.states();
@@ -2779,10 +2887,9 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             let value = ctx.arbitrary(&t)?;
             ctx.env.insert(n.clone(), value);
         }
-        ctx.env.insert(
-            "self".into(),
-            Symbol::Record(s.name.clone(), ctx.env.clone()),
-        );
+        let fields = ctx.clone_env()?;
+        ctx.env
+            .insert("self".into(), Symbol::Record(s.name.clone(), fields));
         for (name, proposition) in &s.facts {
             ctx.fresh_binding(name, proposition.line)?;
             ctx.proposition(proposition)?;
@@ -2932,7 +3039,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             ctx.measure = Some(ctx.nonnegative(measure, "nonnegative recursion measure")?);
             ctx.phase = execution;
         }
-        let contract_env = ctx.env.clone();
+        let contract_env = ctx.clone_env()?;
         let borrowed_result = if let Some(reference) = &f.borrows {
             ctx.phase = Phase::Specification;
             let value = ctx.eval(reference, Some(&ret))?;
@@ -3040,6 +3147,42 @@ mod tests {
     fn later_call_arguments_cannot_invalidate_earlier_borrows() {
         let source = "type Owner struct {tag: usize} impl Drop for Owner {fn drop(self){}} fn read_then_consume(r: &usize, owner: Owner) -> usize {*r} fn main() -> usize {let owner = Owner {tag: 42}; read_then_consume(&owner.tag, owner)}";
         assert!(verify(source).is_err());
+    }
+
+    #[test]
+    fn expanding_value_copies_are_rejected_before_unbounded_materialization() {
+        let mut arrays = "fn main() -> usize {let a0: [usize; 1] = [1];".to_owned();
+        for i in 1..40 {
+            arrays.push_str(&format!("let a{i} = [a{}, a{}];", i - 1, i - 1));
+        }
+        arrays.push_str("42}");
+        let error = verify(&arrays).unwrap_err();
+        assert!(error.contains("symbolic value"), "{error}");
+        let mut formulas = "fn f(flag: bool) -> usize {let p0 = flag;".to_owned();
+        for i in 1..40 {
+            formulas.push_str(&format!("let p{i} = p{} && !p{};", i - 1, i - 1));
+        }
+        formulas.push_str("42}");
+        let error = match verify(&formulas) {
+            Err(error) => error,
+            Ok(_) => panic!("expanded formulas must hit a checked work limit"),
+        };
+        assert!(error.contains("symbolic value"), "{error}");
+        let mut snapshots = format!(
+            "fn main() -> usize {{let a: [usize; 256] = [{}]; let r = &a;",
+            vec!["1"; 256].join(",")
+        );
+        for _ in 0..512 {
+            snapshots.push_str("if true {()} else {()};");
+        }
+        snapshots.push_str("42}");
+        let error = match verify(&snapshots) {
+            Err(error) => error,
+            Ok(_) => panic!("branch snapshots must be charged"),
+        };
+        assert!(error.contains("work limit"), "{error}");
+        let ordinary = "fn main() -> usize {let a: [usize; 2] = [7, 42]; let b = [a, a]; let c = [b, b]; c[1][0][1]}";
+        assert_eq!(verify(ordinary).unwrap().run().unwrap().to_string(), "42");
     }
 
     #[test]

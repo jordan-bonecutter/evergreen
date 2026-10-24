@@ -727,3 +727,12 @@ exits with status 125. Neither is a normal function return.
 checks `proofs/PartialCorrectness.lean`, which separates a postcondition on
 return from the existence of a return and proves partial-contract composition.
 As with the other specifications, this is not an implementation-refinement proof.
+
+Symbolic data expansion is metered independently of syntax depth and fresh
+variables. A logical value is limited to 32768 expanded nodes and depth 128;
+each verification context has a 262144-node value-work budget. The budget
+includes value traversal, environment and branch snapshots, borrowed views,
+and indexed replacements. Small source programs that repeatedly double nested
+arrays or Boolean formulas therefore fail with a work-limit diagnostic before
+unbounded materialization. These are conservative bootstrap availability limits,
+not a formal whole-process resource bound or a new proof assumption.

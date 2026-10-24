@@ -33,12 +33,22 @@ fn hint(
     }
 }
 
+struct Safe<'a> {
+    known: &'a BTreeSet<String>,
+    current: &'a str,
+}
+impl Safe<'_> {
+    fn contains(&self, name: &str) -> bool {
+        name == self.current || self.known.contains(name)
+    }
+}
+
 fn expression(
     e: &Expr,
     expected: Option<&Type>,
     env: &BTreeMap<String, Type>,
     functions: &BTreeMap<String, Function>,
-    safe: &BTreeSet<String>,
+    safe: &Safe<'_>,
 ) -> Option<Type> {
     let value = match &e.kind {
         Kind::Number(_) => expected.filter(|t| matches!(t, Type::Machine(_)))?.clone(),
@@ -148,8 +158,10 @@ pub(crate) fn invariant_independent(
     }
     // Purity of a self-recursive body is a fixed-point check. Totality has
     // already been established, and every non-self effect is still inspected.
-    let mut recursive_safe = safe.clone();
-    recursive_safe.insert(f.name.clone());
+    let recursive_safe = Safe {
+        known: safe,
+        current: &f.name,
+    };
     let safe = &recursive_safe;
     let mut env: BTreeMap<String, Type> = f
         .params
