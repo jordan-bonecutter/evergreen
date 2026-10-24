@@ -1267,7 +1267,7 @@ impl<'a> Context<'a> {
             Kind::Binary(op, _, _)
                 if matches!(
                     op.as_str(),
-                    "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||"
+                    "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||" | "=>"
                 ) =>
             {
                 Some(Ty::Bool)
@@ -1738,11 +1738,15 @@ impl<'a> Context<'a> {
                 };
                 Ok(Symbol::Number(ty, n.scale(-1)?))
             }
-            Kind::Binary(op, a, b) if op == "&&" || op == "||" => {
+            Kind::Binary(op, a, b) if matches!(op.as_str(), "&&" | "||" | "=>") => {
                 let a = self.eval(a, Some(&Ty::Bool))?.proposition()?;
                 // Logical expressions are pure. Both operands must be well-defined.
                 let b = self.eval(b, Some(&Ty::Bool))?.proposition()?;
-                Ok(Symbol::Bool(if op == "&&" { a.and(b) } else { a.or(b) }))
+                Ok(Symbol::Bool(match op.as_str() {
+                    "&&" => a.and(b),
+                    "=>" => a.not().or(b),
+                    _ => a.or(b),
+                }))
             }
             Kind::Binary(op, a, b) => {
                 let ty = if matches!(op.as_str(), "+" | "-" | "*") {
@@ -2960,6 +2964,46 @@ mod tests {
             "let x = if true {consume(t)} else {consume(t)}; t.tag",
         );
         assert!(verify(&format!("{declarations}\n{invalid}")).is_err());
+    }
+
+    #[test]
+    fn implication_and_unlifted_weaker_invariants_check_each_store() {
+        let source = include_str!("../examples/weak_invariant.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        let bad = source.replace("ledger.count = 42;", "ledger.count = 0;");
+        assert!(verify(&bad).is_err());
+        let bad = source.replace(
+            "ledger::reference_count_is_0_implies_no_owners;",
+            "ledger::reference_count_is_accurate;",
+        );
+        assert!(verify(&bad).is_err());
+        let release = "fn release() -> usize {let ledger = Ledger {count: 1, owners: 1}; update(ledger) lifts reference_count_is_accurate {ledger.owners = 0; proof still_safe: ledger::reference_count_is_0_implies_no_owners; ledger.count = 0;} ledger.count}";
+        assert!(verify(&format!(
+            "{} {release}",
+            source.split("fn main").next().unwrap()
+        ))
+        .is_ok());
+        for a in [false, true] {
+            for b in [false, true] {
+                let program = verify(&format!(
+                    "fn main() -> bool ensures(result == {}) {{{a} => {b}}}",
+                    !a || b
+                ))
+                .unwrap();
+                assert_eq!(program.run().unwrap().to_string(), (!a || b).to_string());
+            }
+        }
+        // Implication binds below || and associates to the right.
+        assert_eq!(
+            verify("fn main() -> bool ensures(result == true) {false => true => false}")
+                .unwrap()
+                .run()
+                .unwrap()
+                .to_string(),
+            "true"
+        );
+        assert!(verify("fn bad() -> bool ensures(result == true) {true => false}").is_err());
+        assert!(verify("fn bad() -> bool {1 => true}").is_err());
     }
 
     #[test]

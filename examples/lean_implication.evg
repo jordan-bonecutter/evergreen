@@ -1,0 +1,2 @@
+ideal fn implies(a: bool, b: bool) -> bool ensures (a => b => a) {a => b} proof {simp_all}
+ideal fn main() -> nat ensures ((true => false) => false) {42} proof {decide}

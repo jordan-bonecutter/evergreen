@@ -1,0 +1,17 @@
+// A numeric ledger demonstrating selective lifting. `owners` here is a field,
+// not the proposed owners(plane) ownership primitive or an Rc implementation.
+type Ledger struct {count: usize, owners: usize} where (
+    fact reference_count_is_accurate = owners == count;
+    fact reference_count_is_0_implies_no_owners = count == 0 => owners == 0;
+    reference_count_is_accurate && reference_count_is_0_implies_no_owners
+);
+
+fn main() -> usize ensures (result == 42) {
+    let ledger = Ledger {count: 41, owners: 41};
+    update(ledger) lifts reference_count_is_accurate {
+        ledger.count = 42;
+        proof zero_is_still_safe: ledger::reference_count_is_0_implies_no_owners;
+        ledger.owners = 42;
+    }
+    ledger.count
+}

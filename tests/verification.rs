@@ -5,16 +5,18 @@ use std::{fs, process::Command};
 #[ignore = "requires the pinned Lean toolchain"]
 fn proof_kernel_accepts_and_rejects() {
     let cli = env!("CARGO_BIN_EXE_evg");
-    let output = Command::new(cli)
-        .args(["lean-run", "examples/lean_reference.evg"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+    for file in [
+        "examples/lean_reference.evg",
+        "examples/lean_implication.evg",
+    ] {
+        let output = Command::new(cli).args(["lean-run", file]).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+    }
     for file in ["examples/reject_bounds.evg", "examples/reject_contract.evg"] {
         let output = Command::new(cli)
             .args(["lean-check", file])

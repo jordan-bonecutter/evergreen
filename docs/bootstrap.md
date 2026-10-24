@@ -586,3 +586,17 @@ representation supports scalar elements at statically known indices. Borrowing
 a dynamically selected cell or an opaque aggregate/reference-bearing element
 still requires additional projection and alias rules; known literal aggregate
 elements retain their existing support.
+
+Logical implication is written `premise => consequence`. It has lower precedence
+than `||` and associates to the right: `a => b => c` means `a => (b => c)`.
+Like the other Boolean operators, both operands must be well-defined; it is
+not a short-circuit guard around an otherwise invalid operation. The internal
+verifier expands it to `!premise || consequence`, and the optional Lean
+proposition emitter uses logical implication.
+
+`examples/weak_invariant.evg` demonstrates the proposed selective-lifting rule
+with a numeric ledger: exact accounting is lifted, while
+`count == 0 => owners == 0` remains required after every store. A proof of that
+weaker fact works during the update; claiming exact accounting before restoring
+it or setting count to zero while an owner remains is rejected. The ledger is
+a language-rule test, not an implementation of `owners(plane)` or `Rc`.

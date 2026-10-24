@@ -432,6 +432,7 @@ impl Parser {
                 continue;
             }
             let prec = match self.peek() {
+                "=>" => 0,
                 "||" => 1,
                 "&&" => 2,
                 "==" | "!=" => 3,
@@ -446,7 +447,7 @@ impl Parser {
             }
             let op = self.peek().to_owned();
             self.pos += 1;
-            let rhs = self.expr(prec + 1)?;
+            let rhs = self.expr(if op == "=>" { prec } else { prec + 1 })?;
             lhs = Expr {
                 kind: Kind::Binary(op, Box::new(lhs), Box::new(rhs)),
                 line,

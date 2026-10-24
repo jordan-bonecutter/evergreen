@@ -95,10 +95,15 @@ impl Emitter {
                     t,
                 )
             }
-            Kind::Binary(op, a, b) if op == "&&" || op == "||" => (
+            Kind::Binary(op, a, b) if matches!(op.as_str(), "&&" | "||" | "=>") => (
                 format!(
-                    "({} {op} {})",
-                    self.value(a, Some(&Type::Bool))?.0,
+                    "({} {} {})",
+                    if op == "=>" {
+                        format!("!{}", self.value(a, Some(&Type::Bool))?.0)
+                    } else {
+                        self.value(a, Some(&Type::Bool))?.0
+                    },
+                    if op == "=>" { "||" } else { op },
                     self.value(b, Some(&Type::Bool))?.0
                 ),
                 Type::Bool,
@@ -134,10 +139,14 @@ impl Emitter {
             Kind::Bool(b) => Ok(if *b { "True" } else { "False" }.into()),
             Kind::Name(n) if self.facts.contains(n) => Ok(n.clone()),
             Kind::Unary(op, x) if op == "!" => Ok(format!("(¬ {})", self.prop(x)?)),
-            Kind::Binary(op, a, b) if op == "&&" || op == "||" => Ok(format!(
+            Kind::Binary(op, a, b) if matches!(op.as_str(), "&&" | "||" | "=>") => Ok(format!(
                 "({} {} {})",
                 self.prop(a)?,
-                if op == "&&" { "∧" } else { "∨" },
+                match op.as_str() {
+                    "&&" => "∧",
+                    "=>" => "→",
+                    _ => "∨",
+                },
                 self.prop(b)?
             )),
             Kind::Binary(op, a, b)

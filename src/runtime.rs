@@ -149,7 +149,7 @@ impl Evaluator<'_> {
             Kind::Binary(op, _, _)
                 if matches!(
                     op.as_str(),
-                    "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||"
+                    "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||" | "=>"
                 ) =>
             {
                 Some(Type::Bool)
@@ -536,10 +536,14 @@ impl Evaluator<'_> {
                     })
                 }
             }
-            Kind::Binary(op, a, b) if op == "&&" || op == "||" => {
+            Kind::Binary(op, a, b) if matches!(op.as_str(), "&&" | "||" | "=>") => {
                 let a = self.expr(a, env, Some(&Type::Bool))?.boolean()?;
                 let b = self.expr(b, env, Some(&Type::Bool))?.boolean()?;
-                Ok(Value::Bool(if op == "&&" { a && b } else { a || b }))
+                Ok(Value::Bool(match op.as_str() {
+                    "&&" => a && b,
+                    "=>" => !a || b,
+                    _ => a || b,
+                }))
             }
             Kind::Binary(op, a, b) => {
                 let ty = if matches!(op.as_str(), "+" | "-" | "*") {

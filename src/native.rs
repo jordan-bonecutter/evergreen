@@ -426,7 +426,7 @@ impl Emitter<'_> {
             Kind::Binary(op, _, _)
                 if matches!(
                     op.as_str(),
-                    "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||"
+                    "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||" | "=>"
                 ) =>
             {
                 Some(Type::Bool)
@@ -577,7 +577,7 @@ impl Emitter<'_> {
             }
             Kind::Binary(op, a, b) => {
                 let arithmetic = matches!(op.as_str(), "+" | "-" | "*");
-                let logical = matches!(op.as_str(), "&&" | "||");
+                let logical = matches!(op.as_str(), "&&" | "||" | "=>");
                 let operand = if logical {
                     Type::Bool
                 } else {
@@ -596,6 +596,7 @@ impl Emitter<'_> {
                     "*" => self.code.extend([0x48, 0x0f, 0xaf, 0xc1]),
                     "&&" => self.code.extend([0x48, 0x21, 0xc8]),
                     "||" => self.code.extend([0x48, 0x09, 0xc8]),
+                    "=>" => self.code.extend([0x48, 0x83, 0xf1, 1, 0x48, 0x09, 0xc8]),
                     _ => {
                         self.code.extend([0x48, 0x39, 0xc1]);
                         let signed =
@@ -1171,6 +1172,9 @@ mod tests {
             std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
         fs::create_dir(&directory).unwrap();
         let mut cases = [
+            include_str!("../examples/weak_invariant.evg"),
+            "fn main() -> bool {false => true => false}",
+            "fn main() -> bool {true => false}",
             include_str!("../examples/array_borrows.evg"),
             include_str!("../examples/borrow_returns.evg"),
             include_str!("../examples/recursion.evg"),
