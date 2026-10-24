@@ -1,6 +1,6 @@
-//! Internal word-based bootstrap ABI. This is not a C/FFI layout contract.
-//! Scalars, references, and empty values have eight-byte homes. Aggregates are
-//! consecutive homes in declaration order; only constant array lengths qualify.
+//! Native sizes and alignment for the Linux x86-64 bootstrap target.
+//! Fields retain declaration order. Empty values reserve one byte for identity.
+//! This is not a C/FFI layout contract.
 
 use crate::syntax::{Expr, Kind, Struct, Type};
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,6 +18,7 @@ pub struct Field {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
     pub size: usize,
+    pub align: usize,
     pub fields: BTreeMap<String, Field>,
 }
 
@@ -67,18 +68,29 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
         active: &mut BTreeSet<String>,
     ) -> Result<Layout> {
         let mut fields = BTreeMap::new();
+        let mut align = 1;
         let size = match ty {
-            Type::Machine(_) | Type::Bool | Type::Unit | Type::Ref(_) | Type::Plane(_) => 8,
+            Type::Machine(integer) => {
+                align = usize::from(integer.bits / 8);
+                align
+            }
+            Type::Bool => 1,
+            Type::Unit => 1,
+            Type::Ref(_) | Type::Plane(_) => {
+                align = 8;
+                8
+            }
             Type::Int | Type::Nat => {
                 return Err("ideal mathematical types have no native runtime layout".into())
             }
             Type::Array(element, count) => {
                 let element = compute(element, structs, active)?;
+                align = element.align;
                 element
                     .size
                     .checked_mul(array_length(count)?)
                     .ok_or("native array layout overflow")?
-                    .max(8)
+                    .max(align)
             }
             Type::Named(name) => {
                 let definition = structs
@@ -93,6 +105,8 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
                 let mut offset = 0usize;
                 for (name, ty) in definition.runtime_fields() {
                     let layout = compute(ty, structs, active)?;
+                    align = align.max(layout.align);
+                    offset = offset.next_multiple_of(layout.align);
                     if fields
                         .insert(
                             name.clone(),
@@ -113,13 +127,17 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
                     }
                 }
                 active.remove(name);
-                offset.max(8)
+                offset.next_multiple_of(align).max(1)
             }
         };
         if size > MAX_LAYOUT_BYTES {
             return Err("native object exceeds 64 KiB layout budget".into());
         }
-        Ok(Layout { size, fields })
+        Ok(Layout {
+            size,
+            align,
+            fields,
+        })
     }
     compute(ty, structs, &mut BTreeSet::new())
 }
@@ -138,16 +156,56 @@ mod tests {
     }
 
     #[test]
-    fn fixed_aggregate_homes_preserve_declaration_order_and_alignment() {
+    fn aggregate_layouts_preserve_declaration_order_and_field_alignment() {
         let defs = definitions("type Inner struct {small: u8, flag: bool} type Outer struct {first: usize, payload: [Inner; 2], last: &usize}");
         let layout = of(&Type::Named("Outer".into()), &defs).unwrap();
-        assert_eq!(layout.size, 48);
+        assert_eq!(layout.size, 24);
+        assert_eq!(layout.align, 8);
         assert_eq!(layout.fields["first"].offset, 0);
         assert_eq!(layout.fields["payload"].offset, 8);
-        assert_eq!(layout.fields["last"].offset, 40);
+        assert_eq!(layout.fields["last"].offset, 16);
         assert!(layout.fields.values().all(|f| f.offset % 8 == 0));
         let empty = definitions("type Empty struct {}");
-        assert_eq!(of(&Type::Named("Empty".into()), &empty).unwrap().size, 8);
+        assert_eq!(of(&Type::Named("Empty".into()), &empty).unwrap().size, 1);
+    }
+
+    #[test]
+    fn scalar_widths_array_strides_and_record_padding() {
+        let defs = definitions("type Mixed struct {a: u8, b: u32, c: u16, d: bool} type Bytes struct {data: [u8; 7]} type Nested struct {head: u8, body: Mixed, tail: u8}");
+        for (name, size) in [
+            ("u8", 1),
+            ("i8", 1),
+            ("u16", 2),
+            ("i16", 2),
+            ("u32", 4),
+            ("i32", 4),
+            ("usize", 8),
+            ("isize", 8),
+        ] {
+            let layout = of(
+                &Type::Machine(crate::syntax::MachineInt::parse(name).unwrap()),
+                &defs,
+            )
+            .unwrap();
+            assert_eq!((layout.size, layout.align), (size, size), "{name}");
+        }
+        let mixed = of(&Type::Named("Mixed".into()), &defs).unwrap();
+        assert_eq!((mixed.size, mixed.align), (12, 4));
+        for (field, offset) in [("a", 0), ("b", 4), ("c", 8), ("d", 10)] {
+            assert_eq!(mixed.fields[field].offset, offset);
+        }
+        let bytes = of(&Type::Named("Bytes".into()), &defs).unwrap();
+        assert_eq!((bytes.size, bytes.align), (7, 1));
+        let nested = of(&Type::Named("Nested".into()), &defs).unwrap();
+        assert_eq!((nested.size, nested.align), (20, 4));
+        assert_eq!(nested.fields["body"].offset, 4);
+        assert_eq!(nested.fields["tail"].offset, 16);
+        assert_eq!(of(&Type::Bool, &defs).unwrap().size, 1);
+        assert_eq!(of(&Type::Unit, &defs).unwrap().size, 1);
+        let empty_arrays = definitions("type Storage struct {data: [[u64; 0]; 2], tail: u8}");
+        let storage = of(&Type::Named("Storage".into()), &empty_arrays).unwrap();
+        assert_eq!((storage.size, storage.align), (24, 8));
+        assert_eq!(storage.fields["tail"].offset, 16);
     }
 
     #[test]

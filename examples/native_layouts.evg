@@ -1,0 +1,31 @@
+// Packed byte arrays, aligned fields, narrow signed loads, and exact copies.
+type Packet struct {
+    prefix: u8,
+    bytes: [u8; 3],
+    count: u32,
+    delta: i16,
+    ready: bool,
+}
+
+fn forward(packet: Packet, marker: u8) -> Packet {packet}
+
+fn main() -> u8 {
+    let packet = Packet {
+        prefix: 255,
+        bytes: [7, 8, 9],
+        count: 4294967295,
+        delta: -32768,
+        ready: true,
+    };
+    let moved = forward(packet, 123);
+    let byte = &moved.bytes[1];
+    *byte = 42;
+    let owner = alloc(moved);
+    if (*owner).prefix == 255
+        && (*owner).bytes[0] == 7
+        && (*owner).bytes[1] == 42
+        && (*owner).bytes[2] == 9
+        && (*owner).count == 4294967295
+        && (*owner).delta == -32768
+        && (*owner).ready {42} else {1}
+}

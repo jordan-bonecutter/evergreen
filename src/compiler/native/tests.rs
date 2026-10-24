@@ -105,6 +105,15 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        include_str!("../../../examples/native_layouts.evg"),
+        "type Tiny struct {data: [u8; 3]} impl Drop for Tiny {fn drop(self) {}} fn forward(value: Tiny) -> Tiny {value} fn main() -> u8 {let item = forward(Tiny {data: [1, 2, 42]}); item.data[2]}",
+        "fn main() -> u8 {let data: [[u64; 0]; 2] = [[], []]; if &data[0] != &data[1] {42} else {1}}",
+        "fn forward(a: [u8; 7], marker: u8) -> [u8; 7] {a} fn main() -> u8 {let a: [u8; 7] = [1, 2, 3, 4, 5, 6, 42]; let b = forward(a, 99); b[6]}",
+        "type Mixed struct {a: u8, b: u32, c: i16, flag: bool} fn forward(x: Mixed, n: u8) -> Mixed {x} fn main() -> i16 {let x = Mixed {a: 255, b: 4294967295, c: -42, flag: true}; let y = forward(x, 7); if y.a == 255 && y.b == 4294967295 && y.c == -42 && y.flag {42} else {1}}",
+        "fn forward(a: [u8; 3], b: i8, c: [u16; 3], d: i32) -> i32 {d} fn main() -> i32 {forward([1, 2, 3], -128, [4, 5, 65535], -42)}",
+        "fn main() -> u8 {let a: [u8; 3] = [1, 2, 3]; let middle = &a[1]; *middle = 42; if a[0] == 1 && a[1] == 42 && a[2] == 3 {42} else {1}}",
+        "type Small struct {left: u8, value: u16, right: u8} fn main() -> u8 {let a = Small {left: 7, value: 65535, right: 9}; a.value = 0; a.left + a.right}",
+        "fn main() -> i8 {let n: i8 = -42; let q = alloc(n); if *q == -42 {42} else {1}}",
         include_str!("../../../examples/partial_recursion.evg"),
         include_str!("../../../examples/ideal_bindings.evg"),
         "type Resource struct {tag: usize} where(tag == 42); impl Drop for Resource {fn drop(self){}} ideal fn observe(r: &Resource) -> nat ensures(result == nat((*r).tag)) {nat((*r).tag)} fn main() -> usize {let r = Resource {tag: 42}; ideal let saved = observe(&r); proof correct: saved == 42; r.tag}",
@@ -323,6 +332,18 @@ fn native_execution_agrees_with_the_interpreter() {
     cases.push(format!("{updates} fn main() -> usize {{ideal let parts = credits::split(credits::issue(), 1); ideal let credits::Split {{left, right}} = parts; let count: usize = 1; release_budget(left, &count) + 42}}"));
     cases.push(format!("{credit_test} {} {} fn main() -> usize {{let data: usize = 42; let carrier = carry(credits::issue(), &data); let observed = read_carrier(&carrier); consume_carrier(carrier) + observed - 42}}",
         include_str!("../../../stdlib/borrow_credits.evg"), include_str!("../../../proofs/carried_borrow_credits.evg")));
+    for (ty, first, last) in [
+        ("u8", "255", "42"),
+        ("i8", "-128", "-42"),
+        ("u16", "65535", "42"),
+        ("i16", "-32768", "-42"),
+        ("u32", "4294967295", "42"),
+        ("i32", "-2147483648", "-42"),
+        ("u64", "18446744073709551615", "42"),
+        ("i64", "-9223372036854775808", "-42"),
+    ] {
+        cases.push(format!("fn forward(a: [{ty}; 3], b: {ty}) -> [{ty}; 3] {{a}} fn main() -> u8 {{let original: [{ty}; 3] = [{first}, 0, {last}]; let a = forward(original, {first}); let middle = &a[1]; *middle = {first}; if a[0] == {first} && a[1] == {first} && a[2] == {last} {{42}} else {{1}}}}"));
+    }
     let indexed = include_str!("../../../examples/indexed_borrows.evg")
         .split("fn main")
         .next()

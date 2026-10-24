@@ -161,7 +161,7 @@ impl<'a> ParameterLayout<'a> {
             .collect::<Vec<_>>();
         let sizes = values
             .iter()
-            .map(|(_, ty)| layout::of(ty, structs).map(|layout| layout.size))
+            .map(|(_, ty)| storage::argument_size(ty, structs))
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             values,
@@ -236,7 +236,7 @@ impl Emitter<'_> {
         if let Some(home) = saved_result {
             self.frame_address(home);
             if !layout::aggregate(&function.ret) {
-                self.code.extend([0x48, 0x8b, 0x00]);
+                self.load_scalar(&function.ret)?;
             }
         }
         if parameters.result_pointer != 0 {
@@ -252,7 +252,7 @@ impl Emitter<'_> {
         if self.temporary != 0 {
             return Err("unbalanced native expression stack".into());
         }
-        let frame = self.frame;
+        let frame = self.frame.next_multiple_of(8);
         self.code[frame_fixup..frame_fixup + 4].copy_from_slice(&(frame as u32).to_le_bytes());
         let stack = (8 + frame + self.peak)
             .checked_mul(if recursive { RECURSION_LIMIT } else { 1 })

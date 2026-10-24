@@ -381,7 +381,7 @@ fn ideal_record_fields_move_and_erase_with_runtime_values() {
     let empty =
         crate::compiler::layout::of(&Type::Named("packets::Empty".into()), &program.structs)
             .unwrap();
-    assert_eq!(empty.size, 8);
+    assert_eq!(empty.size, 1);
     assert!(empty.fields.is_empty());
     let duplicate = source.replace(
         "let forwarded = packets::forward(packet);",

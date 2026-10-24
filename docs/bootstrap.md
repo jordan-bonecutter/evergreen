@@ -830,9 +830,8 @@ the generated instructions; the native backend and platform remain trusted.
 
 Native scalar references point into the private stack. Borrowing a local,
 following aliases, nested scalar references, and calls with checked scalar
-write contracts are supported. Scalar and reference locals currently occupy
-eight-byte homes; this internal convention is not an aggregate or foreign ABI.
-Reference returns remain rejected by the source checker.
+write contracts are supported. Scalars use their declared widths, and references
+occupy eight bytes. This internal convention is not a foreign ABI.
 
 ```sh
 cargo run -- --deny-trust build stdlib/counter.evg examples/counter.evg -o /tmp/counter
@@ -844,11 +843,29 @@ performs the checked sequential reserve/release stores and exits with status 0.
 Native differential tests include these programs, scalar alias writes, nested
 references, and Boolean updates.
 
-The internal word ABI gives each scalar, reference, or empty value an eight-byte
-home. Record homes follow declaration order; fixed arrays contain consecutive
-element homes. Inline aggregate layouts must be constant and at most 64 KiB;
+Native machine integers occupy their declared width (one, two, four, or eight
+bytes), aligned to that width. Booleans occupy one byte; references and plane
+owners occupy eight. Records retain declaration order, align each field, and
+include tail padding to their maximum field alignment. Fixed arrays contain
+consecutive elements, so `[u8; 7]` occupies seven bytes. Empty values reserve at least one
+byte, rounded to their alignment, to preserve distinct address identities inside
+arrays and records.
+The private calling convention passes scalars in eight-byte stack slots and
+rounds aggregate argument slots up to eight bytes; that does not change the
+layout of addressable values. Copies access exactly the object size, including
+short aggregate tails, and signed loads extend the stored value correctly. Inline aggregate layouts must be constant and at most 64 KiB;
 ideal, recursive inline, overflowing, and dependent layouts are rejected. Constant
 natural length arithmetic follows the frontend's truncated subtraction rules.
+
+`examples/native_layouts.evg` exercises packed bytes, mixed-width fields, signed
+loads, borrowed byte mutation, aggregate calls, and heap payloads. It returns 42
+in both the interpreter and a compiled executable:
+
+```sh
+cargo run -- run examples/native_layouts.evg
+cargo run -- build examples/native_layouts.evg -o /tmp/native-layouts
+/tmp/native-layouts; echo $?
+```
 
 `examples/native_aggregates.evg` compiles owned local records, complete patterns,
 field borrows, fixed arrays, and stable-layout replacement. Value reads preserve
@@ -1394,7 +1411,7 @@ cannot independently withdraw the same last credit.
 `examples/ideal_fields.evg` checks affine witnesses carried through runtime
 records, complete patterns, selective proof-field updates, and parent/child Drop
 order. It also checks distinct identities for records containing only ideal
-fields; the private ABI retains its ordinary minimum eight-byte home for them.
+fields; native storage reserves one byte for each empty value's identity.
 The example runs, builds, and replays internally. Check
 `stdlib/credits.evg stdlib/borrow_credits.evg proofs/carried_borrow_credits.evg`
 for a runtime carrier that owns a borrowed-credit token without storing that

@@ -12,6 +12,7 @@ type Result<T> = std::result::Result<T, String>;
 
 mod elf;
 mod program;
+mod storage;
 
 const STACK: usize = 65536;
 const MAX_CODE: usize = 8 * 1024 * 1024;
@@ -102,10 +103,12 @@ struct Emitter<'a> {
 
 impl Emitter<'_> {
     fn allocate(&mut self, ty: &Type) -> Result<i32> {
+        let object = layout::of(ty, self.structs)?;
         self.frame = self
             .frame
-            .checked_add(layout::of(ty, self.structs)?.size)
-            .ok_or("native frame overflow")?;
+            .checked_add(object.size)
+            .ok_or("native frame overflow")?
+            .next_multiple_of(object.align);
         if self.frame + 16 > STACK {
             return Err("native frame exceeds private stack budget".into());
         }
@@ -117,45 +120,13 @@ impl Emitter<'_> {
         self.code.extend(offset.to_le_bytes());
     }
 
-    fn copy_frame(&mut self, offset: i32, ty: &Type) -> Result<()> {
-        if !layout::aggregate(ty) {
-            self.code.extend([0x48, 0x89, 0x85]);
-            self.code.extend(offset.to_le_bytes());
-        } else {
-            self.code.extend([0x48, 0x89, 0xc2]); // rdx = source
-            for index in (0..layout::of(ty, self.structs)?.size).step_by(8) {
-                self.code.extend([0x48, 0x8b, 0x82]);
-                self.code.extend((index as i32).to_le_bytes());
-                self.code.extend([0x48, 0x89, 0x85]);
-                self.code.extend((offset + index as i32).to_le_bytes());
-            }
-        }
-        Ok(())
-    }
-
-    fn copy_address(&mut self, ty: &Type) -> Result<()> {
-        // Destination is rcx. Aggregate rax values are snapshot addresses.
-        if !layout::aggregate(ty) {
-            self.code.extend([0x48, 0x89, 0x01]);
-        } else {
-            self.code.extend([0x48, 0x89, 0xc2]);
-            for index in (0..layout::of(ty, self.structs)?.size).step_by(8) {
-                self.code.extend([0x48, 0x8b, 0x82]);
-                self.code.extend((index as i32).to_le_bytes());
-                self.code.extend([0x48, 0x89, 0x81]);
-                self.code.extend((index as i32).to_le_bytes());
-            }
-        }
-        Ok(())
-    }
-
     fn snapshot(&mut self, ty: &Type) -> Result<()> {
         if layout::aggregate(ty) {
             let offset = self.allocate(ty)?;
             self.copy_frame(offset, ty)?;
             self.frame_address(offset);
         } else {
-            self.code.extend([0x48, 0x8b, 0x00]);
+            self.load_scalar(ty)?;
         }
         Ok(())
     }
@@ -198,12 +169,13 @@ impl Emitter<'_> {
 
     fn push_value(&mut self, ty: &Type) -> Result<()> {
         if layout::aggregate(ty) {
-            self.code.extend([0x48, 0x89, 0xc2]);
-            for offset in (0..layout::of(ty, self.structs)?.size).step_by(8).rev() {
-                self.code.extend([0x48, 0x8b, 0x82]);
-                self.code.extend((offset as i32).to_le_bytes());
-                self.push();
-            }
+            let size = storage::argument_size(ty, self.structs)?;
+            self.code.extend([0x48, 0x81, 0xec]);
+            self.code.extend((size as u32).to_le_bytes());
+            self.temporary += size;
+            self.peak = self.peak.max(self.temporary);
+            self.code.extend([0x48, 0x89, 0xe1]); // rcx = argument home
+            self.copy_address(ty)?;
         } else {
             self.push();
         }
@@ -308,7 +280,7 @@ impl Emitter<'_> {
                 self.push_value(ty)?;
                 return self.invoke(
                     &format!("evg_drop_{name}"),
-                    layout::of(ty, self.structs)?.size,
+                    storage::argument_size(ty, self.structs)?,
                 );
             }
         }
@@ -340,7 +312,7 @@ impl Emitter<'_> {
             self.finish_temporaries(start)?;
             self.frame_address(home);
             if !layout::aggregate(&ty) {
-                self.code.extend([0x48, 0x8b, 0x00]);
+                self.load_scalar(&ty)?;
             }
         }
         Ok(ty)
@@ -354,14 +326,14 @@ impl Emitter<'_> {
                 let field = self.field(&ty, name)?;
                 self.add_offset(field.offset);
                 if !layout::aggregate(&field.ty) {
-                    self.code.extend([0x48, 0x8b, 0x00]);
+                    self.load_scalar(&field.ty)?;
                 }
                 Ok(field.ty)
             }
             Kind::Index(base, index) => {
                 let ty = self.index_address(base, index, ReadMode::Storage)?;
                 if !layout::aggregate(&ty) {
-                    self.code.extend([0x48, 0x8b, 0x00]);
+                    self.load_scalar(&ty)?;
                 }
                 Ok(ty)
             }
@@ -378,7 +350,7 @@ impl Emitter<'_> {
                     self.temporaries.push((home, ty.clone()));
                     self.frame_address(home);
                     if !layout::aggregate(&ty) {
-                        self.code.extend([0x48, 0x8b, 0x00]);
+                        self.load_scalar(&ty)?;
                     }
                 }
                 Ok(ty)
@@ -615,7 +587,7 @@ impl Emitter<'_> {
                 if layout::aggregate(&ty) && borrowed {
                     self.snapshot(&ty)?;
                 } else if !layout::aggregate(&ty) {
-                    self.code.extend([0x48, 0x8b, 0x00]);
+                    self.load_scalar(&ty)?;
                 }
                 ty
             }
@@ -779,7 +751,7 @@ impl Emitter<'_> {
                 self.code.extend([0x48, 0x89, 0xc1]); // destination rcx
                 self.frame_address(saved);
                 if !layout::aggregate(&payload) {
-                    self.code.extend([0x48, 0x8b, 0x00]);
+                    self.load_scalar(&payload)?;
                 }
                 self.copy_address(&payload)?;
                 self.frame_address(home);
@@ -857,7 +829,7 @@ impl Emitter<'_> {
                 {
                     let home = self.allocate(&ty)?;
                     if !layout::aggregate(&ty) {
-                        self.code.extend([0x48, 0x8b, 0x00]);
+                        self.load_scalar(&ty)?;
                     }
                     self.copy_frame(home, &ty)?;
                     Some(home)
@@ -875,7 +847,7 @@ impl Emitter<'_> {
                     }
                     self.frame_address(new_value);
                     if !layout::aggregate(&ty) {
-                        self.code.extend([0x48, 0x8b, 0x00]);
+                        self.load_scalar(&ty)?;
                     }
                 }
                 self.code.extend([0x48, 0x8b, 0x8d]);
@@ -902,7 +874,7 @@ impl Emitter<'_> {
                     self.code.extend([0x48, 0x8d, 0x86]);
                     self.code.extend((field.offset as i32).to_le_bytes());
                     if !layout::aggregate(&field.ty) {
-                        self.code.extend([0x48, 0x8b, 0x00]);
+                        self.load_scalar(&field.ty)?;
                     }
                     self.slot(name, field.ty)?;
                 }
