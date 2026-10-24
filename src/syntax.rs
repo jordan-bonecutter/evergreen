@@ -174,6 +174,12 @@ pub struct Program {
     pub destructors: Vec<(String, Function)>,
 }
 #[derive(Clone, Debug)]
+pub struct ReturnBorrow {
+    /// Empty for a direct reference return; otherwise an inline record field path.
+    pub fields: Vec<String>,
+    pub reference: Expr,
+}
+#[derive(Clone, Debug)]
 pub struct Function {
     pub name: String,
     pub params: Vec<(String, Type)>,
@@ -181,7 +187,7 @@ pub struct Function {
     pub pre: Option<Expr>,
     pub post: Option<Expr>,
     pub decreases: Option<Expr>,
-    pub borrows: Option<Expr>,
+    pub borrows: Vec<ReturnBorrow>,
     pub body: Vec<Statement>,
     pub result: Expr,
     pub proof: Option<Vec<String>>,
@@ -671,14 +677,50 @@ impl Parser {
                 self.expect(",")?;
             }
         }
-        let borrows = if self.eat("borrows") {
+        let mut borrows = Vec::new();
+        if self.eat("borrows") {
             self.expect("(")?;
-            let reference = self.expr(0)?;
-            self.expect(")")?;
-            Some(reference)
-        } else {
-            None
-        };
+            loop {
+                let expression = self.expr(0)?;
+                if self.eat(":") {
+                    fn fields(e: &Expr, out: &mut Vec<String>) -> Result<(), String> {
+                        match &e.kind {
+                            Kind::Name(n) => out.push(n.clone()),
+                            Kind::Field(base, n) => {
+                                fields(base, out)?;
+                                out.push(n.clone());
+                            }
+                            _ => {
+                                return Err(
+                                    "borrow targets require a return record field path".into()
+                                )
+                            }
+                        }
+                        Ok(())
+                    }
+                    let mut path = Vec::new();
+                    fields(&expression, &mut path)?;
+                    borrows.push(ReturnBorrow {
+                        fields: path,
+                        reference: self.expr(0)?,
+                    });
+                } else {
+                    if !borrows.is_empty() {
+                        return Err(self.err("structured borrows entries require field: reference"));
+                    }
+                    borrows.push(ReturnBorrow {
+                        fields: Vec::new(),
+                        reference: expression,
+                    });
+                    self.expect(")")?;
+                    break;
+                }
+                if self.eat(")") {
+                    break;
+                }
+                self.expect(",")?;
+            }
+        }
         let post = if self.eat("ensures") {
             self.expect("(")?;
             let p = self.expr(0)?;
@@ -860,7 +902,7 @@ impl Parser {
             || function.ret != Type::Unit
             || function.pre.is_some()
             || function.decreases.is_some()
-            || function.borrows.is_some()
+            || !function.borrows.is_empty()
             || !function.ideal_params.is_empty()
         {
             return Err(

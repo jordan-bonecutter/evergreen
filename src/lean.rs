@@ -177,7 +177,7 @@ impl Emitter {
             || f.partial
             || !f.ideal
             || f.decreases.is_some()
-            || f.borrows.is_some()
+            || !f.borrows.is_empty()
             || !f.modifies.is_empty()
         {
             return Err("the optional Lean backend currently checks nonrecursive ideal mathematical functions; executable machine code uses the internal kernel".into());

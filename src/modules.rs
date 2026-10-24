@@ -104,11 +104,13 @@ impl Scope<'_> {
         for effect in &mut function.modifies {
             self.expr(effect);
         }
+        for alias in &mut function.borrows {
+            self.expr(&mut alias.reference);
+        }
         for e in [
             &mut function.pre,
             &mut function.post,
             &mut function.decreases,
-            &mut function.borrows,
         ]
         .into_iter()
         .flatten()

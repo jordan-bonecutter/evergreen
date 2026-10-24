@@ -1,0 +1,27 @@
+// Reference fields in an owning result retain exact incoming origins.
+type StoreOnDrop struct {target: &usize, value: usize}
+
+impl Drop for StoreOnDrop {
+    fn drop(self) modifies(self.target) ensures (*self.target == self.value) {
+        *self.target = self.value;
+    }
+}
+
+fn make(target: &usize, value: usize) -> StoreOnDrop
+borrows(target: target)
+ensures (result.value == value) {
+    StoreOnDrop {target: target, value: value}
+}
+
+fn forward(target: &usize, value: usize) -> StoreOnDrop
+borrows(target: target)
+ensures (result.value == value) {
+    make(target, value)
+}
+
+fn main() -> usize ensures (result == 42) {
+    let count: usize = 0;
+    let guard = forward(&count, 42);
+    drop(guard);
+    count
+}

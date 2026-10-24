@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
 mod cleanup;
+mod returns;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Formula {
@@ -554,7 +555,10 @@ fn needs_old_memory(function: &Function) -> bool {
         || function.pre.as_ref().is_some_and(expression)
         || function.post.as_ref().is_some_and(expression)
         || function.decreases.as_ref().is_some_and(expression)
-        || function.borrows.as_ref().is_some_and(expression)
+        || function
+            .borrows
+            .iter()
+            .any(|alias| expression(&alias.reference))
         || function.modifies.iter().any(expression)
         || function.body.iter().any(statement)
         || expression(&function.result)
@@ -2970,13 +2974,9 @@ impl<'a> Context<'a> {
                     )?;
                 }
                 let ret = self.resolve(&f.ret)?;
-                let value = if let Some(reference) = &f.borrows {
-                    let phase = self.phase;
-                    self.phase = Phase::Specification;
-                    let value = self.eval(reference, Some(&ret))?;
-                    self.phase = phase;
-                    self.validate_argument(&value, e.line)?;
-                    value
+                let value = if !f.borrows.is_empty() {
+                    let aliases = self.return_aliases(f, None)?;
+                    self.return_shape(&ret, &mut Vec::new(), &aliases)?
                 } else {
                     self.arbitrary(&ret)?
                 };
@@ -3012,6 +3012,9 @@ impl<'a> Context<'a> {
                     let target = project(self.memory.read(input.reference)?, &input.path)?.clone();
                     self.assume_element_type(&target)?;
                 }
+                if !f.borrows.is_empty() {
+                    self.assume_return_type(&value, &ret)?;
+                }
                 self.env.insert("result".into(), value.clone());
                 if let Some(post) = &f.post {
                     let p = self.proposition(post)?;
@@ -3021,7 +3024,7 @@ impl<'a> Context<'a> {
                 // checked postcondition, revalidate the saved reference and its
                 // current target. Havoced contents need not satisfy nominal
                 // invariants until that postcondition has constrained them.
-                if f.borrows.is_some() && !f.modifies.is_empty() {
+                if !f.borrows.is_empty() && !f.modifies.is_empty() {
                     self.validate_argument(&value, e.line)?;
                 }
                 self.env = saved;
@@ -3573,13 +3576,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         ) {
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));
         }
-        if let Some(reference) = &f.borrows {
-            if f.ideal || !matches!(f.ret, Type::Ref(_)) || !borrow_expression(reference) {
-                return Err(format!("line {}: borrows requires a reference return and a checked incoming reference projection", f.line));
-            }
-        } else if type_has_reference(&f.ret, &structs) {
-            return Err(format!("line {}: returning references requires an explicit borrows contract; reference-bearing aggregate returns are unsupported", f.line));
-        }
+        returns::check_return_borrows(f, &structs)?;
         if functions.contains_key(&f.name) {
             return Err(format!("line {}: duplicate function {}", f.line, f.name));
         }
@@ -3628,7 +3625,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             ctx.assume(&p)?;
             ctx.phase = execution;
         }
-        let inputs = if f.modifies.is_empty() && f.borrows.is_none() {
+        let inputs = if f.modifies.is_empty() && f.borrows.is_empty() {
             Vec::new()
         } else {
             ctx.incoming_references(f, !f.modifies.is_empty())?
@@ -3642,34 +3639,17 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             ctx.phase = execution;
         }
         let contract_env = ctx.clone_env()?;
-        let borrowed_result = if let Some(reference) = &f.borrows {
-            ctx.phase = Phase::Specification;
-            let place = ctx.incoming_place(reference, &inputs, Some(&ret))?;
-            ctx.phase = execution;
-            Some(Symbol::Ref(place.ty, place.reference, place.path))
-        } else {
-            None
-        };
+        let borrowed_result = ctx.return_aliases(f, Some(&inputs))?;
         for statement in &f.body {
             ctx.statement(statement)?;
         }
         let value = ctx.scoped_eval(&f.result, Some(&ret))?;
-        if let Some(Symbol::Ref(_, expected, path)) = &borrowed_result {
-            let matches = if let Symbol::Ref(_, actual, actual_path) = &value {
-                actual == expected && ctx.paths_equal(actual_path, path)?
-            } else {
-                false
-            };
-            if !matches {
-                return Err(format!(
-                    "line {}: returned reference does not match its borrows contract",
-                    f.result.line
-                ));
-            }
-            ctx.validate_argument(&value, f.result.line)?;
-        }
+        ctx.check_return_aliases(&value, &borrowed_result, f.result.line)?;
         ctx.validate_live(f.result.line)?;
         ctx.finish_scope(f)?;
+        if type_has_reference(&f.ret, &structs) {
+            ctx.validate_argument(&value, f.result.line)?;
+        }
         if let Some(post) = &f.post {
             ctx.phase = Phase::Specification;
             ctx.env = contract_env;
@@ -3821,6 +3801,82 @@ mod tests {
         ] {
             assert!(verify(source).is_err(), "accepted {source}");
         }
+    }
+
+    #[test]
+    fn owning_return_records_preserve_aliases_extents_and_cleanup() {
+        for source in [
+            include_str!("../examples/owned_borrows.evg"),
+            include_str!("../examples/borrowed_view.evg"),
+        ] {
+            let (program, bundle) = prove(source).unwrap();
+            assert_eq!(program.run().unwrap().to_string(), "42");
+            let replayed = verify_with_certificate(source, &bundle).unwrap();
+            assert_eq!(replayed.proof_search_count(), 0);
+            assert_eq!(replayed.run().unwrap().to_string(), "42");
+        }
+        let alias = "type Pair struct {left: &usize, right: &usize} fn pair(left: &usize, right: &usize) -> Pair borrows(left: left, right: right) {Pair {left: left, right: right}} fn main() -> usize ensures(result == 42) {let count: usize = 1; let view = pair(&count, &count); *view.left = 42; *view.right}";
+        assert_eq!(verify(alias).unwrap().run().unwrap().to_string(), "42");
+        let indexed = "type View struct {reference: &usize} fn at(data: &[usize; 3], i: usize) -> View where(i < 2) borrows(reference: &(*data)[i + 1]) {View {reference: &(*data)[1 + i]}} fn main() -> usize ensures(result == 17) {let data: [usize; 3] = [7, 42, 9]; let view = at(&data, 0); data[1] = 17; *view.reference}";
+        assert_eq!(verify(indexed).unwrap().run().unwrap().to_string(), "17");
+        assert!(verify(&indexed.replace("data[1] = 17;", "drop(data);")).is_err());
+    }
+
+    #[test]
+    fn owning_return_aliases_cannot_escape_local_storage_or_forge_origins() {
+        let view = "type View struct {target: &usize}";
+        for function in [
+            "fn bad(target: &usize) -> View {View {target: target}}",
+            "fn bad(a: &usize, b: &usize) -> View borrows(target: a) {View {target: b}}",
+            "fn bad(target: &usize) -> View borrows(target: target) {let local: usize = 42; View {target: &local}}",
+            "fn bad(value: usize) -> View borrows(target: &value) {View {target: &value}}",
+            "fn bad(target: &usize) -> View borrows(missing: target) {View {target: target}}",
+            "fn bad(target: &usize) -> View borrows(target: target, target: target) {View {target: target}}",
+            "fn bad(a: &usize, b: &usize) -> View borrows(target: a) {proof cheat: false by {trustme}; View {target: b}}",
+        ] {
+            assert!(verify(&format!("{view} {function}")).is_err(), "accepted {function}");
+        }
+        let declarations = include_str!("../examples/owned_borrows.evg")
+            .split("fn main")
+            .next()
+            .unwrap();
+        let invalid = format!("{declarations} type PositiveView struct {{target: &usize}} where(*target > 0); fn bad(target: &usize) -> PositiveView where(*target > 0) modifies(target) borrows(target: target) {{let cleanup = StoreOnDrop {{target: target, value: 0}}; PositiveView {{target: target}}}}");
+        assert!(verify(&invalid).is_err());
+        let broken = format!("{declarations} fn main() -> usize {{let count: usize = 0; let guard = make(&count, 42); drop(count); drop(guard); 0}}");
+        assert!(verify(&broken).is_err());
+    }
+
+    #[test]
+    fn language_count_handle_constructors_clones_and_drops_compose() {
+        let source = [
+            include_str!("../stdlib/counter.evg"),
+            include_str!("../proofs/count_handles.evg"),
+            include_str!("../examples/clone_count.evg"),
+        ]
+        .join("\n");
+        let (program, bundle) = prove(&source).unwrap();
+        let (value, events) = program.run_with_events().unwrap();
+        assert_eq!(value.to_string(), "0");
+        assert_eq!(
+            events,
+            [
+                "drop count_handles::Handle",
+                "drop count_handles::Release",
+                "drop count_handles::Handle",
+                "drop count_handles::Release"
+            ]
+        );
+        assert_eq!(
+            verify_with_certificate(&source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        assert!(verify(&source.replace(
+            "let incremented = counter_increment((*handle).release.count);",
+            ""
+        ))
+        .is_err());
     }
 
     #[test]

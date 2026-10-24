@@ -660,10 +660,26 @@ preserving that record's invariants.
 contract, existing aliases, and later same-layout replacement. An index rebound
 inside the function cannot retarget its entry alias contract.
 
-Reference-bearing aggregate returns and conditional alias contracts remain
-unsupported. They need stronger summaries rather than fabricated fresh reference
-storage. All call arguments are rechecked together after evaluation, preventing
-a later argument from consuming storage borrowed by an earlier one.
+Owning records can return inline reference fields with an exact mapping for each
+field, for example `borrows(target: target)` or
+`borrows(release.count: (*handle).release.count)`. Paths on the left name fields
+of the returned record; expressions on the right name incoming references.
+Every reference field needs exactly one mapping. Calls preserve those actual
+planes rather than inventing reference storage. Dependent field extents and
+record invariants are checked on the returned value, including after local
+cleanup, before callers may rely on them. Moving the returned record does not
+extend the lifetime of its borrowed storage.
+
+`examples/owned_borrows.evg` demonstrates a returned resource whose Drop writes
+through its reference field. `examples/borrowed_view.evg` demonstrates a borrowed
+array with a dependent extent. `proofs/count_handles.evg` and
+`examples/clone_count.evg`, used with `stdlib/counter.evg`, demonstrate constructors,
+cloning, and nested cleanup written in Evergreen. This is a borrowed numeric
+count model, not allocation authority or a proof of actual Rc ownership.
+
+Reference-bearing array returns and conditional alias contracts remain
+unsupported. All call arguments are rechecked together after evaluation,
+preventing a later argument from consuming storage borrowed by an earlier one.
 
 The optional Lean suite now checks three independent specifications:
 

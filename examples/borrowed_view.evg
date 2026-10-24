@@ -1,0 +1,19 @@
+type View struct {length: usize, data: &[usize; length]}
+
+fn view(length: usize, data: &[usize; length]) -> View
+borrows(data: data) {
+    View {length: length, data: data}
+}
+
+fn first(input: &View) -> &usize
+where ((*input).length > 0)
+borrows(&(*(*input).data)[0]) {
+    &(*(*input).data)[0]
+}
+
+fn main() -> usize ensures (result == 42) {
+    let data: [usize; 2] = [42, 7];
+    let input = view(2, &data);
+    proof extent: input.length == 2;
+    *first(&input)
+}
