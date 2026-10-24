@@ -15,7 +15,6 @@ impl Context<'_> {
         // the body only its own grants, retaining actual plane identities.
         let facts = std::mem::take(&mut self.facts);
         let proofs = std::mem::take(&mut self.proofs);
-        let opened = std::mem::take(&mut self.opened);
         // Keep opened_planes: their unlifted requirements apply after every
         // actual write, including writes in further nested helper calls.
         let temporaries = std::mem::take(&mut self.temporaries);
@@ -49,7 +48,6 @@ impl Context<'_> {
         })();
         self.facts = facts;
         self.proofs = proofs;
-        self.opened = opened;
         self.temporaries = temporaries;
         self.current = current;
         self.measure = measure;

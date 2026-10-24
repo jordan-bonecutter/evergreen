@@ -32,8 +32,8 @@ A semicolon discards an expression and cleans up its temporary, including at the
 end of a function. A returned tail expression has no semicolon.
 Nominal structs support dependent fields and `where` invariants. Construction
 and field assignments must establish those invariants. `update(place, ...) lifts
-fact_name, ... { ... }` explicitly opens selected named requirements on local
-struct places. Other requirements remain checked at every write. Type-local
+fact_name, ... { ... }` explicitly opens selected named requirements on struct
+plane roots, including `*owner` and `*borrowed_record`. Other requirements remain checked at every write. Type-local
 facts are declared inside `where (fact name = proposition; name && ...)` and
 can be referenced as `place::name` in proof code. Merely declaring a type fact
 does not require it to hold: only the final `where` proposition imposes a
@@ -270,8 +270,24 @@ recheck the actual body and memory, preserving transfers and frees across the
 call boundary. This is conservative execution, not a reusable allocation-effect
 summary; recursive heap programs may hit verifier limits. Conditional selection
 of different allocation identities remains unsupported. Heap record invariants
-are checked, but opening an update directly on a dereferenced heap record is
-not yet supported.
+can be opened with `update(*owner) lifts fact { ... }`. A borrowed record can use
+`update(*record)` with ordinary matching `modifies` footprints for its writes.
+The update target is a structural storage observation, resolved once before
+opening, and must denote a whole record plane. A plane can be opened only once,
+even through differently named aliases. Nested inline record projections and
+record-array cells still need subplane invariant tracking.
+
+Open requirements are tracked by physical plane identity, including through
+owner fields and borrowed owner handles. Dormant containers are checked against
+retained requirements without making lifted facts available to observations.
+Passing a whole broken record to an observer still fails full type validation.
+Helper writes recheck retained requirements at each actual store. The update
+exit validates each originally opened plane with all its requirements restored.
+`examples/heap_updates.evg` combines borrowed updates, a heap owner carried in a
+record, erased numeric bookkeeping, and owner-first release ordering. This is
+still a numeric protocol, not authority over a shared allocation or an Rc type.
+`examples/reject_heap_update_intermediate.evg` rejects a helper that stores zero
+before restoring the count, breaking the retained zero-is-safe requirement.
 
 Allocation and ownership transfer require runtime execution with closed
 invariants. Proof calls observe heap owners through borrowed interfaces; they
@@ -1243,10 +1259,13 @@ code, and extracting owning fields still requires a complete record pattern.
 Erased expressions cannot construct, consume, or destroy runtime owners.
 
 Existing ideal bindings can be replaced with `ideal name = expression;`, including
-their structural fields and array cells. The target must belong to an ideal
-binding or to an ideal function's local storage. Dereferencing a borrowed target
-in an ideal assignment is rejected: an erased store must not change a runtime
-pointee. Updating an ideal copy of a runtime array changes only the proof copy.
+their structural fields and array cells. The target must be proof storage:
+an ideal binding, an ideal function's local storage, or a declared ideal field.
+Dereferencing a borrow resets that classification. A mathematical `int`/`nat`
+or ideal record pointee is proof storage, while an erased `&usize` can still
+point to runtime data and cannot authorize an erased write. Borrowed writes
+need a matching effect contract unless the caller owns their target plane.
+Updating an ideal copy of a runtime array changes only the proof copy.
 Runtime code still cannot read the resulting ideal value or address.
 
 Selective updates also accept `ideal let` bindings, complete ideal patterns,
@@ -1289,7 +1308,7 @@ resource, and reusing the old value is rejected. Erased fields may own ideal dat
 and borrowed views, but cannot hide a runtime owner by value.
 
 Runtime expressions cannot read, borrow, or assign these fields. `ideal` writes
-may update an owned record's ideal fields using structural paths; they still
+may update a record's ideal fields through owned or authorized borrowed storage; they still
 recheck the record invariant. Complete runtime record patterns bind every field,
 with names from ideal fields automatically marked ideal. Drop proofs may inspect
 ideal fields, while only runtime fields participate in emitted cleanup and its

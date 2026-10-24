@@ -131,7 +131,7 @@ pub enum Statement {
     },
     Effect(Expr),
     Update {
-        places: Vec<String>,
+        places: Vec<Expr>,
         lifts: Vec<String>,
         body: Vec<Statement>,
         line: usize,
@@ -827,7 +827,7 @@ impl Parser {
                 self.expect("(")?;
                 let mut places = Vec::new();
                 loop {
-                    places.push(self.name()?);
+                    places.push(self.expr(0)?);
                     if self.eat(")") {
                         break;
                     }

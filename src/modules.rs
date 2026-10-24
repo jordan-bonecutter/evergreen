@@ -84,7 +84,15 @@ impl Scope<'_> {
                 self.expr(target);
                 self.expr(value);
             }
-            Statement::Update { lifts, body, .. } => {
+            Statement::Update {
+                places,
+                lifts,
+                body,
+                ..
+            } => {
+                for place in places {
+                    self.expr(place);
+                }
                 for selector in lifts {
                     if let Some((ty, fact)) = selector.rsplit_once("::") {
                         *selector = format!("{}::{fact}", resolve(self.module, ty, self.types));

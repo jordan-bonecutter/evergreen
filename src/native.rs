@@ -1298,6 +1298,7 @@ mod tests {
             include_str!("../examples/drop_children.evg"),
             include_str!("../examples/owned_borrows.evg"),
             include_str!("../examples/owned_planes.evg"),
+            include_str!("../examples/heap_updates.evg"),
             "fn main() -> usize {let p: plane(usize) = alloc(42); *p}",
             "fn main() -> usize {let p: plane(usize) = alloc(1); drop(p); p = alloc(42); *p}",
             "fn main() -> isize {*alloc(42)}",

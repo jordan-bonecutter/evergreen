@@ -675,7 +675,6 @@ struct Context<'a> {
     phase: Phase,
     current: Option<String>,
     measure: Option<Linear>,
-    opened: BTreeMap<String, BTreeSet<String>>,
     opened_planes: BTreeMap<PlaneId, BTreeSet<String>>,
     drops: &'a BTreeSet<String>,
     destructors: &'a BTreeMap<String, Function>,
@@ -1244,7 +1243,6 @@ impl<'a> Context<'a> {
             phase: Phase::Runtime,
             current: None,
             measure: None,
-            opened: BTreeMap::new(),
             opened_planes: BTreeMap::new(),
             drops,
             destructors,
@@ -1617,7 +1615,7 @@ impl<'a> Context<'a> {
     }
 
     fn record_valid(&mut self, value: &Symbol, line: usize) -> Result<()> {
-        self.record_valid_with(value, line, &BTreeSet::new())
+        self.validate_value(value, line, &BTreeSet::new(), false)
     }
     fn validate_opened_planes(&mut self, line: usize) -> Result<()> {
         let planes = self.opened_planes.keys().copied().collect::<Vec<_>>();
@@ -1625,20 +1623,42 @@ impl<'a> Context<'a> {
             self.charge_value_work(symbol_weight(self.memory.get(plane)?)?)?;
             let value = self.memory.get(plane)?.clone();
             let lifted = self.opened_planes[&plane].clone();
-            self.record_valid_with(&value, line, &lifted)?;
+            self.retained_valid_with(&value, line, &lifted)?;
         }
         Ok(())
     }
-    fn record_valid_with(
+    fn retained_valid_with(
         &mut self,
         value: &Symbol,
         line: usize,
         lifted: &BTreeSet<String>,
     ) -> Result<()> {
+        // Dormant containers may still carry an open plane. Check retained
+        // requirements through their ownership/borrow edges without publishing
+        // the lifted facts. Expression and argument observations use full
+        // validation instead, so they cannot rely on a suspended invariant.
+        self.validate_value(value, line, lifted, true)
+    }
+    fn validate_value(
+        &mut self,
+        value: &Symbol,
+        line: usize,
+        lifted: &BTreeSet<String>,
+        retained: bool,
+    ) -> Result<()> {
         self.charge_value_work(1)?;
         if let Symbol::Plane(_, reference) = value {
+            let selected = if retained {
+                self.opened_planes
+                    .get(&self.memory.plane(*reference)?)
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                BTreeSet::new()
+            };
+            self.charge_value_work(symbol_weight(self.memory.read(*reference)?)?)?;
             let stored = self.memory.read(*reference)?.clone();
-            return self.record_valid(&stored, line);
+            return self.validate_value(&stored, line, &selected, retained);
         }
         if let Symbol::Array {
             element,
@@ -1663,12 +1683,12 @@ impl<'a> Context<'a> {
                     // before checking nominal invariants in the merged context.
                     let element =
                         self.read_array(element, identity, &index, items.as_deref(), cells)?;
-                    self.validate_argument(&element, line)?;
+                    self.validate_argument_mode(&element, line, retained)?;
                 }
                 return Ok(());
             }
             for v in items.iter().flatten().chain(cells.values()) {
-                self.validate_argument(v, line)?;
+                self.validate_argument_mode(v, line, retained)?;
             }
             return Ok(());
         }
@@ -1691,7 +1711,7 @@ impl<'a> Context<'a> {
             let v = fields
                 .get(n)
                 .ok_or_else(|| format!("line {line}: missing field {n}"))?;
-            self.validate_argument(v, line)?;
+            self.validate_argument_mode(v, line, retained)?;
             let t = self.resolve(t)?;
             self.compatible(&v.ty(), &t, line)?;
             self.env.insert(n.clone(), v.clone());
@@ -1741,7 +1761,7 @@ impl<'a> Context<'a> {
             // Validate against the resulting store: a field reference may point
             // back into this very root. Failure rejects the whole verification.
             self.memory.write(id, root.clone(), replace_plane)?;
-            self.record_valid_with(&root, place.line, &lifted)?;
+            self.retained_valid_with(&root, place.line, &lifted)?;
             for (n, plane) in &self.roots {
                 if *plane == id {
                     self.env.insert(n.clone(), root.clone());
@@ -1823,11 +1843,16 @@ impl<'a> Context<'a> {
                 .ok_or("unknown assignment target")?
         };
         replace(&mut root, &fields, new)?;
-        let lifted = self.opened.get(&name).cloned().unwrap_or_default();
+        let lifted = self
+            .roots
+            .get(&name)
+            .and_then(|plane| self.opened_planes.get(plane))
+            .cloned()
+            .unwrap_or_default();
         if let Some(id) = self.roots.get(&name) {
             self.memory.write(*id, root.clone(), replace_plane)?;
         }
-        self.record_valid_with(&root, place.line, &lifted)?;
+        self.retained_valid_with(&root, place.line, &lifted)?;
         self.env.insert(name, root);
         self.validate_opened_planes(place.line)
     }
@@ -1855,20 +1880,19 @@ impl<'a> Context<'a> {
         match s {
             Statement::Ideal(binding) => {
                 if let Statement::Assign { target, .. } = binding.as_ref() {
-                    fn root(expression: &Expr) -> Option<&str> {
-                        match &expression.kind {
-                            Kind::Name(name) => Some(name),
-                            Kind::Field(base, _) | Kind::Index(base, _) => root(base),
-                            _ => None,
-                        }
-                    }
-                    root(target).ok_or("ideal assignments require an ideal binding or its structural fields, without dereferencing borrowed storage")?;
                     fn erased(context: &Context<'_>, expression: &Expr) -> bool {
                         match &expression.kind {
                             Kind::Name(name) => {
                                 context.ideal_execution || context.ideal_bindings.contains(name)
                             }
                             Kind::Index(base, _) => erased(context, base),
+                            Kind::Unary(op, _) if op == "*" => {
+                                // Following a pointer resets the storage role:
+                                // an erased pointer can still target live data.
+                                context
+                                    .hint(expression)
+                                    .is_some_and(|ty| context.proof_storage(&ty))
+                            }
                             Kind::Field(base, field) => {
                                 erased(context, base)
                                     || matches!(context.hint(base), Some(Ty::Record(name)) if context.structs[&name].ideal_fields.contains(field))
@@ -2018,7 +2042,7 @@ impl<'a> Context<'a> {
             }
             Kind::Record(..) | Kind::Array(..) => false,
             Kind::Unary(op, x) if op == "*" => {
-                matches!(self.hint(x), Some(Ty::Ref(t)) if matches!(*t, Ty::Machine(_) | Ty::Bool | Ty::Int | Ty::Nat))
+                matches!(self.hint(x), Some(Ty::Ref(_) | Ty::Plane(_))) && self.update_expression(x)
             }
             Kind::Unary(_, x) | Kind::Field(x, _) | Kind::FactAt(x, _) => self.update_expression(x),
             Kind::Binary(_, a, b) | Kind::Index(a, b) => {
@@ -2032,7 +2056,7 @@ impl<'a> Context<'a> {
     }
     fn update(
         &mut self,
-        places: &[String],
+        places: &[Expr],
         lifts: &[String],
         body: &[Statement],
         line: usize,
@@ -2040,25 +2064,32 @@ impl<'a> Context<'a> {
         if !self.opened_planes.is_empty() {
             return Err("nested invariant updates are not supported yet".into());
         }
-        let roots: BTreeSet<_> = places.iter().cloned().collect();
-        if roots.len() != places.len() {
-            return Err(format!("line {line}: duplicate update place"));
-        }
         if lifts.iter().collect::<BTreeSet<_>>().len() != lifts.len() {
             return Err(format!("line {line}: duplicate lifted requirement"));
         }
         let mut opened = BTreeMap::new();
         let mut matched = BTreeSet::new();
-        for name in places {
-            let v = self.storage(&Expr {
-                kind: Kind::Name(name.clone()),
-                line,
-            })?;
+        let mut targets = Vec::new();
+        for place in places {
+            if !borrow_expression(place) {
+                return Err(format!(
+                    "line {line}: update places require structural storage observations"
+                ));
+            }
+            let (reference, path) = self.location(place)?;
+            if !path.is_empty() {
+                return Err(format!("line {line}: updates currently open whole plane roots; nested record projections need subplane invariant tracking"));
+            }
+            let plane = self.memory.plane(reference)?;
+            if opened.contains_key(&plane) {
+                return Err(format!(
+                    "line {line}: duplicate update place; aliases name the same plane"
+                ));
+            }
+            let v = self.memory.read(reference)?.clone();
             self.record_valid(&v, line)?;
             let Symbol::Record(typename, _) = v else {
-                return Err(format!(
-                    "line {line}: update requires a live local struct place"
-                ));
+                return Err(format!("line {line}: update requires a live struct plane"));
             };
             let def = self.structs.get(&typename).ok_or("unknown update type")?;
             let mut required = Vec::new();
@@ -2089,20 +2120,13 @@ impl<'a> Context<'a> {
                     matched.insert(selector.clone());
                 }
             }
-            opened.insert(name.clone(), selected);
+            opened.insert(plane, selected);
+            targets.push(reference);
         }
         if matched.len() != lifts.len() {
             return Err(format!("line {line}: lifts must name declared facts used as independent where requirements of an opened place"));
         }
-        self.opened = opened;
-        for name in places {
-            let (reference, _) = self.location(&Expr {
-                kind: Kind::Name(name.clone()),
-                line,
-            })?;
-            self.opened_planes
-                .insert(self.memory.plane(reference)?, self.opened[name].clone());
-        }
+        self.opened_planes = opened;
         let mut locals = Vec::new();
         let mut local_facts = Vec::new();
         let mut local_proofs = Vec::new();
@@ -2133,15 +2157,10 @@ impl<'a> Context<'a> {
                 _ => return Err(format!("line {line}: this operation needs invariant-independent effects; moves, drops, exits, and unknown effects are forbidden while invariants are open")),
             }
         }
-        for name in places {
-            let value = if let Some(id) = self.roots.get(name) {
-                self.memory.get(*id)?.clone()
-            } else {
-                self.env.get(name).cloned().ok_or("unknown update place")?
-            };
+        for reference in targets {
+            let value = self.memory.read(reference)?.clone();
             self.record_valid(&value, line)?;
         }
-        self.opened.clear();
         self.opened_planes.clear();
         for name in locals.into_iter().rev() {
             let value = if let Some(id) = self.roots.remove(&name) {
@@ -2887,11 +2906,41 @@ impl<'a> Context<'a> {
         self.validate_argument(&target, line)
     }
     fn validate_argument(&mut self, value: &Symbol, line: usize) -> Result<()> {
+        self.validate_argument_mode(value, line, false)
+    }
+    fn validate_argument_mode(
+        &mut self,
+        value: &Symbol,
+        line: usize,
+        retained: bool,
+    ) -> Result<()> {
         if let Symbol::Ref(_, reference, path) = value {
-            self.validate_reference(*reference, path, line)
+            if retained {
+                self.validate_retained_reference(*reference, path, line)
+            } else {
+                self.validate_reference(*reference, path, line)
+            }
         } else {
-            self.record_valid(value, line)
+            self.validate_value(value, line, &BTreeSet::new(), retained)
         }
+    }
+    fn validate_retained_reference(
+        &mut self,
+        reference: Reference,
+        path: &[Projection<Linear>],
+        line: usize,
+    ) -> Result<()> {
+        let selected = if path.is_empty() {
+            self.opened_planes
+                .get(&self.memory.plane(reference)?)
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            BTreeSet::new()
+        };
+        self.charge_value_work(symbol_weight(project(self.memory.read(reference)?, path)?)?)?;
+        let target = project(self.memory.read(reference)?, path)?.clone();
+        self.retained_valid_with(&target, line, &selected)
     }
 
     fn validate_live(&mut self, line: usize) -> Result<()> {
@@ -2926,21 +2975,21 @@ impl<'a> Context<'a> {
                 {
                     continue;
                 }
-                self.validate_argument(&value, line)?;
+                self.validate_argument_mode(&value, line, true)?;
             } else {
                 let lifted = plane
                     .and_then(|plane| self.opened_planes.get(&plane))
                     .cloned()
                     .unwrap_or_default();
-                self.record_valid_with(&value, line, &lifted)?;
+                self.retained_valid_with(&value, line, &lifted)?;
             }
         }
         // Rebinding a parameter cannot discard the caller's original typed
         // view. Borrowed input storage must remain valid at this boundary.
         let inputs = std::mem::take(&mut self.input_references);
-        let result = inputs
-            .iter()
-            .try_for_each(|input| self.validate_reference(input.reference, &input.path, line));
+        let result = inputs.iter().try_for_each(|input| {
+            self.validate_retained_reference(input.reference, &input.path, line)
+        });
         self.input_references = inputs;
         result?;
         self.validate_opened_planes(line)
@@ -2992,6 +3041,12 @@ impl<'a> Context<'a> {
                 if self.phase != Phase::Specification && self.symbol_is_affine(&value) {
                     if self.phase == Phase::Ideal && !self.erased_value(&value) {
                         return Err("ideal execution cannot consume runtime ownership; use a read-only proof view".into());
+                    }
+                    if self.phase == Phase::Runtime && !self.opened_planes.is_empty() {
+                        return Err(
+                            "runtime ownership moves are forbidden while invariants are open"
+                                .into(),
+                        );
                     }
                     if self.dropping {
                         return Err("destructor receivers and owned fields cannot be moved in this initial destructor subset".into());
@@ -3554,7 +3609,7 @@ impl<'a> Context<'a> {
                     self.charge_value_work(symbol_weight(self.memory.get(root)?)?)?;
                     let stored = self.memory.get(root)?.clone();
                     let lifted = self.opened_planes.get(&root).cloned().unwrap_or_default();
-                    self.record_valid_with(&stored, e.line, &lifted)?;
+                    self.retained_valid_with(&stored, e.line, &lifted)?;
                 }
                 if !f.modifies.is_empty() {
                     self.validate_live(e.line)?;
@@ -4264,6 +4319,99 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 #[cfg(test)]
 mod tests {
     #[test]
+    fn heap_record_updates_track_physical_planes_and_retained_requirements() {
+        let source = include_str!("../examples/heap_updates.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let unclosed = source.replace(
+            "ideal (*holder.allocation).owners = nat(*changed);",
+            "proof only_count: *changed == 43;",
+        );
+        assert!(verify(&unclosed)
+            .unwrap_err()
+            .contains("invariant of ledgers::Ledger"));
+        for argument in ["&*holder.allocation", "dormant"] {
+            let observes = source.replace("ideal (*holder.allocation).owners = nat(*changed);", &format!("ideal let observed = ledgers::inspect({argument}); ideal (*holder.allocation).owners = nat(*changed);"));
+            assert!(verify(&observes)
+                .unwrap_err()
+                .contains("invariant of ledgers::Ledger"));
+        }
+        let duplicate = source.replace(
+            "update(*holder.allocation)",
+            "update(*holder.allocation, *dormant)",
+        );
+        assert!(verify(&duplicate)
+            .unwrap_err()
+            .contains("duplicate update place"));
+        let no_permission = source.replace("modifies(&(*ledger).count, &(*ledger).owners)", "");
+        assert!(verify(&no_permission)
+            .unwrap_err()
+            .contains("matching modifies contract"));
+        let pulse = include_str!("../examples/reject_heap_update_intermediate.evg");
+        assert!(verify(pulse).unwrap_err().contains("invariant of Ledger"));
+        let reverse_release = source.replace("ideal (*ledger).owners = (*ledger).owners - 1;\n            (*ledger).count = (*ledger).count - 1;", "(*ledger).count = (*ledger).count - 1; ideal (*ledger).owners = (*ledger).owners - 1;");
+        assert!(verify(&reverse_release)
+            .unwrap_err()
+            .contains("invariant of ledgers::Ledger"));
+        let pulse_bounds = source.replace(
+            "{*slot = value; slot}",
+            "{*slot = 101; *slot = value; slot}",
+        );
+        assert!(verify(&pulse_bounds)
+            .unwrap_err()
+            .contains("invariant of ledgers::Ledger"));
+    }
+
+    #[test]
+    fn dormant_heap_views_preserve_other_container_requirements() {
+        let source = include_str!("../examples/heap_updates.evg");
+        let views = source
+            .replace(
+                "type Holder",
+                "type View struct {record: &ledgers::Ledger}\ntype Holder",
+            )
+            .replace(
+                "let holder = Holder {allocation: owner};",
+                "let holder = Holder {allocation: owner}; let tracked = View {record: dormant};",
+            );
+        assert_eq!(verify(&views).unwrap().run().unwrap().to_string(), "42");
+        let guarded = views.replace(
+            "type View struct {record: &ledgers::Ledger}",
+            "type View struct {record: &ledgers::Ledger} where((*record).count <= 42);",
+        );
+        assert!(verify(&guarded).unwrap_err().contains("invariant of View"));
+        let observer = views.replace("fn main()", "ideal fn inspect_view(v: &View) -> nat {ledgers::inspect((*v).record)} fn main()")
+            .replace("ideal (*holder.allocation).owners = nat(*changed);", "ideal let invalid = inspect_view(&tracked); ideal (*holder.allocation).owners = nat(*changed);");
+        assert!(verify(&observer)
+            .unwrap_err()
+            .contains("invariant of ledgers::Ledger"));
+        let owner_view = source.replace("ideal fn inspect(ledger:", "ideal fn inspect_owner(owner: &plane(Ledger)) -> nat {(**owner).owners} ideal fn inspect(ledger:")
+            .replace("let holder = Holder {allocation: owner};", "let holder = Holder {allocation: owner}; let owner_view = &holder.allocation;")
+            .replace("ideal (*holder.allocation).owners = nat(*changed);", "ideal let invalid = ledgers::inspect_owner(owner_view); ideal (*holder.allocation).owners = nat(*changed);");
+        assert!(verify(&owner_view)
+            .unwrap_err()
+            .contains("invariant of ledgers::Ledger"));
+    }
+
+    #[test]
+    fn explicit_ideal_borrowed_writes_reset_erasure_at_pointer_edges() {
+        let source = "ideal fn set(r: &nat, n: nat) modifies(r) ensures(*r == n) {ideal *r = n;} fn main() -> usize {ideal let n: nat = 0; ideal let done = set(&n, 42); proof updated: n == 42; 42}";
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        for source in [
+            "fn main() {let n: usize = 0; ideal let r = &n; ideal *r = 42;}",
+            "ideal type State struct {count: &usize} fn main() {let n: usize = 0; ideal let state = State {count: &n}; ideal *state.count = 42;}",
+            "type Item struct {n: usize} fn main() {let owner = alloc(Item {n: 0}); ideal (*owner).n = 42;}",
+        ] {assert!(verify(source).unwrap_err().contains("ideal assignments cannot modify runtime storage"));}
+    }
+
+    #[test]
     fn owned_planes_keep_identity_across_moves_and_cleanup_nested_payloads() {
         let source = include_str!("../examples/owned_planes.evg");
         let (program, bundle) = prove(source).unwrap();
@@ -4858,7 +5006,11 @@ mod tests {
         let source = "type Resource struct {} impl Drop for Resource {fn drop(self) {}} type Pair struct {left: usize, right: usize} where(fact balanced = left == right; balanced); fn hidden(slot: &usize) -> &usize borrows(slot) {let resource = Resource {}; slot} fn main() {let pair = Pair {left: 7, right: 7}; update(pair) lifts balanced {pair.left = *hidden(&pair.left); pair.right = pair.left;}}";
         assert!(verify(source)
             .unwrap_err()
-            .contains("ownership-free effects"));
+            .contains("invariant-independent effects"));
+        let source = "type Pair struct {left: usize, right: usize} where(fact balanced = left == right; balanced); fn main() {let pair = Pair {left: 42, right: 42}; let owner: plane(usize) = alloc(42); update(pair) lifts balanced {let observed = *(if true {owner} else {owner});}}";
+        assert!(verify(source)
+            .unwrap_err()
+            .contains("runtime ownership moves are forbidden"));
     }
 
     #[test]
