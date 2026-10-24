@@ -1646,3 +1646,14 @@ mathematical views through a conversion. Machine type names are reserved at
 function declarations. The native backend needs no conversion instruction after
 a correctly extended load when the checker has proved representability.
 `examples/integer_conversions.evg` runs and builds without trusted assumptions.
+
+`examples/owned_return_cleanup.evg` exercises a destructor that updates an
+allocation already moved into the function's pending return value. The checker
+keeps that value's ownership authority live until local cleanup finishes;
+postconditions and result alias checks observe the state after cleanup. Cleanup
+also recognizes allocations reachable through ordinary live owners and through
+the destructor receiver itself. `examples/owned_destructor_cleanup.evg` mutates
+its owned allocation before child cleanup frees it. Released roots are not
+revalidated as live post-state objects, and stale references remain invalid.
+These rules still require write footprints for borrowed, externally owned data
+and preserve payload invariants on actual writes.

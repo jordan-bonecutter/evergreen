@@ -3158,3 +3158,34 @@ fn rc_and_arc_share_a_lifting_free_ideal_count_protocol() {
         .unwrap_err()
         .contains("precondition of reserve"));
 }
+
+#[test]
+fn cleanup_can_write_live_owned_heap_and_pending_return_allocations() {
+    let source = include_str!("../../../examples/owned_return_cleanup.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let owned_receiver = include_str!("../../../examples/owned_destructor_cleanup.evg");
+    assert_eq!(
+        verify(owned_receiver).unwrap().run().unwrap().to_string(),
+        "42"
+    );
+    let after_free =
+        owned_receiver.replace("drop(guard);", "drop(guard); proof stale: *target == 42;");
+    assert!(verify(&after_free).is_err());
+    let declarations = source.split("fn finish()").next().unwrap();
+    let local = format!("{declarations} fn main() -> usize {{let owner: plane(usize) = alloc(7); let guard = Guard {{target: &*owner, value: 42}}; drop(guard); *owner}}");
+    assert_eq!(verify(&local).unwrap().run().unwrap().to_string(), "42");
+    let borrowed = format!("{declarations} fn finish(owner: &plane(usize)) -> usize {{let guard = Guard {{target: &**owner, value: 42}}; 42}} fn main() -> usize {{let owner: plane(usize) = alloc(7); finish(&owner)}}");
+    assert!(verify(&borrowed).unwrap_err().contains("modifies"));
+    let invalid_payload = format!("{declarations} type Positive struct {{value: usize}} where(value > 0); fn finish() -> plane(Positive) {{let owner: plane(Positive) = alloc(Positive {{value: 7}}); let guard = Guard {{target: &(*owner).value, value: 0}}; owner}} fn main() -> usize {{let owner = finish(); (*owner).value}}");
+    assert!(verify(&invalid_payload).is_err());
+    let stale = "type Guard struct {slot: &plane(usize)} impl Drop for Guard {fn drop(self) {fact readable = **self.slot == 7;}} fn finish() -> plane(usize) {let owner: plane(usize) = alloc(7); let guard = Guard {slot: &owner}; owner} fn main() -> usize {let owner = finish(); *owner}";
+    assert!(verify(stale).is_err());
+}

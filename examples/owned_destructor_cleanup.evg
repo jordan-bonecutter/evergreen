@@ -1,0 +1,15 @@
+type OwnedGuard struct {owner: plane(usize), target: &usize}
+where(target == &*owner);
+impl Drop for OwnedGuard {
+    fn drop(self) modifies(self.target) {
+        *self.target = 42;
+        proof updated: *self.target == 42;
+    }
+}
+fn main() -> usize {
+    let owner: plane(usize) = alloc(7);
+    let target = &*owner;
+    let guard = OwnedGuard {owner: owner, target: target};
+    drop(guard);
+    42
+}

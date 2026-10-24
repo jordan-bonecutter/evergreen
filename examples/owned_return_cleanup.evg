@@ -1,0 +1,12 @@
+type Guard struct {target: &usize, value: usize}
+impl Drop for Guard {
+    fn drop(self) modifies(self.target) ensures(*self.target == self.value) {
+        *self.target = self.value;
+    }
+}
+fn finish() -> plane(usize) ensures(*result == 42) {
+    let owner: plane(usize) = alloc(7);
+    let guard = Guard {target: &*owner, value: 42};
+    owner
+}
+fn main() -> usize {let owner = finish(); *owner}

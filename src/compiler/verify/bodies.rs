@@ -85,7 +85,15 @@ impl Context<'_> {
         }
         let value = self.scoped_eval(&function.result, Some(result_type))?;
         self.validate_live(function.result.line)?;
+        // The return value owns its allocations while local destructors run.
+        // This reserved binding is not a source name or a cleanup binding, and
+        // normal calls isolate it in the caller environment as usual.
+        if heap::owns_planes_type(&function.ret, self.structs) {
+            self.charge_value_work(symbol_weight(&value)?)?;
+            self.env.insert("evg_return_value".into(), value.clone());
+        }
         self.finish_scope(function)?;
+        self.env.remove("evg_return_value");
         // Cleanup may change fields used to select a result-owned view.
         // Check provenance against the final returned storage, not a state
         // preceding destructor effects.

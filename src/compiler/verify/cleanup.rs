@@ -175,7 +175,8 @@ impl Context<'_> {
             let mut changed = BTreeSet::new();
             for write in &writes {
                 let id = self.memory.plane(write.reference)?;
-                let owned = saved.roots.values().any(|root| *root == id);
+                let owned =
+                    self.owns_plane_in(&saved.env, &saved.roots, id)? || self.owns_plane(id)?;
                 if !self.write_permitted_by(&saved.writable, write.reference, &write.path, owned)? {
                     return Err(
                         "cleanup writes through a reference without a matching modifies contract"
@@ -215,7 +216,12 @@ impl Context<'_> {
         let changed =
             checked.map_err(|error| format!("line {line}: cleanup of {name}: {error}"))?;
         for id in changed {
-            self.charge_value_work(symbol_weight(self.memory.get(id)?)?)?;
+            // A receiver may mutate its owned payload before child cleanup
+            // releases it. Only surviving roots have post-state invariants.
+            let Ok(current) = self.memory.get(id) else {
+                continue;
+            };
+            self.charge_value_work(symbol_weight(current)?)?;
             let current = self.memory.get(id)?.clone();
             self.record_valid(&current, line)?;
             for (binding, root) in &self.roots {

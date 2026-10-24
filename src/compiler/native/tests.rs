@@ -78,13 +78,26 @@ fn execute_test_binary_to(
     };
     fs::write(path, binary).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
-    let mut child = Command::new(path)
+    let mut command = Command::new(path);
+    command
         .stdin(Stdio::null())
         .stdout(stdout)
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::null());
     let deadline = Instant::now() + Duration::from_secs(3);
+    let mut child = loop {
+        match command.spawn() {
+            Ok(child) => break child,
+            // A concurrently starting child can briefly inherit a writable
+            // descriptor before close-on-exec. Retry only that Linux race.
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => panic!("native test could not start: {error}: {source}"),
+        }
+    };
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
@@ -114,6 +127,8 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        include_str!("../../../examples/owned_return_cleanup.evg"),
+        include_str!("../../../examples/owned_destructor_cleanup.evg"),
         include_str!("../../../examples/integer_conversions.evg"),
         "fn main() -> usize {let small: i32 = i32::MIN; let wide = i64(small); let positive = u64(u32::MAX); if wide == -2147483648 && positive == 4294967295 {42} else {1}}",
         "fn widen(n: u8) -> usize ensures(nat(result) == nat(n)) {usize(n)} type Resource struct {tag: u8} where(tag == 7); impl Drop for Resource {fn drop(self) {let tag = widen(self.tag); proof valid: tag == 7;}} fn change(n: &u8) where(*n < u8::MAX) modifies(n) ensures(usize(*n) == old(usize(*n)) + 1) {*n = *n + 1;} fn main() -> usize {let resource = Resource {tag: 7}; let n: u8 = 41; change(&n); widen(n)}",
