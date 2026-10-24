@@ -1219,6 +1219,7 @@ mod tests {
             include_str!("../examples/old_selection.evg"),
             include_str!("../examples/array_frame_history.evg"),
             include_str!("../examples/array_branch_history.evg"),
+            include_str!("../examples/array_model.evg"),
             "fn main() -> usize where(old(1 + 1) == 2) {42}",
             "type Fixed struct {value: usize} where(value == 42); fn refresh(r: &Fixed) -> &Fixed modifies(&(*r).value) borrows(r) ensures((*r).value == 42 && (*result).value == 42) {(*r).value = 42; r} fn main() -> usize {let fixed = Fixed {value: 42}; let refreshed = refresh(&fixed); (*refreshed).value}",
             include_str!("../examples/recursion.evg"),
@@ -1391,6 +1392,11 @@ mod tests {
         ] {
             cases.push(format!("{declarations} fn main() -> usize {{{body}}}"));
         }
+        cases.extend(
+            crate::verify::array_model::concrete_cases()
+                .into_iter()
+                .map(|(source, _)| source),
+        );
         let pair = "type Left struct {} impl Drop for Left {fn drop(self){}} type Right struct {} impl Drop for Right {fn drop(self){}} type Pair struct {left: Left, right: Right} fn take(p: Pair) -> Left {let Pair {left, right} = p; left}";
         for body in [
             "let p = Pair {left: Left {}, right: Right {}}; p.left = Left {}; 42",

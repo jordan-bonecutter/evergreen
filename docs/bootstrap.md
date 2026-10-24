@@ -251,11 +251,21 @@ pointer provenance, concurrent access, or physical storage reuse.
 cargo test
 cargo clippy --all-targets -- -D warnings
 EVG_LEAN=/path/to/lean cargo test --test verification -- --ignored
+cargo test --lib symbolic_array_entries_each_reject_a_wrong_contract -- --ignored
 ```
 
 The external integration suite checks valid programs, false contracts,
 unproven array accesses, and the plane specification. Missing Lean is an error,
 never a successful verification.
+
+An independent two-cell Rust array model checks 64 combinations of writes,
+conditional updates, early or late borrows, and overlapping helper arguments.
+Each case must prove, execute with the model's result, replay its certificate
+without search, and reject a wrong result contract. `examples/array_model.evg`
+also checks a symbolic helper universally and observes its sixteen input
+combinations in both execution backends. The optional exhaustive audit above
+checks wrong entry contracts separately for those sixteen symbolic calls.
+These finite checks are regression evidence, not a compiler correctness proof.
 
 ## Direction
 

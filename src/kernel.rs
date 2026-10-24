@@ -168,11 +168,25 @@ pub fn solve(assumptions: &[Linear]) -> ArithmeticResult<Certificate> {
             .map(|(i, r)| (r.value.clone(), i))
             .collect();
         let mut equality = None;
-        for (i, row) in rows.iter().enumerate() {
-            if let Some(variable) = row.value.terms.keys().next() {
+        // New obligations are appended after the context. Prefer substitutions
+        // touching the current last row so stale SSA equalities do not consume
+        // the elimination budget before we reach the obligation itself.
+        let focus = rows.last().map(|row| &row.value.terms);
+        for (i, row) in rows.iter().enumerate().rev() {
+            if let Some(variable) = row
+                .value
+                .terms
+                .keys()
+                .min_by_key(|name| !focus.is_some_and(|terms| terms.contains_key(*name)))
+            {
                 if let Some(&j) = lookup.get(&row.value.scale(-1)?) {
-                    equality = Some((i, j, variable.clone()));
-                    break;
+                    let relevant = focus.is_some_and(|terms| terms.contains_key(variable));
+                    if equality.is_none() || relevant {
+                        equality = Some((i, j, variable.clone()));
+                    }
+                    if relevant {
+                        break;
+                    }
                 }
             }
         }
@@ -268,6 +282,22 @@ pub fn solve(assumptions: &[Linear]) -> ArithmeticResult<Certificate> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stale_equalities_do_not_exhaust_the_obligation_budget() {
+        let mut assumptions = Vec::new();
+        for index in 0..100 {
+            let stale = Linear::variable(format!("stale_{index}"));
+            assumptions.push(stale.clone());
+            assumptions.push(stale.scale(-1).unwrap());
+        }
+        let result = Linear::variable("result");
+        let equality = result.sub(&Linear::number(42)).unwrap();
+        assumptions.push(equality.clone());
+        assumptions.push(equality.scale(-1).unwrap());
+        assumptions.push(result.scale(-1).unwrap().add(&Linear::number(41)).unwrap());
+        check(&assumptions, &solve(&assumptions).unwrap()).unwrap();
+    }
+
     #[test]
     fn verifies_bounds_certificate() {
         // i >= 0, n - i - 1 >= 0, i - n >= 0 (negated bounds goal).

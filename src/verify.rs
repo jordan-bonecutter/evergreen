@@ -9,6 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
 mod array_history;
+#[cfg(test)]
+pub(crate) mod array_model;
 mod bodies;
 mod cleanup;
 mod paths;

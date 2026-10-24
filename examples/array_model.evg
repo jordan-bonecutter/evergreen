@@ -1,0 +1,48 @@
+fn put(data: &[usize; 2], mirror: &[usize; 2], index: usize, value: usize)
+where(index < 2) modifies(&(*data)[index])
+ensures((*data)[index] == value) {(*data)[index] = value;}
+fn scenario(flag: bool, first: usize, second: usize, queried: usize) -> usize
+where(first < 2 && second < 2 && queried < 2)
+ensures(result == (if flag && second == queried {13} else {if first == queried {42} else {if queried == 0 {7} else {9}}})) {
+    let data: [usize; 2] = [7, 9];
+    let chosen = &data[queried];
+    data[first] = 42;
+    let guarded = if flag {data[queried]} else {0};
+    let effect = if flag {put(&data, &data, second, 13)} else {()};
+    *chosen
+}
+fn main() -> usize ensures(result == 42) {
+    let actual_0 = scenario(false, 0, 0, 0);
+    let failed_0: usize = if actual_0 == 42 {0} else {1};
+    let actual_1 = scenario(true, 0, 0, 0);
+    let failed_1: usize = if actual_1 == 13 {0} else {1};
+    let actual_2 = scenario(false, 0, 0, 1);
+    let failed_2: usize = if actual_2 == 9 {0} else {1};
+    let actual_3 = scenario(true, 0, 0, 1);
+    let failed_3: usize = if actual_3 == 9 {0} else {1};
+    let actual_4 = scenario(false, 0, 1, 0);
+    let failed_4: usize = if actual_4 == 42 {0} else {1};
+    let actual_5 = scenario(true, 0, 1, 0);
+    let failed_5: usize = if actual_5 == 42 {0} else {1};
+    let actual_6 = scenario(false, 0, 1, 1);
+    let failed_6: usize = if actual_6 == 9 {0} else {1};
+    let actual_7 = scenario(true, 0, 1, 1);
+    let failed_7: usize = if actual_7 == 13 {0} else {1};
+    let actual_8 = scenario(false, 1, 0, 0);
+    let failed_8: usize = if actual_8 == 7 {0} else {1};
+    let actual_9 = scenario(true, 1, 0, 0);
+    let failed_9: usize = if actual_9 == 13 {0} else {1};
+    let actual_10 = scenario(false, 1, 0, 1);
+    let failed_10: usize = if actual_10 == 42 {0} else {1};
+    let actual_11 = scenario(true, 1, 0, 1);
+    let failed_11: usize = if actual_11 == 42 {0} else {1};
+    let actual_12 = scenario(false, 1, 1, 0);
+    let failed_12: usize = if actual_12 == 7 {0} else {1};
+    let actual_13 = scenario(true, 1, 1, 0);
+    let failed_13: usize = if actual_13 == 7 {0} else {1};
+    let actual_14 = scenario(false, 1, 1, 1);
+    let failed_14: usize = if actual_14 == 42 {0} else {1};
+    let actual_15 = scenario(true, 1, 1, 1);
+    let failed_15: usize = if actual_15 == 13 {0} else {1};
+    42 - (failed_0 + failed_1 + failed_2 + failed_3 + failed_4 + failed_5 + failed_6 + failed_7 + failed_8 + failed_9 + failed_10 + failed_11 + failed_12 + failed_13 + failed_14 + failed_15)
+}
