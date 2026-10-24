@@ -1,0 +1,63 @@
+// Evergreen's Linux x86-64 scalar layout table, embedded by the bootstrap.
+// Integer meaning is independent of layout. These are literal data producers,
+// not arbitrary compile-time code; the bootstrap also validates backend widths.
+module x86_64 {
+    ideal type ScalarLayout struct {size: nat, alignment: nat}
+    where(size > 0 && size <= 8 && alignment <= size
+        && (alignment == 1 || alignment == 2 || alignment == 4 || alignment == 8));
+
+    ideal fn layout_u8() -> ScalarLayout
+    ensures(result.size == 1 && result.alignment == 1) {
+        ScalarLayout {size: 1, alignment: 1}
+    }
+
+    ideal fn layout_i8() -> ScalarLayout
+    ensures(result.size == 1 && result.alignment == 1) {
+        ScalarLayout {size: 1, alignment: 1}
+    }
+
+    ideal fn layout_u16() -> ScalarLayout
+    ensures(result.size == 2 && result.alignment == 2) {
+        ScalarLayout {size: 2, alignment: 2}
+    }
+
+    ideal fn layout_i16() -> ScalarLayout
+    ensures(result.size == 2 && result.alignment == 2) {
+        ScalarLayout {size: 2, alignment: 2}
+    }
+
+    ideal fn layout_u32() -> ScalarLayout
+    ensures(result.size == 4 && result.alignment == 4) {
+        ScalarLayout {size: 4, alignment: 4}
+    }
+
+    ideal fn layout_i32() -> ScalarLayout
+    ensures(result.size == 4 && result.alignment == 4) {
+        ScalarLayout {size: 4, alignment: 4}
+    }
+
+    ideal fn layout_u64() -> ScalarLayout
+    ensures(result.size == 8 && result.alignment == 8) {
+        ScalarLayout {size: 8, alignment: 8}
+    }
+
+    ideal fn layout_i64() -> ScalarLayout
+    ensures(result.size == 8 && result.alignment == 8) {
+        ScalarLayout {size: 8, alignment: 8}
+    }
+
+    ideal fn layout_bool() -> ScalarLayout
+    ensures(result.size == 1 && result.alignment == 1) {
+        ScalarLayout {size: 1, alignment: 1}
+    }
+
+    ideal fn layout_unit() -> ScalarLayout
+    ensures(result.size == 1 && result.alignment == 1) {
+        ScalarLayout {size: 1, alignment: 1}
+    }
+
+    ideal fn layout_pointer() -> ScalarLayout
+    ensures(result.size == 8 && result.alignment == 8) {
+        ScalarLayout {size: 8, alignment: 8}
+    }
+}

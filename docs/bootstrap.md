@@ -845,6 +845,23 @@ performs the checked sequential reserve/release stores and exits with status 0.
 Native differential tests include these programs, scalar alias writes, nested
 references, and Boolean updates.
 
+The scalar size/alignment table lives in `targets/x86_64.evg`, an ordinary
+Evergreen module of ideal literal data producers. The Rust bootstrap embeds and
+decodes that file once, so editing it requires rebuilding the compiler. Layout
+computation reads this table rather than deriving alignment from integer width.
+The profile checks as an Evergreen program with no trusted assumptions; tests
+also replay its proofs and reject malformed or incompatible target data.
+
+This first bootstrap format accepts literal layout records, not arbitrary
+compile-time programs. The decoder validates widths against the instructions the
+x86-64 backend implements, requires positive power-of-two alignment, and fails
+closed on missing entries. Integer arithmetic meaning remains primitive: `u8`
+means eight unsigned bits regardless of target policy. `usize`/`isize` still
+mean 64-bit integers on the only supported target. This table is not a C ABI
+contract and does not by itself add another architecture or prove hardware
+correctness. Endianness, machine instructions, and syscall register conventions
+remain properties of the x86-64 backend.
+
 Native machine integers occupy their declared width (one, two, four, or eight
 bytes), aligned to that width. Booleans occupy one byte; references and plane
 owners occupy eight. Records retain declaration order, align each field, and

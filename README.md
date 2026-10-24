@@ -18,6 +18,7 @@ standalone Linux x86-64 executable for the supported verified subset.
 | Shared syntax, parsing, and name resolution | [syntax.rs](src/syntax.rs), [syntax modules](src/syntax) |
 | Symbolic verification and language rules | [compiler/verify.rs](src/compiler/verify.rs), [verification modules](src/compiler/verify) |
 | Small proof kernel and certificate replay | [compiler/kernel.rs](src/compiler/kernel.rs), [compiler/certificate.rs](src/compiler/certificate.rs) |
+| Target scalar layout data | [targets/x86_64.evg](targets/x86_64.evg), [target decoder](src/compiler/target.rs), [aggregate layout](src/compiler/layout.rs) |
 | Native expression and statement emission | [compiler/native.rs](src/compiler/native.rs) |
 | Function compilation and executable packaging | [program.rs](src/compiler/native/program.rs), [elf.rs](src/compiler/native/elf.rs) |
 | Executing a verified program | [interpreter](src/interpreter/mod.rs) |

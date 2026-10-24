@@ -2,6 +2,7 @@
 //! Fields retain declaration order. Empty values reserve one byte for identity.
 //! This is not a C/FFI layout contract.
 
+use super::target::{self, Target};
 use crate::syntax::{Expr, Kind, Struct, Type};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -66,25 +67,21 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
         ty: &Type,
         structs: &BTreeMap<String, Struct>,
         active: &mut BTreeSet<String>,
+        target: &Target,
     ) -> Result<Layout> {
         let mut fields = BTreeMap::new();
         let mut align = 1;
         let size = match ty {
-            Type::Machine(integer) => {
-                align = usize::from(integer.bits / 8);
-                align
-            }
-            Type::Bool => 1,
-            Type::Unit => 1,
-            Type::Ref(_) | Type::Plane(_) => {
-                align = 8;
-                8
+            Type::Machine(_) | Type::Bool | Type::Unit | Type::Ref(_) | Type::Plane(_) => {
+                let scalar = target.scalar(ty)?;
+                align = scalar.align;
+                scalar.size
             }
             Type::Int | Type::Nat => {
                 return Err("ideal mathematical types have no native runtime layout".into())
             }
             Type::Array(element, count) => {
-                let element = compute(element, structs, active)?;
+                let element = compute(element, structs, active, target)?;
                 align = element.align;
                 element
                     .size
@@ -104,7 +101,7 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
                 }
                 let mut offset = 0usize;
                 for (name, ty) in definition.runtime_fields() {
-                    let layout = compute(ty, structs, active)?;
+                    let layout = compute(ty, structs, active, target)?;
                     align = align.max(layout.align);
                     offset = offset.next_multiple_of(layout.align);
                     if fields
@@ -139,7 +136,7 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
             fields,
         })
     }
-    compute(ty, structs, &mut BTreeSet::new())
+    compute(ty, structs, &mut BTreeSet::new(), target::native()?)
 }
 
 #[cfg(test)]
