@@ -295,6 +295,19 @@ fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     }
 }
 
+// Erased ownership must belong wholly to proof data. A physical owner or a
+// reference-bearing resource needs an explicit cross-phase ownership rule.
+fn erased_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
+    match t {
+        Type::Ref(_) => false,
+        Type::Named(name) => structs
+            .get(name)
+            .is_some_and(|s| s.ideal && s.fields.iter().all(|(_, t)| erased_type(t, structs))),
+        Type::Array(element, _) => erased_type(element, structs),
+        _ => true,
+    }
+}
+
 // Exact alias contracts may name an incoming reference or project a fixed
 // place through it using a checked scalar index. They cannot allocate, call,
 // or introduce evidence.
@@ -353,6 +366,7 @@ struct Context<'a> {
     functions: &'a BTreeMap<String, Function>,
     module: Option<String>,
     declaring: Option<String>,
+    ideal_execution: bool,
     structs: &'a BTreeMap<String, Struct>,
     env: BTreeMap<String, Symbol>,
     facts: BTreeMap<String, Expr>,
@@ -380,6 +394,22 @@ struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
+    fn erased_value(&self, value: &Symbol) -> bool {
+        match value.ty() {
+            Ty::Record(name) => erased_type(&Type::Named(name), self.structs),
+            Ty::Array(element, _) => self.erased_ty(&element),
+            Ty::Ref(_) => false,
+            _ => true,
+        }
+    }
+    fn erased_ty(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Record(name) => erased_type(&Type::Named(name.clone()), self.structs),
+            Ty::Array(element, _) => self.erased_ty(element),
+            Ty::Ref(_) => false,
+            _ => true,
+        }
+    }
     fn representation_access(&self, name: &str, line: usize) -> Result<()> {
         if self.declaring.as_deref() == Some(name) {
             return Ok(());
@@ -547,6 +577,7 @@ impl<'a> Context<'a> {
             functions,
             module: None,
             declaring: None,
+            ideal_execution: false,
             structs,
             env: BTreeMap::new(),
             facts: BTreeMap::new(),
@@ -808,6 +839,7 @@ impl<'a> Context<'a> {
         let saved_roots = std::mem::take(&mut self.roots);
         let saved_facts = std::mem::take(&mut self.facts);
         let saved_module = std::mem::replace(&mut self.module, def.module.clone());
+        let saved_phase = std::mem::replace(&mut self.phase, Phase::Specification);
         self.facts = def.facts.iter().cloned().collect();
         self.roots.clear();
         self.env.clear();
@@ -836,6 +868,7 @@ impl<'a> Context<'a> {
         self.roots = saved_roots;
         self.facts = saved_facts;
         self.module = saved_module;
+        self.phase = saved_phase;
         Ok(())
     }
 
@@ -1843,6 +1876,9 @@ impl<'a> Context<'a> {
                         .ok_or_else(|| format!("unknown value {n}"))
                 }?;
                 if self.phase != Phase::Specification && self.symbol_is_affine(&value) {
+                    if self.phase == Phase::Ideal && !self.erased_value(&value) {
+                        return Err("ideal execution cannot consume runtime ownership; use a read-only proof view".into());
+                    }
                     if self.dropping {
                         return Err("destructor receivers and owned fields cannot be moved in this initial destructor subset".into());
                     }
@@ -1864,6 +1900,12 @@ impl<'a> Context<'a> {
             }
             Kind::Record(name, entries) => {
                 self.representation_access(name, e.line)?;
+                if self.phase == Phase::Ideal
+                    && is_affine(&Type::Named(name.clone()), self.structs, self.drops)
+                    && !erased_type(&Type::Named(name.clone()), self.structs)
+                {
+                    return Err("ideal execution cannot construct runtime ownership".into());
+                }
                 let def = self
                     .structs
                     .get(name)
@@ -2063,18 +2105,25 @@ impl<'a> Context<'a> {
             }
             Kind::Call(name, args) => {
                 if name == "old" {
-                    if self.phase != Phase::Specification || args.len() != 1 {
+                    if self.phase == Phase::Runtime || args.len() != 1 {
                         return Err(
                             "old is proof-only and takes one entry-state parameter expression"
                                 .into(),
                         );
                     }
                     let key = Self::old_key(&args[0])?;
-                    return self
+                    let value = self
                         .old_values
                         .get(&key)
                         .cloned()
-                        .ok_or_else(|| format!("{key} is not a function entry parameter"));
+                        .ok_or_else(|| format!("{key} is not a function entry parameter"))?;
+                    if self.phase == Phase::Ideal && self.symbol_is_affine(&value) {
+                        return Err(
+                            "old ownership snapshots are proof views, not new ideal resources"
+                                .into(),
+                        );
+                    }
+                    return Ok(value);
                 }
                 if name == "int" || name == "nat" {
                     if self.phase == Phase::Runtime {
@@ -2102,6 +2151,12 @@ impl<'a> Context<'a> {
                     if args.len() != 1 {
                         return Err(format!("{name} expects one place"));
                     }
+                    if self.phase == Phase::Ideal
+                        && !self.ideal_execution
+                        && !matches!(&args[0].kind, Kind::Name(n) if self.ideal_bindings.contains(n))
+                    {
+                        return Err("erased execution cannot move or drop a runtime place".into());
+                    }
                     let (r, path) = self.location(&args[0])?;
                     if !path.is_empty() {
                         return Err(
@@ -2123,6 +2178,9 @@ impl<'a> Context<'a> {
                 if !f.modifies.is_empty() && self.phase == Phase::Specification {
                     return Err("modifying calls are forbidden in proof expressions".into());
                 }
+                if self.phase == Phase::Ideal && !f.ideal && !self.helpers.contains(name) {
+                    return Err("modifying calls and runtime effects cannot be erased; an ideal expression needs ideal code or a checked pure scalar helper".into());
+                }
                 if f.ideal && self.phase == Phase::Runtime {
                     return Err(format!(
                         "{name} is ideal code and cannot be called at runtime"
@@ -2143,8 +2201,8 @@ impl<'a> Context<'a> {
                         _ => None,
                     };
                     let saved_specification = self.phase;
-                    if f.ideal_params.contains(parameter) {
-                        self.phase = Phase::Specification;
+                    if f.ideal_params.contains(parameter) && self.phase != Phase::Specification {
+                        self.phase = Phase::Ideal;
                     }
                     let value = if let (Type::Array(element, _), Kind::Array(_)) = (t, &arg.kind) {
                         if let Some(element) = self.literal_element_hint(element)? {
@@ -2734,11 +2792,21 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
     let mut obligations = 0;
     for f in &all_functions {
         for (name, ty) in &f.params {
-            if f.ideal_params.contains(name)
-                && !matches!(ty, Type::Nat | Type::Int | Type::Bool | Type::Machine(_))
-            {
-                return Err(format!("line {}: ideal parameters currently accept scalar proof metadata; affine capabilities and reference-bearing proof arguments require resource-aware erasure", f.line));
+            if f.ideal_params.contains(name) && !erased_type(ty, &structs) {
+                return Err(format!("line {}: ideal parameters require pure proof data; runtime owners and reference-bearing resources need a cross-phase ownership contract", f.line));
             }
+            if f.ideal && is_affine(ty, &structs, &drops) && !erased_type(ty, &structs) {
+                return Err(format!(
+                    "line {}: ideal functions may borrow runtime ownership but cannot consume it",
+                    f.line
+                ));
+            }
+        }
+        if f.ideal && is_affine(&f.ret, &structs, &drops) && !erased_type(&f.ret, &structs) {
+            return Err(format!(
+                "line {}: ideal functions cannot produce runtime ownership",
+                f.line
+            ));
         }
         if !f.modifies.is_empty() {
             let references = f
@@ -2788,6 +2856,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         }
         let mut ctx = Context::new(&functions, &structs, &drops, &helpers, session);
         ctx.module = f.module.clone();
+        ctx.ideal_execution = f.ideal;
         ctx.dropping = f.drop_target.is_some();
         let execution = if f.ideal {
             Phase::Ideal
@@ -3046,9 +3115,7 @@ mod tests {
         assert_eq!(verify(only_ideal).unwrap().run().unwrap().to_string(), "42");
         let affine =
             "ideal affine type Ticket struct {tag: nat} fn bad(ideal t: Ticket) -> usize {0}";
-        assert!(verify(affine)
-            .unwrap_err()
-            .contains("resource-aware erasure"));
+        assert!(verify(affine).is_ok());
         let effect = "fn write(r: &usize) -> usize modifies(r) ensures (result == 1) {*r = 1; 1} fn metadata(ideal n: nat) -> usize {0} fn main() -> usize {let x: usize = 0; metadata(nat(write(&x)))}";
         assert!(verify(effect).unwrap_err().contains("modifying calls"));
         let declarations = source.split("fn main()").next().unwrap();
@@ -3189,6 +3256,39 @@ mod tests {
             "let x = if true {consume(t)} else {consume(t)}; t.tag",
         );
         assert!(verify(&format!("{declarations}\n{invalid}")).is_err());
+    }
+
+    #[test]
+    fn erased_affine_resources_move_without_runtime_values_or_effects() {
+        let source = include_str!("../examples/erased_resources.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        let declarations = source.split("fn main").next().unwrap();
+        for bad in [
+            "fn duplicate(ideal t: tickets::Ticket) -> usize {let a = consume(t, 0); consume(t, 42)}",
+            "fn restore(ideal t: tickets::Ticket) -> usize {let a = consume(t, 0); consume(old(t), 42)}",
+            "fn leak(ideal t: tickets::Ticket) -> usize {t}",
+            "fn branch(ideal t: tickets::Ticket) -> usize {if t.tag == 1 {42} else {0}}",
+        ] {assert!(verify(&format!("{declarations} {bad}")).is_err(), "{bad}");}
+        let proof_view = "ideal fn inspect(t: tickets::Ticket) -> nat {1} fn caller(ideal t: tickets::Ticket) -> usize {proof stable: inspect(t) == inspect(t); consume(t, 42)}";
+        // A missing postcondition cannot prove equality of arbitrary summaries.
+        assert!(verify(&format!("{declarations} {proof_view}")).is_err());
+        let proof_view = proof_view.replace("-> nat {1}", "-> nat ensures(result == 1) {1}");
+        assert!(verify(&format!("{declarations} {proof_view}")).is_ok());
+        let old_scalar = "fn answer(ideal expected: nat) -> usize where(expected == 42) ensures(result == 42) {42} fn caller(n: usize) -> usize where(n == 42) ensures(result == 42) {n = 0; answer(nat(old(n)))} fn main() -> usize {caller(42)}";
+        assert_eq!(verify(old_scalar).unwrap().run().unwrap().to_string(), "42");
+        let library = include_str!("../stdlib/credits.evg");
+        let bridge = "fn spend(ideal credit: credits::Credit, value: usize) -> usize ensures(result == value) {value} fn forward(ideal credit: credits::Credit, value: usize) -> usize ensures(result == value) {spend(credit, value)}";
+        assert!(verify(&format!("{library} {bridge}")).is_ok());
+        let borrow = "ideal affine type WithRef struct {r: &usize} fn bad(ideal resource: WithRef) -> usize {0}";
+        assert!(verify(borrow).unwrap_err().contains("cross-phase"));
+        let resource = "type Resource struct {} impl Drop for Resource {fn drop(self){}}";
+        for bad in [
+            "ideal fn consume_resource(resource: Resource) -> nat {1}",
+            "ideal fn make_resource() -> Resource {Resource {}}",
+            "ideal fn make_hidden() -> nat {let r = Resource {}; 1}",
+            "fn metadata(ideal u: ()) -> usize {0} fn main() -> usize {let r = Resource {}; metadata(drop(r))}",
+            "fn metadata(ideal n: usize) -> usize {0} fn main() -> usize {let n: usize = 42; metadata(move(n))}",
+        ] {assert!(verify(&format!("{resource} {bad}")).is_err(), "{bad}");}
     }
 
     #[test]

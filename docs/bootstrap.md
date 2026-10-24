@@ -373,20 +373,21 @@ kernel checks a contradiction certificate. Failed probes retain the path.
 Those probes are included in replay artifacts; path and search limits remain
 bounded instead of being raised to accommodate counter branches.
 
-## Ideal scalar parameters
+## Ideal parameters
 
 `fn checked(value: usize, ideal expected: nat)` accepts scalar proof metadata
 which is checked at calls and erased from execution. Contracts and proof terms
 can inspect `expected`; runtime expressions, branches, assignments, and borrows
-cannot. Actual ideal arguments are checked as proof expressions, so they cannot
-call modifying helpers. Their expressions are skipped by the evaluator,
+cannot. Actual ideal arguments use checked ideal execution, so affine proof
+resources are consumed and runtime effects cannot be skipped by erasure. Their expressions are skipped by the evaluator,
 including calls to ideal functions. Runtime arguments retain their source order.
 `examples/ideal_parameters.evg` also uses an erased natural recursion measure.
 
-This first subset accepts `nat`, `int`, Boolean, and machine-scalar metadata.
-Affine and reference-containing ideal parameters are rejected: treating their
-arguments as freely reusable proof expressions would duplicate resource
-witnesses. Passing such witnesses needs resource-aware erasure rules.
+This accepts `nat`, `int`, Boolean, machine and unit values, and pure ideal
+records and arrays, including affine resources. References and reference-bearing
+resources still need cross-phase ownership contracts. Proof expressions are
+non-consuming views; passing an affine resource as an erased execution argument
+consumes it, preventing duplicate witnesses.
 
 The physical count refinement wrappers now use erased owner/credit parameters:
 
@@ -412,7 +413,7 @@ are supported. No assembler, linker, C compiler, or runtime library is needed.
 The supported subset includes machine scalars, Boolean and unit values, fixed
 local arrays and records, field references and their writes, local mutation,
 complete record patterns, invariant updates, calls, branches, and erased
-facts/proofs/ideal scalar arguments, and owned destructor cleanup.
+facts/proofs/erased ideal arguments, and owned destructor cleanup.
 Comparison instructions respect signed versus unsigned machine types.
 
 The entry function's scalar result supplies the low eight bits of the process
@@ -660,3 +661,24 @@ The abstraction tests also run through the CLI: checking
 `stdlib/credits.evg examples/reject_forged_credit.evg` rejects client construction.
 Verification and entry-precondition checking use a bounded 16 MiB worker stack,
 independent of the caller's stack; existing depth and work limits still apply.
+
+Affine ideal values can now be passed through runtime signatures, for example
+`fn consume(ideal ticket: tickets::Ticket, value: usize) -> usize`. Evaluating
+an erased actual is ideal execution, so passing a move-only ideal ticket
+consumes it. The interpreter and native backend omit its storage and the whole
+actual expression. Proof expressions remain non-consuming views.
+
+`examples/erased_resources.evg` forwards a ticket once and returns 42 in both
+backends. The checker rejects duplicate forwarding, runtime inspection, and
+using `old(ticket)` to recreate a consumed ticket. Scalar `old(...)` snapshots
+remain valid erased metadata. Erased arguments may contain pure ideal records
+and arrays; reference-bearing resources still require a cross-phase ownership
+contract. Runtime owners cannot be constructed or consumed by ideal execution,
+and erased calls must be ideal code or checked pure scalar helpers. Thus
+erasure cannot silently skip a runtime write, move, drop, or owner-producing
+operation. This still does not supply allocation authority or `owners(plane)`.
+
+Proof artifacts bind the regenerated verification conditions as well as the
+source. Strengthening the checker can invalidate a cache even when source text
+is unchanged; re-prove it with the new checker. The checked-in RC protocol
+artifact now has a regression test that replays it without proof search.

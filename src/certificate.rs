@@ -414,6 +414,14 @@ mod tests {
     use super::*;
     use crate::verify::{prove, verify, verify_with_certificate};
     #[test]
+    fn checked_in_protocol_artifact_replays_without_search() {
+        let bundle = ProofBundle::parse(include_str!("../proofs/rc_protocol.evgproof")).unwrap();
+        let program =
+            verify_with_certificate(include_str!("../proofs/rc_protocol.evg"), &bundle).unwrap();
+        assert_eq!(program.proof_search_count(), 0);
+        assert!(program.trusted_assumptions().is_empty());
+    }
+    #[test]
     fn opaque_credit_interfaces_replay_without_search() {
         let source = [
             include_str!("../stdlib/credits.evg"),
@@ -458,6 +466,7 @@ mod tests {
     #[test]
     fn replay_checks_certificates_without_search() {
         for source in [
+            include_str!("../examples/erased_resources.evg"),
             include_str!("../examples/opaque_values.evg"),
             include_str!("../examples/indexed_borrows.evg"),
             include_str!("../examples/weak_invariant.evg"),
