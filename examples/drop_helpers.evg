@@ -1,0 +1,28 @@
+type Resource struct {remaining: usize}
+where (remaining <= 2);
+
+fn observe_remaining(value: &usize) -> usize
+ensures (result == *value) {
+    *value
+}
+
+impl Drop for Resource {
+    fn drop(self) {
+        // These are ordinary Evergreen helpers. Writes stay inside this
+        // receiver's live plane, and its nominal invariant stays valid.
+        let first = if self.remaining > 0 {
+            counter_decrement(&self.remaining)
+        } else {false};
+        let second = if self.remaining > 0 {
+            counter_decrement(&self.remaining)
+        } else {false};
+        let remaining = observe_remaining(&self.remaining);
+        proof drained: remaining == 0;
+    }
+}
+
+fn main() -> usize ensures (result == 42) {
+    let resource = Resource {remaining: 2};
+    drop(resource);
+    42
+}

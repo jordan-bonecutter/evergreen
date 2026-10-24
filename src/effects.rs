@@ -1,5 +1,5 @@
-//! Conservative, checked effect summaries for invariant-independent helpers.
-//! Accepted functions touch only scalar values and read-only scalar borrows.
+//! Conservative, checked scalar effect summaries. Invariant-independent helpers
+//! are read-only; ownership-free helpers may use checked write contracts.
 //! Unknown effects remain unknown; callers must not assume they are harmless.
 use crate::syntax::{Expr, Function, Kind, Statement, Type};
 use std::collections::{BTreeMap, BTreeSet};
@@ -145,10 +145,29 @@ pub(crate) fn invariant_independent(
     functions: &BTreeMap<String, Function>,
     safe: &BTreeSet<String>,
 ) -> bool {
+    scalar_effects(f, functions, safe, false)
+}
+
+/// Calls with scalar/reference interfaces and no creation, transfer, or cleanup
+/// of runtime ownership. Writes remain subject to each caller's permissions.
+pub(crate) fn ownership_free(
+    f: &Function,
+    functions: &BTreeMap<String, Function>,
+    safe: &BTreeSet<String>,
+) -> bool {
+    scalar_effects(f, functions, safe, true)
+}
+
+fn scalar_effects(
+    f: &Function,
+    functions: &BTreeMap<String, Function>,
+    safe: &BTreeSet<String>,
+    writes: bool,
+) -> bool {
     if f.ideal
         || f.partial
-        || !f.modifies.is_empty()
-        || !scalar(&f.ret)
+        || (!writes && !f.modifies.is_empty())
+        || !(if writes { leaf(&f.ret) } else { scalar(&f.ret) })
         || f.params
             .iter()
             .any(|(n, t)| !f.ideal_params.contains(n) && !leaf(t))
@@ -156,7 +175,7 @@ pub(crate) fn invariant_independent(
     {
         return false;
     }
-    // Purity of a self-recursive body is a fixed-point check. Totality has
+    // Effects of a self-recursive body are checked as a fixed point. Totality has
     // already been established, and every non-self effect is still inspected.
     let recursive_safe = Safe {
         known: safe,
@@ -179,13 +198,17 @@ pub(crate) fn invariant_independent(
                 env.insert(name.clone(), t);
             }
             Statement::Assign { target, value } => {
-                let Kind::Name(n) = &target.kind else {
+                let ty = match &target.kind {
+                    Kind::Name(n) => env.get(n).cloned(),
+                    Kind::Unary(op, _) if writes && op == "*" => {
+                        expression(target, None, &env, functions, safe)
+                    }
+                    _ => None,
+                };
+                let Some(t) = ty else {
                     return false;
                 };
-                let Some(t) = env.get(n) else {
-                    return false;
-                };
-                if expression(value, Some(t), &env, functions, safe).is_none() {
+                if expression(value, Some(&t), &env, functions, safe).is_none() {
                     return false;
                 }
             }

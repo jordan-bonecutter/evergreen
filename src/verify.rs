@@ -404,8 +404,8 @@ fn borrow_expression(e: &Expr) -> bool {
 
 fn destructor_expression(e: &Expr) -> bool {
     match &e.kind {
-        Kind::Call(..) | Kind::Record(..) => false,
-        Kind::Unary(op, _) if op == "&" || op == "*" => false,
+        Kind::Record(..) => false,
+        Kind::Call(_, args) => args.iter().all(destructor_expression),
         Kind::Unary(_, x) | Kind::Field(x, _) | Kind::FactAt(x, _) => destructor_expression(x),
         Kind::Binary(_, a, b) | Kind::Index(a, b) => {
             destructor_expression(a) && destructor_expression(b)
@@ -482,6 +482,7 @@ struct Context<'a> {
     drops: &'a BTreeSet<String>,
     dropping: bool,
     helpers: &'a BTreeSet<String>,
+    cleanup_helpers: &'a BTreeSet<String>,
     session: &'a mut Session,
     writable: Vec<WritePlace>,
     old_values: BTreeMap<String, Symbol>,
@@ -778,6 +779,7 @@ impl<'a> Context<'a> {
         structs: &'a BTreeMap<String, Struct>,
         drops: &'a BTreeSet<String>,
         helpers: &'a BTreeSet<String>,
+        cleanup_helpers: &'a BTreeSet<String>,
         session: &'a mut Session,
     ) -> Self {
         Self {
@@ -805,6 +807,7 @@ impl<'a> Context<'a> {
             drops,
             dropping: false,
             helpers,
+            cleanup_helpers,
             session,
             writable: Vec::new(),
             old_values: BTreeMap::new(),
@@ -2461,6 +2464,11 @@ impl<'a> Context<'a> {
                     return Err("recursive calls are forbidden in specifications".into());
                 }
                 if name == "move" || name == "drop" {
+                    if self.dropping {
+                        return Err(
+                            "destructors cannot transfer ownership or invoke nested cleanup".into(),
+                        );
+                    }
                     if self.phase == Phase::Specification {
                         return Err("specifications and facts cannot move or drop values".into());
                     }
@@ -2491,6 +2499,15 @@ impl<'a> Context<'a> {
                     return Ok(if name == "drop" { Symbol::Unit } else { value });
                 }
                 let f = self.functions.get(name).ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration; ideal recursion requires decreases"))?;
+                if self.dropping
+                    && self.phase == Phase::Runtime
+                    && !self.cleanup_helpers.contains(name)
+                {
+                    return Err(
+                        "destructor calls require a checked scalar ownership-free effect summary"
+                            .into(),
+                    );
+                }
                 if f.partial {
                     if self.phase != Phase::Runtime {
                         return Err("potentially divergent functions cannot be used in proofs or ideal execution".into());
@@ -2932,6 +2949,7 @@ pub struct VerifiedProgram {
     pub(crate) structs: BTreeMap<String, Struct>,
     pub obligations: usize,
     pub(crate) drops: BTreeSet<String>,
+    pub(crate) cleanup_helpers: BTreeSet<String>,
     trusted: Vec<crate::certificate::TrustedAssumption>,
     proof_searches: usize,
 }
@@ -2978,6 +2996,7 @@ impl VerifiedProgram {
                 &functions,
                 &self.structs,
                 &self.drops,
+                &helpers,
                 &helpers,
                 &mut session,
             );
@@ -3058,6 +3077,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             &structs,
             &empty_drops,
             &empty_drops,
+            &empty_drops,
             session,
         );
         ctx.module = s.module.clone();
@@ -3097,6 +3117,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
     let mut functions = BTreeMap::new();
     let mut drops = BTreeSet::new();
     let mut helpers = BTreeSet::new();
+    let mut cleanup_helpers = BTreeSet::new();
     for (target, f) in &parsed.destructors {
         if structs.get(target).is_some_and(|s| s.module != f.module) {
             return Err(format!(
@@ -3117,7 +3138,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             ));
         }
         if !destructor_body(&f.body) || !destructor_expression(&f.result) {
-            return Err(format!("line {}: destructor effects require proofs; initial Drop bodies allow local scalar work and facts, without calls, borrowing, or allocation", f.line));
+            return Err(format!("line {}: destructor effects require proofs; Drop bodies allow scalar work, checked scalar helpers, borrows, and facts without constructing or destructuring ownership", f.line));
         }
     }
     let mut all_functions = parsed.functions;
@@ -3182,7 +3203,14 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         if f.decreases.is_some() || f.partial {
             functions.insert(f.name.clone(), f.clone());
         }
-        let mut ctx = Context::new(&functions, &structs, &drops, &helpers, session);
+        let mut ctx = Context::new(
+            &functions,
+            &structs,
+            &drops,
+            &helpers,
+            &cleanup_helpers,
+            session,
+        );
         ctx.module = f.module.clone();
         ctx.ideal_execution = f.ideal;
         ctx.partial_execution = f.partial;
@@ -3287,6 +3315,9 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         if crate::effects::invariant_independent(f, &functions, &helpers) {
             helpers.insert(f.name.clone());
         }
+        if crate::effects::ownership_free(f, &functions, &cleanup_helpers) {
+            cleanup_helpers.insert(f.name.clone());
+        }
         functions.insert(f.name.clone(), f.clone());
     }
     Ok(VerifiedProgram {
@@ -3294,6 +3325,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         structs,
         obligations,
         drops,
+        cleanup_helpers,
         trusted: session.trusted_assumptions().to_vec(),
         proof_searches: session.search_count(),
     })
@@ -4577,6 +4609,53 @@ mod tests {
             let source = format!("type Resource struct {{tag: usize}} where (tag == 7); impl Drop for Resource {{fn drop(self) {{ {body} }} }} fn main() -> usize {{0}}");
             assert!(verify(&source).is_err(), "{body}");
         }
+    }
+
+    #[test]
+    fn destructors_use_checked_scalar_helpers_without_gaining_external_effects() {
+        let source = format!(
+            "{} {}",
+            include_str!("../stdlib/counter.evg"),
+            include_str!("../examples/drop_helpers.evg")
+        );
+        let (program, bundle) = prove(&source).unwrap();
+        let (value, events) = program.run_with_events().unwrap();
+        assert_eq!(value.to_string(), "42");
+        assert_eq!(events, ["drop Resource"]);
+        let replayed = verify_with_certificate(&source, &bundle).unwrap();
+        assert_eq!(replayed.proof_search_count(), 0);
+        assert_eq!(replayed.run().unwrap().to_string(), "42");
+        let swaps = format!("{} type Pair struct {{left: usize, right: usize}} impl Drop for Pair {{fn drop(self) {{let left = self.left; let right = self.right; swap_usize(&self.left, &self.right); proof swapped: self.left == right && self.right == left;}}}} fn main() -> usize {{let pair = Pair {{left: 1, right: 2}}; 42}}", include_str!("../stdlib/swap.evg"));
+        assert_eq!(verify(&swaps).unwrap().run().unwrap().to_string(), "42");
+        let returned = "fn reset(r: &usize) -> &usize modifies(r) borrows(r) ensures(*result == 0) {*r = 0; r} type Resource struct {value: usize} impl Drop for Resource {fn drop(self){let r = reset(&self.value); proof updated: *r == 0 && self.value == 0;}} fn main() -> usize {let r = Resource {value: 42}; 42}";
+        assert_eq!(verify(returned).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn destructor_helper_summaries_reject_hidden_cleanup_divergence_and_external_writes() {
+        for source in [
+            "type Resource struct {} fn hidden() -> usize {let another = Resource {}; 0} impl Drop for Resource {fn drop(self){let n = hidden();}}",
+            "type Resource struct {} fn hidden() -> usize {let another = Resource {}; 0} fn wrapper() -> usize {hidden()} impl Drop for Resource {fn drop(self){let n = wrapper();}}",
+            "fn forever() -> usize {forever()} type Resource struct {} impl Drop for Resource {fn drop(self){let n = forever();}}",
+            "fn observe(r: &Resource) -> usize {0} type Resource struct {} impl Drop for Resource {fn drop(self){let n = observe(&self);}}",
+        ] {
+            let error = verify(source).unwrap_err();
+            assert!(error.contains("ownership-free"), "{error}: {source}");
+        }
+        let library = include_str!("../stdlib/counter.evg");
+        for body in [
+            "let zero = counter_decrement(self.target);",
+            "*self.target = 0;",
+        ] {
+            let source = format!("{library} type Resource struct {{target: &usize}} where(*target > 0); impl Drop for Resource {{fn drop(self){{{body}}}}}");
+            let error = verify(&source).unwrap_err();
+            assert!(
+                error.contains("effect contract") || error.contains("modifies contract"),
+                "{error}"
+            );
+        }
+        let broken = format!("{library} type Resource struct {{value: usize}} where(value == 1); impl Drop for Resource {{fn drop(self){{let zero = counter_decrement(&self.value);}}}}");
+        assert!(verify(&broken).is_err());
     }
 
     #[test]

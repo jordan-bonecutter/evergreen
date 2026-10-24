@@ -126,11 +126,26 @@ impl Drop for Resource {
 ```
 
 Destructors are checked against every value of their receiver type and cannot
-add preconditions. The first subset permits local scalar work and facts, but
-rejects calls, borrowing, allocation, and moving/replacing owned fields; these
-need explicit effect and cleanup proofs. `examples/drop.evg` checks a refined
-parent that owns a resource with its own destructor. The debug API
-`run_with_events()` returns a detached result snapshot and destructor trace.
+add preconditions. They permit scalar work, borrows, facts, and calls with a
+checked scalar ownership-free effect summary. This summary is inferred from
+the verified body and its callees: it requires total execution, a scalar/reference
+interface, and no creation, transfer, or cleanup of runtime ownership. It is not
+a programmer-supplied marker. Unlike invariant-independent helpers, these
+helpers may write through their explicit `modifies` contracts.
+
+A destructor can pass its own scalar fields to modifying helpers. The ordinary
+plane permissions and nominal invariants are still checked, and returned
+references stay local to cleanup. Writes through stored references to external
+storage remain rejected: those require cleanup effects in the caller's proof at
+every drop, replacement, and scope exit. Record construction, destructuring,
+ownership transfer, and explicit nested cleanup remain unsupported in Drop
+bodies. The invariant-update rules are unchanged.
+
+`evg run stdlib/counter.evg examples/drop_helpers.evg` checks scalar cleanup
+helpers and read-only observations. The native backend compiles these helpers
+before dependent destructors. `examples/drop.evg` checks a refined parent that
+owns a resource with its own destructor. The debug API `run_with_events()` returns
+a detached result snapshot and destructor trace.
 
 The initial implementation conservatively treats an aggregate's storage as one
 plane, so replacing a nested aggregate may invalidate unrelated references in

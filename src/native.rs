@@ -839,7 +839,13 @@ fn compilation_order(program: &VerifiedProgram) -> Result<Vec<&Function>> {
         .iter()
         .filter_map(|f| f.drop_target.as_deref().map(|name| (name, f)))
         .collect::<BTreeMap<_, _>>();
-    let mut ordered = Vec::new();
+    // Ownership-free helpers cannot depend on cleanup methods. Compile them
+    // first so destructors can call their checked scalar implementations.
+    let mut ordered = program
+        .functions
+        .iter()
+        .filter(|f| program.cleanup_helpers.contains(&f.name))
+        .collect::<Vec<_>>();
     let mut seen = BTreeSet::new();
     for name in &program.drops {
         visit(
@@ -850,7 +856,12 @@ fn compilation_order(program: &VerifiedProgram) -> Result<Vec<&Function>> {
             &mut ordered,
         )?;
     }
-    ordered.extend(program.functions.iter().filter(|f| f.drop_target.is_none()));
+    ordered.extend(
+        program
+            .functions
+            .iter()
+            .filter(|f| f.drop_target.is_none() && !program.cleanup_helpers.contains(&f.name)),
+    );
     Ok(ordered)
 }
 
@@ -1258,6 +1269,13 @@ mod tests {
             [
                 include_str!("../stdlib/counter.evg"),
                 include_str!("../examples/counter.evg"),
+            ]
+            .join("\n"),
+        );
+        cases.push(
+            [
+                include_str!("../stdlib/counter.evg"),
+                include_str!("../examples/drop_helpers.evg"),
             ]
             .join("\n"),
         );
