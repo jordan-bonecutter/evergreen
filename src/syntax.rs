@@ -193,6 +193,8 @@ pub struct Function {
     pub module: Option<String>,
     /// Derived by verification: contracts hold on return, but totality is unproved.
     pub partial: bool,
+    /// Derived once during verification; compound old(...) needs an entry store.
+    pub(crate) entry_memory: bool,
 }
 
 struct Parser {
@@ -814,6 +816,7 @@ impl Parser {
             ideal_params,
             module: None,
             partial: false,
+            entry_memory: false,
         })
     }
 

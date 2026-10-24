@@ -334,6 +334,24 @@ A wrapper must declare its own permission before forwarding a borrowed target
 to a modifying helper. `examples/write_contracts.evg` checks composition,
 aliases, overflow bounds, and preservation of an unrelated sibling field.
 
+`old` also accepts entry-state field, dereference, and indexed projections, plus
+checked scalar arithmetic: `old((*pair).left)`, `old(*handle.count)`, or
+`old((*data)[index])`. All names and dereferences inside the expression use the
+function's entry bindings and memory. Only functions that use these compound
+forms capture an entry store; the snapshot is proof-only and its copying work
+counts against the verifier's limits. Reads are checked when used, so a branch
+can establish the bound for an old indexed read. Local bindings introduced after
+entry, effectful calls, and runtime uses of `old` are rejected. Snapshots do not
+recreate consumed ownership.
+
+`old((*data)[index])` uses the entry index; an index outside `old`, as in
+`old(*data)[index]`, uses the surrounding proof's binding. References remain
+reference values: `old(handle.count)` snapshots the pointer, while
+`old(*handle.count)` snapshots its pointee's value. A dereference outside `old`
+uses live memory and the ordinary generation checks. `examples/old_places.evg`
+exercises nested snapshots, rebinding a pointer field, and preserving a caller's
+entry state across multiple modifying calls.
+
 Write contracts can name scalar projections of incoming references, such as
 `modifies(&(*data)[index])` or `modifies(&(*pair).left)`. Bounds and the
 projection are checked under the entry precondition. Permission stays attached

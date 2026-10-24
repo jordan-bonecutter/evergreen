@@ -194,6 +194,14 @@ fn constant_index(index: &Linear) -> Option<usize> {
         .flatten()
 }
 
+fn store_weight(memory: &Memory<Symbol>) -> Result<usize> {
+    let states = memory.states();
+    // Consumed slots still cost work when the store is copied.
+    Ok(states.len().saturating_add(values_weight(
+        states.iter().filter_map(|(_, _, value)| *value),
+    )?))
+}
+
 fn project<'a>(value: &'a Symbol, path: &[Projection<Linear>]) -> Result<&'a Symbol> {
     if path.is_empty() {
         return Ok(value);
@@ -457,6 +465,60 @@ fn effect_origin(expression: &Expr) -> Option<&str> {
     }
 }
 
+// Only functions that use a compound old(...) expression need an entry store.
+// Simple parameter snapshots retain their existing inexpensive representation.
+fn needs_old_memory(function: &Function) -> bool {
+    fn expression(e: &Expr) -> bool {
+        if matches!(&e.kind, Kind::Call(name, args) if name == "old" && args.len() == 1 && Context::old_key(&args[0]).is_none())
+        {
+            return true;
+        }
+        match &e.kind {
+            Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => expression(e),
+            Kind::Binary(_, a, b) | Kind::Index(a, b) => expression(a) || expression(b),
+            Kind::If(c, a, b) => expression(c) || expression(a) || expression(b),
+            Kind::Array(items) | Kind::Call(_, items) => items.iter().any(expression),
+            Kind::Record(_, fields) => fields.iter().any(|(_, e)| expression(e)),
+            _ => false,
+        }
+    }
+    fn ty(t: &Type) -> bool {
+        match t {
+            Type::Ref(t) => ty(t),
+            Type::Array(t, n) => ty(t) || expression(n),
+            _ => false,
+        }
+    }
+    fn statement(s: &Statement) -> bool {
+        match s {
+            Statement::Ideal(s) => statement(s),
+            Statement::Let { ty: t, value, .. } => t.as_ref().is_some_and(ty) || expression(value),
+            Statement::Destructure { value, .. }
+            | Statement::Fact { value, .. }
+            | Statement::Effect(value) => expression(value),
+            Statement::Proof { proposition, .. } => expression(proposition),
+            Statement::Assign { target, value } => expression(target) || expression(value),
+            Statement::Update { body, .. } => body.iter().any(statement),
+        }
+    }
+    function.params.iter().any(|(_, t)| ty(t))
+        || ty(&function.ret)
+        || function.pre.as_ref().is_some_and(expression)
+        || function.post.as_ref().is_some_and(expression)
+        || function.decreases.as_ref().is_some_and(expression)
+        || function.borrows.as_ref().is_some_and(expression)
+        || function.modifies.iter().any(expression)
+        || function.body.iter().any(statement)
+        || expression(&function.result)
+}
+
+struct EntryMemory {
+    env: BTreeMap<String, Symbol>,
+    roots: BTreeMap<String, PlaneId>,
+    memory: Memory<Symbol>,
+    module: Option<String>,
+}
+
 struct Context<'a> {
     functions: &'a BTreeMap<String, Function>,
     module: Option<String>,
@@ -486,6 +548,7 @@ struct Context<'a> {
     session: &'a mut Session,
     writable: Vec<WritePlace>,
     old_values: BTreeMap<String, Symbol>,
+    old_memory: Option<Box<EntryMemory>>,
     ideal_bindings: BTreeSet<String>,
     array_reads: BTreeMap<(String, Linear), Symbol>,
     temporaries: Vec<(Symbol, usize)>,
@@ -585,19 +648,11 @@ impl<'a> Context<'a> {
         Ok(self.env.clone())
     }
     fn snapshot_memory(&mut self) -> Result<Memory<Symbol>> {
-        let cost = values_weight(
-            self.memory
-                .states()
-                .iter()
-                .filter_map(|(_, _, value)| *value),
-        )?;
-        self.charge_value_work(cost)?;
+        self.charge_value_work(store_weight(&self.memory)?)?;
         Ok(self.memory.snapshot())
     }
     fn clone_store(&mut self, store: &Memory<Symbol>) -> Result<Memory<Symbol>> {
-        self.charge_value_work(values_weight(
-            store.states().iter().filter_map(|(_, _, value)| *value),
-        )?)?;
+        self.charge_value_work(store_weight(store)?)?;
         Ok(store.snapshot())
     }
 
@@ -811,6 +866,7 @@ impl<'a> Context<'a> {
             session,
             writable: Vec::new(),
             old_values: BTreeMap::new(),
+            old_memory: None,
             ideal_bindings: BTreeSet::new(),
             array_reads: BTreeMap::new(),
             temporaries: Vec::new(),
@@ -828,8 +884,20 @@ impl<'a> Context<'a> {
         }
         Ok(())
     }
-    fn capture_old(&mut self) -> Result<()> {
+    fn capture_old(&mut self, function: &Function) -> Result<()> {
         self.charge_value_work(values_weight(self.env.values())?)?;
+        let target_cost = self
+            .env
+            .values()
+            .try_fold(0usize, |cost, value| -> Result<usize> {
+                let extra = if let Symbol::Ref(_, reference, fields) = value {
+                    symbol_weight(project(self.memory.read(*reference)?, fields)?)?
+                } else {
+                    0
+                };
+                Ok(cost.saturating_add(extra))
+            })?;
+        self.charge_value_work(target_cost)?;
         self.old_values.clear();
         for (name, value) in &self.env {
             self.old_values.insert(name.clone(), value.clone());
@@ -838,16 +906,65 @@ impl<'a> Context<'a> {
                 self.old_values.insert(format!("*{name}"), target);
             }
         }
+        self.old_memory = if function.entry_memory {
+            Some(Box::new(EntryMemory {
+                env: self.clone_env()?,
+                roots: self.roots.clone(),
+                memory: self.snapshot_memory()?,
+                module: self.module.clone(),
+            }))
+        } else {
+            None
+        };
         Ok(())
     }
-    fn old_key(e: &Expr) -> Result<String> {
+
+    fn old_expression(&mut self, expression: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
+        if let Some(key) = Self::old_key(expression) {
+            return self
+                .old_values
+                .get(&key)
+                .cloned()
+                .ok_or_else(|| format!("{key} is not a function entry parameter"));
+        }
+        if !place_index_expression(expression) {
+            return Err(
+                "old snapshots require pure scalar arithmetic or storage projections".into(),
+            );
+        }
+        let mut entry = self
+            .old_memory
+            .take()
+            .ok_or("old expression has no function entry memory")?;
+        std::mem::swap(&mut self.env, &mut entry.env);
+        std::mem::swap(&mut self.roots, &mut entry.roots);
+        std::mem::swap(&mut self.memory, &mut entry.memory);
+        std::mem::swap(&mut self.module, &mut entry.module);
+        let facts = std::mem::take(&mut self.facts);
+        let proofs = std::mem::take(&mut self.proofs);
+        let phase = std::mem::replace(&mut self.phase, Phase::Specification);
+        let value = self.eval(expression, expected);
+        self.phase = phase;
+        self.facts = facts;
+        self.proofs = proofs;
+        std::mem::swap(&mut self.env, &mut entry.env);
+        std::mem::swap(&mut self.roots, &mut entry.roots);
+        std::mem::swap(&mut self.memory, &mut entry.memory);
+        std::mem::swap(&mut self.module, &mut entry.module);
+        self.old_memory = Some(entry);
+        // Projections and arithmetic cannot construct addresses. Reference
+        // values therefore retain real incoming handles: dereferencing one
+        // outside old(...) uses the live store and its generation checks.
+        value
+    }
+    fn old_key(e: &Expr) -> Option<String> {
         match &e.kind {
-            Kind::Name(n) => Ok(n.clone()),
+            Kind::Name(n) => Some(n.clone()),
             Kind::Unary(op, x) if op == "*" => match &x.kind {
-                Kind::Name(n) => Ok(format!("*{n}")),
-                _ => Err("old currently accepts a parameter or its direct dereference".into()),
+                Kind::Name(n) => Some(format!("*{n}")),
+                _ => None,
             },
-            _ => Err("old currently accepts a parameter or its direct dereference".into()),
+            _ => None,
         }
     }
     fn number_type(&self) -> Ty {
@@ -1701,8 +1818,8 @@ impl<'a> Context<'a> {
         match &e.kind {
             Kind::Bool(_) => Some(Ty::Bool),
             Kind::Call(name, args) if name == "old" && args.len() == 1 => Self::old_key(&args[0])
-                .ok()
-                .and_then(|key| self.old_values.get(&key).map(Symbol::ty)),
+                .and_then(|key| self.old_values.get(&key).map(Symbol::ty))
+                .or_else(|| self.hint(&args[0])),
             Kind::Call(name, _) if name == "nat" => Some(Ty::Nat),
             Kind::Call(name, _) if name == "int" => Some(Ty::Int),
             Kind::Constant(t, _) => Some(Ty::Machine(*t)),
@@ -2430,12 +2547,7 @@ impl<'a> Context<'a> {
                                 .into(),
                         );
                     }
-                    let key = Self::old_key(&args[0])?;
-                    let value = self
-                        .old_values
-                        .get(&key)
-                        .cloned()
-                        .ok_or_else(|| format!("{key} is not a function entry parameter"))?;
+                    let value = self.old_expression(&args[0], expected)?;
                     if self.phase == Phase::Ideal && self.symbol_is_affine(&value) {
                         return Err(
                             "old ownership snapshots are proof views, not new ideal resources"
@@ -2569,6 +2681,7 @@ impl<'a> Context<'a> {
                 let mut saved = std::mem::take(&mut self.env);
                 let saved_roots = std::mem::take(&mut self.roots);
                 let saved_old = std::mem::take(&mut self.old_values);
+                let saved_old_memory = self.old_memory.take();
                 let saved_ideal = std::mem::take(&mut self.ideal_bindings);
                 let saved_module = std::mem::replace(&mut self.module, f.module.clone());
                 self.ideal_bindings = f.ideal_params.iter().cloned().collect();
@@ -2584,7 +2697,7 @@ impl<'a> Context<'a> {
                     self.compatible(&value.ty(), &t, e.line)?;
                     self.env.insert(n.clone(), value);
                 }
-                self.capture_old()?;
+                self.capture_old(f)?;
                 if let Some(pre) = &f.pre {
                     let p = self.proposition(pre)?;
                     self.prove(&p, &format!("precondition of {name}"), e.line)?;
@@ -2669,6 +2782,7 @@ impl<'a> Context<'a> {
                 self.env = saved;
                 self.roots = saved_roots;
                 self.old_values = saved_old;
+                self.old_memory = saved_old_memory;
                 self.ideal_bindings = saved_ideal;
                 self.module = saved_module;
                 if !f.modifies.is_empty() {
@@ -3001,6 +3115,7 @@ impl VerifiedProgram {
                 &mut session,
             );
             ctx.current = Some("main".into());
+            ctx.capture_old(main)?;
             let p = ctx.proposition(pre)?;
             ctx.prove(&p, "entry precondition of main", pre.line)?;
         }
@@ -3145,6 +3260,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
     all_functions.extend(parsed.destructors.into_iter().map(|(_, f)| f));
     let mut obligations = 0;
     for f in &mut all_functions {
+        f.entry_memory = needs_old_memory(f);
         f.partial = !f.ideal && f.decreases.is_none() && crate::effects::recursive(f);
         for (name, ty) in &f.params {
             if f.ideal_params.contains(name) && !erased_type(ty, &structs) {
@@ -3237,7 +3353,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             ctx.phase = execution;
             ctx.env.insert(n.clone(), value);
         }
-        ctx.capture_old()?;
+        ctx.capture_old(f)?;
         if let Some(pre) = &f.pre {
             ctx.phase = Phase::Specification;
             let p = ctx.eval(pre, Some(&Ty::Bool))?.proposition()?;
@@ -4143,6 +4259,58 @@ mod tests {
         assert!(verify(runtime_old).is_err());
         let proof_effect = "fn main() -> usize {let n: usize = 0; proof p: increment(&n) == 0; n}";
         assert!(verify(&format!("{declarations}\n{proof_effect}")).is_err());
+    }
+
+    #[test]
+    fn compound_old_snapshots_freeze_entry_storage_and_pointer_targets() {
+        let source = include_str!("../examples/old_places.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        let replayed = verify_with_certificate(source, &bundle).unwrap();
+        assert_eq!(replayed.proof_search_count(), 0);
+        assert_eq!(replayed.run().unwrap().to_string(), "42");
+        assert!(verify(&source.replace("old((*pair).left) + 1", "old((*pair).left) + 2")).is_err());
+        let guarded = "ideal fn observed(data: &[usize; 2], i: usize) -> nat ensures(result == if i < 2 {nat(old((*data)[i]))} else {0}) {if i < 2 {nat(old((*data)[i]))} else {0}} fn main() -> usize {let data: [usize; 2] = [7, 42]; ideal let valid = observed(&data, 1); ideal let outside = observed(&data, usize::MAX); proof values: valid == 42 && outside == 0; 42}";
+        assert_eq!(verify(guarded).unwrap().run().unwrap().to_string(), "42");
+        let entry = "fn main() -> usize where(old(1 + 1) == 2) {42}";
+        assert_eq!(verify(entry).unwrap().run().unwrap().to_string(), "42");
+        assert!(verify(&entry.replace("== 2", "== 3"))
+            .unwrap()
+            .run()
+            .is_err());
+    }
+
+    #[test]
+    fn entry_snapshot_work_includes_consumed_plane_slots() {
+        let mut source = "fn observe(n: usize) where(n < usize::MAX) ensures(old(n + 1) == n + 1) {} fn main() -> usize {".to_owned();
+        for i in 0..640 {
+            source.push_str(&format!("let value{i}: usize = 1; drop(value{i});"));
+        }
+        for _ in 0..448 {
+            source.push_str("observe(0);");
+        }
+        source.push_str("42}");
+        let error = verify(&source).unwrap_err();
+        assert!(error.contains("symbolic value work limit"), "{error}");
+    }
+
+    #[test]
+    fn compound_old_snapshots_do_not_capture_locals_effects_or_new_ownership() {
+        let ownership = "ideal affine type Token struct {units: nat} ideal affine type Bundle struct {token: Token} ideal fn consume(t: Token) -> nat {t.units} fn bad(ideal bundle: Bundle) {ideal let Bundle {token} = bundle; ideal let used = consume(token); ideal let again = consume(old(bundle.token));}";
+        assert!(verify(ownership)
+            .unwrap_err()
+            .contains("old ownership snapshots"));
+        for source in [
+            "fn bad(n: usize) {let local: usize = 1; proof missing: old(local + n) == 1;}",
+            "ideal fn bad(data: &[usize; 2], i: usize) -> nat {nat(old((*data)[i]))}",
+
+            "fn change(r: &usize) -> usize modifies(r) {*r = 0; 0} fn bad(r: &usize) {proof effect: old(change(r)) == 0;}",
+            "fn bad(n: usize) -> usize {old(n + 1)}",
+            "fn bad(n: usize) where(n == usize::MAX) {proof overflow: old(n + 1) > n;}",
+
+        ] {
+            assert!(verify(source).is_err(), "accepted {source}");
+        }
     }
 
     #[test]
