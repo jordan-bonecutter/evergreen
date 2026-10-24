@@ -14,9 +14,9 @@ pub struct PlaneId {
     slot: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Projection {
+pub enum Projection<I = usize> {
     Field(String),
-    Index(usize),
+    Index(I),
 }
 #[derive(Clone, Debug)]
 struct Plane<T> {

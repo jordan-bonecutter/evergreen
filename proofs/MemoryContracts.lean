@@ -39,6 +39,11 @@ theorem distinct_fields_disjoint (plane left right : Nat) (h : left ≠ right) :
     | nil => simp at equal; exact h equal.symm
     | cons head rest => simp at equal
 
+def indexed (plane index : Nat) : Address := ⟨plane, [.index index]⟩
+
+theorem indexed_eq_iff (plane i j : Nat) : indexed plane i = indexed plane j ↔ i = j := by
+  simp [indexed, Address.mk.injEq]
+
 def Store := Address → Int
 
 def write (store : Store) (target : Address) (value : Int) : Store :=
@@ -46,6 +51,12 @@ def write (store : Store) (target : Address) (value : Int) : Store :=
 
 theorem read_write (store : Store) (target : Address) (value : Int) :
     write store target value target = value := by simp [write]
+
+-- No disjointness premise: a dynamic index may alias the written cell.
+theorem indexed_write (store : Store) (plane i j : Nat) (value : Int) :
+    write store (indexed plane i) value (indexed plane j) =
+      if j = i then value else store (indexed plane j) := by
+  simp [write, indexed_eq_iff]
 
 theorem frame (store : Store) (target other : Address) (value : Int)
     (h : other ≠ target) : write store target value other = store other := by

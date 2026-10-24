@@ -134,7 +134,8 @@ parent that owns a resource with its own destructor. The debug API
 
 The initial implementation conservatively treats an aggregate's storage as one
 plane, so replacing a nested aggregate may invalidate unrelated references in
-the same root. Symbolic-index reference projections and partial moves remain unsupported.
+the same root. Partial moves remain unsupported. Scalar array references support proved
+symbolic indices, including aliasing as described below.
 Reference returns require the exact alias contracts described below. Scalar writes
 require the explicit contracts described below.
 
@@ -582,10 +583,10 @@ these cell observations with guarded value relations.
 `examples/array_borrows.evg` runs, replays from a proof artifact, and builds with
 the internal native backend. It returns references from a length-indexed helper,
 writes one cell, and proves that the other cell is unchanged. This initial lazy
-representation supports scalar elements at statically known indices. Borrowing
-a dynamically selected cell or an opaque aggregate/reference-bearing element
-still requires additional projection and alias rules; known literal aggregate
-elements retain their existing support.
+representation now supports scalar elements at proved symbolic indices too, as
+described below. Opaque aggregate/reference-bearing elements still require
+additional projection and alias rules; known literal aggregate elements retain
+their existing support.
 
 Logical implication is written `premise => consequence`. It has lower precedence
 than `||` and associates to the right: `a => b => c` means `a => (b => c)`.
@@ -600,3 +601,18 @@ with a numeric ledger: exact accounting is lifted, while
 weaker fact works during the update; claiming exact accounting before restoring
 it or setting count to zero while an owner remains is rejected. The ledger is
 a language-rule test, not an implementation of `owners(plane)` or `Rc`.
+
+Dynamic scalar array borrows carry a symbolic index snapshot in their plane
+projection. For example, `borrows(&(*data)[index])` checks both bounds and the
+identity of the returned cell. Reassigning the index variable later does not
+retarget an existing reference. An equivalent index may be used in the body
+when equality follows from the function's precondition.
+
+The symbolic store preserves conditional aliasing: writing through index `i`
+updates a tracked cell at index `j` when `i == j`, and preserves it when `i != j`.
+Ordinary scalar reads have the same array-selection consistency rule. Multiple
+writable arguments into the same array require a checked disjointness proof;
+different symbolic expressions alone do not establish different locations.
+`examples/indexed_borrows.evg` verifies both outcomes of a possibly aliasing
+write and works with certificate replay and native emission. These additional
+relations remain subject to the verifier's path and proof-work limits.

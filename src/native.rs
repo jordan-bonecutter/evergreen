@@ -1172,6 +1172,7 @@ mod tests {
             std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
         fs::create_dir(&directory).unwrap();
         let mut cases = [
+            include_str!("../examples/indexed_borrows.evg"),
             include_str!("../examples/weak_invariant.evg"),
             "fn main() -> bool {false => true => false}",
             "fn main() -> bool {true => false}",
@@ -1244,6 +1245,21 @@ mod tests {
             ]
             .join("\n"),
         );
+        let indexed = include_str!("../examples/indexed_borrows.evg")
+            .split("fn main")
+            .next()
+            .unwrap();
+        for i in 0..2 {
+            for j in 0..2 {
+                cases.push(format!(
+                    "{indexed} fn main() -> usize {{may_alias([7, 1], {i}, {j})}}"
+                ));
+            }
+        }
+        let swap = include_str!("../stdlib/swap.evg");
+        cases.push(format!("{swap} fn change(data: [usize; 2], i: usize, j: usize) -> usize where(i < 2 && j < 2 && i != j) ensures(result == data[j]) {{swap_usize(&data[i], &data[j]); data[i]}} fn main() -> usize {{change([7, 42], 0, 1)}}"));
+        cases.push("fn signed(data: &[usize; 2], index: isize) -> &usize where(index >= 0 && index < 2) borrows(&(*data)[index]) {&(*data)[index]} fn main() -> usize {let a: [usize; 2] = [7, 42]; *signed(&a, 1)}".into());
+        cases.push("fn change(data: [bool; 2], i: usize, j: usize) -> bool where(i < 2 && j < 2) ensures(i == j => result) {let a = &data[i]; let b = &data[j]; *a = true; *b} fn main() -> bool {change([false, false], 0, 0)}".into());
         let declarations = "type Resource struct {tag: usize} where (tag == 7); impl Drop for Resource {fn drop(self){}} fn make() -> Resource {Resource {tag: 7}} fn consume(r: Resource) -> usize {r.tag}";
         for body in [
             "let r = make(); let s = r; s.tag",
