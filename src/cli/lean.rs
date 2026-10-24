@@ -1,4 +1,5 @@
 //! Optional Lean execution and its temporary input directory.
+
 use std::{
     env, fs,
     path::{Path, PathBuf},

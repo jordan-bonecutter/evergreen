@@ -1,4 +1,5 @@
 //! Publish completed artifacts atomically without overwriting source inputs.
+
 use std::{
     fs,
     io::Write,
@@ -50,6 +51,7 @@ fn write_bytes(
                 file.set_permissions(fs::Permissions::from_mode(0o755))
                     .map_err(|e| e.to_string())?;
             }
+
             #[cfg(not(unix))]
             return Err("native executable output currently requires a Unix host".into());
         }

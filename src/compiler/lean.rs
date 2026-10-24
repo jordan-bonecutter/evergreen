@@ -1,6 +1,8 @@
 //! Optional reference backend over the shared Evergreen syntax tree.
+
 use crate::syntax::{self, Expr, Function, Kind, Statement, Type};
 use std::collections::{BTreeMap, BTreeSet};
+
 type Result<T> = std::result::Result<T, String>;
 
 #[derive(Default)]
@@ -9,6 +11,7 @@ struct Emitter {
     facts: BTreeSet<String>,
     proofs: BTreeSet<String>,
 }
+
 impl Emitter {
     fn steps(&self, steps: &[String]) -> Result<String> {
         if steps.iter().any(|s| s == "trustme") {
@@ -77,12 +80,14 @@ impl Emitter {
         }
         Ok(emitted.join("; "))
     }
+
     fn fresh(&self, name: &str) -> Result<()> {
         if self.env.contains_key(name) || self.facts.contains(name) || self.proofs.contains(name) {
             return Err(format!("duplicate binding {name}"));
         }
         Ok(())
     }
+
     fn hint(&self, e: &Expr) -> Option<Type> {
         match &e.kind {
             Kind::Name(n) => self.env.get(n).cloned(),
@@ -91,6 +96,7 @@ impl Emitter {
             _ => None,
         }
     }
+
     fn operand_type(&self, a: &Expr, b: &Expr, expected: Option<&Type>) -> Type {
         expected
             .cloned()
@@ -98,6 +104,7 @@ impl Emitter {
             .or_else(|| self.hint(b))
             .unwrap_or(Type::Int)
     }
+
     fn ty(&self, t: &Type) -> Result<String> {
         match t {
             Type::Int => Ok("Int".into()), Type::Nat => Ok("Nat".into()), Type::Bool => Ok("Bool".into()), Type::Unit => Ok("Unit".into()),
@@ -105,6 +112,7 @@ impl Emitter {
             _ => Err("Lean reference backend supports mathematical int/nat, bool, unit, and vectors; machine arithmetic and ownership use the internal kernel".into()),
         }
     }
+
     fn value(&self, e: &Expr, expected: Option<&Type>) -> Result<(String, Type)> {
         let (text, ty) = match &e.kind {
             Kind::Number(n) => (n.to_string(), expected.cloned().unwrap_or(Type::Int)),
@@ -186,6 +194,7 @@ impl Emitter {
         }
         Ok((text, ty))
     }
+
     fn prop(&self, e: &Expr) -> Result<String> {
         match &e.kind {
             Kind::Bool(b) => Ok(if *b { "True" } else { "False" }.into()),
@@ -224,6 +233,7 @@ impl Emitter {
             _ => Ok(format!("({} = true)", self.value(e, Some(&Type::Bool))?.0)),
         }
     }
+
     fn function(&mut self, f: &Function, run: bool) -> Result<(String, bool)> {
         if f.module.is_some()
             || f.partial

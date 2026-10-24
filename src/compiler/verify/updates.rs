@@ -1,4 +1,5 @@
 //! Explicit invariant suspension, checked update statements, and restoration.
+
 use super::*;
 
 #[derive(Default)]

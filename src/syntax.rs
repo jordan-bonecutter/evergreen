@@ -1,4 +1,5 @@
 //! Shared, source-located syntax for the internal compiler pipeline.
+
 use lexer::{lex, Token};
 
 mod lexer;
@@ -12,6 +13,7 @@ pub struct MachineInt {
     pub signed: bool,
     pub bits: u8,
 }
+
 impl MachineInt {
     pub fn parse(s: &str) -> Option<Self> {
         if s == "usize" {
@@ -37,6 +39,7 @@ impl MachineInt {
         }
         Some(Self { signed, bits })
     }
+
     pub fn bounds(self) -> (i128, i128) {
         if self.signed {
             let half = 1_i128 << (self.bits - 1);
@@ -59,11 +62,13 @@ pub enum Type {
     Named(String),
     Array(Box<Type>, Box<Expr>),
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Expr {
     pub kind: Kind,
     pub line: usize,
 }
+
 impl Expr {
     pub(crate) fn indirect_place(&self) -> bool {
         match &self.kind {
@@ -92,6 +97,7 @@ impl Expr {
         }
     }
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
     Number(i128),
@@ -109,6 +115,7 @@ pub enum Kind {
     Field(Box<Expr>, String),
     FactAt(Box<Expr>, String),
 }
+
 #[derive(Clone, Debug)]
 pub enum Statement {
     Ideal(Box<Statement>),
@@ -143,6 +150,7 @@ pub enum Statement {
         line: usize,
     },
 }
+
 impl Statement {
     pub fn bindings(&self) -> Vec<&str> {
         match self {
@@ -154,6 +162,7 @@ impl Statement {
             _ => Vec::new(),
         }
     }
+
     pub fn runtime_bindings(
         &self,
         structs: &std::collections::BTreeMap<String, Struct>,
@@ -169,6 +178,7 @@ impl Statement {
         }
     }
 }
+
 #[derive(Clone, Debug)]
 pub struct Struct {
     pub name: String,
@@ -182,6 +192,7 @@ pub struct Struct {
     pub module: Option<String>,
     pub facts: Vec<(String, Expr)>,
 }
+
 impl Struct {
     pub fn runtime_fields(&self) -> impl Iterator<Item = &(String, Type)> {
         self.fields
@@ -189,23 +200,27 @@ impl Struct {
             .filter(|(name, _)| !self.ideal_fields.contains(name))
     }
 }
+
 #[derive(Clone, Debug)]
 pub struct Program {
     pub structs: Vec<Struct>,
     pub functions: Vec<Function>,
     pub destructors: Vec<(String, Function)>,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ReturnProjection {
     Field(String),
     Index(usize),
 }
+
 #[derive(Clone, Debug)]
 pub struct ReturnBorrow {
     /// Empty for a direct reference return; otherwise a path in the returned value.
     pub path: Vec<ReturnProjection>,
     pub reference: Expr,
 }
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub name: String,
@@ -235,16 +250,20 @@ struct Parser {
     pos: usize,
     depth: usize,
 }
+
 impl Parser {
     fn peek(&self) -> &str {
         &self.tokens[self.pos].text
     }
+
     fn line(&self) -> usize {
         self.tokens[self.pos].line
     }
+
     fn err(&self, s: &str) -> String {
         format!("line {}: {s}", self.line())
     }
+
     fn eat(&mut self, s: &str) -> bool {
         if self.peek() == s {
             self.pos += 1;
@@ -253,6 +272,7 @@ impl Parser {
             false
         }
     }
+
     fn expect(&mut self, s: &str) -> Result<(), String> {
         if self.eat(s) {
             Ok(())
@@ -260,6 +280,7 @@ impl Parser {
             Err(self.err(&format!("expected {s:?}, found {:?}", self.peek())))
         }
     }
+
     fn name(&mut self) -> Result<String, String> {
         let s = self.peek().to_string();
         if s.len() > 256 {
@@ -296,6 +317,7 @@ impl Parser {
         self.pos += 1;
         Ok(s)
     }
+
     fn path_name(&mut self) -> Result<String, String> {
         let mut name = self.name()?;
         if self.eat("::") {
@@ -304,6 +326,7 @@ impl Parser {
         }
         Ok(name)
     }
+
     fn arguments(&mut self) -> Result<Vec<Expr>, String> {
         let mut args = Vec::new();
         if !self.eat(")") {
@@ -317,6 +340,7 @@ impl Parser {
         }
         Ok(args)
     }
+
     // Unlike call arguments, effect and update lists require at least one item.
     fn nonempty_expressions(&mut self) -> Result<Vec<Expr>, String> {
         self.expect("(")?;
@@ -349,6 +373,7 @@ impl Parser {
         }
         Ok(fields)
     }
+
     fn ty(&mut self) -> Result<Type, String> {
         if self.depth >= 128 {
             return Err(self.err("syntax nesting limit reached"));
@@ -409,6 +434,7 @@ impl Parser {
         self.depth -= 1;
         result
     }
+
     fn expr(&mut self, min: u8) -> Result<Expr, String> {
         if self.depth >= 128 {
             return Err(self.err("syntax nesting limit reached"));
@@ -594,6 +620,7 @@ impl Parser {
         self.depth -= 1;
         Ok(lhs)
     }
+
     fn proof(&mut self) -> Result<Vec<String>, String> {
         self.expect("{")?;
         let mut steps = Vec::new();
@@ -639,6 +666,7 @@ impl Parser {
         }
         Ok(steps)
     }
+
     fn destructor(&mut self) -> Result<(String, Function), String> {
         self.expect("impl")?;
         self.expect("Drop")?;

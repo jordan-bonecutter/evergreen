@@ -1,5 +1,7 @@
 //! Lean emission acceptance and rejection regressions.
+
 use super::*;
+
 #[test]
 fn emits_contract_and_facts() {
     let s = emit(
@@ -10,6 +12,7 @@ fn emits_contract_and_facts() {
     assert!(s.contains("{ result : Nat // (result > n) }"));
     assert!(s.contains("have h : ((n + 1) > n) := by omega"));
 }
+
 #[test]
 fn emits_bounds_obligation() {
     let s = emit(
@@ -20,6 +23,7 @@ fn emits_bounds_obligation() {
     assert!(s.contains("Vector (Int) (n)"));
     assert!(s.contains("[i]'(by omega)"));
 }
+
 #[test]
 fn rejects_escape_hatches() {
     for tactic in ["sorry", "admit", "native_decide", "axiom", "exact missing"] {
@@ -30,6 +34,7 @@ fn rejects_escape_hatches() {
         .is_err());
     }
 }
+
 #[test]
 fn rejects_bad_programs() {
     for s in [
@@ -43,10 +48,12 @@ fn rejects_bad_programs() {
         assert!(emit(s, false).is_err(), "{s}");
     }
 }
+
 #[test]
 fn run_requires_entrypoint() {
     assert!(emit("ideal fn f() -> nat { 1 }", true).is_err());
 }
+
 #[test]
 fn comments_and_precedence() {
     let s = emit("// comment\nideal fn main() -> int { 1 + 2 * 3 }", true).unwrap();

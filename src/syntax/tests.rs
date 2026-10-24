@@ -1,5 +1,7 @@
 //! Parser acceptance, rejection, and syntax-depth regressions.
+
 use super::*;
+
 #[test]
 fn module_scopes_are_closed_and_names_are_qualified_once() {
     let program = parse("module a {opaque type Item struct {n: usize} fn get() -> Item {Item {n: 42}}} fn main() -> usize {let item: a::Item = a::get(); 42}").unwrap();
@@ -20,12 +22,14 @@ fn module_scopes_are_closed_and_names_are_qualified_once() {
     }
     assert!(parse(&format!("fn {}() -> usize {{0}}", "x".repeat(257))).is_err());
 }
+
 #[test]
 fn parses_calls_branches_and_arrays() {
     let f = parse("fn main() -> nat { let a: [nat; 2] = [1, 2]; if true { f(a[0]) } else { 3 } }")
         .unwrap();
     assert!(matches!(f.functions[0].result.kind, Kind::If(..)));
 }
+
 #[test]
 fn rejects_flat_chains_before_the_expression_tree_can_overflow() {
     for expression in [
@@ -45,6 +49,7 @@ fn rejects_flat_chains_before_the_expression_tree_can_overflow() {
     ))
     .is_ok());
 }
+
 #[test]
 fn rejects_truncated_proofs_and_deep_syntax() {
     assert!(parse("fn f() -> nat { 1 } proof {").is_err());

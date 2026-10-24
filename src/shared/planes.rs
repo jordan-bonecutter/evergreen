@@ -2,34 +2,42 @@
 //! Handles are opaque; invalidation is checked independently of the prover.
 //! The checker and interpreter instantiate this store with their own value types.
 //! Generated executables use the native backend's Linux allocator.
+
 use std::sync::atomic::{AtomicU64, Ordering};
+
 static NEXT_ARENA: AtomicU64 = AtomicU64::new(1);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Reference {
     owner: u64,
     slot: usize,
     generation: u64,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PlaneId {
     owner: u64,
     slot: usize,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Projection<I = usize> {
     Field(String),
     Index(I),
 }
+
 #[derive(Clone, Debug)]
 struct Plane<T> {
     generation: u64,
     value: Option<T>,
 }
+
 #[derive(Debug)]
 pub struct Memory<T> {
     owner: u64,
     planes: Vec<Plane<T>>,
 }
+
 impl<T> Default for Memory<T> {
     fn default() -> Self {
         let mut owner = NEXT_ARENA.load(Ordering::Relaxed);
@@ -53,6 +61,7 @@ impl<T> Default for Memory<T> {
         }
     }
 }
+
 impl<T> Memory<T> {
     pub(crate) fn snapshot(&self) -> Self
     where
@@ -63,6 +72,7 @@ impl<T> Memory<T> {
             planes: self.planes.clone(),
         }
     }
+
     pub(crate) fn states(&self) -> Vec<(PlaneId, u64, Option<&T>)> {
         self.planes
             .iter()
@@ -79,6 +89,7 @@ impl<T> Memory<T> {
             })
             .collect()
     }
+
     pub fn allocate(&mut self, value: T) -> Result<PlaneId, String> {
         if self.planes.len() >= 100_000 {
             return Err("plane allocation limit reached".into());
@@ -93,6 +104,7 @@ impl<T> Memory<T> {
         });
         Ok(id)
     }
+
     pub fn borrow(&self, id: PlaneId) -> Result<Reference, String> {
         if id.owner != self.owner {
             return Err("plane belongs to a different arena".into());
@@ -107,6 +119,7 @@ impl<T> Memory<T> {
             generation: p.generation,
         })
     }
+
     pub fn get(&self, id: PlaneId) -> Result<&T, String> {
         if id.owner != self.owner {
             return Err("plane belongs to a different arena".into());
@@ -116,6 +129,7 @@ impl<T> Memory<T> {
             .and_then(|p| p.value.as_ref())
             .ok_or_else(|| "use of shape(T): plane is moved or dropped".into())
     }
+
     pub fn read(&self, reference: Reference) -> Result<&T, String> {
         if reference.owner != self.owner {
             return Err("reference belongs to a different arena".into());
@@ -131,6 +145,7 @@ impl<T> Memory<T> {
         }
         p.value.as_ref().ok_or_else(|| "dropped plane".into())
     }
+
     pub fn plane(&self, reference: Reference) -> Result<PlaneId, String> {
         self.read(reference)?;
         Ok(PlaneId {
@@ -138,6 +153,7 @@ impl<T> Memory<T> {
             slot: reference.slot,
         })
     }
+
     pub fn write(&mut self, id: PlaneId, value: T, replace: bool) -> Result<(), String> {
         if id.owner != self.owner {
             return Err("plane belongs to a different arena".into());
@@ -152,6 +168,7 @@ impl<T> Memory<T> {
         p.value = Some(value);
         Ok(())
     }
+
     pub fn take(&mut self, id: PlaneId) -> Result<T, String> {
         if id.owner != self.owner {
             return Err("plane belongs to a different arena".into());
@@ -171,6 +188,7 @@ impl<T> Memory<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn proof_snapshots_isolate_branch_writes_and_consumption() {
         let mut original = Memory::default();
@@ -184,6 +202,7 @@ mod tests {
         assert!(branch.read(reference).is_err());
         assert_eq!(*original.read(reference).unwrap(), 7);
     }
+
     #[test]
     fn aliases_observe_scalar_writes() {
         let mut m = Memory::default();
@@ -194,6 +213,7 @@ mod tests {
         assert_eq!(*m.read(a).unwrap(), 2);
         assert_eq!(*m.read(b).unwrap(), 2);
     }
+
     #[test]
     fn replacing_or_moving_invalidates_all_aliases() {
         let mut m = Memory::default();

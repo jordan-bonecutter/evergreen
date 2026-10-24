@@ -1,4 +1,5 @@
 //! Reference identity and the independent-input boundary of modular contracts.
+
 use super::*;
 
 impl Context<'_> {

@@ -1,4 +1,5 @@
 //! Internal elaboration and verification-condition generation.
+
 use crate::shared::ownership::is_affine;
 use crate::{
     compiler::certificate::{ProofBundle, Session},
@@ -9,7 +10,9 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
+
 mod array_history;
+
 #[cfg(test)]
 pub(crate) mod array_model;
 mod bodies;
@@ -32,6 +35,7 @@ enum Formula {
     Not(Box<Self>),
     Implies(Box<Self>, Box<Self>),
 }
+
 impl Formula {
     fn encode(&self, out: &mut Vec<u8>) {
         match self {
@@ -63,6 +67,7 @@ impl Formula {
             }
         }
     }
+
     fn and(self, other: Self) -> Self {
         match (self, other) {
             (Self::False, _) | (_, Self::False) => Self::False,
@@ -71,6 +76,7 @@ impl Formula {
             (a, b) => Self::And(Box::new(a), Box::new(b)),
         }
     }
+
     fn or(self, other: Self) -> Self {
         match (self, other) {
             (Self::True, _) | (_, Self::True) => Self::True,
@@ -79,6 +85,7 @@ impl Formula {
             (a, b) => Self::Or(Box::new(a), Box::new(b)),
         }
     }
+
     fn not(self) -> Self {
         match self {
             Self::True => Self::False,
@@ -101,6 +108,7 @@ enum Ty {
     Array(Box<Ty>, Linear),
     Record(String),
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Symbol {
     Number(Ty, Linear),
@@ -117,6 +125,7 @@ enum Symbol {
     Ref(Box<Ty>, Reference, Vec<Projection<Linear>>),
     Plane(Box<Ty>, Reference),
 }
+
 impl Symbol {
     fn ty(&self) -> Ty {
         match self {
@@ -129,6 +138,7 @@ impl Symbol {
             Self::Plane(t, _) => Ty::Plane(t.clone()),
         }
     }
+
     fn number(&self) -> Result<Linear> {
         if let Self::Number(_, n) = self {
             Ok(n.clone())
@@ -136,6 +146,7 @@ impl Symbol {
             Err("expected an integer expression".into())
         }
     }
+
     fn proposition(&self) -> Result<Formula> {
         if let Self::Bool(p) = self {
             Ok(p.clone())
@@ -150,6 +161,7 @@ impl Symbol {
 // separately. These are bootstrap availability limits, not logical assumptions.
 const MAX_VALUE_NODES: usize = 32768;
 const MAX_VALUE_WORK: usize = 262144;
+
 fn symbol_weight(value: &Symbol) -> Result<usize> {
     enum Node<'a> {
         Value(&'a Symbol, usize),
@@ -200,6 +212,7 @@ fn symbol_weight(value: &Symbol) -> Result<usize> {
     }
     Ok(weight)
 }
+
 fn values_weight<'a>(values: impl IntoIterator<Item = &'a Symbol>) -> Result<usize> {
     let mut cost = 0usize;
     for value in values {
@@ -257,6 +270,7 @@ fn project<'a>(value: &'a Symbol, path: &[Projection<Linear>]) -> Result<&'a Sym
     };
     project(value, &path[1..])
 }
+
 fn project_mut<'a>(value: &'a mut Symbol, path: &[Projection<Linear>]) -> Result<&'a mut Symbol> {
     if path.is_empty() {
         return Ok(value);
@@ -387,6 +401,7 @@ fn extend_normalized(
 fn equal(a: &Linear, b: &Linear) -> Result<Formula> {
     Ok(Formula::Ge(a.sub(b)?).and(Formula::Ge(b.sub(a)?)))
 }
+
 fn clauses<'a>(expression: &'a Expr, out: &mut Vec<&'a Expr>) {
     if let Kind::Binary(op, a, b) = &expression.kind {
         if op == "&&" {
@@ -481,6 +496,7 @@ fn destructor_expression(e: &Expr) -> bool {
         _ => true,
     }
 }
+
 fn destructor_body(body: &[Statement]) -> bool {
     body.iter().all(|s| match s {
         Statement::Ideal(binding) => destructor_body(std::slice::from_ref(binding.as_ref())),
@@ -513,6 +529,7 @@ struct WritePlace {
     path: Vec<Projection<Linear>>,
     ty: Box<Ty>,
 }
+
 #[derive(Clone)]
 struct InputReference {
     origin: String,
@@ -545,6 +562,7 @@ fn input_value_path(expression: &Expr) -> Option<String> {
         _ => None,
     }
 }
+
 fn input_reference_origin(expression: &Expr) -> Option<String> {
     fn indirect(place: &Expr) -> Option<String> {
         match &place.kind {
@@ -586,6 +604,7 @@ fn needs_old_memory(function: &Function) -> bool {
             _ => false,
         }
     }
+
     fn ty(t: &Type) -> bool {
         match t {
             Type::Ref(t) | Type::Plane(t) => ty(t),
@@ -593,6 +612,7 @@ fn needs_old_memory(function: &Function) -> bool {
             _ => false,
         }
     }
+
     fn statement(s: &Statement) -> bool {
         match s {
             Statement::Ideal(s) => statement(s),
@@ -692,6 +712,7 @@ impl<'a> Context<'a> {
         self.writable = grants;
         result
     }
+
     fn write_permitted_by(
         &mut self,
         grants: &[WritePlace],
@@ -718,6 +739,7 @@ impl<'a> Context<'a> {
         }
         Ok(false)
     }
+
     fn incoming_references(
         &mut self,
         function: &Function,
@@ -960,14 +982,17 @@ impl<'a> Context<'a> {
         }
         Ok(())
     }
+
     fn clone_env(&mut self) -> Result<BTreeMap<String, Symbol>> {
         self.charge_value_work(values_weight(self.env.values())?)?;
         Ok(self.env.clone())
     }
+
     fn snapshot_memory(&mut self) -> Result<Memory<Symbol>> {
         self.charge_value_work(store_weight(&self.memory)?)?;
         Ok(self.memory.snapshot())
     }
+
     fn clone_store(&mut self, store: &Memory<Symbol>) -> Result<Memory<Symbol>> {
         self.charge_value_work(store_weight(store)?)?;
         Ok(store.snapshot())
@@ -982,6 +1007,7 @@ impl<'a> Context<'a> {
             _ => true,
         }
     }
+
     fn proof_storage(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Nat | Ty::Int => true,
@@ -991,6 +1017,7 @@ impl<'a> Context<'a> {
             _ => false,
         }
     }
+
     fn erased_ty(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Plane(_) => false,
@@ -1000,6 +1027,7 @@ impl<'a> Context<'a> {
             _ => true,
         }
     }
+
     fn representation_access(&self, name: &str, line: usize) -> Result<()> {
         if self.declaring.as_deref() == Some(name) {
             return Ok(());
@@ -1015,6 +1043,7 @@ impl<'a> Context<'a> {
         }
         Ok(())
     }
+
     fn field_access(&self, name: &str, field: &str, line: usize) -> Result<()> {
         self.representation_access(name, line)?;
         if self.phase == Phase::Runtime && self.structs[name].ideal_fields.contains(field) {
@@ -1039,6 +1068,7 @@ impl<'a> Context<'a> {
         }
         Ok(true)
     }
+
     fn paths_disjoint(
         &mut self,
         a: &[Projection<Linear>],
@@ -1056,6 +1086,7 @@ impl<'a> Context<'a> {
         }
         Ok(false)
     }
+
     fn paths_equal(&mut self, a: &[Projection<Linear>], b: &[Projection<Linear>]) -> Result<bool> {
         if a.len() != b.len() {
             return Ok(false);
@@ -1069,6 +1100,7 @@ impl<'a> Context<'a> {
         }
         Ok(true)
     }
+
     fn updated_cell(
         &mut self,
         target: &Linear,
@@ -1097,6 +1129,7 @@ impl<'a> Context<'a> {
         self.assume(&relation)?;
         Ok(result)
     }
+
     fn replace_projection(
         &mut self,
         value: &mut Symbol,
@@ -1248,10 +1281,12 @@ impl<'a> Context<'a> {
             temporaries: Vec::new(),
         }
     }
+
     fn fresh_name(&mut self) -> String {
         self.fresh += 1;
         format!("evg_{}", self.fresh)
     }
+
     fn runtime_name(&self, name: &str) -> Result<()> {
         if self.ideal_bindings.contains(name) && self.phase == Phase::Runtime {
             return Err(format!(
@@ -1260,6 +1295,7 @@ impl<'a> Context<'a> {
         }
         Ok(())
     }
+
     fn capture_old(&mut self, function: &Function) -> Result<()> {
         self.charge_value_work(values_weight(self.env.values())?)?;
         let target_cost = self
@@ -1377,6 +1413,7 @@ impl<'a> Context<'a> {
         }
         value
     }
+
     fn old_key(e: &Expr) -> Option<String> {
         match &e.kind {
             Kind::Name(n) => Some(n.clone()),
@@ -1387,6 +1424,7 @@ impl<'a> Context<'a> {
             _ => None,
         }
     }
+
     fn number_type(&self) -> Ty {
         if self.phase != Phase::Runtime {
             Ty::Int
@@ -1394,11 +1432,13 @@ impl<'a> Context<'a> {
             Ty::Machine(MachineInt::parse("isize").expect("isize type"))
         }
     }
+
     fn assume(&mut self, p: &Formula) -> Result<()> {
         let paths = extend(&self.paths, p, false, self.session, &mut self.value_work)?;
         self.paths = self.feasible_paths(paths)?;
         Ok(())
     }
+
     fn feasible_paths(&mut self, paths: Vec<Vec<Linear>>) -> Result<Vec<Vec<Linear>>> {
         if paths.len() <= 1 {
             return Ok(paths);
@@ -1411,6 +1451,7 @@ impl<'a> Context<'a> {
         }
         Ok(feasible)
     }
+
     fn proposition(&mut self, e: &Expr) -> Result<Formula> {
         let saved = self.phase;
         self.phase = Phase::Specification;
@@ -1418,6 +1459,7 @@ impl<'a> Context<'a> {
         self.phase = saved;
         result
     }
+
     fn nonnegative(&mut self, e: &Expr, label: &str) -> Result<Linear> {
         let ty = self.hint(e).unwrap_or(Ty::Nat);
         if !matches!(ty, Ty::Int | Ty::Nat | Ty::Machine(_)) {
@@ -1427,6 +1469,7 @@ impl<'a> Context<'a> {
         self.prove(&Formula::Ge(n.clone()), label, e.line)?;
         Ok(n)
     }
+
     fn prove(&mut self, p: &Formula, label: &str, line: usize) -> Result<()> {
         self.obligations += 1;
         for path in extend(&self.paths, p, true, self.session, &mut self.value_work)? {
@@ -1436,6 +1479,7 @@ impl<'a> Context<'a> {
         }
         Ok(())
     }
+
     fn resolve(&mut self, t: &Type) -> Result<Ty> {
         match t {
             Type::Int | Type::Nat if self.phase == Phase::Runtime => Err("int and nat are proof-only; use a machine integer for runtime storage or declare ideal code".into()),
@@ -1470,6 +1514,7 @@ impl<'a> Context<'a> {
             }
         }
     }
+
     fn literal_element_hint(&mut self, t: &Type) -> Result<Option<Ty>> {
         match t {
             // Nested dependent lengths need the callee's parameter environment.
@@ -1480,6 +1525,7 @@ impl<'a> Context<'a> {
             _ => self.resolve(t).map(Some),
         }
     }
+
     fn compatible(&mut self, got: &Ty, expected: &Ty, line: usize) -> Result<()> {
         match (got, expected) {
             (Ty::Int, Ty::Int)
@@ -1499,6 +1545,7 @@ impl<'a> Context<'a> {
             )),
         }
     }
+
     fn arbitrary(&mut self, t: &Ty) -> Result<Symbol> {
         self.charge_value_work(1)?;
         if self.fresh >= 8192 {
@@ -1633,6 +1680,7 @@ impl<'a> Context<'a> {
             }
             return self.validate_opened_planes(place.line);
         }
+
         fn path(e: &Expr, fields: &mut Vec<String>) -> Result<String> {
             match &e.kind {
                 Kind::Name(n) => Ok(n.clone()),
@@ -1647,6 +1695,7 @@ impl<'a> Context<'a> {
                 )),
             }
         }
+
         fn replace(root: &mut Symbol, fields: &[String], value: Symbol) -> Result<()> {
             if fields.is_empty() {
                 *root = value;
@@ -1726,6 +1775,7 @@ impl<'a> Context<'a> {
         self.statement_inner(s)?;
         self.finish_temporaries(start)
     }
+
     fn finish_temporaries(&mut self, start: usize) -> Result<()> {
         for (value, line) in self.temporaries.split_off(start).into_iter().rev() {
             self.validate_argument(&value, line)
@@ -1734,12 +1784,14 @@ impl<'a> Context<'a> {
         }
         Ok(())
     }
+
     fn scoped_eval(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
         let start = self.temporaries.len();
         let value = self.eval(e, expected)?;
         self.finish_temporaries(start)?;
         Ok(value)
     }
+
     fn statement_inner(&mut self, s: &Statement) -> Result<()> {
         match s {
             Statement::Ideal(binding) => {
@@ -1880,6 +1932,7 @@ impl<'a> Context<'a> {
             }
         }
     }
+
     fn fresh_binding(&self, name: &str, line: usize) -> Result<()> {
         if self.env.contains_key(name)
             || self.facts.contains_key(name)
@@ -2093,6 +2146,7 @@ impl<'a> Context<'a> {
             _ => Err(format!("line {}: expected a referenceable place", e.line)),
         }
     }
+
     fn declared_hint(t: &Type) -> Option<Ty> {
         match t {
             Type::Int => Some(Ty::Int),
@@ -2106,6 +2160,7 @@ impl<'a> Context<'a> {
             Type::Array(..) => None,
         }
     }
+
     // Read types from already modeled storage without evaluation or proof
     // assumptions. This includes arrays behind record fields and references;
     // dependent extents cannot be reconstructed from a field declaration alone.
@@ -2147,6 +2202,7 @@ impl<'a> Context<'a> {
             _ => None,
         }
     }
+
     fn hint(&self, e: &Expr) -> Option<Ty> {
         if let Some(value) = self.stored_hint(e) {
             return Some(value.ty());
@@ -2205,6 +2261,7 @@ impl<'a> Context<'a> {
             _ => None,
         }
     }
+
     fn prove_with(
         &mut self,
         goal: &Formula,
@@ -2217,6 +2274,7 @@ impl<'a> Context<'a> {
         }
         self.prove(goal, label, line)
     }
+
     fn eval(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
         if self.eval_depth >= 32 || self.eval_steps >= 100_000 {
             return Err(format!(
@@ -2230,6 +2288,7 @@ impl<'a> Context<'a> {
         self.eval_depth -= 1;
         result
     }
+
     fn eval_checked(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
         let value = self.eval_inner(e, expected).map_err(|s| {
             if s.starts_with("line ") {
@@ -2266,6 +2325,7 @@ impl<'a> Context<'a> {
         }
         Ok(value)
     }
+
     fn symbol_is_affine(&self, value: &Symbol) -> bool {
         match value {
             Symbol::Plane(..) => true,
@@ -2277,6 +2337,7 @@ impl<'a> Context<'a> {
             _ => false,
         }
     }
+
     fn ty_is_affine(&self, t: &Ty) -> bool {
         match t {
             Ty::Plane(_) => true,
@@ -2285,6 +2346,7 @@ impl<'a> Context<'a> {
             _ => false,
         }
     }
+
     // Extensional array histories can compare these values structurally.
     // Reference identity, nested arrays, and owning values need their own rules.
     // Reference-free scalar trees can be havoced without changing storage
@@ -2306,9 +2368,11 @@ impl<'a> Context<'a> {
             _ => true,
         }
     }
+
     fn history_element(&self, t: &Ty) -> bool {
         !self.ty_is_affine(t) && self.scalar_field_value(t)
     }
+
     fn ty_has_reference(&self, t: &Ty) -> bool {
         match t {
             Ty::Ref(_) | Ty::Plane(_) => true,
@@ -2317,6 +2381,7 @@ impl<'a> Context<'a> {
             _ => false,
         }
     }
+
     fn assume_element_type(&mut self, value: &Symbol) -> Result<()> {
         let bounds = match value {
             Symbol::Number(Ty::Machine(t), n) => {
@@ -2363,6 +2428,7 @@ impl<'a> Context<'a> {
         }
         Ok(())
     }
+
     fn finish_scope(&mut self, f: &Function) -> Result<()> {
         let mut names = f.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
         names.extend(
@@ -2392,6 +2458,7 @@ impl<'a> Context<'a> {
         }
         Ok(())
     }
+
     fn read_array(
         &mut self,
         element: &Ty,
@@ -2428,6 +2495,7 @@ impl<'a> Context<'a> {
         }
         self.array_read(element, identity, index)
     }
+
     fn array_read(&mut self, element: &Ty, identity: &str, index: &Linear) -> Result<Symbol> {
         self.charge_value_work(1)?;
         if self.array_read_depth >= 64 {
@@ -2442,6 +2510,7 @@ impl<'a> Context<'a> {
         self.array_read_depth -= 1;
         result
     }
+
     fn array_read_value(&mut self, element: &Ty, identity: &str, index: &Linear) -> Result<Symbol> {
         // Stable contents identities give extensional reads across scopes. A
         // reference-bearing selection needs an alias rule, not a fresh plane.
@@ -2480,11 +2549,13 @@ impl<'a> Context<'a> {
         self.array_reads.insert(key, value.clone());
         Ok(value)
     }
+
     fn storage(&mut self, e: &Expr) -> Result<Symbol> {
         let value = self.storage_inner(e)?;
         self.charge_value_work(symbol_weight(&value)?)?;
         Ok(value)
     }
+
     fn storage_inner(&mut self, e: &Expr) -> Result<Symbol> {
         match &e.kind {
             Kind::Name(n) => {
@@ -2559,6 +2630,7 @@ impl<'a> Context<'a> {
             }
         }
     }
+
     fn fact_at(&mut self, place: &Expr, fact: &str, line: usize) -> Result<Formula> {
         if self.phase != Phase::Specification {
             return Err(format!(
@@ -3316,6 +3388,7 @@ impl<'a> Context<'a> {
             }
         }
     }
+
     fn join_value(
         &mut self,
         a: &Symbol,
@@ -3540,6 +3613,7 @@ impl<'a> Context<'a> {
             ),
         }
     }
+
     fn symbol_equal(&self, a: &Symbol, b: &Symbol) -> Result<Formula> {
         match (a, b) {
             (Symbol::Number(_, a), Symbol::Number(_, b)) => equal(a, b),
@@ -3578,21 +3652,26 @@ impl VerifiedProgram {
             .iter()
             .any(|f| heap::function_uses_planes(f, &self.structs))
     }
+
     pub fn trusted_assumptions(&self) -> &[crate::compiler::certificate::TrustedAssumption] {
         &self.trusted
     }
+
     pub fn potentially_diverging_functions(&self) -> impl Iterator<Item = &str> {
         self.functions
             .iter()
             .filter(|f| f.partial)
             .map(|f| f.name.as_str())
     }
+
     pub fn proof_search_count(&self) -> usize {
         self.proof_searches
     }
+
     pub(crate) fn check_entry(&self) -> Result<()> {
         crate::shared::worker::run("evergreen-entry-checker", || self.check_entry_inner())
     }
+
     fn check_entry_inner(&self) -> Result<()> {
         let main = self
             .functions
@@ -3640,12 +3719,14 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
     session.finish()?;
     Ok(program)
 }
+
 pub fn prove(source: &str) -> Result<(VerifiedProgram, ProofBundle)> {
     let mut session = Session::recording();
     let program = verify_using(source, &mut session)?;
     session.finish()?;
     Ok((program, session.bundle(source)?))
 }
+
 pub fn verify_with_certificate(source: &str, bundle: &ProofBundle) -> Result<VerifiedProgram> {
     bundle.check_source(source)?;
     let mut session = Session::replay(bundle);
@@ -3653,6 +3734,7 @@ pub fn verify_with_certificate(source: &str, bundle: &ProofBundle) -> Result<Ver
     session.finish()?;
     Ok(program)
 }
+
 // Bound the unfolded type graph before recursive property checks or symbolic
 // record construction. Costs are computed once per declaration using the
 // already checked prefix, so repeated fields cannot cause exponential work.
@@ -3688,6 +3770,7 @@ fn check_type_expansion(structs: &[Struct]) -> Result<()> {
 fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> {
     crate::shared::worker::run("evergreen-verifier", || verify_inner(source, session))
 }
+
 fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> {
     let parsed = syntax::parse(source)?;
     check_type_expansion(&parsed.structs)?;

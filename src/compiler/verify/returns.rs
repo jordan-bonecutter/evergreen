@@ -1,10 +1,13 @@
 //! Exact provenance for reference leaves in returned records and fixed arrays.
+
 use super::*;
 use crate::syntax::ReturnProjection;
+
 pub(super) enum AliasTarget {
     Incoming(Symbol),
     Result(Expr),
 }
+
 type Aliases = BTreeMap<Vec<ReturnProjection>, AliasTarget>;
 
 fn root(expression: &Expr) -> Option<&str> {
@@ -36,6 +39,7 @@ fn check_result_anchor(
             _ => false,
         }
     }
+
     fn project_type<'a>(
         expression: &Expr,
         ty: &'a Type,
@@ -333,6 +337,7 @@ impl Context<'_> {
             _ => Err("return alias type disagrees with the declared result type".into()),
         }
     }
+
     pub(super) fn assume_return_type(&mut self, value: &Symbol, ty: &Ty) -> Result<()> {
         self.charge_value_work(1)?;
         self.assume_return_compatible(&value.ty(), ty)?;

@@ -1,4 +1,5 @@
 //! Statement parsing, tail expressions, and the restricted update grammar.
+
 use super::*;
 
 enum BindingKind {
@@ -139,6 +140,7 @@ impl Parser {
         };
         Ok(Statement::Ideal(Box::new(statement)))
     }
+
     fn binding(&mut self, kind: BindingKind) -> Result<Statement, String> {
         let fact = matches!(kind, BindingKind::Fact);
         let mut name = self.name()?;
@@ -192,6 +194,7 @@ impl Parser {
             Statement::Let { name, ty, value }
         })
     }
+
     fn proof_statement(&mut self) -> Result<Statement, String> {
         let name = self.name()?;
         self.expect(":")?;

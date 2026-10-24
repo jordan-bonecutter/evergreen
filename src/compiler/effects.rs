@@ -1,12 +1,14 @@
 //! Conservative, checked scalar effect summaries. Invariant-independent helpers
 //! are read-only; ownership-free helpers may use checked write contracts.
 //! Unknown effects remain unknown; callers must not assume they are harmless.
+
 use crate::syntax::{Expr, Function, Kind, Statement, Type};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn scalar(t: &Type) -> bool {
     matches!(t, Type::Machine(_) | Type::Bool | Type::Unit)
 }
+
 fn leaf(t: &Type) -> bool {
     scalar(t) || matches!(t, Type::Ref(inner) if matches!(**inner, Type::Machine(_) | Type::Bool))
 }
@@ -37,6 +39,7 @@ struct Safe<'a> {
     known: &'a BTreeSet<String>,
     current: &'a str,
 }
+
 impl Safe<'_> {
     fn contains(&self, name: &str) -> bool {
         name == self.current || self.known.contains(name)
@@ -239,6 +242,7 @@ pub(crate) fn recursive(function: &Function) -> bool {
             _ => false,
         }
     }
+
     fn statement(s: &Statement, name: &str) -> bool {
         match s {
             Statement::Ideal(_) | Statement::Fact { .. } | Statement::Proof { .. } => false,

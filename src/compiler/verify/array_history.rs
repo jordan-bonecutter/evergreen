@@ -1,4 +1,5 @@
 //! Immutable array versions preserve cells first observed after a store or join.
+
 use super::*;
 
 impl Context<'_> {

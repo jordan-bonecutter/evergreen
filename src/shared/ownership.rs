@@ -1,4 +1,5 @@
 //! Structural ownership classification used by the checker and both backends.
+
 use crate::syntax::{Struct, Type};
 use std::collections::{BTreeMap, BTreeSet};
 

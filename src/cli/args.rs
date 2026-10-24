@@ -1,4 +1,5 @@
 //! Command syntax and input-file selection.
+
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 

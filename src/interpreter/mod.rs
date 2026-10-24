@@ -1,10 +1,12 @@
 //! Bounded reference evaluator; construction requires a verified program.
+
 use crate::{
     compiler::verify::VerifiedProgram,
     shared::planes::{Memory, PlaneId, Projection, Reference},
     syntax::{Expr, Function, Kind, MachineInt, Statement, Struct, Type},
 };
 use std::collections::{BTreeMap, BTreeSet};
+
 mod compat;
 
 type Result<T> = std::result::Result<T, String>;
@@ -21,6 +23,7 @@ pub enum Value {
     Plane(Box<Type>, Reference),
     Machine(MachineInt, i128),
 }
+
 // Charge aggregate snapshots before cloning their expanded representation.
 // Handles do not recursively copy the plane they point to.
 fn charge_value(value: &Value, fuel: &mut usize) -> Result<()> {
@@ -40,6 +43,7 @@ fn charge_value(value: &Value, fuel: &mut usize) -> Result<()> {
     *fuel -= cost;
     Ok(())
 }
+
 fn copy_value(value: &Value, fuel: &mut usize) -> Result<Value> {
     charge_value(value, fuel)?;
     Ok(value.clone())
@@ -67,6 +71,7 @@ impl std::fmt::Display for Value {
         }
     }
 }
+
 impl Value {
     fn number(&self) -> Result<i128> {
         match self {
@@ -74,6 +79,7 @@ impl Value {
             _ => Err("expected integer".into()),
         }
     }
+
     fn boolean(&self) -> Result<bool> {
         if let Self::Bool(b) = self {
             Ok(*b)
@@ -81,6 +87,7 @@ impl Value {
             Err("expected boolean".into())
         }
     }
+
     fn hint(&self) -> Option<Type> {
         match self {
             Self::Int(_) => Some(Type::Int),
@@ -101,6 +108,7 @@ impl Value {
         }
     }
 }
+
 struct Evaluator<'a> {
     functions: &'a [Function],
     structs: &'a BTreeMap<String, Struct>,
@@ -113,6 +121,7 @@ struct Evaluator<'a> {
     events: Vec<String>,
     temporaries: Vec<Value>,
 }
+
 impl Evaluator<'_> {
     fn finish_temporaries(&mut self, start: usize) -> Result<()> {
         let values = self.temporaries.split_off(start);
@@ -121,6 +130,7 @@ impl Evaluator<'_> {
         }
         Ok(())
     }
+
     fn scoped_expr(
         &mut self,
         e: &Expr,
@@ -132,6 +142,7 @@ impl Evaluator<'_> {
         self.finish_temporaries(start)?;
         Ok(value)
     }
+
     fn hint(&self, e: &Expr, env: &BTreeMap<String, Value>) -> Option<Type> {
         match &e.kind {
             Kind::Bool(_) => Some(Type::Bool),
@@ -196,6 +207,7 @@ impl Evaluator<'_> {
             _ => None,
         }
     }
+
     fn call(&mut self, name: &str, actuals: Vec<Value>) -> Result<Value> {
         if self.depth >= 128 {
             return Err("execution call depth limit reached".into());
@@ -340,6 +352,7 @@ impl Evaluator<'_> {
             _ => false,
         }
     }
+
     fn drop_value(&mut self, value: Value) -> Result<()> {
         self.fuel = self
             .fuel
@@ -355,6 +368,7 @@ impl Evaluator<'_> {
         }
         self.drop_fields(value)
     }
+
     fn drop_fields(&mut self, value: Value) -> Result<()> {
         match value {
             Value::Plane(_, reference) => {
@@ -409,6 +423,7 @@ impl Evaluator<'_> {
             }
             return Ok(());
         }
+
         fn path(e: &Expr, fields: &mut Vec<String>) -> Result<String> {
             match &e.kind {
                 Kind::Name(n) => Ok(n.clone()),
@@ -420,6 +435,7 @@ impl Evaluator<'_> {
                 _ => Err("invalid assignment".into()),
             }
         }
+
         fn replace(root: &mut Value, fields: &[String], value: Value) -> Result<()> {
             if fields.is_empty() {
                 *root = value;
@@ -486,6 +502,7 @@ impl Evaluator<'_> {
 
         Ok(())
     }
+
     fn expr(
         &mut self,
         e: &Expr,
@@ -513,6 +530,7 @@ impl Evaluator<'_> {
             }
         })
     }
+
     fn inner(
         &mut self,
         e: &Expr,
@@ -802,6 +820,7 @@ impl Evaluator<'_> {
         charge_value(&value, &mut self.fuel)?;
         Ok(value)
     }
+
     fn storage_inner(&mut self, e: &Expr, env: &BTreeMap<String, Value>) -> Result<Value> {
         match &e.kind {
             Kind::Name(n) => {
@@ -889,6 +908,7 @@ fn project<'a>(value: &'a Value, path: &[Projection]) -> Result<&'a Value> {
     };
     project(value, &path[1..])
 }
+
 fn replace_projection(value: &mut Value, path: &[Projection], new: Value) -> Result<()> {
     if path.is_empty() {
         *value = new;

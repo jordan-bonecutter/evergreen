@@ -1,4 +1,5 @@
 //! Small propositional proof rules. Arithmetic leaves still use certificates.
+
 use super::*;
 
 impl Formula {

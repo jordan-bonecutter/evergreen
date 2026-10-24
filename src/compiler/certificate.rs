@@ -1,9 +1,12 @@
 //! Portable, untrusted arithmetic proof artifacts. Replay regenerates all VCs
 //! with the current frontend and checks every certificate against those VCs.
+
 use crate::compiler::kernel::{self, Certificate, Linear};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, io::Read, path::Path, sync::Arc};
+
 type Result<T> = std::result::Result<T, String>;
+
 pub const MAX_ARTIFACT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_RECORDS: usize = 20_000;
 const MAX_WEIGHTS: usize = 2048;
@@ -17,6 +20,7 @@ fn source_hash(source: &str) -> String {
     h.update(source.as_bytes());
     format!("{:x}", h.finalize())
 }
+
 fn statement_hash(rows: &[Linear]) -> String {
     let mut h = Sha256::new();
     h.update(b"evergreen-linear-v1\0");
@@ -32,6 +36,7 @@ fn statement_hash(rows: &[Linear]) -> String {
     }
     format!("{:x}", h.finalize())
 }
+
 fn digest(text: &str) -> bool {
     text.len() == 64
         && text
@@ -45,22 +50,26 @@ struct Record {
     certificate: Option<Certificate>,
     optional: bool,
 }
+
 #[derive(Clone, Debug)]
 struct TrustRecord {
     line: usize,
     statement: String,
 }
+
 #[derive(Clone, Debug)]
 pub struct TrustedAssumption {
     pub line: usize,
     pub goal: String,
 }
+
 #[derive(Clone, Debug)]
 pub struct ProofBundle {
     source: String,
     records: Arc<Vec<Record>>,
     trusted: Arc<Vec<TrustRecord>>,
 }
+
 impl ProofBundle {
     pub fn certificate_count(&self) -> usize {
         self.records
@@ -68,9 +77,11 @@ impl ProofBundle {
             .filter(|r| r.certificate.is_some())
             .count()
     }
+
     pub fn trusted_assumption_count(&self) -> usize {
         self.trusted.len()
     }
+
     pub fn to_text(&self) -> String {
         use std::fmt::Write;
         let mut out = format!(
@@ -104,6 +115,7 @@ impl ProofBundle {
         out.push_str("end\n");
         out
     }
+
     pub fn parse(text: &str) -> Result<Self> {
         if text.len() > MAX_ARTIFACT_BYTES {
             return Err("proof artifact exceeds 32 MiB limit".into());
@@ -217,6 +229,7 @@ impl ProofBundle {
             trusted: Arc::new(trusted),
         })
     }
+
     pub fn read(path: impl AsRef<Path>) -> Result<Self> {
         let mut text = String::new();
         std::fs::File::open(path.as_ref())
@@ -226,6 +239,7 @@ impl ProofBundle {
             .map_err(|e| e.to_string())?;
         Self::parse(&text)
     }
+
     pub(crate) fn check_source(&self, source: &str) -> Result<()> {
         if self.source != source_hash(source) {
             return Err("proof artifact is for different source content".into());
@@ -244,6 +258,7 @@ pub(crate) struct Session {
     trust_summary: Vec<TrustedAssumption>,
     searches: usize,
 }
+
 impl Session {
     pub(crate) fn search() -> Self {
         Self {
@@ -257,27 +272,32 @@ impl Session {
             searches: 0,
         }
     }
+
     pub(crate) fn recording() -> Self {
         Self {
             recording: true,
             ..Self::search()
         }
     }
+
     pub(crate) fn replay(bundle: &ProofBundle) -> Self {
         Self {
             replay: Some(bundle.clone()),
             ..Self::search()
         }
     }
+
     pub(crate) fn prove(&mut self, rows: &[Linear]) -> Result<()> {
         if !self.query(rows, false)? {
             return Err("required certificate is missing".into());
         }
         Ok(())
     }
+
     pub(crate) fn probe(&mut self, rows: &[Linear]) -> Result<bool> {
         self.query(rows, true)
     }
+
     fn query(&mut self, rows: &[Linear], optional: bool) -> Result<bool> {
         if self.cursor >= MAX_RECORDS {
             return Err("verification query limit reached".into());
@@ -336,6 +356,7 @@ impl Session {
         self.cursor += 1;
         Ok(proved)
     }
+
     pub(crate) fn finish(&self) -> Result<()> {
         if self
             .replay
@@ -353,6 +374,7 @@ impl Session {
         }
         Ok(())
     }
+
     pub(crate) fn trust(
         &mut self,
         paths: &[Vec<Linear>],
@@ -390,12 +412,15 @@ impl Session {
         });
         Ok(())
     }
+
     pub(crate) fn trusted_assumptions(&self) -> &[TrustedAssumption] {
         &self.trust_summary
     }
+
     pub(crate) fn search_count(&self) -> usize {
         self.searches
     }
+
     pub(crate) fn bundle(self, source: &str) -> Result<ProofBundle> {
         let bundle = ProofBundle {
             source: source_hash(source),
@@ -413,6 +438,7 @@ impl Session {
 mod tests {
     use super::*;
     use crate::compiler::verify::{prove, verify, verify_with_certificate};
+
     #[test]
     fn checked_in_protocol_artifact_replays_without_search() {
         let bundle = ProofBundle::parse(include_str!("../../proofs/rc_protocol.evgproof")).unwrap();
@@ -421,6 +447,7 @@ mod tests {
         assert_eq!(program.proof_search_count(), 0);
         assert!(program.trusted_assumptions().is_empty());
     }
+
     #[test]
     fn opaque_credit_interfaces_replay_without_search() {
         let source = [
@@ -434,6 +461,7 @@ mod tests {
         assert_eq!(program.proof_search_count(), 0);
         assert!(program.trusted_assumptions().is_empty());
     }
+
     #[test]
     fn disjoint_write_contracts_replay_without_search() {
         let source = [
@@ -446,6 +474,7 @@ mod tests {
         assert_eq!(program.proof_search_count(), 0);
         assert_eq!(program.run().unwrap().to_string(), "42");
     }
+
     #[test]
     fn erased_count_refinement_replays_and_executes_without_search() {
         let source = [

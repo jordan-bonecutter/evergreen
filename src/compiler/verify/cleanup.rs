@@ -1,5 +1,6 @@
 //! Cleanup elaboration. Effectful destructors are checked against the actual
 //! receiver so child cleanup sees fields changed by its parent's body.
+
 use super::*;
 
 struct Scope {
@@ -20,6 +21,7 @@ struct Scope {
     ideal: BTreeSet<String>,
     temporaries: Vec<(Symbol, usize)>,
 }
+
 impl Scope {
     fn enter(ctx: &mut Context<'_>, f: &Function, receiver: Symbol) -> Self {
         let saved = Self {
@@ -43,6 +45,7 @@ impl Scope {
         ctx.env.insert("self".into(), receiver);
         saved
     }
+
     fn restore(self, ctx: &mut Context<'_>) {
         ctx.env = self.env;
         ctx.roots = self.roots;
@@ -80,6 +83,7 @@ impl Context<'_> {
             _ => false, // References do not own their pointees.
         }
     }
+
     fn cleanup_effects(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Plane(_) => true,

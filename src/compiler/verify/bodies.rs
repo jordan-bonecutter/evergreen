@@ -1,5 +1,6 @@
 //! Calls with overlapping ports or open invariants use actual shared storage.
 //! Their modular summary cannot hide aliasing or intermediate writes.
+
 use super::*;
 
 impl Context<'_> {
@@ -59,6 +60,7 @@ impl Context<'_> {
         self.phase = phase;
         checked
     }
+
     /// Shared body obligations for declarations and actual-alias rechecks.
     pub(super) fn check_function_body(
         &mut self,

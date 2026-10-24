@@ -1,14 +1,18 @@
 //! Small Linux x86-64 backend. Source verification is required before emission.
 //! This backend is trusted code, not a machine-checked compiler-correctness proof.
+
 use crate::{
     compiler::layout,
     compiler::verify::VerifiedProgram,
     syntax::{Expr, Function, Kind, MachineInt, Statement, Struct, Type},
 };
 use std::collections::{BTreeMap, BTreeSet};
+
 type Result<T> = std::result::Result<T, String>;
+
 mod elf;
 mod program;
+
 const STACK: usize = 65536;
 const MAX_CODE: usize = 8 * 1024 * 1024;
 const RECURSION_LIMIT: usize = 128;
@@ -21,9 +25,11 @@ fn scalar(t: &Type) -> Result<()> {
         Err("native main must return a machine integer, Boolean, or unit value".into())
     }
 }
+
 fn machine() -> Type {
     Type::Machine(MachineInt::parse("isize").expect("isize"))
 }
+
 // A stored read may avoid a value copy only when computing the path cannot
 // change its contents. Calls are kept on the snapshot path, including helpers.
 fn no_calls(e: &Expr) -> bool {
@@ -37,6 +43,7 @@ fn no_calls(e: &Expr) -> bool {
         _ => true,
     }
 }
+
 fn stored(e: &Expr) -> bool {
     match &e.kind {
         Kind::Name(_) => true,
@@ -46,6 +53,7 @@ fn stored(e: &Expr) -> bool {
         _ => false,
     }
 }
+
 fn patch(code: &mut [u8], displacement: usize, target: usize) -> Result<()> {
     let relative = i32::try_from(target as i64 - (displacement + 4) as i64)
         .map_err(|_| "native branch displacement overflow")?;
@@ -54,17 +62,20 @@ fn patch(code: &mut [u8], displacement: usize, target: usize) -> Result<()> {
         .copy_from_slice(&relative.to_le_bytes());
     Ok(())
 }
+
 #[derive(Clone)]
 struct Compiled {
     offset: usize,
     stack: usize,
 }
+
 #[derive(Clone, Copy)]
 enum ReadMode {
     Place,
     Value,
     Storage,
 }
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(test), allow(dead_code))]
 enum TraceMode {
@@ -72,6 +83,7 @@ enum TraceMode {
     Count,
     Order,
 }
+
 struct Emitter<'a> {
     code: &'a mut Vec<u8>,
     known: &'a BTreeMap<String, Compiled>,
@@ -87,6 +99,7 @@ struct Emitter<'a> {
     trace: TraceMode,
     drop_ids: &'a BTreeMap<String, u32>,
 }
+
 impl Emitter<'_> {
     fn allocate(&mut self, ty: &Type) -> Result<i32> {
         self.frame = self
@@ -98,10 +111,12 @@ impl Emitter<'_> {
         }
         Ok(-i32::try_from(self.frame).map_err(|_| "native frame offset overflow")?)
     }
+
     fn frame_address(&mut self, offset: i32) {
         self.code.extend([0x48, 0x8d, 0x85]);
         self.code.extend(offset.to_le_bytes());
     }
+
     fn copy_frame(&mut self, offset: i32, ty: &Type) -> Result<()> {
         if !layout::aggregate(ty) {
             self.code.extend([0x48, 0x89, 0x85]);
@@ -117,6 +132,7 @@ impl Emitter<'_> {
         }
         Ok(())
     }
+
     fn copy_address(&mut self, ty: &Type) -> Result<()> {
         // Destination is rcx. Aggregate rax values are snapshot addresses.
         if !layout::aggregate(ty) {
@@ -132,6 +148,7 @@ impl Emitter<'_> {
         }
         Ok(())
     }
+
     fn snapshot(&mut self, ty: &Type) -> Result<()> {
         if layout::aggregate(ty) {
             let offset = self.allocate(ty)?;
@@ -142,6 +159,7 @@ impl Emitter<'_> {
         }
         Ok(())
     }
+
     fn slot(&mut self, name: &str, ty: Type) -> Result<()> {
         let offset = self.allocate(&ty)?;
         self.copy_frame(offset, &ty)?;
@@ -151,6 +169,7 @@ impl Emitter<'_> {
         }
         Ok(())
     }
+
     fn load(&mut self, name: &str) -> Result<Type> {
         let (offset, ty) = self
             .slots
@@ -161,6 +180,7 @@ impl Emitter<'_> {
         self.snapshot(&ty)?;
         Ok(ty)
     }
+
     fn has_drop(&self, ty: &Type) -> bool {
         match ty {
             Type::Plane(_) => true,
@@ -175,6 +195,7 @@ impl Emitter<'_> {
             _ => false,
         }
     }
+
     fn push_value(&mut self, ty: &Type) -> Result<()> {
         if layout::aggregate(ty) {
             self.code.extend([0x48, 0x89, 0xc2]);
@@ -188,6 +209,7 @@ impl Emitter<'_> {
         }
         Ok(())
     }
+
     fn invoke(&mut self, name: &str, argument_bytes: usize) -> Result<()> {
         let callee = self
             .known
@@ -212,6 +234,7 @@ impl Emitter<'_> {
         }
         Ok(())
     }
+
     fn trace_drop(&mut self, name: &str) -> Result<()> {
         match self.trace {
             TraceMode::Value => {}
@@ -230,6 +253,7 @@ impl Emitter<'_> {
         }
         Ok(())
     }
+
     fn drop_fields(&mut self, ty: &Type, offset: i32) -> Result<()> {
         match ty {
             Type::Named(name) => {
@@ -255,6 +279,7 @@ impl Emitter<'_> {
         }
         Ok(())
     }
+
     fn drop_frame(&mut self, ty: &Type, offset: i32) -> Result<()> {
         if !self.has_drop(ty) {
             return Ok(());
@@ -289,6 +314,7 @@ impl Emitter<'_> {
         }
         self.drop_fields(ty, offset)
     }
+
     fn drop_value(&mut self, ty: &Type) -> Result<()> {
         if self.has_drop(ty) {
             let home = self.allocate(ty)?;
@@ -297,12 +323,14 @@ impl Emitter<'_> {
         }
         Ok(())
     }
+
     fn finish_temporaries(&mut self, start: usize) -> Result<()> {
         for (offset, ty) in self.temporaries.split_off(start).into_iter().rev() {
             self.drop_frame(&ty, offset)?;
         }
         Ok(())
     }
+
     fn scoped_expr(&mut self, e: &Expr, expected: Option<&Type>) -> Result<Type> {
         let start = self.temporaries.len();
         let ty = self.expr(e, expected)?;
@@ -317,6 +345,7 @@ impl Emitter<'_> {
         }
         Ok(ty)
     }
+
     fn storage_value(&mut self, e: &Expr) -> Result<Type> {
         match &e.kind {
             Kind::Name(name) => self.load(name),
@@ -356,6 +385,7 @@ impl Emitter<'_> {
             }
         }
     }
+
     fn field(&self, ty: &Type, name: &str) -> Result<layout::Field> {
         layout::of(ty, self.structs)?
             .fields
@@ -363,12 +393,14 @@ impl Emitter<'_> {
             .cloned()
             .ok_or_else(|| format!("unknown native field {name}"))
     }
+
     fn add_offset(&mut self, offset: usize) {
         if offset != 0 {
             self.code.extend([0x48, 0x05]);
             self.code.extend((offset as u32).to_le_bytes());
         }
     }
+
     fn compatible(a: &Type, b: &Type) -> Result<bool> {
         if a == b {
             return Ok(true);
@@ -384,6 +416,7 @@ impl Emitter<'_> {
             _ => Ok(false),
         }
     }
+
     fn index_address(&mut self, base: &Expr, index: &Expr, mode: ReadMode) -> Result<Type> {
         let ty = match mode {
             ReadMode::Place => self.address(base)?,
@@ -405,19 +438,23 @@ impl Emitter<'_> {
         self.code.extend([0x48, 0x01, 0xc8]);
         Ok(*element)
     }
+
     fn immediate(&mut self, value: u64) {
         self.code.extend([0x48, 0xb8]);
         self.code.extend(value.to_le_bytes());
     }
+
     fn push(&mut self) {
         self.code.push(0x50);
         self.temporary += 8;
         self.peak = self.peak.max(self.temporary);
     }
+
     fn pop(&mut self) {
         self.code.push(0x59);
         self.temporary -= 8;
     }
+
     fn jump(&mut self, conditional: bool) -> usize {
         if conditional {
             self.code.extend([0x0f, 0x84]);
@@ -428,6 +465,7 @@ impl Emitter<'_> {
         self.code.extend([0; 4]);
         position
     }
+
     fn hint(&self, e: &Expr) -> Option<Type> {
         match &e.kind {
             Kind::Name(n) => self.slots.get(n).map(|(_, t)| t.clone()),
@@ -463,6 +501,7 @@ impl Emitter<'_> {
             _ => None,
         }
     }
+
     fn address(&mut self, e: &Expr) -> Result<Type> {
         match &e.kind {
             Kind::Field(base, name) => {
@@ -485,6 +524,7 @@ impl Emitter<'_> {
             _ => Err("native references require stored places".into()),
         }
     }
+
     fn expr(&mut self, e: &Expr, expected: Option<&Type>) -> Result<Type> {
         let ty = match &e.kind {
             Kind::Number(n) => {
@@ -785,11 +825,13 @@ impl Emitter<'_> {
         }
         Ok(ty)
     }
+
     fn statement(&mut self, statement: &Statement) -> Result<()> {
         let start = self.temporaries.len();
         self.statement_inner(statement)?;
         self.finish_temporaries(start)
     }
+
     fn statement_inner(&mut self, statement: &Statement) -> Result<()> {
         match statement {
             Statement::Ideal(_) | Statement::Fact { .. } | Statement::Proof { .. } => Ok(()),
@@ -956,6 +998,7 @@ fn compilation_order(program: &VerifiedProgram) -> Result<Vec<&Function>> {
 pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
     emit_mode(program, TraceMode::Value)
 }
+
 fn emit_mode(program: &VerifiedProgram, trace: TraceMode) -> Result<Vec<u8>> {
     program::emit(program, trace)
 }

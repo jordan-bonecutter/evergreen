@@ -1,4 +1,5 @@
 //! Verifier acceptance, rejection, execution, and certificate regressions.
+
 use super::*;
 
 #[test]
@@ -2513,6 +2514,7 @@ fn checks_contracts_and_bounds_internally() {
         assert!(verify(source).is_err());
     }
 }
+
 #[test]
 fn composes_calls_and_checks_preconditions() {
     let prefix = "fn inc(n: usize) -> usize where (n < 10) ensures (result == n + 1) { n + 1 } ";
@@ -2522,6 +2524,7 @@ fn composes_calls_and_checks_preconditions() {
     .is_ok());
     assert!(verify(&format!("{prefix} fn main() -> usize {{ inc(10) }}")).is_err());
 }
+
 #[test]
 fn verifies_both_branches_and_natural_subtraction() {
     verify("ideal fn abs(n: int) -> int ensures (result >= 0) { if n >= 0 { n } else { -n } }")
@@ -2532,12 +2535,14 @@ fn verifies_both_branches_and_natural_subtraction() {
     )
     .is_err());
 }
+
 #[test]
 fn facts_are_proved_before_use() {
     assert!(verify("fn bad(n: usize) -> usize { proof lie: n < 0; n }").is_err());
     assert!(verify("fn bad() -> usize { proof h: true by { exact missing }; 0 }").is_err());
     assert!(verify("fn bad() -> usize { result }").is_err());
 }
+
 #[test]
 fn arrays_and_types_are_checked() {
     verify("fn main() -> usize ensures (result == 20) { let a: [usize; 2] = [10, 20]; a[1] }")
@@ -2551,6 +2556,7 @@ fn arrays_and_types_are_checked() {
         assert!(verify(s).is_err(), "{s}");
     }
 }
+
 #[test]
 fn compound_logic_and_contradictory_preconditions() {
     verify("fn f(n: usize) -> usize where (n < 3 || n > 10) ensures (result != 5) { n }").unwrap();

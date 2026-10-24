@@ -1,5 +1,7 @@
 //! Interpreter execution, ownership, and cleanup regressions.
+
 use super::{copy_value, Value};
+
 #[test]
 fn aggregate_copy_work_is_charged_before_cloning() {
     let value = Value::Array(vec![Value::Bool(true); 64]);
@@ -74,6 +76,7 @@ fn unused_owned_temporaries_are_dropped_at_the_statement() {
 }
 
 use crate::compiler::verify::verify;
+
 #[test]
 fn executes_verified_calls_arrays_and_branches() {
     let s = "fn abs(n: isize) -> isize where (n > isize::MIN) ensures (result >= 0) { if n >= 0 { n } else { -n } } fn main() -> isize { let a: [isize; 2] = [-4, 8]; abs(a[0]) }";
@@ -87,6 +90,7 @@ fn executes_verified_calls_arrays_and_branches() {
         "42"
     );
 }
+
 #[test]
 fn recursive_execution_fails_before_exhausting_the_host_stack() {
     let source = "fn count(n: usize) -> usize ensures(result == n) decreases(n) {if n == 0 {0} else {count(n - 1) + 1}} fn main() -> usize {count(1000)}";
@@ -97,6 +101,7 @@ fn recursive_execution_fails_before_exhausting_the_host_stack() {
         "{error}"
     );
 }
+
 #[test]
 fn false_entry_precondition_cannot_execute() {
     assert!(verify("fn main() -> usize where (false) { 1 }")
@@ -104,6 +109,7 @@ fn false_entry_precondition_cannot_execute() {
         .run()
         .is_err());
 }
+
 #[test]
 fn ideal_math_is_never_executed_by_the_runtime() {
     let source = format!(

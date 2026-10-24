@@ -1,4 +1,5 @@
 //! CLI orchestration: load sources once and dispatch one command handler.
+
 mod args;
 mod lean;
 mod output;

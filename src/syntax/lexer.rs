@@ -1,4 +1,5 @@
 //! Source tokenization shared by all compiler frontends.
+
 #[derive(Clone, Debug)]
 pub(super) struct Token {
     pub(super) text: String,

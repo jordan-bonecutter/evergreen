@@ -1,9 +1,12 @@
 //! Internal word-based bootstrap ABI. This is not a C/FFI layout contract.
 //! Scalars, references, and empty values have eight-byte homes. Aggregates are
 //! consecutive homes in declaration order; only constant array lengths qualify.
+
 use crate::syntax::{Expr, Kind, Struct, Type};
 use std::collections::{BTreeMap, BTreeSet};
+
 type Result<T> = std::result::Result<T, String>;
+
 pub const MAX_LAYOUT_BYTES: usize = 65536;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -11,6 +14,7 @@ pub struct Field {
     pub offset: usize,
     pub ty: Type,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
     pub size: usize,
@@ -30,6 +34,7 @@ pub fn array_length(expression: &Expr) -> Result<usize> {
             _ => false,
         }
     }
+
     fn integer(expression: &Expr, natural: bool) -> Result<i128> {
         let overflow = || "constant native layout arithmetic overflow".to_string();
         match &expression.kind {
@@ -122,6 +127,7 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn definitions(source: &str) -> BTreeMap<String, Struct> {
         crate::syntax::parse(&format!("{source} fn main() {{}}"))
             .unwrap()
@@ -130,6 +136,7 @@ mod tests {
             .map(|s| (s.name.clone(), s))
             .collect()
     }
+
     #[test]
     fn fixed_aggregate_homes_preserve_declaration_order_and_alignment() {
         let defs = definitions("type Inner struct {small: u8, flag: bool} type Outer struct {first: usize, payload: [Inner; 2], last: &usize}");
@@ -142,6 +149,7 @@ mod tests {
         let empty = definitions("type Empty struct {}");
         assert_eq!(of(&Type::Named("Empty".into()), &empty).unwrap().size, 8);
     }
+
     #[test]
     fn natural_length_folding_matches_the_frontend() {
         let defs = definitions("type Storage struct {data: [usize; (1 - 2) + 2]}");
@@ -156,6 +164,7 @@ mod tests {
             "42"
         );
     }
+
     #[test]
     fn dependent_recursive_and_ideal_layouts_fail_closed() {
         for source in [

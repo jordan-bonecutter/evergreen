@@ -1,4 +1,5 @@
 //! Small independent concrete oracle for interactions in the symbolic heap.
+
 use super::*;
 
 fn expected(first: usize, second: usize, queried: usize, flag: bool) -> usize {

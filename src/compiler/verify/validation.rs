@@ -1,4 +1,5 @@
 //! Complete observations and retained-invariant checks on actual storage.
+
 use super::*;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -11,6 +12,7 @@ impl Context<'_> {
     pub(super) fn record_valid(&mut self, value: &Symbol, line: usize) -> Result<()> {
         self.validate_value(value, line, &BTreeSet::new(), Validation::Complete)
     }
+
     pub(super) fn validate_opened_planes(&mut self, line: usize) -> Result<()> {
         let planes = self.opened_planes.keys().copied().collect::<Vec<_>>();
         for plane in planes {
@@ -21,6 +23,7 @@ impl Context<'_> {
         }
         Ok(())
     }
+
     pub(super) fn retained_valid_with(
         &mut self,
         value: &Symbol,
@@ -33,6 +36,7 @@ impl Context<'_> {
         // validation instead, so they cannot rely on a suspended invariant.
         self.validate_value(value, line, lifted, Validation::Retained)
     }
+
     fn validate_value(
         &mut self,
         value: &Symbol,
@@ -158,9 +162,11 @@ impl Context<'_> {
         let target = project(self.memory.read(reference)?, path)?.clone();
         self.validate_argument(&target, line)
     }
+
     pub(super) fn validate_argument(&mut self, value: &Symbol, line: usize) -> Result<()> {
         self.validate_argument_mode(value, line, Validation::Complete)
     }
+
     fn validate_argument_mode(
         &mut self,
         value: &Symbol,
@@ -177,6 +183,7 @@ impl Context<'_> {
             self.validate_value(value, line, &BTreeSet::new(), mode)
         }
     }
+
     fn validate_retained_reference(
         &mut self,
         reference: Reference,

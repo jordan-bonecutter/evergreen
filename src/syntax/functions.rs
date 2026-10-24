@@ -1,4 +1,5 @@
 //! Function signatures, contracts, and return-borrow paths.
+
 use super::*;
 
 struct Parameters {

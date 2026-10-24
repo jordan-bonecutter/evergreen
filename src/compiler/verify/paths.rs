@@ -1,4 +1,5 @@
 //! Bound paths after exact deduplication and certificate-checked pruning.
+
 use super::*;
 
 pub(super) fn bounded(

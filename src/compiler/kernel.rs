@@ -3,6 +3,7 @@
 //! Every constraint means `constant + sum(coeff * variable) >= 0`. A certificate
 //! gives nonnegative integer weights for the original constraints whose sum is
 //! a negative constant. The solver is separate; only `check` establishes validity.
+
 use std::collections::BTreeMap;
 
 pub type ArithmeticResult<T> = Result<T, String>;
@@ -20,12 +21,14 @@ impl Linear {
             terms: BTreeMap::new(),
         }
     }
+
     pub fn variable(name: impl Into<String>) -> Self {
         Self {
             constant: 0,
             terms: BTreeMap::from([(name.into(), 1)]),
         }
     }
+
     pub fn add(&self, rhs: &Self) -> ArithmeticResult<Self> {
         let mut out = self.clone();
         out.constant = out
@@ -43,6 +46,7 @@ impl Linear {
         }
         Ok(out)
     }
+
     pub fn scale(&self, factor: i128) -> ArithmeticResult<Self> {
         let mut out = Self::number(
             self.constant
@@ -59,6 +63,7 @@ impl Linear {
         }
         Ok(out)
     }
+
     pub fn sub(&self, rhs: &Self) -> ArithmeticResult<Self> {
         self.add(&rhs.scale(-1)?)
     }
@@ -69,10 +74,12 @@ impl Linear {
 pub struct Certificate {
     weights: BTreeMap<usize, i128>,
 }
+
 impl Certificate {
     pub(crate) fn weights(&self) -> impl Iterator<Item = (usize, i128)> + '_ {
         self.weights.iter().map(|(i, w)| (*i, *w))
     }
+
     pub(crate) fn from_weights(weights: BTreeMap<usize, i128>) -> ArithmeticResult<Self> {
         if weights.values().any(|w| *w <= 0) {
             return Err("certificate weights must be positive".into());
@@ -282,6 +289,7 @@ pub fn solve(assumptions: &[Linear]) -> ArithmeticResult<Certificate> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn stale_equalities_do_not_exhaust_the_obligation_budget() {
         let mut assumptions = Vec::new();
@@ -310,6 +318,7 @@ mod tests {
         ];
         check(&assumptions, &solve(&assumptions).unwrap()).unwrap();
     }
+
     #[test]
     fn refuses_forged_certificates() {
         let assumptions = vec![Linear::number(1), Linear::variable("x")];
@@ -323,6 +332,7 @@ mod tests {
             assert!(check(&assumptions, &Certificate { weights }).is_err());
         }
     }
+
     #[test]
     fn overflow_fails_closed() {
         assert!(Linear::number(i128::MAX).add(&Linear::number(1)).is_err());
@@ -335,6 +345,7 @@ mod tests {
         )
         .is_err());
     }
+
     #[test]
     fn satisfiable_constraints_are_not_proofs() {
         assert!(solve(&[
@@ -343,6 +354,7 @@ mod tests {
         ])
         .is_err());
     }
+
     #[test]
     fn eliminates_multiple_variables() {
         let x = Linear::variable("x");

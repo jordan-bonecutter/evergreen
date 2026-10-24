@@ -1,5 +1,6 @@
 //! Unique ownership of stable, separately allocated planes. No shared-owner
 //! capability or allocation authority can be fabricated by ideal computation.
+
 use super::*;
 
 pub(super) fn payload_type(ty: &Type, structs: &BTreeMap<String, Struct>) -> bool {
@@ -47,6 +48,7 @@ pub(super) fn function_uses_planes(
             _ => false,
         }
     }
+
     fn expression(value: &Expr) -> bool {
         match &value.kind {
             Kind::Call(name, _) if name == "alloc" => true,
@@ -58,6 +60,7 @@ pub(super) fn function_uses_planes(
             _ => false,
         }
     }
+
     fn statement(value: &Statement, structs: &BTreeMap<String, Struct>) -> bool {
         match value {
             Statement::Ideal(inner) => statement(inner, structs),
