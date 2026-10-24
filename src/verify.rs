@@ -526,6 +526,7 @@ struct InputReference {
     origin: String,
     reference: Reference,
     path: Vec<Projection<Linear>>,
+    pointee: Box<Ty>,
 }
 
 // Identify an incoming reference value by its structural argument path, never
@@ -747,7 +748,7 @@ impl<'a> Context<'a> {
                 );
             }
             match value {
-                Symbol::Ref(_, reference, path) => {
+                Symbol::Ref(pointee, reference, path) => {
                     if inputs.len() >= 8192 {
                         return Err("incoming reference graph limit reached (8192)".into());
                     }
@@ -769,6 +770,7 @@ impl<'a> Context<'a> {
                         origin: origin.clone(),
                         reference: *reference,
                         path: path.clone(),
+                        pointee: pointee.clone(),
                     });
                     let target = project(ctx.memory.read(*reference)?, path)?;
                     visit(
@@ -883,8 +885,26 @@ impl<'a> Context<'a> {
         let mut places: Vec<WritePlace> = Vec::new();
         for expression in &function.modifies {
             let place = self.incoming_place(expression, inputs, None)?;
+            // Erasure belongs to the storage slot, not to the reference value.
+            // A pointer stored inside ideal data may still target runtime data.
+            let input = inputs
+                .iter()
+                .find(|input| input.origin == place.origin)
+                .ok_or("missing incoming reference for write footprint")?;
+            let mut erased = self.proof_storage(&input.pointee);
+            let mut target = project(self.memory.read(input.reference)?, &input.path)?;
+            for step in &place.path[input.path.len()..] {
+                if let (Symbol::Record(name, _), Projection::Field(field)) = (target, step) {
+                    erased |= self.structs[name].ideal_fields.contains(field);
+                }
+                target = project(target, std::slice::from_ref(step))?;
+            }
+            if function.ideal && !erased {
+                return Err("ideal modifies must target proof storage; erased references do not grant writes to runtime pointees".into());
+            }
             let supported_region = match &*place.ty {
                 Ty::Machine(_) | Ty::Bool => true,
+                Ty::Nat | Ty::Int => erased,
                 Ty::Record(_) => self.history_element(&place.ty),
                 Ty::Array(element, _) => {
                     matches!(**element, Ty::Machine(_) | Ty::Bool)
@@ -893,7 +913,7 @@ impl<'a> Context<'a> {
                 _ => false,
             };
             if !supported_region {
-                return Err("modifies targets require machine scalars, Booleans, copyable scalar-field records, or arrays of those values".into());
+                return Err("modifies targets require machine scalars, Booleans, proof-only int/nat slots, copyable scalar-field records, or supported arrays".into());
             }
             // Permissions form a union for one structural input origin. Pointer
             // equality cannot merge independently modeled reference fields.
@@ -942,6 +962,15 @@ impl<'a> Context<'a> {
             Ty::Array(element, _) => self.erased_ty(&element),
             Ty::Ref(_) => true,
             _ => true,
+        }
+    }
+    fn proof_storage(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Nat | Ty::Int => true,
+            Ty::Record(name) => self.structs[name].ideal,
+            Ty::Array(element, _) => self.proof_storage(element),
+            // A reference is itself a runtime word, regardless of its target.
+            _ => false,
         }
     }
     fn erased_ty(&self, ty: &Ty) -> bool {
@@ -3995,14 +4024,12 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
                 .iter()
                 .filter(|(_, t)| type_has_reference(t, &structs))
                 .collect::<Vec<_>>();
-            if f.ideal
-                || f.modifies.iter().any(|expression| {
-                    !borrow_expression(expression)
-                        || !references
-                            .iter()
-                            .any(|(name, _)| Some(name.as_str()) == effect_origin(expression))
-                })
-            {
+            if f.modifies.iter().any(|expression| {
+                !borrow_expression(expression)
+                    || !references
+                        .iter()
+                        .any(|(name, _)| Some(name.as_str()) == effect_origin(expression))
+            }) {
                 return Err(format!("line {}: modifies requires projections of incoming reference-bearing parameters", f.line));
             }
         }
@@ -4106,6 +4133,50 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ideal_borrow_writes_have_checked_erased_footprints() {
+        let source = include_str!("../examples/ideal_borrow_writes.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let missing = source.replacen(
+            "ideal fn forward_budget(state: &Budget, remaining: nat)\nmodifies(&(*state).remaining)",
+            "ideal fn forward_budget(state: &Budget, remaining: nat)", 1);
+        assert!(verify(&missing).unwrap_err().contains("matching modifies"));
+        let bad_post = source.replace(
+            "ensures(*state == expected)",
+            "ensures(*state == expected + 1)",
+        );
+        assert!(verify(&bad_post).is_err());
+        let retained = source.replace("synced);", "synced && expected >= 40);");
+        assert!(verify(&retained).is_ok());
+        let pulse = retained.replace("{*state = expected;}", "{*state = 0; *state = expected;}");
+        assert!(verify(&pulse).unwrap_err().contains("invariant"));
+    }
+
+    #[test]
+    fn erased_pointer_values_never_authorize_erased_runtime_writes() {
+        for source in [
+            "ideal fn bad(r: &usize) modifies(r) {*r = 0;}",
+            "ideal fn bad(ideal r: &usize) modifies(r) {*r = 0;}",
+            "ideal type State struct {target: &usize} ideal fn bad(s: &State) modifies((*s).target) {*(*s).target = 0;}",
+            "type State struct {ideal target: &usize} ideal fn bad(s: &State) modifies((*s).target) {*(*s).target = 0;}",
+            "ideal type State struct {target: &usize} ideal fn bad(s: State) modifies(s.target) {*s.target = 0;}",
+        ] {
+            let error = verify(source).unwrap_err();
+            assert!(error.contains("ideal modifies must target proof storage"), "{error}");
+        }
+        let source = "ideal fn set(r: &nat) -> nat modifies(r) ensures(*r == 0) {*r = 0; 0} fn main() {ideal let n: nat = 1; proof wrong: set(&n) == 0;}";
+        let error = verify(source).unwrap_err();
+        assert!(error.contains("forbidden in proof expressions"), "{error}");
+    }
+
     #[test]
     fn ideal_record_fields_move_and_erase_with_runtime_values() {
         let source = include_str!("../examples/ideal_fields.evg");

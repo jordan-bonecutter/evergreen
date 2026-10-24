@@ -1245,6 +1245,25 @@ declaration order. References inside ideal fields remain part of alias checking.
 Plane generations still apply to the whole record, so changing a proof
 aggregate's logical layout can invalidate other views of that record too.
 
+Ideal functions may declare checked `modifies` footprints for borrowed proof
+storage. For example, `ideal fn set(r: &nat, n: nat) modifies(r)
+ensures(*r == n) {*r = n;}` updates mathematical state and emits no runtime
+write. Scalar slots inside ideal records, and declared ideal fields projected
+through runtime records, are also supported. A nested call needs the caller's
+own matching footprint unless the caller owns that storage. Calls that modify
+proof state are forbidden inside propositions and specification expressions.
+
+Erasure follows the target slot, not the pointer value: an ideal record can
+contain `target: &usize`, but an ideal function cannot declare
+`modifies((*record).target)` to mutate that runtime pointee. Entering a nested
+reference resets the proof-storage classification. Mathematical `int` and `nat`
+slots can be modified; whole affine aggregates and reference-slot replacement
+remain unsupported effect regions. Copyable scalar-field records retain the
+ordinary aggregate effect support. Every write during an open update, including
+nested ideal calls, checks all retained invariants against actual shared memory.
+`examples/ideal_borrow_writes.evg` exercises forwarding, proof-field writes,
+transactional invariant restoration, erasure, and certificate replay.
+
 `examples/ideal_fields.evg` checks affine witnesses carried through runtime
 records, complete patterns, selective proof-field updates, and parent/child Drop
 order. It also checks distinct identities for records containing only ideal

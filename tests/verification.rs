@@ -119,6 +119,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/ideal_borrow_resources.evg",
         "examples/ideal_update_state.evg",
         "examples/ideal_fields.evg",
+        "examples/ideal_borrow_writes.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")
