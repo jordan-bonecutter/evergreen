@@ -4134,6 +4134,35 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 #[cfg(test)]
 mod tests {
     #[test]
+    fn borrowed_credit_transfer_conserves_quantity_and_rejects_overdrafts() {
+        let credits = include_str!("../stdlib/credits.evg");
+        let source = format!(
+            "{credits}\n{}",
+            include_str!("../proofs/borrowed_credit_transfer.evg")
+        );
+        let (program, bundle) = prove(&source).unwrap();
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(
+            verify_with_certificate(&source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let overdraw = format!("{credits} ideal fn bad(c: credits::Credit) where(credits::units(&c) == 1) {{let first = credits::take(&c, 1); let second = credits::take(&c, 1);}}");
+        assert!(verify(&overdraw)
+            .unwrap_err()
+            .contains("precondition of credits::take"));
+        let forged = source.replace(
+            "(*credit).units = (*credit).units - amount;",
+            "(*credit).units = (*credit).units;",
+        );
+        assert!(verify(&forged).unwrap_err().contains("postcondition"));
+        let private =
+            format!("{credits} ideal fn bad(c: credits::Credit) {{(*(&c)).units = 100;}}");
+        assert!(verify(&private).unwrap_err().contains("opaque"));
+    }
+
+    #[test]
     fn ideal_borrow_writes_have_checked_erased_footprints() {
         let source = include_str!("../examples/ideal_borrow_writes.evg");
         let (program, bundle) = prove(source).unwrap();

@@ -1378,6 +1378,7 @@ mod tests {
             "module credits {",
             "module credits {ideal fn issue() -> Credit ensures(result.units == 42) {Credit {units: 42}}",
         );
+        cases.push(format!("{credit_test} {} fn main() -> usize {{ideal let restored = transfer_existing(credits::issue()); proof conserved: credits::units(&restored) == 42; 42}}", include_str!("../proofs/borrowed_credit_transfer.evg")));
         cases.push(format!(
             "{credit_test} {} fn main() -> usize {{use_budget(credits::issue(), 42)}}",
             include_str!("../proofs/ideal_credit_bindings.evg")

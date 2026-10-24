@@ -1,0 +1,13 @@
+// Check after stdlib/credits.evg. No credit is minted by this example.
+ideal fn transfer_existing(credit: credits::Credit) -> credits::Credit
+where(credits::units(&credit) >= 1)
+ensures(credits::units(&result) == credits::units(&credit)) {
+    let original: nat = credits::units(&credit);
+    let taken = credits::take(&credit, 1);
+    proof transfer_conserves:
+        credits::units(&credit) + credits::units(&taken) == original;
+    proof one_transferred: credits::units(&taken) == 1;
+    let restored = credits::join(credit, taken);
+    proof total_restored: credits::units(&restored) == original;
+    restored
+}

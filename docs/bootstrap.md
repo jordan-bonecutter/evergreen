@@ -1264,6 +1264,16 @@ nested ideal calls, checks all retained invariants against actual shared memory.
 `examples/ideal_borrow_writes.evg` exercises forwarding, proof-field writes,
 transactional invariant restoration, erasure, and certificate replay.
 
+The opaque credit library uses this mechanism in `credits::take(&credit,
+amount)`: it decreases the borrowed credit and returns a new affine credit of
+exactly `amount`. Its checked postcondition conserves the sum against the entry
+quantity using `old`. Sequential calls see the updated balance; overdrafts fail
+at the next precondition. `proofs/borrowed_credit_transfer.evg` checks taking and
+rejoining existing credits. This API still has no mint operation and grants no
+allocation authority. Its footprint names its private scalar slot in the
+defining module. Abstract forwarding footprints for opaque affine regions are
+not yet supported; this example owns the incoming credit locally.
+
 `examples/ideal_fields.evg` checks affine witnesses carried through runtime
 records, complete patterns, selective proof-field updates, and parent/child Drop
 order. It also checks distinct identities for records containing only ideal

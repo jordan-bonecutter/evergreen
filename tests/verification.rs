@@ -171,6 +171,7 @@ fn ordered_proof_units_share_checked_contracts() {
             "proofs/borrow_credits.evg",
             "proofs/borrow_credit_updates.evg",
             "proofs/carried_borrow_credits.evg",
+            "proofs/borrowed_credit_transfer.evg",
         ])
         .output()
         .unwrap();
