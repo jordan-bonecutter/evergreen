@@ -367,7 +367,7 @@ impl Evaluator<'_> {
         value: &Expr,
         env: &mut BTreeMap<String, Value>,
     ) -> Result<()> {
-        if matches!(&target.kind, Kind::Unary(op, _) if op == "*") {
+        if target.indirect_place() {
             let (r, path) = self.location(target, env)?;
             let old = copy_value(project(self.memory.read(r)?, &path)?, &mut self.fuel)?;
             let new = self.expr(value, env, old.hint().as_ref())?;

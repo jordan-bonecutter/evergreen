@@ -101,6 +101,9 @@ impl Scope<'_> {
             self.ty(ty);
         }
         self.ty(&mut function.ret);
+        for effect in &mut function.modifies {
+            self.expr(effect);
+        }
         for e in [
             &mut function.pre,
             &mut function.post,

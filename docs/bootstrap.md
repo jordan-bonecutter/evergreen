@@ -319,9 +319,15 @@ A wrapper must declare its own permission before forwarding a borrowed target
 to a modifying helper. `examples/write_contracts.evg` checks composition,
 aliases, overflow bounds, and preservation of an unrelated sibling field.
 
-Write contracts support multiple machine-scalar or Boolean reference parameters,
+Write contracts can name scalar projections of incoming references, such as
+`modifies(&(*data)[index])` or `modifies(&(*pair).left)`. Bounds and the
+projection are checked under the entry precondition. Permission stays attached
+to that entry place if an index variable later changes; sibling cells remain
+unchanged. Targets currently require machine-scalar or Boolean layouts.
+
+Write contracts support multiple reference parameters,
 including read-only parameters omitted from `modifies`. At each call, every
-writable argument must be disjoint from every other reference argument. The
+write target must be disjoint from every other reference parameter’s region. The
 checker compares actual planes and projection paths: two distinct fields or
 array elements in one plane are disjoint, while two aliases of the same scalar
 are rejected. Read-only arguments may alias each other. This condition justifies

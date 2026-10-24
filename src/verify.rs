@@ -426,6 +426,21 @@ enum Phase {
     Specification,
 }
 
+#[derive(Clone)]
+struct WritePlace {
+    origin: String,
+    reference: Reference,
+    path: Vec<Projection<Linear>>,
+    ty: Box<Ty>,
+}
+fn effect_origin(expression: &Expr) -> Option<&str> {
+    match &expression.kind {
+        Kind::Name(name) => Some(name),
+        Kind::Unary(_, base) | Kind::Field(base, _) | Kind::Index(base, _) => effect_origin(base),
+        _ => None,
+    }
+}
+
 struct Context<'a> {
     functions: &'a BTreeMap<String, Function>,
     module: Option<String>,
@@ -452,7 +467,7 @@ struct Context<'a> {
     dropping: bool,
     helpers: &'a BTreeSet<String>,
     session: &'a mut Session,
-    writable: BTreeSet<PlaneId>,
+    writable: Vec<WritePlace>,
     old_values: BTreeMap<String, Symbol>,
     ideal_bindings: BTreeSet<String>,
     array_reads: BTreeMap<(String, Linear), Symbol>,
@@ -460,6 +475,70 @@ struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
+    fn write_permitted(
+        &mut self,
+        reference: Reference,
+        path: &[Projection<Linear>],
+        owned: bool,
+    ) -> Result<bool> {
+        if owned {
+            return Ok(true);
+        }
+        let plane = self.memory.plane(reference)?;
+        let grants = self
+            .writable
+            .iter()
+            .filter(|grant| {
+                self.memory.plane(grant.reference).ok() == Some(plane)
+                    && grant.path.len() <= path.len()
+            })
+            .map(|grant| grant.path.clone())
+            .collect::<Vec<_>>();
+        for grant in grants {
+            if self.paths_equal(&grant, &path[..grant.len()])? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    fn write_places(&mut self, function: &Function) -> Result<Vec<WritePlace>> {
+        let phase = std::mem::replace(&mut self.phase, Phase::Specification);
+        let mut places: Vec<WritePlace> = Vec::new();
+        for expression in &function.modifies {
+            let origin = effect_origin(expression)
+                .ok_or("modifies requires an incoming reference projection")?
+                .to_owned();
+            let Some(Symbol::Ref(_, root, root_path)) = self.env.get(&origin).cloned() else {
+                return Err("modifies must originate at a reference parameter".into());
+            };
+            let Symbol::Ref(ty, reference, path) = self.eval(expression, None)? else {
+                return Err("modifies entries must denote references".into());
+            };
+            if !matches!(*ty, Ty::Machine(_) | Ty::Bool) {
+                return Err("modifies targets must have a scalar machine or Boolean layout".into());
+            }
+            if self.memory.plane(root)? != self.memory.plane(reference)?
+                || root_path.len() > path.len()
+                || !self.paths_equal(&root_path, &path[..root_path.len()])?
+            {
+                return Err("modifies cannot acquire a different plane's write permission".into());
+            }
+            for previous in &places {
+                if previous.reference == reference && self.paths_equal(&previous.path, &path)? {
+                    return Err("duplicate modifies place overlaps an existing write target".into());
+                }
+            }
+            places.push(WritePlace {
+                origin,
+                reference,
+                path,
+                ty,
+            });
+        }
+        self.phase = phase;
+        Ok(places)
+    }
+
     fn charge_value_work(&mut self, cost: usize) -> Result<()> {
         self.value_work = self.value_work.saturating_add(cost);
         if self.value_work > MAX_VALUE_WORK {
@@ -694,7 +773,7 @@ impl<'a> Context<'a> {
             dropping: false,
             helpers,
             session,
-            writable: BTreeSet::new(),
+            writable: Vec::new(),
             old_values: BTreeMap::new(),
             ideal_bindings: BTreeSet::new(),
             array_reads: BTreeMap::new(),
@@ -973,18 +1052,22 @@ impl<'a> Context<'a> {
     }
 
     fn assign(&mut self, place: &Expr, value: &Expr) -> Result<()> {
-        if matches!(&place.kind, Kind::Unary(op, _) if op == "*") {
+        if place.indirect_place() {
             let (reference, fields) = self.location(place)?;
             let id = self.memory.plane(reference)?;
-            if !self.roots.values().any(|p| *p == id) && !self.writable.contains(&id) {
+            let owned = self.roots.values().any(|p| *p == id);
+            if !self.write_permitted(reference, &fields, owned)? {
                 return Err(format!("line {}: writes through reference parameters need an effect contract; unsupported", place.line));
             }
             let old = project(self.memory.read(reference)?, &fields)?.clone();
             if self.symbol_is_affine(&old) {
                 return Err("overwriting owned fields through references requires ownership effect proofs; unsupported".into());
             }
-            let new = self.eval(value, Some(&old.ty()))?;
+            let mut new = self.eval(value, Some(&old.ty()))?;
             let replace_plane = !self.same_layout(&old, &new)?;
+            if !replace_plane {
+                self.preserve_views(&old, &mut new)?;
+            }
             let mut root = self.memory.read(reference)?.clone();
             self.replace_projection(&mut root, &fields, new)?;
             self.record_valid(&root, place.line)?;
@@ -1025,20 +1108,27 @@ impl<'a> Context<'a> {
         let name = path(place, &mut fields)?;
         self.runtime_name(&name)?;
         let old = if let Kind::Name(n) = &place.kind {
-            self.env
-                .get(n)
-                .cloned()
-                .ok_or("unknown assignment target")?
+            if let Some(value) = self.roots.get(n).and_then(|id| self.memory.get(*id).ok()) {
+                value.clone()
+            } else {
+                self.env
+                    .get(n)
+                    .cloned()
+                    .ok_or("unknown assignment target")?
+            }
         } else {
             self.storage(place)?
         };
-        let new = self.eval(value, Some(&old.ty()))?;
+        let mut new = self.eval(value, Some(&old.ty()))?;
         if self.dropping && self.symbol_is_affine(&old) {
             return Err(
                 "destructors cannot replace owning fields without cleanup/effect proofs".into(),
             );
         }
         let replace_plane = !self.same_layout(&old, &new)?;
+        if !replace_plane {
+            self.preserve_views(&old, &mut new)?;
+        }
         let old_live = self
             .roots
             .get(&name)
@@ -1348,6 +1438,44 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
+    // A contents replacement preserves storage identity, including previously
+    // materialized symbolic cell paths. Rebuild their values from new contents.
+    fn preserve_views(&mut self, old: &Symbol, new: &mut Symbol) -> Result<()> {
+        match (old, new) {
+            (
+                Symbol::Array {
+                    cells: observed, ..
+                },
+                Symbol::Array {
+                    element,
+                    identity,
+                    items,
+                    cells,
+                    ..
+                },
+            ) if matches!(
+                **element,
+                Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
+            ) =>
+            {
+                for index in observed.keys() {
+                    let value =
+                        self.read_array(element, identity, index, items.as_deref(), cells)?;
+                    cells.insert(index.clone(), value);
+                }
+            }
+            (Symbol::Record(a, before), Symbol::Record(b, after)) if a == b => {
+                for (name, value) in after {
+                    if let Some(previous) = before.get(name) {
+                        self.preserve_views(previous, value)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn same_layout(&mut self, a: &Symbol, b: &Symbol) -> Result<bool> {
         match (a, b) {
             (Symbol::Record(an, a), Symbol::Record(bn, b)) => {
@@ -1463,7 +1591,13 @@ impl<'a> Context<'a> {
                 )?;
                 let literal = constant_index(&index)
                     .and_then(|i| items.as_ref().and_then(|items| items.get(i)));
-                if literal.is_none() && !cells.contains_key(&index) {
+                if !cells.contains_key(&index)
+                    && (literal.is_none()
+                        || matches!(
+                            *element,
+                            Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
+                        ))
+                {
                     if !matches!(
                         *element,
                         Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
@@ -2360,24 +2494,6 @@ impl<'a> Context<'a> {
                 for value in &actuals {
                     self.validate_argument(value, e.line)?;
                 }
-                for (i, ((parameter, _), actual)) in f.params.iter().zip(&actuals).enumerate() {
-                    if !f.modifies.contains(parameter) {
-                        continue;
-                    }
-                    let Symbol::Ref(_, reference, path) = actual else {
-                        return Err("modifies requires a reference argument".into());
-                    };
-                    for (j, other) in actuals.iter().enumerate() {
-                        if i == j {
-                            continue;
-                        }
-                        if let Symbol::Ref(_, r, p) = other {
-                            if r == reference && !self.paths_disjoint(path, p)? {
-                                return Err(format!("line {}: writable argument {parameter} overlaps another reference argument or disjointness is unproved", e.line));
-                            }
-                        }
-                    }
-                }
                 let mut saved = std::mem::take(&mut self.env);
                 let saved_roots = std::mem::take(&mut self.roots);
                 let saved_old = std::mem::take(&mut self.old_values);
@@ -2400,6 +2516,23 @@ impl<'a> Context<'a> {
                 if let Some(pre) = &f.pre {
                     let p = self.proposition(pre)?;
                     self.prove(&p, &format!("precondition of {name}"), e.line)?;
+                }
+                let writes = self.write_places(f)?;
+                for write in &writes {
+                    for (parameter, _) in &f.params {
+                        if parameter == &write.origin {
+                            continue;
+                        }
+                        if let Some(Symbol::Ref(_, reference, path)) =
+                            self.env.get(parameter).cloned()
+                        {
+                            if reference == write.reference
+                                && !self.paths_disjoint(&write.path, &path)?
+                            {
+                                return Err(format!("line {}: writable place from {} overlaps another reference argument or disjointness is unproved", e.line, write.origin));
+                            }
+                        }
+                    }
                 }
                 if self.current.as_ref() == Some(name) && !f.partial {
                     let entry = self
@@ -2431,18 +2564,15 @@ impl<'a> Context<'a> {
                 } else {
                     self.arbitrary(&ret)?
                 };
-                for parameter in &f.modifies {
-                    let Some(Symbol::Ref(ty, reference, fields)) = self.env.get(parameter).cloned()
-                    else {
-                        return Err("modifies requires a scalar reference parameter".into());
-                    };
-                    let id = self.memory.plane(reference)?;
-                    if !saved_roots.values().any(|p| *p == id) && !self.writable.contains(&id) {
-                        return Err(format!("line {}: call to {name} writes through a parameter without a modifies contract", e.line));
+                for write in writes {
+                    let id = self.memory.plane(write.reference)?;
+                    let owned = saved_roots.values().any(|p| *p == id);
+                    if !self.write_permitted(write.reference, &write.path, owned)? {
+                        return Err(format!("line {}: call to {name} writes through a parameter without a matching modifies contract", e.line));
                     }
-                    let new = self.arbitrary(&ty)?;
-                    let mut root = self.memory.read(reference)?.clone();
-                    self.replace_projection(&mut root, &fields, new)?;
+                    let new = self.arbitrary(&write.ty)?;
+                    let mut root = self.memory.read(write.reference)?.clone();
+                    self.replace_projection(&mut root, &write.path, new)?;
                     self.memory.write(id, root.clone(), false)?;
                     for (binding, plane) in &saved_roots {
                         if *plane == id {
@@ -2954,13 +3084,11 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
                 .iter()
                 .filter(|(_, t)| type_has_reference(t, &structs))
                 .collect::<Vec<_>>();
-            let modified = f.modifies.iter().collect::<BTreeSet<_>>();
             if f.ideal
-                || modified.len() != f.modifies.len()
-                || f.modifies.iter().any(|name| !references.iter().any(|(n, _)| n == name))
-                || references.iter().any(|(_, ty)| !matches!(ty, Type::Ref(t) if matches!(**t, Type::Machine(_) | Type::Bool)))
+                || f.modifies.iter().any(|expression| !borrow_expression(expression) || !references.iter().any(|(name, _)| Some(name.as_str()) == effect_origin(expression)))
+                || references.iter().any(|(_, ty)| !matches!(ty, Type::Ref(target) if !type_has_reference(target, &structs)))
             {
-                return Err(format!("line {}: modifies requires distinct scalar reference parameters; reference-bearing aggregates need stronger effect contracts", f.line));
+                return Err(format!("line {}: modifies requires incoming reference projections without nested reference-bearing parameters", f.line));
             }
         }
         if !f.ideal
@@ -3022,17 +3150,13 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             ctx.env.insert(n.clone(), value);
         }
         ctx.capture_old()?;
-        for parameter in &f.modifies {
-            if let Some(Symbol::Ref(_, reference, _)) = ctx.env.get(parameter) {
-                ctx.writable.insert(ctx.memory.plane(*reference)?);
-            }
-        }
         if let Some(pre) = &f.pre {
             ctx.phase = Phase::Specification;
             let p = ctx.eval(pre, Some(&Ty::Bool))?.proposition()?;
             ctx.assume(&p)?;
             ctx.phase = execution;
         }
+        ctx.writable = ctx.write_places(f)?;
         let ret = ctx.resolve(&f.ret)?;
         if let Some(measure) = &f.decreases {
             ctx.phase = Phase::Specification;
@@ -3703,6 +3827,17 @@ mod tests {
         assert!(verify(bad).is_err());
         let fake = "fn bad(data: &[usize; 2]) -> usize ensures(result == 0) {if *first(2, data) == 0 {*first(2, data)} else {*first(2, data)}}";
         assert!(verify(&format!("{declarations} {fake}")).is_err());
+    }
+
+    #[test]
+    fn projected_effects_frame_siblings_and_preserve_array_views() {
+        let helper = "fn set(data: &[usize; 2], i: usize) where(i < 2) modifies(&(*data)[i]) ensures((*data)[i] == 42) {(*data)[i] = 42;}";
+        let source = format!("{helper} fn main() -> usize ensures(result == 49) {{let a: [usize; 2] = [1, 7]; set(&a, 0); a[0] + a[1]}}");
+        assert_eq!(verify(&source).unwrap().run().unwrap().to_string(), "49");
+        let bad = helper.replace("(*data)[i] = 42", "(*data)[1] = 42");
+        assert!(verify(&bad).is_err());
+        let source = "fn read(i: usize) -> usize where(i < 2) ensures(result == 42) {let a: [usize; 2] = [1, 7]; let r = &a[i]; a = [42, 42]; *r} fn main() -> usize {read(1)}";
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     }
 
     #[test]

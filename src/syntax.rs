@@ -58,6 +58,15 @@ pub struct Expr {
     pub line: usize,
 }
 impl Expr {
+    pub(crate) fn indirect_place(&self) -> bool {
+        match &self.kind {
+            Kind::Index(..) => true,
+            Kind::Unary(op, _) if op == "*" => true,
+            Kind::Field(base, _) => base.indirect_place(),
+            _ => false,
+        }
+    }
+
     // Check actual tree depth as well as parser recursion: a flat sequence of
     // left-associative operators or projections otherwise builds an unbounded
     // tree, including recursively dropped boxes on a parse error.
@@ -179,7 +188,7 @@ pub struct Function {
     pub line: usize,
     pub drop_target: Option<String>,
     pub ideal: bool,
-    pub modifies: Vec<String>,
+    pub modifies: Vec<Expr>,
     pub ideal_params: Vec<String>,
     pub module: Option<String>,
     /// Derived by verification: contracts hold on return, but totality is unproved.
@@ -642,7 +651,7 @@ impl Parser {
         if self.eat("modifies") {
             self.expect("(")?;
             loop {
-                modifies.push(self.name()?);
+                modifies.push(self.expr(0)?);
                 if self.eat(")") {
                     break;
                 }
