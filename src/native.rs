@@ -1172,6 +1172,9 @@ mod tests {
             std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
         fs::create_dir(&directory).unwrap();
         let mut cases = [
+            include_str!("../examples/opaque_values.evg"),
+            "module a {fn get() -> usize ensures(result == 20) {20}} module b {fn get() -> usize ensures(result == 22) {22}} fn main() -> usize {a::get() + b::get()}",
+            "module owned {opaque type Resource struct {tag: usize} where(self.tag == 42); impl Drop for Resource {fn drop(self) {proof valid: self.tag == 42;}} fn make() -> Resource {Resource {tag: 42}} fn read(r: &Resource) -> usize ensures(result == (*r).tag) {(*r).tag}} fn main() -> usize {let r = owned::make(); owned::read(&r)}",
             include_str!("../examples/indexed_borrows.evg"),
             include_str!("../examples/weak_invariant.evg"),
             "fn main() -> bool {false => true => false}",

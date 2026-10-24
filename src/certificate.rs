@@ -414,6 +414,18 @@ mod tests {
     use super::*;
     use crate::verify::{prove, verify, verify_with_certificate};
     #[test]
+    fn opaque_credit_interfaces_replay_without_search() {
+        let source = [
+            include_str!("../stdlib/credits.evg"),
+            include_str!("../proofs/opaque_credits.evg"),
+        ]
+        .join("\n");
+        let (_, bundle) = prove(&source).unwrap();
+        let program = verify_with_certificate(&source, &bundle).unwrap();
+        assert_eq!(program.proof_search_count(), 0);
+        assert!(program.trusted_assumptions().is_empty());
+    }
+    #[test]
     fn disjoint_write_contracts_replay_without_search() {
         let source = [
             include_str!("../stdlib/swap.evg"),
@@ -446,6 +458,7 @@ mod tests {
     #[test]
     fn replay_checks_certificates_without_search() {
         for source in [
+            include_str!("../examples/opaque_values.evg"),
             include_str!("../examples/indexed_borrows.evg"),
             include_str!("../examples/weak_invariant.evg"),
             include_str!("../examples/array_borrows.evg"),

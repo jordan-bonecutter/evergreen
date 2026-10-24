@@ -351,6 +351,8 @@ enum Phase {
 
 struct Context<'a> {
     functions: &'a BTreeMap<String, Function>,
+    module: Option<String>,
+    declaring: Option<String>,
     structs: &'a BTreeMap<String, Struct>,
     env: BTreeMap<String, Symbol>,
     facts: BTreeMap<String, Expr>,
@@ -378,6 +380,22 @@ struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
+    fn representation_access(&self, name: &str, line: usize) -> Result<()> {
+        if self.declaring.as_deref() == Some(name) {
+            return Ok(());
+        }
+        let def = self
+            .structs
+            .get(name)
+            .ok_or_else(|| format!("unknown struct {name}"))?;
+        if def.opaque && def.module != self.module {
+            return Err(format!(
+                "line {line}: {name} has an opaque representation outside its defining module"
+            ));
+        }
+        Ok(())
+    }
+
     fn follows(&mut self, proposition: &Formula) -> Result<bool> {
         for path in extend(&self.paths, proposition, true)? {
             if !self.session.probe(&path)? {
@@ -527,6 +545,8 @@ impl<'a> Context<'a> {
     ) -> Self {
         Self {
             functions,
+            module: None,
+            declaring: None,
             structs,
             env: BTreeMap::new(),
             facts: BTreeMap::new(),
@@ -733,6 +753,7 @@ impl<'a> Context<'a> {
                 let saved = std::mem::take(&mut self.env);
                 let saved_roots = std::mem::take(&mut self.roots);
                 let saved_facts = std::mem::take(&mut self.facts);
+                let saved_module = std::mem::replace(&mut self.module, def.module.clone());
                 self.facts = def.facts.iter().cloned().collect();
                 self.roots.clear();
                 self.env.clear();
@@ -752,6 +773,7 @@ impl<'a> Context<'a> {
                 self.env = saved;
                 self.roots = saved_roots;
                 self.facts = saved_facts;
+                self.module = saved_module;
                 Ok(value)
             }
         }
@@ -785,6 +807,7 @@ impl<'a> Context<'a> {
         let saved = std::mem::take(&mut self.env);
         let saved_roots = std::mem::take(&mut self.roots);
         let saved_facts = std::mem::take(&mut self.facts);
+        let saved_module = std::mem::replace(&mut self.module, def.module.clone());
         self.facts = def.facts.iter().cloned().collect();
         self.roots.clear();
         self.env.clear();
@@ -812,6 +835,7 @@ impl<'a> Context<'a> {
         self.env = saved;
         self.roots = saved_roots;
         self.facts = saved_facts;
+        self.module = saved_module;
         Ok(())
     }
 
@@ -932,6 +956,7 @@ impl<'a> Context<'a> {
                 fields,
                 value,
             } => {
+                self.representation_access(record, value.line)?;
                 let def = self
                     .structs
                     .get(record)
@@ -1106,7 +1131,7 @@ impl<'a> Context<'a> {
             let mut selected = BTreeSet::new();
             for selector in lifts {
                 let (qualifier, fact) = selector
-                    .split_once("::")
+                    .rsplit_once("::")
                     .map(|(q, n)| (Some(q), n))
                     .unwrap_or((None, selector.as_str()));
                 if qualifier.is_some_and(|q| q != typename) {
@@ -1257,6 +1282,10 @@ impl<'a> Context<'a> {
             }
             Kind::Field(base, n) => {
                 let (r, mut path) = self.location(base)?;
+                let Symbol::Record(typename, _) = project(self.memory.read(r)?, &path)? else {
+                    return Err("field reference requires a record".into());
+                };
+                self.representation_access(typename, e.line)?;
                 path.push(Projection::Field(n.clone()));
                 project(self.memory.read(r)?, &path)?;
                 Ok((r, path))
@@ -1522,6 +1551,7 @@ impl<'a> Context<'a> {
                 .cloned()
                 .ok_or("unknown array element type")?;
             if let Some(invariant) = definition.invariant {
+                let saved_module = std::mem::replace(&mut self.module, definition.module.clone());
                 let env = std::mem::replace(&mut self.env, fields.clone());
                 let roots = std::mem::take(&mut self.roots);
                 let facts =
@@ -1532,6 +1562,7 @@ impl<'a> Context<'a> {
                 self.env = env;
                 self.roots = roots;
                 self.facts = facts;
+                self.module = saved_module;
             }
         }
         Ok(())
@@ -1646,9 +1677,10 @@ impl<'a> Context<'a> {
                 }
             }
             Kind::Field(base, name) => {
-                let Symbol::Record(_, fields) = self.storage(base)? else {
+                let Symbol::Record(typename, fields) = self.storage(base)? else {
                     return Err("field access requires struct storage".into());
                 };
+                self.representation_access(&typename, e.line)?;
                 fields
                     .get(name)
                     .cloned()
@@ -1730,7 +1762,9 @@ impl<'a> Context<'a> {
         self.env.insert("self".into(), value);
         self.roots.clear();
         self.facts = def.facts.iter().cloned().collect();
+        let saved_module = std::mem::replace(&mut self.module, def.module.clone());
         let result = self.proposition(&expression);
+        self.module = saved_module;
         self.env = saved;
         self.roots = roots;
         self.facts = facts;
@@ -1819,15 +1853,17 @@ impl<'a> Context<'a> {
                 Ok(value)
             }
             Kind::Field(base, name) => {
-                let Symbol::Record(_, fields) = self.storage(base)? else {
+                let Symbol::Record(typename, fields) = self.storage(base)? else {
                     return Err("field access requires a struct".into());
                 };
+                self.representation_access(&typename, e.line)?;
                 fields
                     .get(name)
                     .cloned()
                     .ok_or_else(|| format!("unknown field {name}"))
             }
             Kind::Record(name, entries) => {
+                self.representation_access(name, e.line)?;
                 let def = self
                     .structs
                     .get(name)
@@ -2155,6 +2191,7 @@ impl<'a> Context<'a> {
                 let saved_roots = std::mem::take(&mut self.roots);
                 let saved_old = std::mem::take(&mut self.old_values);
                 let saved_ideal = std::mem::take(&mut self.ideal_bindings);
+                let saved_module = std::mem::replace(&mut self.module, f.module.clone());
                 self.ideal_bindings = f.ideal_params.iter().cloned().collect();
                 self.env.clear();
                 self.roots.clear();
@@ -2231,6 +2268,7 @@ impl<'a> Context<'a> {
                 self.roots = saved_roots;
                 self.old_values = saved_old;
                 self.ideal_bindings = saved_ideal;
+                self.module = saved_module;
                 if !f.modifies.is_empty() {
                     self.validate_live(e.line)?;
                 }
@@ -2520,6 +2558,9 @@ impl VerifiedProgram {
         self.proof_searches
     }
     pub(crate) fn check_entry(&self) -> Result<()> {
+        crate::bounded::run("evergreen-entry-checker", || self.check_entry_inner())
+    }
+    fn check_entry_inner(&self) -> Result<()> {
         let main = self
             .functions
             .iter()
@@ -2608,6 +2649,9 @@ fn check_type_expansion(structs: &[Struct]) -> Result<()> {
 }
 
 fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> {
+    crate::bounded::run("evergreen-verifier", || verify_inner(source, session))
+}
+fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> {
     let parsed = syntax::parse(source)?;
     check_type_expansion(&parsed.structs)?;
     let mut structs = BTreeMap::new();
@@ -2624,6 +2668,8 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             &empty_drops,
             session,
         );
+        ctx.module = s.module.clone();
+        ctx.declaring = Some(s.name.clone());
         ctx.phase = if s.ideal {
             Phase::Ideal
         } else {
@@ -2661,6 +2707,12 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
     let mut drops = BTreeSet::new();
     let mut helpers = BTreeSet::new();
     for (target, f) in &parsed.destructors {
+        if structs.get(target).is_some_and(|s| s.module != f.module) {
+            return Err(format!(
+                "line {}: Drop must be defined in the type's defining module",
+                f.line
+            ));
+        }
         if structs.get(target).is_some_and(|s| s.ideal) {
             return Err(format!(
                 "line {}: ideal data has no runtime Drop implementation",
@@ -2711,7 +2763,10 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         {
             return Err(format!("line {}: runtime signatures require fixed-layout types; int/nat and ideal records are proof-only", f.line));
         }
-        if matches!(f.name.as_str(), "move" | "drop" | "int" | "nat" | "old") {
+        if matches!(
+            f.name.rsplit("::").next().unwrap_or(&f.name),
+            "move" | "drop" | "int" | "nat" | "old"
+        ) {
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));
         }
         if let Some(reference) = &f.borrows {
@@ -2732,6 +2787,7 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             functions.insert(f.name.clone(), f.clone());
         }
         let mut ctx = Context::new(&functions, &structs, &drops, &helpers, session);
+        ctx.module = f.module.clone();
         ctx.dropping = f.drop_target.is_some();
         let execution = if f.ideal {
             Phase::Ideal
@@ -3133,6 +3189,71 @@ mod tests {
             "let x = if true {consume(t)} else {consume(t)}; t.tag",
         );
         assert!(verify(&format!("{declarations}\n{invalid}")).is_err());
+    }
+
+    #[test]
+    fn opaque_module_representations_are_checked_without_client_privileges() {
+        let source = include_str!("../examples/opaque_values.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        let declarations = source.split("fn main").next().unwrap();
+        for body in [
+            "let p = permits::Permit {tag: 42}; 42",
+            "let p = permits::issue(); p.tag",
+            "let p = permits::issue(); p.tag = 42; 42",
+            "let p = permits::issue(); let r = &p.tag; *r",
+            "let p = permits::issue(); let permits::Permit {tag} = p; tag",
+            "let p = permits::issue(); let x = permits::read(&p); p.tag",
+            "let p = permits::issue(); proof hidden: p.tag == 42; 42",
+        ] {
+            let error =
+                verify(&format!("{declarations} fn main() -> usize {{{body}}}")).unwrap_err();
+            assert!(error.contains("opaque representation"), "{error}: {body}");
+        }
+        assert!(verify(&format!(
+            "{declarations} module permits {{fn forge() -> Permit {{Permit {{tag: 42}}}}}}"
+        ))
+        .is_err());
+        assert!(verify(&format!("{declarations} module other {{fn forge() -> permits::Permit {{permits::Permit {{tag: 42}}}}}}" )).is_err());
+        assert!(verify(&format!(
+            "{declarations} impl Drop for permits::Permit {{fn drop(self){{}}}}"
+        ))
+        .unwrap_err()
+        .contains("defining module"));
+        let self_fact = source.replace("tag == 42", "self.tag == 42");
+        assert_eq!(verify(&self_fact).unwrap().run().unwrap().to_string(), "42");
+        let wrap = "type Wrapper struct {p: permits::Permit} where (p::valid); fn main() -> usize {let wrapper = Wrapper {p: permits::issue()}; permits::read(&wrapper.p)}";
+        assert_eq!(
+            verify(&format!("{declarations} {wrap}"))
+                .unwrap()
+                .run()
+                .unwrap()
+                .to_string(),
+            "42"
+        );
+        assert!(verify(&format!(
+            "{declarations} {}",
+            wrap.replace("p::valid", "p.tag == 42")
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn opaque_affine_credits_can_be_rearranged_but_not_forged_or_duplicated() {
+        let library = include_str!("../stdlib/credits.evg");
+        assert!(verify(&format!(
+            "{library} {}",
+            include_str!("../proofs/opaque_credits.evg")
+        ))
+        .is_ok());
+        for client in [
+            "ideal fn forge() -> credits::Credit {credits::Credit {units: 7}}",
+            "ideal fn steal(c: credits::Credit) -> nat {c.units}",
+            "ideal fn duplicate(c: credits::Credit) -> credits::Split {credits::Split {left: c, right: c}}",
+            "ideal fn extract(c: credits::Credit) -> nat {let credits::Credit {units} = c; units}",
+            "ideal fn forge(c: credits::Credit) -> credits::Credit {credits::join(credits::Credit {units: 7}, c)}",
+            "ideal fn mint(c: credits::Credit) -> credits::Credit {c.units = 7; c}",
+            "ideal fn copy(c: &credits::Credit) -> credits::Credit {*c}",
+        ] {assert!(verify(&format!("{library} {client}")).is_err(), "{client}");}
     }
 
     #[test]

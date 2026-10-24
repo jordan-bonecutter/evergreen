@@ -1,0 +1,21 @@
+module permits {
+    opaque affine type Permit struct {tag: usize} where (
+        fact valid = tag == 42;
+        valid
+    );
+
+    fn issue() -> Permit {
+        Permit {tag: 42}
+    }
+
+    fn read(permit: &Permit) -> usize
+    ensures (result == (*permit).tag) {
+        (*permit).tag
+    }
+}
+
+fn main() -> usize ensures (result == 42) {
+    let permit = permits::issue();
+    proof permitted: permit::valid;
+    permits::read(&permit)
+}

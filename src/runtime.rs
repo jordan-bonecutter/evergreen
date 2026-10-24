@@ -812,18 +812,9 @@ impl VerifiedProgram {
     /// Returns a detached result snapshot and an execution trace for debugging.
     pub fn run_with_events(&self) -> Result<(Value, Vec<String>)> {
         self.check_entry()?;
-        // The caller may have a small thread stack. Isolate recursive bootstrap
-        // evaluation on one bounded stack; depth/step guards remain mandatory.
-        std::thread::scope(|scope| {
-            std::thread::Builder::new()
-                .name("evergreen-evaluator".into())
-                .stack_size(16 * 1024 * 1024)
-                .spawn_scoped(scope, || self.evaluate())
-                .map_err(|e| format!("cannot start bounded evaluator: {e}"))?
-                .join()
-                .map_err(|_| "bounded evaluator panicked".to_owned())?
-        })
+        crate::bounded::run("evergreen-evaluator", || self.evaluate())
     }
+
     fn evaluate(&self) -> Result<(Value, Vec<String>)> {
         let mut evaluator = Evaluator {
             functions: &self.functions,

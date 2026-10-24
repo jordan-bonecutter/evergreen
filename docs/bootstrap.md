@@ -616,3 +616,47 @@ different symbolic expressions alone do not establish different locations.
 `examples/indexed_borrows.evg` verifies both outcomes of a possibly aliasing
 write and works with certificate replay and native emission. These additional
 relations remain subject to the verifier's path and proof-work limits.
+
+Modules provide a closed lexical namespace:
+
+```evergreen
+module permits {
+    opaque affine type Permit struct {tag: usize}
+    fn issue() -> Permit {Permit {tag: 42}}
+}
+fn main() -> usize {let permit = permits::issue(); 42}
+```
+
+Within a module, local type and function names resolve to that module. Clients
+use qualified names such as `permits::Permit` and `permits::issue()`. Modules
+are checked in the same ordered proof unit, introduce no trusted declarations,
+and cannot be reopened or nested. Functions and type names are currently all
+exported. Calls still require an earlier checked function declaration.
+
+`opaque` hides construction, field reads/writes, field borrows, and destructuring
+from other modules. It requires a defining module. `affine` separately prevents
+implicit duplication. Values can still be passed, moved, borrowed as a whole,
+and used through checked functions. Public named type facts remain available.
+Function contracts are checked and instantiated in their defining scope; a
+callee's representation access never grants that access to caller expressions.
+Drop implementations must belong to the type's defining module. Identifiers
+have a 256-byte bootstrap limit.
+
+`stdlib/credits.evg` is an opaque affine quantity library with no public mint
+operation. Its checked API observes units by reference and splits/joins existing
+credits while conserving their total quantity. The client proof in
+`proofs/opaque_credits.evg` uses only that API and the public split-result record.
+Check both files together. Clients cannot manufacture a new credit from a number
+or duplicate an existing credit. This abstract quantity is not yet connected to
+a physical allocation, `owners(plane)`, or atomic operations.
+
+`examples/opaque_values.evg` demonstrates runtime opaque values, public facts,
+and checked accessors; it runs and builds natively. Module-qualified programs
+use the internal verifier; the optional Lean expression emitter remains limited
+to its existing non-modular reference subset.
+
+The abstraction tests also run through the CLI: checking
+`stdlib/credits.evg proofs/opaque_credits.evg` succeeds, while checking
+`stdlib/credits.evg examples/reject_forged_credit.evg` rejects client construction.
+Verification and entry-precondition checking use a bounded 16 MiB worker stack,
+independent of the caller's stack; existing depth and work limits still apply.

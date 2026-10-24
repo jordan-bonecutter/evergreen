@@ -145,6 +145,8 @@ pub struct Struct {
     pub line: usize,
     pub ideal: bool,
     pub affine: bool,
+    pub opaque: bool,
+    pub module: Option<String>,
     pub facts: Vec<(String, Expr)>,
 }
 #[derive(Clone, Debug)]
@@ -170,6 +172,7 @@ pub struct Function {
     pub ideal: bool,
     pub modifies: Vec<String>,
     pub ideal_params: Vec<String>,
+    pub module: Option<String>,
 }
 
 struct Parser {
@@ -204,6 +207,9 @@ impl Parser {
     }
     fn name(&mut self) -> Result<String, String> {
         let s = self.peek().to_string();
+        if s.len() > 256 {
+            return Err(self.err("identifier exceeds 256-byte bootstrap limit"));
+        }
         if !s.starts_with(|c: char| c.is_ascii_alphabetic())
             || s.starts_with("evg_")
             || matches!(
@@ -216,6 +222,8 @@ impl Parser {
                     | "where"
                     | "ensures"
                     | "borrows"
+                    | "module"
+                    | "opaque"
                     | "if"
                     | "else"
                     | "true"
@@ -231,6 +239,45 @@ impl Parser {
         }
         self.pos += 1;
         Ok(s)
+    }
+    fn path_name(&mut self) -> Result<String, String> {
+        let mut name = self.name()?;
+        if self.eat("::") {
+            name.push_str("::");
+            name.push_str(&self.name()?);
+        }
+        Ok(name)
+    }
+    fn arguments(&mut self) -> Result<Vec<Expr>, String> {
+        let mut args = Vec::new();
+        if !self.eat(")") {
+            loop {
+                args.push(self.expr(0)?);
+                if self.eat(")") {
+                    break;
+                }
+                self.expect(",")?;
+            }
+        }
+        Ok(args)
+    }
+    fn record_fields(&mut self) -> Result<Vec<(String, Expr)>, String> {
+        let mut fields = Vec::new();
+        if !self.eat("}") {
+            loop {
+                let field = self.name()?;
+                self.expect(":")?;
+                fields.push((field, self.expr(0)?));
+                if self.eat("}") {
+                    break;
+                }
+                self.expect(",")?;
+                if self.eat("}") {
+                    break;
+                }
+            }
+        }
+        Ok(fields)
     }
     fn ty(&mut self) -> Result<Type, String> {
         if self.depth >= 128 {
@@ -267,8 +314,8 @@ impl Parser {
                     self.pos += 1;
                     Ok(Type::Bool)
                 }
-                _ if self.peek().starts_with(|c: char| c.is_ascii_uppercase()) => {
-                    Ok(Type::Named(self.name()?))
+                _ if self.peek().starts_with(|c: char| c.is_ascii_alphabetic()) => {
+                    Ok(Type::Named(self.path_name()?))
                 }
                 _ => Err(self.err("expected isize, usize, bool, [T; n], or a struct name")),
             }
@@ -356,6 +403,11 @@ impl Parser {
                                 _ => return Err(self.err("expected MAX or MIN")),
                             },
                         )
+                    } else if self.eat("(") {
+                        Kind::Call(format!("{n}::{member}"), self.arguments()?)
+                    } else if member.starts_with(|c: char| c.is_ascii_uppercase()) && self.eat("{")
+                    {
+                        Kind::Record(format!("{n}::{member}"), self.record_fields()?)
                     } else {
                         Kind::FactAt(
                             Box::new(Expr {
@@ -581,7 +633,7 @@ impl Parser {
                 let mut lifts = Vec::new();
                 loop {
                     let mut name = self.name()?;
-                    if self.eat("::") {
+                    while self.eat("::") {
                         name.push_str("::");
                         name.push_str(&self.name()?);
                     }
@@ -658,7 +710,14 @@ impl Parser {
             if !fact {
                 self.expect("let")?;
             }
-            let name = self.name()?;
+            let mut name = self.name()?;
+            if !fact && self.eat("::") {
+                name.push_str("::");
+                name.push_str(&self.name()?);
+                if self.peek() != "{" {
+                    return Err(self.err("qualified let names require a record pattern"));
+                }
+            }
             if !fact && self.eat("{") {
                 let mut fields = Vec::new();
                 if !self.eat("}") {
@@ -725,6 +784,7 @@ impl Parser {
             ideal,
             modifies,
             ideal_params,
+            module: None,
         })
     }
 
@@ -749,7 +809,7 @@ impl Parser {
         self.expect("impl")?;
         self.expect("Drop")?;
         self.expect("for")?;
-        let target = self.name()?;
+        let target = self.path_name()?;
         self.expect("{")?;
         let mut function = self.function(Some(&target), false)?;
         if function.name != "drop"
@@ -821,6 +881,8 @@ impl Parser {
             ideal,
             affine,
             facts,
+            opaque: false,
+            module: None,
         })
     }
 }
@@ -837,39 +899,101 @@ pub fn parse(source: &str) -> Result<Program, String> {
     let mut functions = Vec::new();
     let mut structs = Vec::new();
     let mut destructors = Vec::new();
+    let mut module = None;
+    let mut modules = std::collections::BTreeSet::new();
     while p.peek() != "<eof>" {
+        if p.eat("module") {
+            if module.is_some() {
+                return Err(p.err("nested modules are not supported yet"));
+            }
+            let name = p.name()?;
+            if MachineInt::parse(&name).is_some() || matches!(name.as_str(), "int" | "nat" | "bool")
+            {
+                return Err(p.err("module names cannot shadow builtin types"));
+            }
+            if !modules.insert(name.clone()) {
+                return Err(
+                    p.err("a module must have one closed definition; reopening is forbidden")
+                );
+            }
+            p.expect("{")?;
+            module = Some(name);
+            continue;
+        }
+        if p.eat("}") {
+            if module.take().is_none() {
+                return Err(p.err("unexpected module closing brace"));
+            }
+            continue;
+        }
         let ideal = p.eat("ideal");
+        let opaque = p.eat("opaque");
         let affine = p.eat("affine");
         if p.peek() == "type" {
-            structs.push(p.structure(ideal, affine)?);
+            let mut structure = p.structure(ideal, affine)?;
+            if opaque && module.is_none() {
+                return Err(p.err("opaque representations require a defining module"));
+            }
+            structure.opaque = opaque;
+            structure.module = module.clone();
+            structs.push(structure);
         } else if p.peek() == "impl" {
-            if affine {
-                return Err(p.err("affine modifies a type declaration"));
+            if affine || opaque {
+                return Err(p.err("affine and opaque modify type declarations"));
             }
             if ideal {
                 return Err(p.err("ideal data has no runtime destructor"));
             }
-            destructors.push(p.destructor()?);
+            let (target, mut function) = p.destructor()?;
+            function.module = module.clone();
+            destructors.push((target, function));
         } else {
-            if affine {
-                return Err(p.err("affine modifies a type declaration"));
+            if affine || opaque {
+                return Err(p.err("affine and opaque modify type declarations"));
             }
-            functions.push(p.function(None, ideal)?);
+            let mut function = p.function(None, ideal)?;
+            function.module = module.clone();
+            functions.push(function);
         }
+    }
+    if module.is_some() {
+        return Err(p.err("unterminated module"));
     }
     if functions.is_empty() && destructors.is_empty() {
         return Err("expected at least one function".into());
     }
-    Ok(Program {
+    let mut program = Program {
         structs,
         functions,
         destructors,
-    })
+    };
+    crate::modules::qualify(&mut program);
+    Ok(program)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn module_scopes_are_closed_and_names_are_qualified_once() {
+        let program = parse("module a {opaque type Item struct {n: usize} fn get() -> Item {Item {n: 42}}} fn main() -> usize {let item: a::Item = a::get(); 42}").unwrap();
+        assert_eq!(program.structs[0].name, "a::Item");
+        assert!(program.structs[0].opaque);
+        assert_eq!(program.functions[0].name, "a::get");
+        assert!(
+            matches!(&program.functions[0].result.kind, Kind::Record(name, _) if name == "a::Item")
+        );
+        for source in [
+            "module a {module b {fn f() -> usize {0}}}",
+            "module a {fn f() -> usize {0}} module a {fn g() -> usize {0}}",
+            "module a {fn f() -> usize {0}",
+            "opaque type Item struct {} fn main() -> usize {0}",
+            "module usize {fn f() -> usize {0}}",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+        assert!(parse(&format!("fn {}() -> usize {{0}}", "x".repeat(257))).is_err());
+    }
     #[test]
     fn parses_calls_branches_and_arrays() {
         let f =

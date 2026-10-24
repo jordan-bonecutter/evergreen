@@ -71,6 +71,7 @@ fn emission_is_inspectable_without_backend() {
 fn internal_backend_needs_no_external_tools() {
     for file in [
         "examples/contracts.evg",
+        "examples/opaque_values.evg",
         "examples/composition.evg",
         "examples/references.evg",
         "examples/intermediate_states.evg",
@@ -154,6 +155,32 @@ fn ordered_proof_units_share_checked_contracts() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+    let credits = Command::new(env!("CARGO_BIN_EXE_evg"))
+        .env("PATH", "")
+        .args([
+            "--deny-trust",
+            "check",
+            "stdlib/credits.evg",
+            "proofs/opaque_credits.evg",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        credits.status.success(),
+        "{}",
+        String::from_utf8_lossy(&credits.stderr)
+    );
+    let forged = Command::new(env!("CARGO_BIN_EXE_evg"))
+        .args([
+            "check",
+            "stdlib/credits.evg",
+            "examples/reject_forged_credit.evg",
+        ])
+        .output()
+        .unwrap();
+    assert!(!forged.status.success());
+    assert!(forged.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&forged.stderr).contains("opaque representation"));
     let reversed = Command::new(env!("CARGO_BIN_EXE_evg"))
         .args(["run", "examples/counter.evg", "stdlib/counter.evg"])
         .output()

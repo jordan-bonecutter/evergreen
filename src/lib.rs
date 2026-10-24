@@ -1,10 +1,12 @@
 //! Evergreen bootstrap: shared syntax, internal verification, and execution.
 
+mod bounded;
 pub mod certificate;
 mod effects;
 pub mod kernel;
 pub mod layout;
 pub mod memory;
+mod modules;
 pub mod native;
 pub mod runtime;
 pub mod syntax;

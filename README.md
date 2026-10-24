@@ -8,7 +8,7 @@ the current trust boundary. The remainder of this README is the original
 language design sketch; not all of it is implemented yet.
 
 `cargo run -- --deny-trust build examples/native.evg -o /tmp/answer` builds a
-standalone Linux x86-64 executable for the verified scalar subset.
+standalone Linux x86-64 executable for the supported verified subset.
 
 Evergreen is a systems programming language, aimed to finally be a successor to
 C and C++. Why have we failed so many times? Let's look at Rust for an example:

@@ -1,0 +1,9 @@
+// Check after stdlib/credits.evg. This client can rearrange existing credits,
+// but cannot mint one or inspect/alter its representation.
+ideal fn conserve(credit: credits::Credit, amount: nat) -> credits::Credit
+where (amount <= credits::units(&credit))
+ensures (credits::units(&result) == credits::units(&credit)) {
+    let parts = credits::split(credit, amount);
+    let credits::Split {left, right} = parts;
+    credits::join(left, right)
+}
