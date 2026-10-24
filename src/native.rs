@@ -1218,6 +1218,13 @@ mod tests {
         ].map(str::to_owned).to_vec();
         cases.push(
             [
+                include_str!("../stdlib/swap.evg"),
+                include_str!("../examples/disjoint_writes.evg"),
+            ]
+            .join("\n"),
+        );
+        cases.push(
+            [
                 include_str!("../stdlib/counter.evg"),
                 include_str!("../examples/counter.evg"),
             ]

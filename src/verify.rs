@@ -1868,6 +1868,23 @@ impl<'a> Context<'a> {
                 for value in &actuals {
                     self.validate_argument(value, e.line)?;
                 }
+                for (i, ((parameter, _), actual)) in f.params.iter().zip(&actuals).enumerate() {
+                    if !f.modifies.contains(parameter) {
+                        continue;
+                    }
+                    let Symbol::Ref(_, reference, path) = actual else {
+                        return Err("modifies requires a reference argument".into());
+                    };
+                    for (j, other) in actuals.iter().enumerate() {
+                        if i == j {
+                            continue;
+                        }
+                        if matches!(other, Symbol::Ref(_, r, p) if r == reference && (path.starts_with(p) || p.starts_with(path)))
+                        {
+                            return Err(format!("line {}: writable argument {parameter} overlaps another reference argument", e.line));
+                        }
+                    }
+                }
                 let mut saved = std::mem::take(&mut self.env);
                 let saved_roots = std::mem::take(&mut self.roots);
                 let saved_old = std::mem::take(&mut self.old_values);
@@ -2314,13 +2331,13 @@ fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
                 .iter()
                 .filter(|(_, t)| type_has_reference(t, &structs))
                 .collect::<Vec<_>>();
+            let modified = f.modifies.iter().collect::<BTreeSet<_>>();
             if f.ideal
-                || f.modifies.len() != 1
-                || references.len() != 1
-                || references[0].0 != f.modifies[0]
-                || !matches!(&references[0].1, Type::Ref(t) if matches!(**t, Type::Machine(_) | Type::Bool))
+                || modified.len() != f.modifies.len()
+                || f.modifies.iter().any(|name| !references.iter().any(|(n, _)| n == name))
+                || references.iter().any(|(_, ty)| !matches!(ty, Type::Ref(t) if matches!(**t, Type::Machine(_) | Type::Bool)))
             {
-                return Err(format!("line {}: initial modifies contracts require exactly one scalar reference parameter and no other borrowed parameters; alias contracts are not implemented", f.line));
+                return Err(format!("line {}: modifies requires distinct scalar reference parameters; reference-bearing aggregates need stronger effect contracts", f.line));
             }
         }
         if !f.ideal
@@ -2752,6 +2769,41 @@ mod tests {
     }
 
     #[test]
+    fn multiple_scalar_writes_require_disjoint_actual_storage() {
+        let library = include_str!("../stdlib/swap.evg");
+        let source = format!(
+            "{library}\n{}",
+            include_str!("../examples/disjoint_writes.evg")
+        );
+        assert_eq!(verify(&source).unwrap().run().unwrap().to_string(), "42");
+        for body in [
+            "let n: usize = 1; swap_usize(&n, &n); n",
+            "let n: usize = 1; let r = &n; swap_usize(&n, r); n",
+            "let a: [usize; 2] = [1, 2]; swap_usize(&a[0], &a[0]); a[0]",
+        ] {
+            let error = verify(&format!("{library} fn main() -> usize {{{body}}}")).unwrap_err();
+            assert!(error.contains("overlaps"), "{error}");
+        }
+        for body in [
+            "let a: [usize; 2] = [7, 42]; swap_usize(&a[0], &a[1]); a[0]",
+            "let a: usize = usize::MAX; let b: usize = 42; swap_usize(&a, &b); a",
+            "let p = Equal {left: 42, right: 42}; swap_usize(&p.left, &p.right); p.right",
+        ] {
+            let source = format!("{library} type Equal struct {{left: usize, right: usize}} where(left == right); fn main() -> usize ensures(result == 42) {{{body}}}");
+            assert_eq!(verify(&source).unwrap().run().unwrap().to_string(), "42");
+        }
+        let copy = "fn copy(to: &usize, from: &usize) modifies(to) ensures(*to == old(*from) && *from == old(*from)) {*to = *from;}";
+        assert!(verify(&format!(
+            "{copy} fn main() -> usize {{let n: usize = 42; copy(&n, &n); n}}"
+        ))
+        .unwrap_err()
+        .contains("overlaps"));
+        assert!(verify(&format!("{copy} fn main() -> usize ensures(result == 42) {{let a: usize = 0; let b: usize = 42; copy(&a, &b); a}}")).is_ok());
+        assert!(verify("fn duplicate(r: &usize) modifies(r, r) {*r = 0;}").is_err());
+        assert!(verify("fn missing(r: &usize) modifies(no_such_param) {*r = 0;}").is_err());
+    }
+
+    #[test]
     fn scalar_write_contracts_update_aliases_and_frame_other_fields() {
         let source = include_str!("../examples/write_contracts.evg");
         assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
@@ -2761,7 +2813,7 @@ mod tests {
         let declarations = source.split("type Counters").next().unwrap();
         for body in [
             "fn wrapper(r: &usize) {increment(r);}",
-            "fn wrapper(r: &usize, other: &usize) modifies(r) {*r = 1;}",
+            "fn wrapper(r: &usize, other: &usize) modifies(r) {*other = 1;}",
             "fn main() -> usize {let n: usize = 0; proof p: old(n) == 0; n}",
             "fn main() -> usize {let n: usize = 0; proof p: n == 0; increment(&n); proof stale: n == 0 by {exact p}; n}",
             "type Balanced struct {left: usize, right: usize} where (left == right); fn main() -> usize {let p = Balanced {left: 0, right: 0}; increment(&p.left); p.left}",

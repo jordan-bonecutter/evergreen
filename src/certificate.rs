@@ -414,6 +414,18 @@ mod tests {
     use super::*;
     use crate::verify::{prove, verify, verify_with_certificate};
     #[test]
+    fn disjoint_write_contracts_replay_without_search() {
+        let source = [
+            include_str!("../stdlib/swap.evg"),
+            include_str!("../examples/disjoint_writes.evg"),
+        ]
+        .join("\n");
+        let (_, bundle) = prove(&source).unwrap();
+        let program = verify_with_certificate(&source, &bundle).unwrap();
+        assert_eq!(program.proof_search_count(), 0);
+        assert_eq!(program.run().unwrap().to_string(), "42");
+    }
+    #[test]
     fn erased_count_refinement_replays_and_executes_without_search() {
         let source = [
             include_str!("../proofs/rc_protocol.evg"),

@@ -1,0 +1,15 @@
+// Check/run/build after stdlib/swap.evg.
+type Pair struct {left: usize, right: usize}
+
+fn main() -> usize ensures (result == 42) {
+    let pair = Pair {left: 42, right: 7};
+    let observed = &pair.right;
+    swap_usize(&pair.left, &pair.right);
+    proof left_changed: pair.left == 7;
+    proof alias_observes_write: *observed == 42;
+    let yes = true;
+    let no = false;
+    swap_bool(&yes, &no);
+    proof booleans_changed: !yes && no;
+    *observed
+}

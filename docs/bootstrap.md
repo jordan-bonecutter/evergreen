@@ -315,10 +315,21 @@ A wrapper must declare its own permission before forwarding a borrowed target
 to a modifying helper. `examples/write_contracts.evg` checks composition,
 aliases, overflow bounds, and preservation of an unrelated sibling field.
 
-The initial contract supports exactly one machine-scalar or Boolean reference
-parameter and no other reference-containing parameters. Multiple borrowed
-parameters need alias-aware contracts; treating them as independent would be
-unsound. Modifying calls inside invariant updates await suitable checked effect
+Write contracts support multiple machine-scalar or Boolean reference parameters,
+including read-only parameters omitted from `modifies`. At each call, every
+writable argument must be disjoint from every other reference argument. The
+checker compares actual planes and projection paths: two distinct fields or
+array elements in one plane are disjoint, while two aliases of the same scalar
+are rejected. Read-only arguments may alias each other. This condition justifies
+the independent parameter storage used while checking the function body; broader
+overlapping effects need stronger alias-aware summaries. Reference-containing
+aggregate parameters remain unsupported in modifying functions.
+
+`stdlib/swap.evg` implements verified `swap_usize` and `swap_bool` with
+`modifies(left, right)` and entry-value postconditions. Run its example with
+`evg run stdlib/swap.evg examples/disjoint_writes.evg`; the same ordered unit can
+be proved or built natively. Swapping needs no compiler-specific operation.
+Modifying calls inside invariant updates await suitable checked effect
 summaries. Modifying calls in proof expressions and ideal functions are rejected. There are no
 concurrency or atomic-operation guarantees in this rule.
 

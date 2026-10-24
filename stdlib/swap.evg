@@ -1,0 +1,16 @@
+// Disjointness is a checked call obligation of the modifies contract.
+fn swap_usize(left: &usize, right: &usize)
+modifies(left, right)
+ensures (*left == old(*right) && *right == old(*left)) {
+    let previous = *left;
+    *left = *right;
+    *right = previous;
+}
+
+fn swap_bool(left: &bool, right: &bool)
+modifies(left, right)
+ensures (*left == old(*right) && *right == old(*left)) {
+    let previous = *left;
+    *left = *right;
+    *right = previous;
+}
