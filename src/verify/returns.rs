@@ -1,7 +1,90 @@
 //! Exact provenance for reference leaves in returned records and fixed arrays.
 use super::*;
 use crate::syntax::ReturnProjection;
-type Aliases = BTreeMap<Vec<ReturnProjection>, Symbol>;
+pub(super) enum AliasTarget {
+    Incoming(Symbol),
+    Result(Expr),
+}
+type Aliases = BTreeMap<Vec<ReturnProjection>, AliasTarget>;
+
+fn root(expression: &Expr) -> Option<&str> {
+    match &expression.kind {
+        Kind::Name(name) => Some(name),
+        Kind::Field(base, _) | Kind::Index(base, _) | Kind::Unary(_, base) => root(base),
+        _ => None,
+    }
+}
+
+// A result anchor may traverse inline fields/arrays and owned allocations,
+// never borrowed pointers. Merely referring to a result field does not give
+// its temporary return slot a lifetime beyond the function.
+fn check_result_anchor(
+    expression: &Expr,
+    ty: &Type,
+    structs: &BTreeMap<String, Struct>,
+) -> Result<()> {
+    fn result_only(expression: &Expr) -> bool {
+        match &expression.kind {
+            Kind::Name(name) => name == "result",
+            Kind::Number(_) | Kind::Constant(..) | Kind::Bool(_) => true,
+            Kind::Field(base, _) | Kind::Unary(_, base) => result_only(base),
+            Kind::Binary(_, a, b) | Kind::Index(a, b) => result_only(a) && result_only(b),
+            Kind::If(c, a, b) => result_only(c) && result_only(a) && result_only(b),
+            Kind::Call(name, args) if matches!(name.as_str(), "int" | "nat") => {
+                args.iter().all(result_only)
+            }
+            _ => false,
+        }
+    }
+    fn project_type<'a>(
+        expression: &Expr,
+        ty: &'a Type,
+        structs: &'a BTreeMap<String, Struct>,
+        crossed: &mut bool,
+    ) -> Result<&'a Type> {
+        match &expression.kind {
+            Kind::Name(name) if name == "result" => Ok(ty),
+            Kind::Field(base, field) => {
+                let Type::Named(name) = project_type(base, ty, structs, crossed)? else {
+                    return Err("result anchor field needs a record".into());
+                };
+                structs
+                    .get(name)
+                    .and_then(|definition| definition.fields.iter().find(|(name, _)| name == field))
+                    .map(|(_, ty)| ty)
+                    .ok_or_else(|| "unknown result anchor field".into())
+            }
+            Kind::Index(base, index) if result_only(index) => {
+                let Type::Array(inner, _) = project_type(base, ty, structs, crossed)? else {
+                    return Err("result anchor index needs an array".into());
+                };
+                Ok(inner)
+            }
+            Kind::Unary(op, base) if op == "*" => {
+                let Type::Plane(inner) = project_type(base, ty, structs, crossed)? else {
+                    return Err(
+                        "result anchors may follow owned planes, not borrowed pointers".into(),
+                    );
+                };
+                *crossed = true;
+                Ok(inner)
+            }
+            _ => Err("result anchors require structural projections of the returned value".into()),
+        }
+    }
+    let Kind::Unary(op, place) = &expression.kind else {
+        return Err("result borrows require an address inside a returned owned plane".into());
+    };
+    if op != "&" {
+        return Err("result borrows require an address inside a returned owned plane".into());
+    }
+    let mut crossed = false;
+    project_type(place, ty, structs, &mut crossed)?;
+    if !crossed {
+        return Err("result borrows cannot reference temporary return slots; project through a returned owned plane".into());
+    }
+    Ok(())
+}
 
 pub(super) fn check_return_borrows(f: &Function, structs: &BTreeMap<String, Struct>) -> Result<()> {
     fn paths(
@@ -51,6 +134,12 @@ pub(super) fn check_return_borrows(f: &Function, structs: &BTreeMap<String, Stru
         if !borrow_expression(&alias.reference) || !supplied.insert(alias.path.clone()) {
             return Err(format!("line {}: borrows requires unique return paths and checked incoming reference projections", f.line));
         }
+        if root(&alias.reference) == Some("result") {
+            if f.params.iter().any(|(name, _)| name == "result") {
+                return Err("result in a borrow contract names the returned value; rename the input parameter".into());
+            }
+            check_result_anchor(&alias.reference, &f.ret, structs)?;
+        }
     }
     if supplied != required {
         return Err(format!(
@@ -71,6 +160,13 @@ impl Context<'_> {
         let result = (|| {
             let mut aliases = BTreeMap::new();
             for alias in &f.borrows {
+                if root(&alias.reference) == Some("result") {
+                    aliases.insert(
+                        alias.path.clone(),
+                        AliasTarget::Result(alias.reference.clone()),
+                    );
+                    continue;
+                }
                 let value = if let Some(inputs) = inputs {
                     let place = self.incoming_place(&alias.reference, inputs, None)?;
                     Symbol::Ref(place.ty, place.reference, place.path)
@@ -80,7 +176,7 @@ impl Context<'_> {
                 if !matches!(value, Symbol::Ref(..)) {
                     return Err("return aliases must denote references".into());
                 }
-                aliases.insert(alias.path.clone(), value);
+                aliases.insert(alias.path.clone(), AliasTarget::Incoming(value));
             }
             Ok(aliases)
         })();
@@ -93,8 +189,24 @@ impl Context<'_> {
         value: &Symbol,
         aliases: &Aliases,
         line: usize,
+        infeasible_entry: bool,
     ) -> Result<()> {
         for (fields, expected) in aliases {
+            let expected = match expected {
+                AliasTarget::Incoming(value) => value.clone(),
+                AliasTarget::Result(expression) => {
+                    self.charge_value_work(symbol_weight(value)?)?;
+                    let env = std::mem::take(&mut self.env);
+                    let roots = std::mem::take(&mut self.roots);
+                    let phase = std::mem::replace(&mut self.phase, Phase::Specification);
+                    self.env.insert("result".into(), value.clone());
+                    let evaluated = self.eval(expression, None);
+                    self.env = env;
+                    self.roots = roots;
+                    self.phase = phase;
+                    evaluated?
+                }
+            };
             let mut actual = value;
             for field in fields {
                 actual = match (actual, field) {
@@ -113,14 +225,18 @@ impl Context<'_> {
                 };
             }
             let same = if let (Symbol::Ref(a_ty, a, a_path), Symbol::Ref(b_ty, b, b_path)) =
-                (actual, expected)
+                (actual, &expected)
             {
                 self.compatible(a_ty, b_ty, line)?;
                 a == b && self.paths_equal(a_path, b_path)?
             } else {
                 false
             };
-            if !same {
+            if !same && !infeasible_entry {
+                // The independent-port declaration can be infeasible for a
+                // nominal invariant requiring internal aliases. Only a checked
+                // contradiction discharges that configuration; heap/overlapping
+                // calls still recheck the body against their actual addresses.
                 return Err(format!(
                     "line {line}: returned reference field does not match its borrows contract"
                 ));
@@ -140,10 +256,13 @@ impl Context<'_> {
             return self.arbitrary(ty);
         }
         match ty {
-            Ty::Ref(_) => aliases
-                .get(path)
-                .cloned()
-                .ok_or_else(|| "missing return reference alias".into()),
+            Ty::Ref(_) => match aliases.get(path) {
+                Some(AliasTarget::Incoming(value)) => Ok(value.clone()),
+                Some(AliasTarget::Result(_)) => {
+                    Err("result-owned borrows require actual storage checking".into())
+                }
+                None => Err("missing return reference alias".into()),
+            },
             Ty::Record(name) => {
                 let definition = self
                     .structs

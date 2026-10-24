@@ -96,6 +96,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/drop_children.evg",
         "examples/owned_borrows.evg",
         "examples/owned_planes.evg",
+        "examples/owned_result_views.evg",
         "examples/heap_updates.evg",
         "examples/borrowed_view.evg",
         "examples/borrowed_array.evg",

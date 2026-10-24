@@ -1000,12 +1000,47 @@ inside the function cannot retarget its entry alias contract.
 Owning records can return inline reference fields with an exact mapping for each
 field, for example `borrows(target: target)` or
 `borrows(release.count: (*handle).release.count)`. Paths on the left name fields
-of the returned record; expressions on the right name incoming references.
+of the returned record; expressions on the right name incoming references or
+storage owned by the returned value.
 Every reference field needs exactly one mapping. Calls preserve those actual
 planes rather than inventing reference storage. Dependent field extents and
 record invariants are checked on the returned value, including after local
 cleanup, before callers may rely on them. Moving the returned record does not
 extend the lifetime of its borrowed storage.
+
+A returned owner can anchor a companion view with `result` on the right:
+
+```evergreen
+type Packet struct {owner: plane(usize), view: &usize}
+fn make(value: usize) -> Packet
+borrows(view: &*result.owner) {
+    let owner: plane(usize) = alloc(value);
+    let view = &*owner;
+    Packet {owner: owner, view: view}
+}
+```
+
+The anchor must cross an owned plane in the result. It cannot borrow an inline
+return slot, follow a borrowed pointer, or merely name another returned view.
+Fields, nested owners, and checked array projections are supported. Index
+observations can refer only to the returned value and constants; incoming alias
+entries retain their existing entry-state semantics. Representation access is
+checked in the function's module. `result` in this contract names the returned
+value, so an input with that name must be renamed. Every reference leaf still
+needs an alias contract, including erased reference fields.
+
+Result anchors are checked after scope cleanup against the final returned
+storage. A destructor cannot change a selector and leave an old view claiming
+to match its new selection. Returned owner/data generations must also remain
+live after cleanup. All heap calls use actual-body checking; no modular return
+shape invents ownership for this case. An independent-port declaration that is
+infeasible under its nominal alias invariant may discharge a mismatch only with
+a kernel-checked contradiction from its entry configuration. A later `trustme`
+cannot discharge a provenance mismatch. Actual calls and `main` always require
+concrete alias agreement, including on paths with trusted falsehoods.
+`examples/owned_result_views.evg` checks an
+opaque owner/view carrier through construction, forwarding, reading, and final
+consumption. This remains unique ownership; it does not implement Rc sharing.
 
 `examples/owned_borrows.evg` demonstrates a returned resource whose Drop writes
 through its reference field. `examples/borrowed_view.evg` demonstrates a borrowed

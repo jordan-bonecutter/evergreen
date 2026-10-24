@@ -1,0 +1,45 @@
+module owned_views {
+    opaque type Packet struct {owner: plane(usize), view: &usize}
+    where(view == &*owner);
+
+    fn make(value: usize) -> Packet
+    borrows(view: &*result.owner)
+    ensures(*result.view == value) {
+        let owner: plane(usize) = alloc(value);
+        let view = &*owner;
+        Packet {owner: owner, view: view}
+    }
+
+    fn forward(packet: Packet) -> Packet
+    borrows(view: &*result.owner)
+    ensures(*result.view == old(*packet.view)) {packet}
+
+    fn read(packet: &Packet) -> usize ensures(result == *(*packet).view) {
+        *(*packet).view
+    }
+
+    fn consume(packet: Packet) -> usize ensures(result == old(*packet.view)) {
+        let Packet {owner, view} = packet;
+        *view
+    }
+
+    fn pair() -> [Packet; 2]
+    borrows(result[0].view: &*result[0].owner,
+        result[1].view: &*result[1].owner) {
+        let first = make(7);
+        let second = make(42);
+        [first, second]
+    }
+
+    fn second(packets: &[Packet; 2]) -> usize
+    ensures(result == *(*packets)[1].view) {*(*packets)[1].view}
+}
+
+fn main() -> usize ensures(result == 42) {
+    let packet = owned_views::make(42);
+    let forwarded = owned_views::forward(packet);
+    let observed = owned_views::read(&forwarded);
+    let pair = owned_views::pair();
+    let second = owned_views::second(&pair);
+    owned_views::consume(forwarded) + observed + second - 84
+}

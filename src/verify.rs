@@ -3116,6 +3116,9 @@ impl<'a> Context<'a> {
                             value,
                             Some(&Ty::Array(Box::new(element), Linear::number(0))),
                         )?
+                    } else if matches!(ty, Type::Plane(_)) {
+                        let ty = self.resolve(ty)?;
+                        self.eval(value, Some(&ty))?
                     } else {
                         self.eval(value, hint.as_ref())?
                     };
@@ -3423,6 +3426,7 @@ impl<'a> Context<'a> {
                         Type::Int => Some(Ty::Int),
                         Type::Bool => Some(Ty::Bool),
                         Type::Machine(t) => Some(Ty::Machine(*t)),
+                        Type::Plane(_) => Some(self.resolve(t)?),
                         _ => None,
                     };
                     let saved_specification = self.phase;
@@ -4294,7 +4298,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             ctx.measure = Some(ctx.nonnegative(measure, "nonnegative recursion measure")?);
             ctx.phase = execution;
         }
-        ctx.check_function_body(f, &ret, &inputs)?;
+        ctx.check_function_body(f, &ret, &inputs, true)?;
         obligations += ctx.obligations;
         f.partial = ctx.partial_execution;
         if crate::effects::invariant_independent(f, &functions, &helpers) {
@@ -4318,6 +4322,76 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn result_borrows_are_anchored_in_surviving_returned_owners() {
+        let source = include_str!("../examples/owned_result_views.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        for source in [
+            "type Out struct {owner: plane(usize), view: &usize} fn bad(r: &usize) -> Out borrows(view: &*result.owner) {Out {owner: alloc(42), view: r}}",
+            "type Out struct {owner: plane(usize), view: &usize} fn bad() -> Out borrows(view: &*result.owner) {let other: plane(usize) = alloc(42); let view = &*other; Out {owner: alloc(42), view: view}}",
+        ] {let error = verify(source).unwrap_err(); assert!(error.contains("returned reference field does not match"), "{error}");}
+        for source in [
+            "type Out struct {value: usize, view: &usize} fn bad(r: &usize) -> Out borrows(view: &result.value) {Out {value: 42, view: r}}",
+            "type Out struct {owner: &plane(usize), view: &usize} fn bad(r: &plane(usize)) -> Out borrows(owner: r, view: &**result.owner) {Out {owner: r, view: &**r}}",
+            "type Out struct {owner: plane(usize), view: &usize} fn bad(r: &usize) -> Out borrows(view: result.view) {Out {owner: alloc(42), view: r}}",
+        ] {let error = verify(source).unwrap_err(); assert!(error.contains("result borrows") || error.contains("result anchors"), "{error}");}
+        let library = "type Packet struct {owner: plane(usize), other: plane(usize), view: &usize} where(view == &*owner); fn wrong(p: Packet) -> Packet borrows(view: &*result.other) {p}";
+        assert!(verify(library).is_ok()); // The independent-port configuration is impossible.
+        let call = format!("{library} fn main() -> usize {{let owner: plane(usize) = alloc(42); let view = &*owner; let packet = Packet {{owner: owner, other: alloc(7), view: view}}; let returned = wrong(packet); *returned.view}}");
+        let error = verify(&call).unwrap_err();
+        assert!(
+            error.contains("body recheck failed")
+                && error.contains("returned reference field does not match"),
+            "{error}"
+        );
+        let trusted_call = call.replace(
+            "let returned = wrong(packet);",
+            "proof cheat: false by {trustme}; let returned = wrong(packet);",
+        );
+        assert!(verify(&trusted_call)
+            .unwrap_err()
+            .contains("returned reference field does not match"));
+        let trusted_body = "type Out struct {owner: plane(usize), view: &usize} fn bad(r: &usize) -> Out borrows(view: &*result.owner) {proof cheat: false by {trustme}; Out {owner: alloc(42), view: r}}";
+        assert!(verify(trusted_body)
+            .unwrap_err()
+            .contains("returned reference field does not match"));
+        let correct = call.replace(
+            "borrows(view: &*result.other)",
+            "borrows(view: &*result.owner)",
+        );
+        assert_eq!(verify(&correct).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn result_owned_alias_selection_is_checked_after_destructor_effects() {
+        let source = "type Guard struct {target: &usize} impl Drop for Guard {fn drop(self) modifies(self.target) ensures(*self.target == 1) {*self.target = 1;}} type Indexed struct {owner: plane([usize; 2]), index: &usize, view: &usize} fn make(index: &usize) -> Indexed where(*index == 0) modifies(index) borrows(index: index, view: &(*result.owner)[*result.index]) {let owner: plane([usize; 2]) = alloc([7, 42]); let guard = Guard {target: index}; let view = &(*owner)[*index]; Indexed {owner: owner, index: index, view: view}} fn main() -> usize {let index: usize = 0; let packet = make(&index); *packet.view}";
+        assert!(verify(source)
+            .unwrap_err()
+            .contains("returned reference field does not match"));
+        let settled = source.replace(
+            "let view = &(*owner)[*index];",
+            "drop(guard); let view = &(*owner)[*index];",
+        );
+        let (program, bundle) = prove(&settled).unwrap();
+        let (value, events) = program.run_with_events().unwrap();
+        assert_eq!(value.to_string(), "42");
+        assert_eq!(events, ["drop Guard"]);
+        assert_eq!(
+            verify_with_certificate(&settled, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+    }
+
     #[test]
     fn heap_record_updates_track_physical_planes_and_retained_requirements() {
         let source = include_str!("../examples/heap_updates.evg");

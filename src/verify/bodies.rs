@@ -38,7 +38,7 @@ impl Context<'_> {
                 self.phase = execution;
             }
             let inputs = self.input_references.clone();
-            let (value, post) = self.check_function_body(function, result_type, &inputs)?;
+            let (value, post) = self.check_function_body(function, result_type, &inputs, false)?;
             if let Some(proposition) = post {
                 // Publish only a checked theorem for this alias configuration.
                 // An explicit trustme remains recorded in the proof manifest.
@@ -65,17 +65,29 @@ impl Context<'_> {
         function: &Function,
         result_type: &Ty,
         inputs: &[InputReference],
+        declaration: bool,
     ) -> Result<(Symbol, Option<Formula>)> {
         let entry = self.clone_env()?;
+        // Only the independent entry configuration of a heap declaration may
+        // be discharged as impossible. Actual calls and main always require
+        // concrete provenance, even if a later trustme proves false.
+        let infeasible_entry = declaration
+            && function.name != "main"
+            && !function.borrows.is_empty()
+            && heap::function_uses_planes(function, self.structs)
+            && self.follows(&Formula::False)?;
         // Entry aliases must precede stores and parameter rebinding.
         let aliases = self.return_aliases(function, Some(inputs))?;
         for statement in &function.body {
             self.statement(statement)?;
         }
         let value = self.scoped_eval(&function.result, Some(result_type))?;
-        self.check_return_aliases(&value, &aliases, function.result.line)?;
         self.validate_live(function.result.line)?;
         self.finish_scope(function)?;
+        // Cleanup may change fields used to select a result-owned view.
+        // Check provenance against the final returned storage, not a state
+        // preceding destructor effects.
+        self.check_return_aliases(&value, &aliases, function.result.line, infeasible_entry)?;
         if self.ty_has_reference(result_type) {
             self.validate_argument(&value, function.result.line)?;
         }
