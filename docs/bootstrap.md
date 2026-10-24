@@ -67,14 +67,42 @@ fn increment(n: usize) -> usize where (n < usize::MAX) ensures (result > n) {
 } proof { omega }
 ```
 
-The initial proof vocabulary is `omega`, `rfl`, `simp_all`, `decide`,
-`assumption`, and `exact proof_name`. The default is
-`omega`. Arbitrary Lean source and unproven axioms are not accepted. Lean warnings
-are errors; proof escape hatches such as `sorry` are unavailable. In the internal
-backend the search tactics currently use the bounded arithmetic prover rather
-than implementing Lean's individual tactic semantics. `exact proof_name` is a
-checked proof reference: the named witness must prove the same normalized
-proposition, not merely another true statement. A fact name denotes its
+Proof scripts support `intro hypothesis`, `apply proof_name`, `constructor`,
+`left`, `right`, `assumption`, and `exact proof_name`. Separate steps with
+semicolons. `intro` opens an implication (or negation) and makes its premise a
+local checked hypothesis; that hypothesis and its path assumptions leave scope
+when the subgoal closes. `apply` uses a checked implication and creates its
+premise goals in declaration order, including curried implications. It can also
+apply a checked negation to prove false. `constructor` proves both conjuncts;
+`left` and `right` select a disjunct. `assumption` finds a matching named checked
+proof or introduced hypothesis; it does not invoke arithmetic search or treat a
+raw fact as a proof. `exact` requires the same normalized proposition, rather
+than merely another true statement.
+
+```evergreen
+proof combined: a => b => (a && b) by {
+    intro first;
+    intro second;
+    constructor;
+    exact first;
+    exact second
+};
+```
+
+The default is `omega`. The automation names `omega`, `rfl`, `simp_all`, and
+`decide` currently all use the bounded arithmetic certificate procedure in the
+internal backend; they do not implement Lean's individual automation strategies.
+Scripts must finish every generated goal and consume every supplied step.
+Unknown steps, escaped hypotheses, raw facts passed to `apply`, and incomplete
+scripts are rejected. `examples/reject_proof_scope.evg` fails in both backends
+because an introduced hypothesis leaves scope before the next conjunct.
+Scripts have at most 1024 steps and goal nesting depth 64,
+within the general symbolic work limits. `examples/propositional_proofs.evg`
+checks implication composition and logical introduction rules, runs, replays,
+and builds natively. `examples/lean_propositional.evg` checks the corresponding
+scripts with Lean's own tactics through the optional reference backend.
+Arbitrary Lean source and unproven axioms are not accepted. Lean warnings are
+errors; `sorry` is unavailable. Explicit audited `trustme` is described below. A fact name denotes its
 proposition in proof code, never a runtime boolean. Local fact definitions are
 re-evaluated against the current places; an old witness cannot certify a changed
 state. `examples/named_facts.evg` includes an unused false fact and actual proof
@@ -734,7 +762,7 @@ Symbolic-size reference arrays and conditional alias contracts remain unsupporte
 All call arguments are rechecked together after evaluation, preventing a later
 argument from consuming storage borrowed by an earlier one.
 
-The optional Lean suite now checks three independent specifications:
+The optional Lean suite checks independent specifications:
 
 - `proofs/LinearCertificates.lean` defines weighted combination of original
   integer rows and proves that accepted certificates imply unsatisfiability.
@@ -744,6 +772,11 @@ The optional Lean suite now checks three independent specifications:
   that disjoint writes commute, writes preserve other addresses, and the swap
   postcondition and involution hold. Distinct fields of one plane are disjoint.
   Its invariant-framing rule accounts for read footprints spanning multiple planes.
+- `proofs/PropositionalProofs.lean` defines contextual derivations for the
+  structural propositional rules and proves their soundness under a valuation.
+  Implication introduction extends only its subproof's context; application
+  requires both the implication and its premise. It also proves the classical
+  implication/disjunction identity and that false has no closed derivation.
 - `proofs/Planes.lean` also proves that same-layout writes preserve references
   and restoring dropped storage does not revive old generations.
 
@@ -782,8 +815,9 @@ Logical implication is written `premise => consequence`. It has lower precedence
 than `||` and associates to the right: `a => b => c` means `a => (b => c)`.
 Like the other Boolean operators, both operands must be well-defined; it is
 not a short-circuit guard around an otherwise invalid operation. The internal
-verifier expands it to `!premise || consequence`, and the optional Lean
-proposition emitter uses logical implication.
+verifier retains its structure for proof steps and normalizes it to
+`!premise || consequence` before generating arithmetic certificates. The optional
+Lean proposition emitter uses logical implication.
 
 `examples/weak_invariant.evg` demonstrates the proposed selective-lifting rule
 with a numeric ledger: exact accounting is lifted, while

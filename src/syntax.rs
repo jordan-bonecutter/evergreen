@@ -563,8 +563,9 @@ impl Parser {
             let s = self.peek().to_owned();
             self.pos += 1;
             let step = match s.as_str() {
-                "omega" | "rfl" | "simp_all" | "decide" | "assumption" | "trustme" => s,
-                "exact" => format!("exact {}", self.name()?),
+                "omega" | "rfl" | "simp_all" | "decide" | "assumption" | "trustme"
+                | "constructor" | "left" | "right" => s,
+                "exact" | "intro" | "apply" => format!("{s} {}", self.name()?),
                 _ => return Err(self.err("unsupported proof step; unproven axioms are forbidden")),
             };
             steps.push(step);

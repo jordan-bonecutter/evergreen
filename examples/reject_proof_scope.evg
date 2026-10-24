@@ -1,0 +1,10 @@
+// Closing the first conjunct removes its introduced hypothesis.
+ideal fn main() -> nat {
+    proof escaped: (false => false) && false by {
+        constructor;
+        intro local;
+        exact local;
+        exact local
+    };
+    42
+}

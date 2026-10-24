@@ -1,0 +1,33 @@
+fn transitive(a: bool, b: bool, c: bool) -> usize
+where ((a => b) && (b => c))
+ensures ((a => c) && result == 42) {
+    proof first: a => b by {simp_all};
+    proof second: b => c by {simp_all};
+    proof composed: a => c by {
+        intro premise;
+        apply second;
+        apply first;
+        exact premise
+    };
+    42
+} proof {constructor; exact composed; omega}
+
+fn package(a: bool, b: bool) -> usize {
+    proof package: a => b => (a && b) by {
+        intro left_value;
+        intro right_value;
+        constructor;
+        exact left_value;
+        exact right_value
+    };
+    42
+}
+
+fn choose(a: bool, b: bool) -> usize {
+    proof choose: a => (b || a) by {intro present; right; assumption};
+    42
+}
+
+fn main() -> usize ensures(result == 42) {
+    transitive(true, true, true)
+}

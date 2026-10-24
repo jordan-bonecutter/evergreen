@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 type Result<T> = std::result::Result<T, String>;
 mod bodies;
 mod cleanup;
+mod proofs;
 mod returns;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,6 +21,7 @@ enum Formula {
     And(Box<Self>, Box<Self>),
     Or(Box<Self>, Box<Self>),
     Not(Box<Self>),
+    Implies(Box<Self>, Box<Self>),
 }
 impl Formula {
     fn encode(&self, out: &mut Vec<u8>) {
@@ -44,6 +46,11 @@ impl Formula {
             Self::Not(p) => {
                 out.push(5);
                 p.encode(out);
+            }
+            Self::Implies(a, b) => {
+                out.push(6);
+                a.encode(out);
+                b.encode(out);
             }
         }
     }
@@ -166,7 +173,10 @@ fn symbol_weight(value: &Symbol) -> Result<usize> {
             Node::Value(Symbol::Ref(_, _, path), _) => weight = weight.saturating_add(path.len()),
             Node::Formula(Formula::Ge(n), _) => weight = weight.saturating_add(n.terms.len()),
             Node::Formula(Formula::Not(p), depth) => pending.push(Node::Formula(p, depth + 1)),
-            Node::Formula(Formula::And(a, b) | Formula::Or(a, b), depth) => {
+            Node::Formula(
+                Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b),
+                depth,
+            ) => {
                 pending.push(Node::Formula(a, depth + 1));
                 pending.push(Node::Formula(b, depth + 1));
             }
@@ -280,6 +290,14 @@ fn type_has_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
 
 /// Each path is a conjunction of inequalities. The path list is a disjunction.
 fn extend(paths: &[Vec<Linear>], formula: &Formula, negated: bool) -> Result<Vec<Vec<Linear>>> {
+    extend_normalized(paths, &formula.normalized(), negated)
+}
+
+fn extend_normalized(
+    paths: &[Vec<Linear>],
+    formula: &Formula,
+    negated: bool,
+) -> Result<Vec<Vec<Linear>>> {
     let result = match formula {
         Formula::True => {
             if negated {
@@ -310,14 +328,23 @@ fn extend(paths: &[Vec<Linear>], formula: &Formula, negated: bool) -> Result<Vec
                 })
                 .collect()
         }
-        Formula::Not(p) => return extend(paths, p, !negated),
+        Formula::Not(p) => return extend_normalized(paths, p, !negated),
+        Formula::Implies(a, b) => {
+            if negated {
+                extend_normalized(&extend_normalized(paths, a, false)?, b, true)?
+            } else {
+                let mut left = extend_normalized(paths, a, true)?;
+                left.extend(extend_normalized(paths, b, false)?);
+                left
+            }
+        }
         Formula::And(a, b) | Formula::Or(a, b) => {
             let conjunction = matches!(formula, Formula::And(..)) != negated;
             if conjunction {
-                extend(&extend(paths, a, negated)?, b, negated)?
+                extend_normalized(&extend_normalized(paths, a, negated)?, b, negated)?
             } else {
-                let mut left = extend(paths, a, negated)?;
-                left.extend(extend(paths, b, negated)?);
+                let mut left = extend_normalized(paths, a, negated)?;
+                left.extend(extend_normalized(paths, b, negated)?);
                 left
             }
         }
@@ -2141,31 +2168,7 @@ impl<'a> Context<'a> {
         steps: Option<&[String]>,
     ) -> Result<()> {
         if let Some(steps) = steps {
-            if steps.iter().any(|s| s == "trustme") {
-                if steps.len() != 1 {
-                    return Err(format!(
-                        "line {line}: trustme must be a single explicit proof term"
-                    ));
-                }
-                let mut proposition = Vec::new();
-                goal.encode(&mut proposition);
-                self.session.trust(&self.paths, &proposition, line, label)?;
-                self.obligations += 1;
-                return Ok(());
-            }
-            if let Some(name) = steps.iter().find_map(|s| s.strip_prefix("exact ")) {
-                if steps.len() != 1 {
-                    return Err(format!(
-                        "line {line}: exact must be a single proof term in this subset"
-                    ));
-                }
-                let proven = self.proofs.get(name).ok_or_else(|| format!("line {line}: {name} is not a checked proof; fact declarations are propositions, not assumptions"))?;
-                if proven != goal {
-                    return Err(format!("line {line}: exact {name} proves a different proposition or an earlier state"));
-                }
-                self.obligations += 1;
-                return Ok(());
-            }
+            return self.proof_script(goal, label, line, steps);
         }
         self.prove(goal, label, line)
     }
@@ -2702,9 +2705,9 @@ impl<'a> Context<'a> {
                 // Logical expressions are pure. Both operands must be well-defined.
                 let b = self.eval(b, Some(&Ty::Bool))?.proposition()?;
                 Ok(Symbol::Bool(match op.as_str() {
-                    "&&" => a.and(b),
-                    "=>" => a.not().or(b),
-                    _ => a.or(b),
+                    "&&" => Formula::And(Box::new(a), Box::new(b)),
+                    "=>" => Formula::Implies(Box::new(a), Box::new(b)),
+                    _ => Formula::Or(Box::new(a), Box::new(b)),
                 }))
             }
             Kind::Binary(op, a, b) => {
@@ -3730,6 +3733,59 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn propositional_proof_scripts_check_rules_and_replay_without_search() {
+        let source = include_str!("../examples/propositional_proofs.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        for source in [
+            "fn identity(a: bool) {proof same: a => a by {intro h; exact h}; proof expanded: !a || a by {exact same};}",
+            "fn package(a: bool, b: bool) {proof rule: a => b => (a && b) by {intro ha; intro hb; constructor; exact ha; exact hb}; proof again: a => b => (a && b) by {intro ha; intro hb; apply rule; assumption; assumption};}",
+            "fn scopes(a: bool, b: bool) {proof both: (a => a) && (b => b) by {constructor; intro h; exact h; intro h; exact h};}",
+            "fn duplicate(a: bool, b: bool) {proof both: a => ((a || b) && (a || b)) by {intro h; constructor; left; exact h; left; assumption};}",
+            "fn negate(a: bool) {proof law: !(a && !a) by {intro impossible; omega};}",
+            "fn refute(a: bool) {proof impossible: !a => a => false by {intro negative; intro positive; apply negative; exact positive};}",
+            "fn main() -> usize {proof identity: true => true by {intro h; exact h}; 42}",
+        ] {assert!(verify(source).is_ok(), "rejected {source}");}
+    }
+
+    #[test]
+    fn propositional_hypotheses_cannot_escape_or_prove_the_wrong_goal() {
+        for source in [
+            "fn bad(a: bool, b: bool) {proof wrong: a => b by {intro h; exact h};}",
+            "fn bad(a: bool) {proof same: a => a by {intro h; exact h}; proof escaped: a by {exact h};}",
+            "fn bad() {proof same: false => false by {intro h; exact h}; proof leaked: false;}",
+            "fn bad(a: bool) {proof both: (a => a) && a by {constructor; intro h; exact h; exact h};}",
+            "fn bad(a: bool) {fact rule = a => a; proof same: a => a by {apply rule};}",
+            "fn bad(a: bool) {proof same: a => a by {intro h; exact h}; proof unfinished: a => a by {intro h; apply same};}",
+            "fn bad(a: bool) {proof same: a => a by {intro a; exact a};}",
+            "fn bad() {proof no_hypothesis: true by {assumption};}",
+            "fn bad() {proof extra: true by {omega; omega};}",
+            "fn bad() {proof wrong: true by {intro h; omega};}",
+            "fn bad() {proof wrong: true by {constructor; omega; omega};}",
+            "fn bad() {proof wrong: true by {left; omega};}",
+            "fn bad() {proof wrong: true by {right; omega};}",
+            "fn bad() {proof wrong: true by {apply missing};}",
+            "fn bad() {proof wrong: true by {invent_proof};}",
+            "fn bad() {proof mixed: true && true by {constructor; trustme; omega};}",
+            "fn main() -> usize {let n: usize = 1; proof rule: n == 1 => n > 0; n = 0; proof stale: n > 0 by {apply rule; omega}; n}",
+        ] {assert!(verify(source).is_err(), "accepted {source}");}
+        let oversized = format!(
+            "fn main() {{proof too_long: true by {{{}}};}}",
+            "omega;".repeat(1025)
+        );
+        assert!(verify(&oversized)
+            .unwrap_err()
+            .contains("proof script limit"));
+    }
+
     #[test]
     fn overlapping_calls_reprove_bodies_contracts_and_return_aliases() {
         let source = include_str!("../examples/aliasing_calls.evg");

@@ -14,12 +14,23 @@ impl Emitter {
         if steps.iter().any(|s| s == "trustme") {
             return Err("trustme declares a trusted assumption; the optional Lean reference backend requires checked proofs".into());
         }
+        let mut known = self.proofs.clone();
         for step in steps {
-            if let Some(name) = step.strip_prefix("exact ") {
-                if steps.len() != 1 || !self.proofs.contains(name) {
-                    return Err(format!(
-                        "exact {name} must reference a checked proof declaration"
-                    ));
+            if let Some(name) = step.strip_prefix("intro ") {
+                if self.env.contains_key(name)
+                    || self.facts.contains(name)
+                    || self.proofs.contains(name)
+                {
+                    return Err(format!("duplicate proof binding {name}"));
+                }
+                known.insert(name.into());
+            }
+            if let Some(name) = step
+                .strip_prefix("exact ")
+                .or_else(|| step.strip_prefix("apply "))
+            {
+                if !known.contains(name) {
+                    return Err(format!("{step} must reference a checked proof declaration or introduced hypothesis"));
                 }
             }
         }

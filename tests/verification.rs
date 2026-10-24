@@ -8,6 +8,7 @@ fn proof_kernel_accepts_and_rejects() {
     for file in [
         "examples/lean_reference.evg",
         "examples/lean_implication.evg",
+        "examples/lean_propositional.evg",
     ] {
         let output = Command::new(cli).args(["lean-run", file]).output().unwrap();
         assert!(
@@ -17,7 +18,11 @@ fn proof_kernel_accepts_and_rejects() {
         );
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
     }
-    for file in ["examples/reject_bounds.evg", "examples/reject_contract.evg"] {
+    for file in [
+        "examples/reject_bounds.evg",
+        "examples/reject_contract.evg",
+        "examples/reject_proof_scope.evg",
+    ] {
         let output = Command::new(cli)
             .args(["lean-check", file])
             .output()
@@ -32,6 +37,7 @@ fn proof_kernel_accepts_and_rejects() {
         "proofs/LinearCertificates.lean",
         "proofs/MemoryContracts.lean",
         "proofs/PartialCorrectness.lean",
+        "proofs/PropositionalProofs.lean",
     ] {
         let output = Command::new(&lean).arg(specification).output().unwrap();
         assert!(
@@ -92,6 +98,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/borrowed_array_owners.evg",
         "examples/reference_array_inputs.evg",
         "examples/aliasing_calls.evg",
+        "examples/propositional_proofs.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")
@@ -113,6 +120,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/reject_incomplete_state.evg",
         "examples/reject_overflow.evg",
         "examples/reject_false_proof.evg",
+        "examples/reject_proof_scope.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")
