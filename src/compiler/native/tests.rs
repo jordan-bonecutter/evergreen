@@ -356,6 +356,11 @@ fn native_execution_agrees_with_the_interpreter() {
     }
     let atomic = include_str!("../../../stdlib/x86_64_atomics.evg");
     cases.push(format!(
+        "{atomic} {} {}",
+        include_str!("../../../stdlib/atomic_counter.evg"),
+        include_str!("../../../examples/atomic_counter.evg")
+    ));
+    cases.push(format!(
         "{atomic} {}",
         include_str!("../../../examples/compare_exchange.evg")
     ));

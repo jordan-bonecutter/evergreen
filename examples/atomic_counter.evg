@@ -1,0 +1,24 @@
+// Check/run/build after x86_64_atomics.evg and atomic_counter.evg.
+fn main() -> usize {
+    let count: usize = 41;
+    let increased = atomic_counter::try_increment(&count);
+    proof incremented: increased && count == 42;
+    let previous = atomic_counter::decrement(&count);
+    proof decremented: previous == 42 && count == 41;
+
+    let saturated: usize = usize::MAX;
+    let overflowed = atomic_counter::try_increment(&saturated);
+    proof no_wrap: !overflowed && saturated == usize::MAX;
+
+    let empty: usize = 0;
+    let absent = atomic_counter::decrement(&empty);
+    proof no_underflow: absent == 0 && empty == 0;
+
+    let final: usize = 1;
+    let last = atomic_counter::decrement(&final);
+    proof final_release: last == 1 && final == 0;
+
+    if increased && !overflowed && previous == 42 && absent == 0 && last == 1 {
+        42
+    } else {1}
+}

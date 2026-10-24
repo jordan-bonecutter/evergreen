@@ -240,6 +240,24 @@ mod atomic_tests {
     }
 
     #[test]
+    fn library_cas_loops_prove_overflow_underflow_and_final_decrement() {
+        let source = format!(
+            "{ATOMIC} {} {}",
+            include_str!("../../../stdlib/atomic_counter.evg"),
+            include_str!("../../../examples/atomic_counter.evg")
+        );
+        let (program, bundle) = prove(&source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(program.trusted_assumptions().len(), 1);
+        assert_eq!(
+            verify_with_certificate(&source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+    }
+
+    #[test]
     fn atomic_interface_and_effect_errors_are_rejected() {
         for declaration in [
             "extern compare_exchange64 fn cas(v: &u8, e: u8, d: u8) -> u8 modifies(v); proof {trustme}",

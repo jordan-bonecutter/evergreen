@@ -92,6 +92,17 @@ model caches, reads-from edges, release sequences, hardware instructions,
 thread scheduling, or payload accesses. Those must be connected by a refinement
 proof before this becomes an Arc safety argument.
 
+The generic retry loops now live in `stdlib/atomic_counter.evg`; increment checks
+saturation before choosing its desired word, and decrement returns the observed
+old count. They are actual Evergreen code executed by both backends, with only
+the target compare-exchange contract trusted. Their present checked contracts
+still describe sequential execution.
+
+The Lean protocol relates each attempt's word effect to a strong CAS at the
+atomic point. With the corresponding token held, a successful attempt is a
+permitted ledger step; a failed or saturated attempt is a stutter. It does not
+claim that the compiler has implemented that joint word/resource update yet.
+
 ## Facts across interference
 
 The existing checker reasons about sequential execution. An ordinary `old(...)`

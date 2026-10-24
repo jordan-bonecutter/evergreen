@@ -1597,3 +1597,24 @@ value at its linearization point, and must not preserve arbitrary prior loads
 as facts about shared memory. No thread API, memory-order parameters, release
 sequence proof, or concurrent payload-access guarantee is implemented yet. See
 [the shared ownership obligations](shared-ownership.md).
+
+`stdlib/atomic_counter.evg` implements increment/decrement retry loops entirely
+in Evergreen using compare-exchange. Increment refuses saturation instead of
+wrapping; decrement refuses underflow and returns the observed old count. The
+old value of one identifies a final decrement without a separate zero load.
+The library adds no trusted assumptions beyond the target operation:
+
+```sh
+cargo run -- run stdlib/x86_64_atomics.evg stdlib/atomic_counter.evg examples/atomic_counter.evg
+cargo run -- build stdlib/x86_64_atomics.evg stdlib/atomic_counter.evg examples/atomic_counter.evg -o /tmp/atomic-counter
+/tmp/atomic-counter; echo $?
+```
+
+These retry loops are conservatively partial and subject to execution limits.
+Their checked contracts are sequential; they do not establish concurrent Rc/Arc
+or permit a shared counter equality to survive interference. The shared ownership
+Lean model now proves that an individual successful checked CAS attempt matches
+one ledger transition and a failed/saturated attempt leaves the ledger unchanged,
+assuming the corresponding owner/retiring token is held and the comparison
+happens at the modeled atomic point. Connecting that assumption to the compiler's
+future shared-invariant rule and to the instruction memory model remains work.

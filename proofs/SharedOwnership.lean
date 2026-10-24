@@ -256,4 +256,58 @@ example : ¬ Valid 3
   have accounting := h.accounting
   simp at accounting
 
+-- The word effect of a strong compare-exchange, abstracted at its atomic point.
+def casWord (current expected desired : Nat) : Nat :=
+  if current = expected then desired else current
+
+def reserveAttempt (limit : Nat) (s : State) (observed : Nat) : State :=
+  if s.count = observed ∧ observed < limit then reserve s else s
+
+def decrementAttempt (s : State) (id observed : Nat) : State :=
+  if s.count = observed ∧ observed > 0 then decrement s id else s
+
+theorem reserve_attempt_word_effect {limit : Nat} {s : State}
+    (observed : Nat) (wordBound : observed ≤ limit) :
+    (reserveAttempt limit s observed).count =
+      casWord s.count observed (if observed = limit then observed else observed + 1) := by
+  by_cases same : s.count = observed
+  · by_cases room : observed < limit
+    · have notFull : observed ≠ limit := by omega
+      simp [reserveAttempt, casWord, same, room, reserve, notFull]
+    · have full : observed = limit := by omega
+      simp [reserveAttempt, casWord, same, full]
+  · simp [reserveAttempt, casWord, same]
+
+theorem reserve_attempt_is_step_or_stutter {limit : Nat} {s : State}
+    (h : Valid limit s) (owner observed : Nat) (held : ⟨owner, .owner⟩ ∈ s.tokens) :
+    reserveAttempt limit s observed = s ∨ Step limit s (reserveAttempt limit s observed) := by
+  by_cases success : s.count = observed ∧ observed < limit
+  · right
+    simp only [reserveAttempt, success]
+    exact Step.reserve s owner held (token_protects_allocation h ⟨owner, .owner⟩ held)
+      (by omega)
+  · left
+    simp [reserveAttempt, success]
+
+theorem decrement_attempt_word_effect {s : State}
+    (id observed : Nat) :
+    (decrementAttempt s id observed).count =
+      casWord s.count observed (if observed = 0 then 0 else observed - 1) := by
+  by_cases same : s.count = observed
+  · by_cases zero : observed = 0
+    · simp [decrementAttempt, casWord, same, zero]
+    · have positive : observed > 0 := by omega
+      simp [decrementAttempt, casWord, same, zero, positive, decrement]
+  · simp [decrementAttempt, casWord, same]
+
+theorem decrement_attempt_is_step_or_stutter {limit : Nat} {s : State}
+    (h : Valid limit s) (id observed : Nat) (held : ⟨id, .retiring⟩ ∈ s.tokens) :
+    decrementAttempt s id observed = s ∨ Step limit s (decrementAttempt s id observed) := by
+  by_cases success : s.count = observed ∧ observed > 0
+  · right
+    simp only [decrementAttempt, success]
+    exact Step.decrement s id held (token_protects_allocation h ⟨id, .retiring⟩ held)
+  · left
+    simp [decrementAttempt, success]
+
 end Evergreen.SharedOwnership
