@@ -188,7 +188,8 @@ and native backend remain trusted Rust code. The kernel is not a full dependent 
 theory yet. There is no theorem of compiler correctness. Arithmetic is
 mathematical in verification; the reference evaluator uses checked i128 and
 reports an error for values beyond its range. It never wraps silently.
-Execution has a 100,000-step budget, a 128-call depth limit, and a combined
+The interpreter has a 100,000-unit expression/value-work budget, a 128-call depth
+limit, and a combined
 expression-depth limit of 256. It uses one worker with a bounded 16 MiB stack
 so these diagnostics do not depend on the calling thread’s stack size.
 
@@ -736,3 +737,11 @@ and indexed replacements. Small source programs that repeatedly double nested
 arrays or Boolean formulas therefore fail with a work-limit diagnostic before
 unbounded materialization. These are conservative bootstrap availability limits,
 not a formal whole-process resource bound or a new proof assumption.
+
+Interpreter work accounting includes expanded expression results, aggregate
+copies used for storage views and assignments, detached result snapshots, and
+cleanup traversal. Copying an aggregate is charged before explicit snapshot
+clones, so a small recursive body cannot repeatedly copy a large argument for
+the cost of one AST node. Exhaustion returns an execution-limit error, not a
+normal result. These interpreter limits are separate from native stack guards
+and do not constitute a formal whole-process time or memory bound.

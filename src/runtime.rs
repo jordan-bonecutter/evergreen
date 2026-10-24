@@ -18,6 +18,30 @@ pub enum Value {
     Ref(Box<Type>, Reference, Vec<Projection>),
     Machine(MachineInt, i128),
 }
+// Charge aggregate snapshots before cloning their expanded representation.
+// Handles do not recursively copy the plane they point to.
+fn charge_value(value: &Value, fuel: &mut usize) -> Result<()> {
+    let mut pending = vec![value];
+    let mut cost = 0usize;
+    while let Some(value) = pending.pop() {
+        cost += 1;
+        if cost > *fuel {
+            return Err("execution value-work limit reached (100000 steps and nodes)".into());
+        }
+        match value {
+            Value::Array(items) => pending.extend(items),
+            Value::Record(_, fields) => pending.extend(fields.values()),
+            _ => {}
+        }
+    }
+    *fuel -= cost;
+    Ok(())
+}
+fn copy_value(value: &Value, fuel: &mut usize) -> Result<Value> {
+    charge_value(value, fuel)?;
+    Ok(value.clone())
+}
+
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -269,7 +293,10 @@ impl Evaluator<'_> {
                 }
                 self.memory.take(*id)?
             } else {
-                env.get(&name).cloned().ok_or("unknown cleanup binding")?
+                copy_value(
+                    env.get(&name).ok_or("unknown cleanup binding")?,
+                    &mut self.fuel,
+                )?
             };
             if name == "self" && f.drop_target.is_some() {
                 self.drop_fields(live)?;
@@ -293,6 +320,10 @@ impl Evaluator<'_> {
         }
     }
     fn drop_value(&mut self, value: Value) -> Result<()> {
+        self.fuel = self
+            .fuel
+            .checked_sub(1)
+            .ok_or("execution value-work limit reached during cleanup")?;
         if let Value::Record(name, _) = &value {
             if self.drops.contains(name) {
                 let method = format!("evg_drop_{name}");
@@ -338,16 +369,17 @@ impl Evaluator<'_> {
     ) -> Result<()> {
         if matches!(&target.kind, Kind::Unary(op, _) if op == "*") {
             let (r, path) = self.location(target, env)?;
-            let old = project(self.memory.read(r)?, &path)?.clone();
+            let old = copy_value(project(self.memory.read(r)?, &path)?, &mut self.fuel)?;
             let new = self.expr(value, env, old.hint().as_ref())?;
             let id = self.memory.plane(r)?;
-            let mut root = self.memory.read(r)?.clone();
+            let mut root = copy_value(self.memory.read(r)?, &mut self.fuel)?;
             replace_projection(&mut root, &path, new)?;
             let replace_plane = !same_layout(&old, project(&root, &path)?);
-            self.memory.write(id, root.clone(), replace_plane)?;
+            self.memory
+                .write(id, copy_value(&root, &mut self.fuel)?, replace_plane)?;
             for (n, p) in &self.roots {
                 if *p == id {
-                    env.insert(n.clone(), root.clone());
+                    env.insert(n.clone(), copy_value(&root, &mut self.fuel)?);
                 }
             }
             return Ok(());
@@ -378,12 +410,13 @@ impl Evaluator<'_> {
             )
         }
         let old = if let Kind::Name(n) = &target.kind {
-            self.roots
+            let value = self
+                .roots
                 .get(n)
                 .and_then(|id| self.memory.get(*id).ok())
-                .cloned()
-                .or_else(|| env.get(n).cloned())
-                .ok_or("unknown assignment target")?
+                .or_else(|| env.get(n))
+                .ok_or("unknown assignment target")?;
+            copy_value(value, &mut self.fuel)?
         } else {
             self.storage(target, env)?
         };
@@ -393,7 +426,8 @@ impl Evaluator<'_> {
             .get(&root_name(target)?)
             .is_none_or(|id| self.memory.get(*id).is_ok());
         if old_live && self.value_is_affine(&old) {
-            self.drop_value(old.clone())?;
+            let old_copy = copy_value(&old, &mut self.fuel)?;
+            self.drop_value(old_copy)?;
         }
         let replace_plane = !same_layout(&old, &new);
         let mut fields = Vec::new();
@@ -405,8 +439,8 @@ impl Evaluator<'_> {
             .roots
             .get(&root)
             .and_then(|id| self.memory.get(*id).ok())
-            .cloned()
         {
+            let live = copy_value(live, &mut self.fuel)?;
             env.insert(root.clone(), live);
         }
         replace(
@@ -417,7 +451,10 @@ impl Evaluator<'_> {
         if let Some(id) = self.roots.get(&root) {
             self.memory.write(
                 *id,
-                env.get(&root).cloned().ok_or("unknown assignment root")?,
+                copy_value(
+                    env.get(&root).ok_or("unknown assignment root")?,
+                    &mut self.fuel,
+                )?,
                 replace_plane,
             )?;
         }
@@ -438,7 +475,10 @@ impl Evaluator<'_> {
         }
         self.fuel -= 1;
         self.expression_depth += 1;
-        let result = self.inner(e, env, expected);
+        let result = self.inner(e, env, expected).and_then(|value| {
+            charge_value(&value, &mut self.fuel)?;
+            Ok(value)
+        });
         self.expression_depth -= 1;
         result.map_err(|s| {
             if s.starts_with("line ") {
@@ -670,7 +710,7 @@ impl Evaluator<'_> {
                 let id = if let Some(id) = self.roots.get(n) {
                     *id
                 } else {
-                    let v = env.get(n).cloned().ok_or("unknown place")?;
+                    let v = copy_value(env.get(n).ok_or("unknown place")?, &mut self.fuel)?;
                     let id = self.memory.allocate(v)?;
                     self.roots.insert(n.clone(), id);
                     id
@@ -703,6 +743,11 @@ impl Evaluator<'_> {
     }
 
     fn storage(&mut self, e: &Expr, env: &BTreeMap<String, Value>) -> Result<Value> {
+        let value = self.storage_inner(e, env)?;
+        charge_value(&value, &mut self.fuel)?;
+        Ok(value)
+    }
+    fn storage_inner(&mut self, e: &Expr, env: &BTreeMap<String, Value>) -> Result<Value> {
         match &e.kind {
             Kind::Name(n) => {
                 if let Some(id) = self.roots.get(n) {
@@ -738,7 +783,7 @@ impl Evaluator<'_> {
             _ => {
                 let value = self.expr(e, env, None)?;
                 if self.value_is_affine(&value) {
-                    self.temporaries.push(value.clone());
+                    self.temporaries.push(copy_value(&value, &mut self.fuel)?);
                 }
                 Ok(value)
             }
@@ -829,13 +874,33 @@ impl VerifiedProgram {
             temporaries: Vec::new(),
         };
         let value = evaluator.call("main", vec![])?;
-        evaluator.drop_value(value.clone())?;
+        let snapshot = copy_value(&value, &mut evaluator.fuel)?;
+        evaluator.drop_value(snapshot)?;
         Ok((value, evaluator.events))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::{copy_value, Value};
+    #[test]
+    fn aggregate_copy_work_is_charged_before_cloning() {
+        let value = Value::Array(vec![Value::Bool(true); 64]);
+        let mut fuel = 64;
+        assert!(copy_value(&value, &mut fuel)
+            .unwrap_err()
+            .contains("value-work"));
+        assert_eq!(fuel, 64);
+        fuel = 65;
+        assert_eq!(copy_value(&value, &mut fuel).unwrap(), value);
+        assert_eq!(fuel, 0);
+        let values = vec!["1"; 2048].join(",");
+        let source = format!("fn repeat(n: usize, data: [usize; 2048]) -> usize where(data[0] == 1) ensures(result == 1) decreases(n) {{if n == 0 {{data[0]}} else {{repeat(n - 1, data)}}}} fn main() -> usize {{let data: [usize; 2048] = [{values}]; repeat(40, data)}}");
+        let program = verify(&source).unwrap();
+        let error = program.run().unwrap_err();
+        assert!(error.contains("value-work"), "{error}");
+    }
+
     #[test]
     fn unused_owned_temporaries_are_dropped_at_the_statement() {
         let declarations = include_str!("../examples/borrowed_temporaries.evg")
