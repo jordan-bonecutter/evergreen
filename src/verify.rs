@@ -514,8 +514,13 @@ impl<'a> Context<'a> {
             let Symbol::Ref(ty, reference, path) = self.eval(expression, None)? else {
                 return Err("modifies entries must denote references".into());
             };
-            if !matches!(*ty, Ty::Machine(_) | Ty::Bool) {
-                return Err("modifies targets must have a scalar machine or Boolean layout".into());
+            let scalar_region = match &*ty {
+                Ty::Machine(_) | Ty::Bool => true,
+                Ty::Array(element, _) => matches!(**element, Ty::Machine(_) | Ty::Bool),
+                _ => false,
+            };
+            if !scalar_region {
+                return Err("modifies targets require machine scalars, Booleans, or arrays of those scalars".into());
             }
             if self.memory.plane(root)? != self.memory.plane(reference)?
                 || root_path.len() > path.len()
@@ -1139,11 +1144,18 @@ impl<'a> Context<'a> {
         if old_live && self.symbol_is_affine(&old) {
             self.validate_argument(&old, place.line)?;
         }
-        let mut root = self
-            .env
+        let mut root = if let Some(value) = self
+            .roots
             .get(&name)
-            .cloned()
-            .ok_or("unknown assignment target")?;
+            .and_then(|id| self.memory.get(*id).ok())
+        {
+            value.clone()
+        } else {
+            self.env
+                .get(&name)
+                .cloned()
+                .ok_or("unknown assignment target")?
+        };
         replace(&mut root, &fields, new)?;
         let lifted = self.opened.get(&name).cloned().unwrap_or_default();
         self.record_valid_with(&root, place.line, &lifted)?;
@@ -1441,6 +1453,7 @@ impl<'a> Context<'a> {
     // A contents replacement preserves storage identity, including previously
     // materialized symbolic cell paths. Rebuild their values from new contents.
     fn preserve_views(&mut self, old: &Symbol, new: &mut Symbol) -> Result<()> {
+        self.charge_value_work(1)?;
         match (old, new) {
             (
                 Symbol::Array {
@@ -1458,10 +1471,24 @@ impl<'a> Context<'a> {
                 Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
             ) =>
             {
+                self.charge_value_work(observed.len())?;
                 for index in observed.keys() {
                     let value =
                         self.read_array(element, identity, index, items.as_deref(), cells)?;
                     cells.insert(index.clone(), value);
+                }
+            }
+            (
+                Symbol::Array {
+                    items: Some(before),
+                    ..
+                },
+                Symbol::Array {
+                    items: Some(after), ..
+                },
+            ) => {
+                for (previous, value) in before.iter().zip(after) {
+                    self.preserve_views(previous, value)?;
                 }
             }
             (Symbol::Record(a, before), Symbol::Record(b, after)) if a == b => {
@@ -2570,8 +2597,10 @@ impl<'a> Context<'a> {
                     if !self.write_permitted(write.reference, &write.path, owned)? {
                         return Err(format!("line {}: call to {name} writes through a parameter without a matching modifies contract", e.line));
                     }
-                    let new = self.arbitrary(&write.ty)?;
+                    let mut new = self.arbitrary(&write.ty)?;
+                    self.charge_value_work(symbol_weight(self.memory.read(write.reference)?)?)?;
                     let mut root = self.memory.read(write.reference)?.clone();
+                    self.preserve_views(project(&root, &write.path)?, &mut new)?;
                     self.replace_projection(&mut root, &write.path, new)?;
                     self.memory.write(id, root.clone(), false)?;
                     for (binding, plane) in &saved_roots {
@@ -3838,6 +3867,66 @@ mod tests {
         assert!(verify(&bad).is_err());
         let source = "fn read(i: usize) -> usize where(i < 2) ensures(result == 42) {let a: [usize; 2] = [1, 7]; let r = &a[i]; a = [42, 42]; *r} fn main() -> usize {read(1)}";
         assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn scalar_array_regions_preserve_aliases_and_replay_without_search() {
+        let library = include_str!("../stdlib/array.evg");
+        let source = format!(
+            "{library} {}",
+            include_str!("../examples/array_updates.evg")
+        );
+        let (program, bundle) = prove(&source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        let replayed = verify_with_certificate(&source, &bundle).unwrap();
+        assert_eq!(replayed.proof_search_count(), 0);
+        assert_eq!(replayed.run().unwrap().to_string(), "42");
+
+        // Both a constant cell and a symbolic cell retain their storage paths
+        // when the call summary replaces known contents with an opaque array.
+        let caller = "fn check(i: usize) -> usize where(i < 2) ensures(result == 42) {let a: [usize; 2] = [7, 9]; let constant = &a[0]; let dynamic = &a[i]; arrays::replace_pair(&a, 42, 42); proof constant_live: *constant == 42; *dynamic} fn main() -> usize {check(1)}";
+        assert_eq!(
+            verify(&format!("{library} {caller}"))
+                .unwrap()
+                .run()
+                .unwrap()
+                .to_string(),
+            "42"
+        );
+        let nested = "fn read(i: usize) -> usize where(i < 2) ensures(result == 42) {let a: [[usize; 2]; 1] = [[7, 9]]; let r = &a[0][i]; a = [[42, 42]]; *r} fn main() -> usize {read(1)}";
+        assert_eq!(verify(nested).unwrap().run().unwrap().to_string(), "42");
+        let sibling = "type WithTag struct {data: [usize; 2], tag: usize} fn read(i: usize) -> usize where(i < 2) ensures(result == 42) {let p = WithTag {data: [42, 42], tag: 7}; let r = &p.data[i]; p.tag = 9; *r} fn main() -> usize {read(1)}";
+        assert_eq!(verify(sibling).unwrap().run().unwrap().to_string(), "42");
+        let caller = "type WithTag struct {data: [usize; 2], tag: usize} fn main() -> usize ensures(result == 42) {let p = WithTag {data: [7, 9], tag: 42}; arrays::replace_pair(&p.data, 1, 2); p.tag}";
+        assert_eq!(
+            verify(&format!("{library} {caller}"))
+                .unwrap()
+                .run()
+                .unwrap()
+                .to_string(),
+            "42"
+        );
+    }
+
+    #[test]
+    fn array_effects_do_not_gain_permissions_or_keep_old_contents() {
+        let library = include_str!("../stdlib/array.evg");
+        for caller in [
+            // A projected grant cannot authorize an entire-array write.
+            "fn bad(a: &[usize; 2]) modifies(&(*a)[0]) {arrays::replace_pair(a, 1, 2);}",
+            // Writes follow entry indices even if the index variable is rebound.
+            "fn bad(a: &[usize; 2], i: usize) where(i == 0) modifies(&(*a)[i]) {i = 1; (*a)[i] = 42;}",
+            // Broad regions forget all contents outside the checked postcondition.
+            "fn change(a: &[usize; 2]) modifies(a) {(*a)[1] = 9;} fn main() -> usize ensures(result == 42) {let a: [usize; 2] = [42, 7]; change(&a); a[0]}",
+            // An independent readonly parameter cannot alias a written region.
+            "fn change(a: &[usize; 2], r: &usize) modifies(a) {(*a)[0] = *r;} fn main() {let a: [usize; 2] = [42, 7]; change(&a, &a[1]);}",
+            // A whole-array grant does not authorize writes to another parameter.
+            "fn bad(a: &[usize; 2], b: &usize) modifies(a) {*b = 42;}",
+            // Reference-containing elements require separate ownership semantics.
+            "fn bad(a: &[&usize; 2]) modifies(a) {}",
+        ] {
+            assert!(verify(&format!("{library} {caller}")).is_err(), "accepted {caller}");
+        }
     }
 
     #[test]

@@ -1233,6 +1233,13 @@ mod tests {
         ].map(str::to_owned).to_vec();
         cases.push(
             [
+                include_str!("../stdlib/array.evg"),
+                include_str!("../examples/array_updates.evg"),
+            ]
+            .join("\n"),
+        );
+        cases.push(
+            [
                 include_str!("../stdlib/swap.evg"),
                 include_str!("../examples/disjoint_writes.evg"),
             ]

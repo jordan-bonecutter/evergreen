@@ -100,4 +100,61 @@ theorem swap_involution (store : Store) (a b : Address) (h : Disjoint a b) :
       rw [(swap_postcondition (swap store a b) a b h).2, post.1]
     · rw [swap_frame _ a b queried at_a at_b, swap_frame _ a b queried at_a at_b]
 
+-- One input array gives the body a shared alias model. Its two indices need
+-- not be distinct: both postconditions remain valid when they denote one cell.
+theorem swap_postcondition_with_aliases (store : Store) (a b : Address) :
+    swap store a b a = store b ∧ swap store a b b = store a := by
+  by_cases same : a = b
+  · subst b
+    simp [swap, write]
+  · simp [swap, write, same]
+
+-- A region contract forgets arbitrary contents inside its footprint while
+-- preserving everything outside. These are specification rules; there is no
+-- claim here that the Rust frontend or native backend refines this model.
+def Region := Address → Prop
+
+def Modifies (region : Region) (before after : Store) : Prop :=
+  ∀ queried, ¬ region queried → after queried = before queried
+
+def within (root queried : Address) : Prop :=
+  queried.plane = root.plane ∧ root.path <+: queried.path
+
+theorem within_trans (root child leaf : Address)
+    (first : within root child) (second : within child leaf) : within root leaf := by
+  exact ⟨second.1.trans first.1, first.2.trans second.2⟩
+
+theorem region_frame (region : Region) (before after : Store)
+    (effect : Modifies region before after) (queried : Address)
+    (outside : ¬ region queried) : after queried = before queried := by
+  exact effect queried outside
+
+theorem modifies_weaken (small large : Region) (before after : Store)
+    (included : ∀ address, small address → large address)
+    (effect : Modifies small before after) : Modifies large before after := by
+  intro queried outside
+  apply effect queried
+  intro inside
+  exact outside (included queried inside)
+
+theorem modifies_sequence (region : Region) (before middle after : Store)
+    (first : Modifies region before middle) (second : Modifies region middle after) :
+    Modifies region before after := by
+  intro queried outside
+  rw [second queried outside, first queried outside]
+
+def replaceRegion (store replacement : Store) (region : Region)
+    [DecidablePred region] : Store :=
+  fun queried => if region queried then replacement queried else store queried
+
+theorem replace_region_modifies (store replacement : Store) (region : Region)
+    [DecidablePred region] : Modifies region store (replaceRegion store replacement region) := by
+  intro queried outside
+  simp [replaceRegion, outside]
+
+theorem replace_region_read (store replacement : Store) (region : Region)
+    [DecidablePred region] (queried : Address) (inside : region queried) :
+    replaceRegion store replacement region queried = replacement queried := by
+  simp [replaceRegion, inside]
+
 end Evergreen.MemoryContracts

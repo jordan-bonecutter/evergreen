@@ -156,6 +156,22 @@ fn ordered_proof_units_share_checked_contracts() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+    let arrays = Command::new(env!("CARGO_BIN_EXE_evg"))
+        .env("PATH", "")
+        .args([
+            "--deny-trust",
+            "run",
+            "stdlib/array.evg",
+            "examples/array_updates.evg",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        arrays.status.success(),
+        "{}",
+        String::from_utf8_lossy(&arrays.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&arrays.stdout).trim(), "42");
     let credits = Command::new(env!("CARGO_BIN_EXE_evg"))
         .env("PATH", "")
         .args([

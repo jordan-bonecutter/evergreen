@@ -323,14 +323,29 @@ Write contracts can name scalar projections of incoming references, such as
 `modifies(&(*data)[index])` or `modifies(&(*pair).left)`. Bounds and the
 projection are checked under the entry precondition. Permission stays attached
 to that entry place if an index variable later changes; sibling cells remain
-unchanged. Targets currently require machine-scalar or Boolean layouts.
+unchanged. Targets support machine scalars, Booleans, and arrays of those scalars.
+
+`modifies(data)` for an incoming scalar-array reference grants permission to
+write its cells or replace its contents with the same array layout. The call
+summary forgets the entire region's contents, then assumes its checked
+postcondition. Only memory outside the region is automatically preserved; a
+helper promising a smaller change should declare a projected footprint instead.
+Existing element references keep their storage identity and read the new
+contents, including symbolic indices and references created before the call.
+`old(*data)[index]` reads from the entry snapshot.
+
+`stdlib/array.evg` provides `arrays::set`, `arrays::swap`, and
+`arrays::replace_pair` in Evergreen. `swap` accepts equal indices because both
+places share one incoming array's alias model. Run the example with
+`evg run stdlib/array.evg examples/array_updates.evg`; the same ordered unit
+supports certificate replay and native compilation.
 
 Write contracts support multiple reference parameters,
 including read-only parameters omitted from `modifies`. At each call, every
 write target must be disjoint from every other reference parameter’s region. The
 checker compares actual planes and projection paths: two distinct fields or
-array elements in one plane are disjoint, while two aliases of the same scalar
-are rejected. Read-only arguments may alias each other. This condition justifies
+array elements in one plane are disjoint. Overlapping arguments passed through
+distinct reference parameters are rejected. Read-only arguments may alias each other. This condition justifies
 the independent parameter storage used while checking the function body; broader
 overlapping effects need stronger alias-aware summaries. Reference-containing
 aggregate parameters remain unsupported in modifying functions.

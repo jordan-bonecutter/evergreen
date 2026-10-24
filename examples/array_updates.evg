@@ -1,0 +1,16 @@
+fn change(index: usize) -> usize
+where (index < 2)
+ensures (result == 42) {
+    let data: [usize; 2] = [7, 9];
+    let existing = &data[index];
+    arrays::set(2, &data, index, 42);
+    proof cell_updated: *existing == 42;
+    arrays::swap(2, &data, index, index);
+    proof self_swap: *existing == 42;
+    arrays::replace_pair(&data, 42, 42);
+    *existing
+}
+
+fn main() -> usize ensures (result == 42) {
+    change(1)
+}

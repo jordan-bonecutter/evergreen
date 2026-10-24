@@ -1,0 +1,29 @@
+// Sequential machine-word array operations, implemented and checked in Evergreen.
+module arrays {
+    fn set(ideal n: nat, data: &[usize; n], index: usize, value: usize)
+    where (int(index) < int(n))
+    modifies(&(*data)[index])
+    ensures ((*data)[index] == value) {
+        (*data)[index] = value;
+    }
+
+    // One incoming array describes aliases between the two indexed places.
+    // In particular, swapping a cell with itself is valid.
+    fn swap(ideal n: nat, data: &[usize; n], left: usize, right: usize)
+    where (int(left) < int(n) && int(right) < int(n))
+    modifies(data)
+    ensures (
+        (*data)[left] == old(*data)[right] &&
+        (*data)[right] == old(*data)[left]
+    ) {
+        let previous = (*data)[left];
+        (*data)[left] = (*data)[right];
+        (*data)[right] = previous;
+    }
+
+    fn replace_pair(data: &[usize; 2], left: usize, right: usize)
+    modifies(data)
+    ensures ((*data)[0] == left && (*data)[1] == right) {
+        *data = [left, right];
+    }
+}
