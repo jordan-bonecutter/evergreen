@@ -247,9 +247,52 @@ is strictly smaller than the entry measure. The callee contract is available
 only under this well-founded induction rule. Recursive calls in specifications
 are rejected. Mutual recursion is not implemented yet.
 
-Not yet supported: non-record patterns, heap allocation, FFI, foreign aggregate
+Not yet supported: non-record patterns, shared heap ownership, FFI, foreign aggregate
 layouts. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
+
+Unique heap ownership uses `plane(T)` and `alloc(value)`. An owner is affine and
+owns a separately allocated, stable data plane. Moving the owner invalidates its
+old binding but preserves borrows of the data. `*owner` reads its payload;
+`&*owner` borrows it. Dropping an owner or replacing it runs payload cleanup and
+frees the allocation. Old data borrows become `never`; a later allocation or
+owner restoration cannot revive them. A borrow of the owner *slot* observes a
+same-layout replacement of that slot and then refers to its new owner value.
+
+Payloads currently require fixed runtime layouts and cannot contain borrowed
+references, including erased borrowed fields. Nested owned planes, fixed arrays,
+runtime records, and reference-free proof fields are supported. Owning payload
+fields remain subject to the existing complete-pattern and partial-move rules.
+`&plane(T)` borrows an owner without receiving its allocation authority. A
+function writing through it declares a footprint such as `modifies(&**owner)`;
+it cannot move or drop the borrowed owner. Calls involving owned-plane types
+recheck the actual body and memory, preserving transfers and frees across the
+call boundary. This is conservative execution, not a reusable allocation-effect
+summary; recursive heap programs may hit verifier limits. Conditional selection
+of different allocation identities remains unsupported. Heap record invariants
+are checked, but opening an update directly on a dereferenced heap record is
+not yet supported.
+
+Allocation and ownership transfer require runtime execution with closed
+invariants. Proof calls observe heap owners through borrowed interfaces; they
+cannot take owners or produce owning results. Ideal code cannot allocate, hide,
+or consume an owner. Interpreter allocation uses the generation-checked store.
+Native allocation uses anonymous private Linux `mmap` and `munmap`, with a
+16 MiB limit on live mapped pages. Allocation failure, budget exhaustion, or a
+failed release exits with status 126 rather than returning a language value.
+The private word ABI still gives each owner an eight-byte home; payload layouts
+have their existing 64 KiB limit. These allocator/backend rules remain trusted
+implementation code. The Lean owner-slot model separately proves that an owner
+move preserves payload references and a free invalidates them; it does not prove
+affine enforcement, the allocator, or compilation correctness.
+
+`examples/owned_planes.evg` runs, builds, and replays with stable data borrows,
+borrowed write contracts, entry payload snapshots via `old(*owner)`, owner-slot
+replacement, and nested payload cleanup.
+The `reject_heap_*` examples reject duplicates, use after free, and undeclared
+borrowed writes. This primitive is unique allocation ownership, not Rc or Arc:
+shared ownership authority and atomic state transitions still need language
+support and library implementations.
 
 `src/memory.rs` provides the internal generation-checked plane store used by
 both verification and execution. Arena identities prevent handles from crossing

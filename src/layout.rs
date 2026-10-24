@@ -63,7 +63,7 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
     ) -> Result<Layout> {
         let mut fields = BTreeMap::new();
         let size = match ty {
-            Type::Machine(_) | Type::Bool | Type::Unit | Type::Ref(_) => 8,
+            Type::Machine(_) | Type::Bool | Type::Unit | Type::Ref(_) | Type::Plane(_) => 8,
             Type::Int | Type::Nat => {
                 return Err("ideal mathematical types have no native runtime layout".into())
             }

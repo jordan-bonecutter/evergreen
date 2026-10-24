@@ -13,6 +13,7 @@ mod array_history;
 pub(crate) mod array_model;
 mod bodies;
 mod cleanup;
+mod heap;
 mod paths;
 mod proofs;
 mod references;
@@ -92,6 +93,7 @@ enum Ty {
     Bool,
     Unit,
     Ref(Box<Ty>),
+    Plane(Box<Ty>),
     Machine(MachineInt),
     Array(Box<Ty>, Linear),
     Record(String),
@@ -110,6 +112,7 @@ enum Symbol {
     Record(String, BTreeMap<String, Symbol>),
     Unit,
     Ref(Box<Ty>, Reference, Vec<Projection<Linear>>),
+    Plane(Box<Ty>, Reference),
 }
 impl Symbol {
     fn ty(&self) -> Ty {
@@ -120,6 +123,7 @@ impl Symbol {
             Self::Record(name, _) => Ty::Record(name.clone()),
             Self::Unit => Ty::Unit,
             Self::Ref(t, _, _) => Ty::Ref(t.clone()),
+            Self::Plane(t, _) => Ty::Plane(t.clone()),
         }
     }
     fn number(&self) -> Result<Linear> {
@@ -284,7 +288,7 @@ fn project_mut<'a>(value: &'a mut Symbol, path: &[Projection<Linear>]) -> Result
 
 fn type_has_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match t {
-        Type::Ref(_) => true,
+        Type::Ref(_) | Type::Plane(_) => true,
         Type::Array(t, _) => type_has_reference(t, structs),
         Type::Named(n) => structs
             .get(n)
@@ -397,6 +401,7 @@ pub(crate) fn is_affine(
     drops: &BTreeSet<String>,
 ) -> bool {
     match t {
+        Type::Plane(_) => true,
         Type::Named(n) => {
             drops.contains(n)
                 || structs.get(n).is_some_and(|s| {
@@ -413,7 +418,7 @@ fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
         Type::Named(n) => structs
             .get(n)
             .is_some_and(|s| !s.ideal && s.runtime_fields().all(|(_, t)| runtime_type(t, structs))),
-        Type::Array(t, _) | Type::Ref(t) => runtime_type(t, structs),
+        Type::Array(t, _) | Type::Ref(t) | Type::Plane(t) => runtime_type(t, structs),
         _ => true,
     }
 }
@@ -422,6 +427,7 @@ fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
 // boundary; their provenance and liveness use the ordinary reference rules.
 fn erased_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match t {
+        Type::Plane(_) => false,
         Type::Ref(_) => true,
         Type::Named(name) => structs
             .get(name)
@@ -596,7 +602,7 @@ fn needs_old_memory(function: &Function) -> bool {
     }
     fn ty(t: &Type) -> bool {
         match t {
-            Type::Ref(t) => ty(t),
+            Type::Ref(t) | Type::Plane(t) => ty(t),
             Type::Array(t, n) => ty(t) || expression(n),
             _ => false,
         }
@@ -736,11 +742,12 @@ impl<'a> Context<'a> {
             ctx: &Context<'_>,
             value: &Symbol,
             origin: String,
-            strict: bool,
+            mode: (bool, bool),
             inputs: &mut Vec<InputReference>,
             work: &mut usize,
             limit: usize,
         ) -> Result<()> {
+            let (strict, borrowed) = mode;
             *work = work.saturating_add(1 + origin.len() / 32);
             if *work > limit {
                 return Err(
@@ -777,7 +784,29 @@ impl<'a> Context<'a> {
                         ctx,
                         target,
                         format!("(*{origin})"),
-                        strict,
+                        (strict, true),
+                        inputs,
+                        work,
+                        limit,
+                    )?;
+                }
+                Symbol::Plane(pointee, reference) => {
+                    if borrowed {
+                        if inputs.len() >= 8192 {
+                            return Err("incoming reference graph limit reached (8192)".into());
+                        }
+                        inputs.push(InputReference {
+                            origin: origin.clone(),
+                            reference: *reference,
+                            path: Vec::new(),
+                            pointee: pointee.clone(),
+                        });
+                    }
+                    visit(
+                        ctx,
+                        ctx.memory.read(*reference)?,
+                        format!("(*{origin})"),
+                        mode,
                         inputs,
                         work,
                         limit,
@@ -789,7 +818,7 @@ impl<'a> Context<'a> {
                             ctx,
                             value,
                             format!("{origin}.{name}"),
-                            strict,
+                            mode,
                             inputs,
                             work,
                             limit,
@@ -808,7 +837,7 @@ impl<'a> Context<'a> {
                                 ctx,
                                 value,
                                 format!("{origin}[{index}]"),
-                                strict,
+                                mode,
                                 inputs,
                                 work,
                                 limit,
@@ -835,7 +864,7 @@ impl<'a> Context<'a> {
                     self,
                     value,
                     name.clone(),
-                    strict,
+                    (strict, false),
                     &mut inputs,
                     &mut work,
                     remaining,
@@ -961,6 +990,7 @@ impl<'a> Context<'a> {
 
     fn erased_value(&self, value: &Symbol) -> bool {
         match value.ty() {
+            Ty::Plane(_) => false,
             Ty::Record(name) => erased_type(&Type::Named(name), self.structs),
             Ty::Array(element, _) => self.erased_ty(&element),
             Ty::Ref(_) => true,
@@ -978,6 +1008,7 @@ impl<'a> Context<'a> {
     }
     fn erased_ty(&self, ty: &Ty) -> bool {
         match ty {
+            Ty::Plane(_) => false,
             Ty::Record(name) => erased_type(&Type::Named(name.clone()), self.structs),
             Ty::Array(element, _) => self.erased_ty(element),
             Ty::Ref(_) => true,
@@ -1253,6 +1284,8 @@ impl<'a> Context<'a> {
             .try_fold(0usize, |cost, value| -> Result<usize> {
                 let extra = if let Symbol::Ref(_, reference, fields) = value {
                     symbol_weight(project(self.memory.read(*reference)?, fields)?)?
+                } else if let Symbol::Plane(_, reference) = value {
+                    symbol_weight(self.memory.read(*reference)?)?
                 } else {
                     0
                 };
@@ -1265,6 +1298,8 @@ impl<'a> Context<'a> {
             self.old_values.insert(name.clone(), value.clone());
             if let Symbol::Ref(_, reference, fields) = value {
                 targets.push((name.clone(), *reference, fields.clone()));
+            } else if let Symbol::Plane(_, reference) = value {
+                targets.push((name.clone(), *reference, Vec::new()));
             }
         }
         for (name, reference, fields) in targets {
@@ -1425,6 +1460,13 @@ impl<'a> Context<'a> {
             Type::Machine(t) => Ok(Ty::Machine(*t)),
             Type::Unit => Ok(Ty::Unit),
             Type::Ref(t) => Ok(Ty::Ref(Box::new(self.resolve(t)?))),
+            Type::Plane(t) => {
+                if !runtime_type(t, self.structs) || !heap::payload_type(t, self.structs) {
+                    return Err("owned planes require runtime payloads without borrowed references".into());
+                }
+                crate::layout::of(t, self.structs)?;
+                Ok(Ty::Plane(Box::new(self.resolve(t)?)))
+            }
             Type::Named(n) => {
                 if !self.structs.contains_key(n) {
                     return Err(format!(
@@ -1461,6 +1503,7 @@ impl<'a> Context<'a> {
             | (Ty::Bool, Ty::Bool)
             | (Ty::Unit, Ty::Unit) => Ok(()),
             (Ty::Ref(a), Ty::Ref(b)) => self.compatible(a, b, line),
+            (Ty::Plane(a), Ty::Plane(b)) => self.compatible(a, b, line),
             (Ty::Machine(a), Ty::Machine(b)) if a == b => Ok(()),
             (Ty::Record(a), Ty::Record(b)) if a == b => Ok(()),
             (Ty::Array(a, n), Ty::Array(b, m)) => {
@@ -1487,6 +1530,11 @@ impl<'a> Context<'a> {
                 Ok(Symbol::Number(Ty::Machine(*t), n))
             }
             Ty::Unit => Ok(Symbol::Unit),
+            Ty::Plane(t) => {
+                let value = self.arbitrary(t)?;
+                let plane = self.memory.allocate(value)?;
+                Ok(Symbol::Plane(t.clone(), self.memory.borrow(plane)?))
+            }
             Ty::Ref(t) => {
                 let v = self.arbitrary(t)?;
                 let id = self.memory.allocate(v)?;
@@ -1588,6 +1636,10 @@ impl<'a> Context<'a> {
         lifted: &BTreeSet<String>,
     ) -> Result<()> {
         self.charge_value_work(1)?;
+        if let Symbol::Plane(_, reference) = value {
+            let stored = self.memory.read(*reference)?.clone();
+            return self.record_valid(&stored, line);
+        }
         if let Symbol::Array {
             element,
             items,
@@ -1668,7 +1720,7 @@ impl<'a> Context<'a> {
         if place.indirect_place() {
             let (reference, fields) = self.location(place)?;
             let id = self.memory.plane(reference)?;
-            let owned = self.roots.values().any(|p| *p == id);
+            let owned = self.owns_plane(id)?;
             if !self.write_permitted(reference, &fields, owned)? {
                 return Err(format!("line {}: writes through reference parameters need an effect contract; unsupported", place.line));
             }
@@ -2233,6 +2285,7 @@ impl<'a> Context<'a> {
             (Symbol::Number(_, _), Symbol::Number(_, _))
             | (Symbol::Bool(_), Symbol::Bool(_))
             | (Symbol::Ref(..), Symbol::Ref(..))
+            | (Symbol::Plane(..), Symbol::Plane(..))
             | (Symbol::Unit, Symbol::Unit) => Ok(true),
             _ => Ok(false),
         }
@@ -2309,8 +2362,10 @@ impl<'a> Context<'a> {
                 Ok((r, path))
             }
             Kind::Unary(op, x) if op == "*" => {
-                let Symbol::Ref(_, r, path) = self.eval(x, None)? else {
-                    return Err("dereference requires a reference".into());
+                let (r, path) = match self.storage(x)? {
+                    Symbol::Ref(_, r, path) => (r, path),
+                    Symbol::Plane(_, r) => (r, Vec::new()),
+                    _ => return Err("dereference requires a reference or owned plane".into()),
                 };
                 self.memory.read(r)?;
                 Ok((r, path))
@@ -2327,6 +2382,7 @@ impl<'a> Context<'a> {
             Type::Machine(t) => Some(Ty::Machine(*t)),
             Type::Named(n) => Some(Ty::Record(n.clone())),
             Type::Ref(t) => Self::declared_hint(t).map(|t| Ty::Ref(Box::new(t))),
+            Type::Plane(t) => Self::declared_hint(t).map(|t| Ty::Plane(Box::new(t))),
             Type::Array(..) => None,
         }
     }
@@ -2350,6 +2406,7 @@ impl<'a> Context<'a> {
                 Symbol::Ref(_, reference, path) => {
                     project(self.memory.read(*reference).ok()?, path).ok()
                 }
+                Symbol::Plane(_, reference) => self.memory.read(*reference).ok(),
                 _ => None,
             },
             Kind::Index(base, index) => {
@@ -2381,12 +2438,15 @@ impl<'a> Context<'a> {
                 .or_else(|| self.hint(&args[0])),
             Kind::Call(name, _) if name == "nat" => Some(Ty::Nat),
             Kind::Call(name, _) if name == "int" => Some(Ty::Int),
+            Kind::Call(name, args) if name == "alloc" && args.len() == 1 => {
+                self.hint(&args[0]).map(|t| Ty::Plane(Box::new(t)))
+            }
             Kind::Constant(t, _) => Some(Ty::Machine(*t)),
             Kind::Name(n) => self.env.get(n).map(Symbol::ty),
             Kind::Record(n, _) => Some(Ty::Record(n.clone())),
             Kind::Unary(op, x) if op == "&" => self.hint(x).map(|t| Ty::Ref(Box::new(t))),
             Kind::Unary(op, x) if op == "*" => {
-                if let Some(Ty::Ref(t)) = self.hint(x) {
+                if let Some(Ty::Ref(t) | Ty::Plane(t)) = self.hint(x) {
                     Some(*t)
                 } else {
                     None
@@ -2488,6 +2548,7 @@ impl<'a> Context<'a> {
     }
     fn symbol_is_affine(&self, value: &Symbol) -> bool {
         match value {
+            Symbol::Plane(..) => true,
             Symbol::Record(n, _) => is_affine(&Type::Named(n.clone()), self.structs, self.drops),
             Symbol::Array {
                 items: Some(xs), ..
@@ -2498,6 +2559,7 @@ impl<'a> Context<'a> {
     }
     fn ty_is_affine(&self, t: &Ty) -> bool {
         match t {
+            Ty::Plane(_) => true,
             Ty::Record(n) => is_affine(&Type::Named(n.clone()), self.structs, self.drops),
             Ty::Array(t, _) => self.ty_is_affine(t),
             _ => false,
@@ -2514,13 +2576,13 @@ impl<'a> Context<'a> {
                 Type::Named(name) => structs.get(name).is_some_and(|definition| {
                     definition.fields.iter().all(|(_, ty)| fields(ty, structs))
                 }),
-                Type::Ref(_) | Type::Array(..) => false,
+                Type::Ref(_) | Type::Plane(_) | Type::Array(..) => false,
                 _ => true,
             }
         }
         match t {
             Ty::Record(name) => fields(&Type::Named(name.clone()), self.structs),
-            Ty::Ref(_) | Ty::Array(..) => false,
+            Ty::Ref(_) | Ty::Plane(_) | Ty::Array(..) => false,
             _ => true,
         }
     }
@@ -2529,7 +2591,7 @@ impl<'a> Context<'a> {
     }
     fn ty_has_reference(&self, t: &Ty) -> bool {
         match t {
-            Ty::Ref(_) => true,
+            Ty::Ref(_) | Ty::Plane(_) => true,
             Ty::Array(element, _) => self.ty_has_reference(element),
             Ty::Record(name) => type_has_reference(&Type::Named(name.clone()), self.structs),
             _ => false,
@@ -3171,6 +3233,9 @@ impl<'a> Context<'a> {
                 self.read_array(&element, &identity, &index, items.as_deref(), &cells)
             }
             Kind::Call(name, args) => {
+                if name == "alloc" {
+                    return self.allocate_owned(args, expected, e.line);
+                }
                 if name == "old" {
                     if self.phase == Phase::Runtime || args.len() != 1 {
                         return Err(
@@ -3271,6 +3336,14 @@ impl<'a> Context<'a> {
                         return Err("potentially divergent functions cannot be used in proofs or ideal execution".into());
                     }
                     self.partial_execution = true;
+                }
+                if self.phase == Phase::Specification
+                    && (heap::owns_planes_type(&f.ret, self.structs)
+                        || f.params
+                            .iter()
+                            .any(|(_, ty)| heap::owns_planes_type(ty, self.structs)))
+                {
+                    return Err("proof calls must borrow heap owners; ownership transfers and owning results cannot be erased".into());
                 }
                 if !f.modifies.is_empty() && self.phase == Phase::Specification {
                     return Err("modifying calls are forbidden in proof expressions".into());
@@ -3385,15 +3458,21 @@ impl<'a> Context<'a> {
                 for write in &writes {
                     let id = self.memory.plane(write.reference)?;
                     changed_roots.insert(id);
-                    let owned = saved_roots.values().any(|p| *p == id);
+                    let owned =
+                        self.owns_plane_in(&saved, &saved_roots, id)? || self.owns_plane(id)?;
                     if !self.write_permitted(write.reference, &write.path, owned)? {
                         return Err(format!("line {}: call to {name} writes through a parameter without a matching modifies contract", e.line));
                     }
                 }
-                let value = if overlaps || !self.opened_planes.is_empty() && !f.modifies.is_empty()
+                let heap_call = heap::function_uses_planes(f, self.structs);
+                let value = if overlaps
+                    || heap_call
+                    || !self.opened_planes.is_empty() && !f.modifies.is_empty()
                 {
                     let reason = if overlaps {
                         "overlaps incoming references"
+                    } else if heap_call {
+                        "uses owned planes"
                     } else {
                         "writes while invariants are open"
                     };
@@ -3450,6 +3529,12 @@ impl<'a> Context<'a> {
                     }
                     value
                 };
+                if heap_call {
+                    // An actual body may write and then release storage it
+                    // received by ownership. Surviving plain aliases are never;
+                    // validating a fictional post-store root would revive it.
+                    changed_roots.retain(|root| self.memory.get(*root).is_ok());
+                }
                 for root in &changed_roots {
                     self.charge_value_work(symbol_weight(self.memory.get(*root)?)?)?;
                     let stored = self.memory.get(*root)?.clone();
@@ -3827,6 +3912,11 @@ pub struct VerifiedProgram {
 }
 
 impl VerifiedProgram {
+    pub(crate) fn uses_owned_planes(&self) -> bool {
+        self.functions
+            .iter()
+            .any(|f| heap::function_uses_planes(f, &self.structs))
+    }
     pub fn trusted_assumptions(&self) -> &[crate::certificate::TrustedAssumption] {
         &self.trusted
     }
@@ -3909,7 +3999,7 @@ fn check_type_expansion(structs: &[Struct]) -> Result<()> {
     fn cost(t: &Type, known: &BTreeMap<String, (usize, usize)>) -> (usize, usize) {
         let (nodes, depth) = match t {
             Type::Named(n) => known.get(n).copied().unwrap_or((1, 1)),
-            Type::Ref(t) | Type::Array(t, _) => cost(t, known),
+            Type::Ref(t) | Type::Plane(t) | Type::Array(t, _) => cost(t, known),
             _ => (0, 0),
         };
         (nodes.saturating_add(1), depth.saturating_add(1))
@@ -4083,7 +4173,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         }
         if matches!(
             f.name.rsplit("::").next().unwrap_or(&f.name),
-            "move" | "drop" | "int" | "nat" | "old"
+            "move" | "drop" | "alloc" | "int" | "nat" | "old"
         ) {
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));
         }
@@ -4173,6 +4263,58 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn owned_planes_keep_identity_across_moves_and_cleanup_nested_payloads() {
+        let source = include_str!("../examples/owned_planes.evg");
+        let (program, bundle) = prove(source).unwrap();
+        let (result, events) = program.run_with_events().unwrap();
+        assert_eq!(result.to_string(), "42");
+        assert_eq!(events, ["drop Resource"]);
+        let overflow = source.replace("make(41)", "make(usize::MAX)");
+        assert!(verify(&overflow)
+            .unwrap_err()
+            .contains("precondition of advance"));
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        assert!(program.trusted_assumptions().is_empty());
+        let through_call = "fn write(owner: plane(usize), view: &usize) -> usize modifies(view) ensures(result == 42) {*view = 42; *view} fn main() -> usize {let owner: plane(usize) = alloc(41); let view = &*owner; write(owner, view); 42}";
+        assert_eq!(
+            verify(through_call).unwrap().run().unwrap().to_string(),
+            "42"
+        );
+        let observed_after =
+            through_call.replace("write(owner, view); 42", "write(owner, view); *view");
+        assert!(verify(&observed_after).unwrap_err().contains("never"));
+        let branches = "fn choose(owner: &plane(usize), flag: bool) -> usize modifies(&**owner) ensures(result == **owner && result >= 41 && result <= 42) {let done = if flag {set(owner, 42)} else {set(owner, 41)}; **owner}";
+        let source = format!("fn set(owner: &plane(usize), n: usize) -> usize modifies(&**owner) ensures(**owner == n && result == n) {{**owner = n; n}} {branches} fn main() -> usize {{let p: plane(usize) = alloc(0); choose(&p, true)}}");
+        assert_eq!(verify(&source).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn heap_ownership_rejects_dangling_duplicates_and_erased_effects() {
+        for (source, diagnostic) in [
+            (include_str!("../examples/reject_heap_use_after_free.evg"), "never"),
+            (include_str!("../examples/reject_heap_duplicate_owner.evg"), "shape(T)"),
+            (include_str!("../examples/reject_heap_borrow_write.evg"), "effect contract"),
+            ("fn main() -> usize {let owner: plane(usize) = alloc(7); let view = &*owner; drop(owner); owner = alloc(42); *view}", "never"),
+            ("fn bad(owner: plane(usize), view: &usize) -> &usize borrows(view) {view} fn main() -> usize {let owner: plane(usize) = alloc(42); let view = &*owner; *bad(owner, view)}", "never"),
+            ("fn change(owner: plane(usize)) -> usize {*owner = 42; 42} fn main() -> usize ensures(result == 42) {let owner: plane(usize) = alloc(7); proof wrong: change(owner) == 42; *owner}", "proof calls must borrow heap owners"),
+            ("fn make() -> plane(usize) {alloc(42)} fn main() {proof wrong: *make() == 42;}", "proof calls must borrow heap owners"),
+            ("fn main() {ideal let owner = alloc(42);}", "allocation requires runtime"),
+            ("fn bad(owner: plane(usize)) {ideal let stolen = owner;}", "cannot consume runtime ownership"),
+            ("fn main() {let n: usize = 42; let owner = alloc(&n);}", "without borrowed references"),
+            ("ideal fn bad(owner: &plane(usize)) modifies(&**owner) {**owner = 42;}", "ideal modifies must target proof storage"),
+            ("fn main() {ideal let n: nat = 42; let owner = alloc(n);}", "ideal parameter"),
+        ] {
+            let error = verify(source).unwrap_err();
+            assert!(error.contains(diagnostic), "expected {diagnostic}: {error}");
+        }
+    }
+
     #[test]
     fn opaque_ideal_effect_regions_forward_and_recheck_aliases() {
         let credits = include_str!("../stdlib/credits.evg").replace("module credits {", "module credits {ideal fn issue(n: nat) -> Credit ensures(result.units == n) {Credit {units: n}}");

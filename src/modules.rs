@@ -25,7 +25,7 @@ impl Scope<'_> {
     fn ty(&self, ty: &mut Type) {
         match ty {
             Type::Named(name) => *name = resolve(self.module, name, self.types),
-            Type::Ref(ty) => self.ty(ty),
+            Type::Ref(ty) | Type::Plane(ty) => self.ty(ty),
             Type::Array(ty, len) => {
                 self.ty(ty);
                 self.expr(len);

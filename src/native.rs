@@ -12,6 +12,7 @@ const HEADER: usize = 64 + 2 * 56;
 const STACK: usize = 65536;
 const MAX_CODE: usize = 8 * 1024 * 1024;
 const RECURSION_LIMIT: usize = 128;
+const HEAP_LIMIT: u32 = 16 * 1024 * 1024;
 
 fn scalar(t: &Type) -> Result<()> {
     if matches!(t, Type::Machine(_) | Type::Bool | Type::Unit) {
@@ -162,6 +163,7 @@ impl Emitter<'_> {
     }
     fn has_drop(&self, ty: &Type) -> bool {
         match ty {
+            Type::Plane(_) => true,
             Type::Named(name) => {
                 self.drops.contains(name)
                     || self
@@ -257,6 +259,23 @@ impl Emitter<'_> {
         if !self.has_drop(ty) {
             return Ok(());
         }
+        if let Type::Plane(payload) = ty {
+            self.frame_address(offset);
+            self.code.extend([0x48, 0x8b, 0x00]);
+            self.snapshot(payload)?;
+            self.drop_value(payload)?;
+            self.code.extend([0x48, 0x8b, 0xbd]); // rdi = allocation address
+            self.code.extend(offset.to_le_bytes());
+            let size = layout::of(payload, self.structs)?.size as u32;
+            self.code.push(0xbe); // esi = byte length
+            self.code.extend(size.to_le_bytes());
+            self.code.extend([0xb8, 11, 0, 0, 0, 0x0f, 0x05]); // munmap
+            self.code.extend([0x48, 0x85, 0xc0]);
+            self.heap_guard(0x79); // jns success
+            self.code.extend([0x49, 0x81, 0xed]); // sub r13, mapped pages
+            self.code.extend(size.next_multiple_of(4096).to_le_bytes());
+            return Ok(());
+        }
         if let Type::Named(name) = ty {
             if self.drops.contains(name) {
                 self.trace_drop(name)?;
@@ -329,6 +348,9 @@ impl Emitter<'_> {
                     self.copy_frame(home, &ty)?;
                     self.temporaries.push((home, ty.clone()));
                     self.frame_address(home);
+                    if !layout::aggregate(&ty) {
+                        self.code.extend([0x48, 0x8b, 0x00]);
+                    }
                 }
                 Ok(ty)
             }
@@ -420,7 +442,7 @@ impl Emitter<'_> {
             Kind::Unary(op, _) if op == "!" => Some(Type::Bool),
             Kind::Unary(op, x) if op == "&" => self.hint(x).map(|t| Type::Ref(Box::new(t))),
             Kind::Unary(op, x) if op == "*" => match self.hint(x)? {
-                Type::Ref(inner) => Some(*inner),
+                Type::Ref(inner) | Type::Plane(inner) => Some(*inner),
                 _ => None,
             },
             Kind::Unary(_, x) => self.hint(x),
@@ -433,6 +455,9 @@ impl Emitter<'_> {
                 Some(Type::Bool)
             }
             Kind::Binary(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
+            Kind::Call(n, args) if n == "alloc" && args.len() == 1 => {
+                self.hint(&args[0]).map(|t| Type::Plane(Box::new(t)))
+            }
             Kind::Call(n, _) => self.functions.get(n).map(|f| f.ret.clone()),
             Kind::If(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
             _ => None,
@@ -453,8 +478,8 @@ impl Emitter<'_> {
                 self.code.extend(offset.to_le_bytes());
                 Ok(ty.clone())
             }
-            Kind::Unary(op, x) if op == "*" => match self.expr(x, None)? {
-                Type::Ref(inner) => Ok(*inner),
+            Kind::Unary(op, x) if op == "*" => match self.storage_value(x)? {
+                Type::Ref(inner) | Type::Plane(inner) => Ok(*inner),
                 _ => Err("native place dereference requires a reference".into()),
             },
             _ => Err("native references require stored places".into()),
@@ -556,8 +581,11 @@ impl Emitter<'_> {
             }
             Kind::Unary(op, x) if op == "&" => Type::Ref(Box::new(self.address(x)?)),
             Kind::Unary(op, x) if op == "*" => {
-                let Type::Ref(inner) = self.expr(x, None)? else {
-                    return Err("native dereference requires a reference".into());
+                let inner = match self.storage_value(x)? {
+                    Type::Ref(inner) | Type::Plane(inner) => inner,
+                    _ => {
+                        return Err("native dereference requires a reference or owned plane".into())
+                    }
                 };
                 self.snapshot(&inner)?;
                 *inner
@@ -682,6 +710,42 @@ impl Emitter<'_> {
                     ty
                 }
             }
+            Kind::Call(name, args) if name == "alloc" => {
+                let hint = match expected {
+                    Some(Type::Plane(inner)) => Some(inner.as_ref()),
+                    _ => None,
+                };
+                let payload = self.expr(&args[0], hint)?;
+                let saved = self.allocate(&payload)?;
+                self.copy_frame(saved, &payload)?;
+                let size = layout::of(&payload, self.structs)?.size as u32;
+                self.code.extend([0x49, 0x81, 0xc5]); // add r13, mapped bytes
+                self.code.extend(size.next_multiple_of(4096).to_le_bytes());
+                self.code.extend([0x49, 0x81, 0xfd]); // cmp r13, heap budget
+                self.code.extend(HEAP_LIMIT.to_le_bytes());
+                self.heap_guard(0x76); // jbe success
+                self.code.extend([0x31, 0xff]); // rdi = null address hint
+                self.code.push(0xbe);
+                self.code.extend(size.to_le_bytes());
+                self.code.extend([0xba, 3, 0, 0, 0]); // PROT_READ | PROT_WRITE
+                self.code.extend([0x41, 0xba, 0x22, 0, 0, 0]); // MAP_PRIVATE | MAP_ANONYMOUS
+                self.code.extend([0x49, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff]); // fd = -1
+                self.code.extend([0x45, 0x31, 0xc9]); // offset = 0
+                self.code.extend([0xb8, 9, 0, 0, 0, 0x0f, 0x05]); // mmap
+                self.code.extend([0x48, 0x85, 0xc0]);
+                self.heap_guard(0x79); // jns success
+                let home = self.allocate(&Type::Plane(Box::new(payload.clone())))?;
+                self.copy_frame(home, &Type::Ref(Box::new(payload.clone())))?;
+                self.code.extend([0x48, 0x89, 0xc1]); // destination rcx
+                self.frame_address(saved);
+                if !layout::aggregate(&payload) {
+                    self.code.extend([0x48, 0x8b, 0x00]);
+                }
+                self.copy_address(&payload)?;
+                self.frame_address(home);
+                self.code.extend([0x48, 0x8b, 0x00]);
+                Type::Plane(Box::new(payload))
+            }
             Kind::Call(name, args) => {
                 let function = self.functions.get(name).ok_or("unknown native callee")?;
                 if function.params.len() != args.len() {
@@ -750,6 +814,9 @@ impl Emitter<'_> {
                     && owner.as_ref().is_some_and(|n| self.alive.contains(n))
                 {
                     let home = self.allocate(&ty)?;
+                    if !layout::aggregate(&ty) {
+                        self.code.extend([0x48, 0x8b, 0x00]);
+                    }
                     self.copy_frame(home, &ty)?;
                     Some(home)
                 } else {
@@ -765,6 +832,9 @@ impl Emitter<'_> {
                         }
                     }
                     self.frame_address(new_value);
+                    if !layout::aggregate(&ty) {
+                        self.code.extend([0x48, 0x8b, 0x00]);
+                    }
                 }
                 self.code.extend([0x48, 0x8b, 0x8d]);
                 self.code.extend(pointer.to_le_bytes());
@@ -812,6 +882,13 @@ impl Emitter<'_> {
             }
         }
     }
+
+    fn heap_guard(&mut self, success: u8) {
+        self.code.extend([success, 14]);
+        self.code.extend([
+            0xbf, 126, 0, 0, 0, 0xb8, 60, 0, 0, 0, 0x0f, 0x05, 0x0f, 0x0b,
+        ]);
+    }
 }
 
 fn compilation_order(program: &VerifiedProgram) -> Result<Vec<&Function>> {
@@ -836,7 +913,9 @@ fn compilation_order(program: &VerifiedProgram) -> Result<Vec<&Function>> {
                     output.push(*method);
                 }
             }
-            Type::Array(element, _) => visit(element, program, methods, seen, output)?,
+            Type::Array(element, _) | Type::Plane(element) => {
+                visit(element, program, methods, seen, output)?
+            }
             _ => {}
         }
         Ok(())
@@ -896,9 +975,11 @@ fn emit_mode(program: &VerifiedProgram, trace: TraceMode) -> Result<Vec<u8>> {
         .map(|f| (f.name.clone(), f))
         .collect::<BTreeMap<_, _>>();
     let mut known = BTreeMap::new();
+    let heap_ownership = program.uses_owned_planes();
     let mut code = vec![0x48, 0xbc];
     code.extend([0; 8]); // mov rsp, private stack end
     code.extend([0x45, 0x31, 0xf6]); // reserved r14: recursive activation count
+    code.extend([0x45, 0x31, 0xed]); // reserved r13: live mapped heap bytes
     if trace != TraceMode::Value {
         code.extend([0x4d, 0x31, 0xff]);
     }
@@ -986,7 +1067,7 @@ fn emit_mode(program: &VerifiedProgram, trace: TraceMode) -> Result<Vec<u8>> {
             emitter.statement(statement)?;
         }
         emitter.scoped_expr(&function.result, Some(&function.ret))?;
-        let saved_result = if program.drops.is_empty() {
+        let saved_result = if program.drops.is_empty() && !heap_ownership {
             None
         } else {
             let home = emitter.allocate(&function.ret)?;
@@ -1216,6 +1297,18 @@ mod tests {
             include_str!("../examples/drop_effects.evg"),
             include_str!("../examples/drop_children.evg"),
             include_str!("../examples/owned_borrows.evg"),
+            include_str!("../examples/owned_planes.evg"),
+            "fn main() -> usize {let p: plane(usize) = alloc(42); *p}",
+            "fn main() -> usize {let p: plane(usize) = alloc(1); drop(p); p = alloc(42); *p}",
+            "fn main() -> isize {*alloc(42)}",
+            "type Resource struct {n: usize} impl Drop for Resource {fn drop(self){}} fn main() -> usize {(*alloc(Resource {n: 42})).n}",
+            "fn main() -> usize {let p: plane([usize; 2]) = alloc([7, 42]); (*p)[1]}",
+            "fn main() -> usize {let p: plane(plane(usize)) = alloc(alloc(42)); **p}",
+            "fn main() -> usize {let p: plane([plane(usize); 2]) = alloc([alloc(7), alloc(42)]); *(*p)[1]}",
+            "fn main() -> usize {let p: plane(usize) = alloc(41); let view = &*p; let nested = alloc(p); *view = 42; *view}",
+            "type Holder struct {owner: plane(usize)} fn main() -> usize {let p: plane(usize) = alloc(42); let view = &*p; let h = Holder {owner: p}; let Holder {owner: q} = h; *view}",
+            "type Child struct {n: usize} impl Drop for Child {fn drop(self){}} type Parent struct {child: plane(Child)} impl Drop for Parent {fn drop(self){}} fn main() -> usize {let p = alloc(Parent {child: alloc(Child {n: 42})}); (*(*p).child).n}",
+            "type Empty struct {} fn main() -> usize {let a = alloc(Empty {}); let b = alloc(Empty {}); if &*a != &*b {42} else {0}}",
             include_str!("../examples/borrowed_view.evg"),
             include_str!("../examples/borrowed_array.evg"),
             include_str!("../examples/borrowed_array_owners.evg"),

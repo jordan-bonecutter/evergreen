@@ -1,0 +1,8 @@
+fn release(owner: plane(usize)) {}
+
+fn main() -> usize {
+    let owner: plane(usize) = alloc(42);
+    let view = &*owner;
+    release(owner);
+    *view
+}

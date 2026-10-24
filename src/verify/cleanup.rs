@@ -69,6 +69,7 @@ impl Scope {
 impl Context<'_> {
     fn cleanup_effects_type(&self, ty: &Type) -> bool {
         match ty {
+            Type::Plane(_) => true,
             Type::Named(name) => {
                 self.destructors
                     .get(name)
@@ -84,6 +85,7 @@ impl Context<'_> {
     }
     fn cleanup_effects(&self, ty: &Ty) -> bool {
         match ty {
+            Ty::Plane(_) => true,
             Ty::Record(name) => self.cleanup_effects_type(&Type::Named(name.clone())),
             Ty::Array(element, _) => self.cleanup_effects(element),
             _ => false,
@@ -117,6 +119,11 @@ impl Context<'_> {
         }
         self.charge_value_work(1)?;
         match value {
+            Symbol::Plane(_, reference) => {
+                let plane = self.memory.plane(reference)?;
+                let payload = self.memory.take(plane)?;
+                self.cleanup_value(payload, line)?;
+            }
             Symbol::Record(name, mut fields) => {
                 let order = self
                     .structs

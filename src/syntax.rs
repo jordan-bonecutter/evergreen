@@ -48,6 +48,7 @@ pub enum Type {
     Bool,
     Unit,
     Ref(Box<Type>),
+    Plane(Box<Type>),
     Machine(MachineInt),
     Named(String),
     Array(Box<Type>, Box<Expr>),
@@ -346,6 +347,11 @@ impl Parser {
             }
         } else if self.eat("&") {
             Ok(Type::Ref(Box::new(self.ty()?)))
+        } else if self.eat("plane") {
+            self.expect("(")?;
+            let inner = self.ty()?;
+            self.expect(")")?;
+            Ok(Type::Plane(Box::new(inner)))
         } else if self.eat("(") {
             self.expect(")")?;
             Ok(Type::Unit)

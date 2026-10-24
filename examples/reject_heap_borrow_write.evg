@@ -1,0 +1,5 @@
+fn unlicensed(owner: &plane(usize)) {
+    **owner = 42;
+}
+
+fn main() -> usize {0}

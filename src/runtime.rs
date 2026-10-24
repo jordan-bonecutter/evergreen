@@ -16,6 +16,7 @@ pub enum Value {
     Record(String, BTreeMap<String, Value>),
     Unit,
     Ref(Box<Type>, Reference, Vec<Projection>),
+    Plane(Box<Type>, Reference),
     Machine(MachineInt, i128),
 }
 // Charge aggregate snapshots before cloning their expanded representation.
@@ -60,6 +61,7 @@ impl std::fmt::Display for Value {
             Self::Record(n, fields) => write!(f, "{n} {fields:?}"),
             Self::Unit => write!(f, "()"),
             Self::Ref(_, _, _) => write!(f, "<reference>"),
+            Self::Plane(_, _) => write!(f, "<owned plane>"),
         }
     }
 }
@@ -84,6 +86,7 @@ impl Value {
             Self::Bool(_) => Some(Type::Bool),
             Self::Record(n, _) => Some(Type::Named(n.clone())),
             Self::Ref(t, _, _) => Some(Type::Ref(t.clone())),
+            Self::Plane(t, _) => Some(Type::Plane(t.clone())),
             Self::Unit => Some(Type::Unit),
             Self::Machine(t, _) => Some(Type::Machine(*t)),
             Self::Array(items) => Some(Type::Array(
@@ -135,13 +138,16 @@ impl Evaluator<'_> {
             Kind::Record(n, _) => Some(Type::Named(n.clone())),
             Kind::Unary(op, x) if op == "&" => self.hint(x, env).map(|t| Type::Ref(Box::new(t))),
             Kind::Unary(op, x) if op == "*" => {
-                if let Some(Type::Ref(t)) = self.hint(x, env) {
+                if let Some(Type::Ref(t) | Type::Plane(t)) = self.hint(x, env) {
                     Some(*t)
                 } else {
                     None
                 }
             }
             Kind::Unary(_, x) => self.hint(x, env),
+            Kind::Call(name, args) if name == "alloc" && args.len() == 1 => {
+                self.hint(&args[0], env).map(|t| Type::Plane(Box::new(t)))
+            }
             Kind::Index(base, _) => match self.hint(base, env)? {
                 Type::Array(element, _) => Some(*element),
                 _ => None,
@@ -322,6 +328,7 @@ impl Evaluator<'_> {
 
     fn value_is_affine(&self, value: &Value) -> bool {
         match value {
+            Value::Plane(..) => true,
             Value::Record(n, _) => {
                 crate::verify::is_affine(&Type::Named(n.clone()), self.structs, self.drops)
             }
@@ -346,6 +353,11 @@ impl Evaluator<'_> {
     }
     fn drop_fields(&mut self, value: Value) -> Result<()> {
         match value {
+            Value::Plane(_, reference) => {
+                let plane = self.memory.plane(reference)?;
+                let payload = self.memory.take(plane)?;
+                self.drop_value(payload)?;
+            }
             Value::Record(name, mut fields) => {
                 let order = self
                     .structs
@@ -684,6 +696,19 @@ impl Evaluator<'_> {
                 })
             }
             Kind::Call(name, args) => {
+                if name == "alloc" {
+                    let hint = match expected {
+                        Some(Type::Plane(inner)) => Some(inner.as_ref()),
+                        _ => None,
+                    };
+                    let value = self.expr(&args[0], env, hint)?;
+                    let ty = hint
+                        .cloned()
+                        .or_else(|| value.hint())
+                        .ok_or("missing allocation payload type")?;
+                    let plane = self.memory.allocate(value)?;
+                    return Ok(Value::Plane(Box::new(ty), self.memory.borrow(plane)?));
+                }
                 if name == "move" || name == "drop" {
                     let (r, path) = self.location(&args[0], env)?;
                     if !path.is_empty() {
@@ -756,8 +781,10 @@ impl Evaluator<'_> {
                 Ok((r, p))
             }
             Kind::Unary(op, x) if op == "*" => {
-                let Value::Ref(_, r, p) = self.expr(x, env, None)? else {
-                    return Err("expected reference".into());
+                let (r, p) = match self.storage(x, env)? {
+                    Value::Ref(_, r, p) => (r, p),
+                    Value::Plane(_, r) => (r, Vec::new()),
+                    _ => return Err("expected reference or owned plane".into()),
                 };
                 self.memory.read(r)?;
                 Ok((r, p))
@@ -838,6 +865,7 @@ fn same_layout(a: &Value, b: &Value) -> bool {
         | (Value::Nat(_), Value::Nat(_))
         | (Value::Bool(_), Value::Bool(_))
         | (Value::Ref(..), Value::Ref(..))
+        | (Value::Plane(..), Value::Plane(..))
         | (Value::Unit, Value::Unit) => true,
         (Value::Machine(a, _), Value::Machine(b, _)) => a == b,
         _ => false,

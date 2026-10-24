@@ -107,6 +107,34 @@ example : (⟨7, 7⟩ : PhasedRecord Nat Nat).runtime = 7 ∧
     (replaceIdeal (⟨7, 7⟩ : PhasedRecord Nat Nat) 42).runtime ≠
       (replaceIdeal (⟨7, 7⟩ : PhasedRecord Nat Nat) 42).ideal := by decide
 
+-- The owner slot and separately allocated payload have distinct identities.
+-- These equations specify the intended transitions, not the compiler's
+-- enforcement of uniqueness or the native allocator's implementation.
+structure OwnedAllocation where
+  ownerSlot : Plane
+  payload : Plane
+
+def moveAllocationOwner (allocation : OwnedAllocation) : OwnedAllocation :=
+  { allocation with ownerSlot := dropPlane allocation.ownerSlot }
+
+def freeAllocation (allocation : OwnedAllocation) : OwnedAllocation :=
+  { ownerSlot := dropPlane allocation.ownerSlot,
+    payload := dropPlane allocation.payload }
+
+theorem owner_move_keeps_payload_reference (allocation : OwnedAllocation)
+    (reference : Reference) (valid : Valid allocation.payload reference) :
+    Valid (moveAllocationOwner allocation).payload reference := valid
+
+theorem owner_move_invalidates_old_slot (allocation : OwnedAllocation)
+    (reference : Reference) :
+    ¬ Valid (moveAllocationOwner allocation).ownerSlot reference :=
+  dropped_references_invalid allocation.ownerSlot reference
+
+theorem freeing_invalidates_payload_reference (allocation : OwnedAllocation)
+    (reference : Reference) :
+    ¬ Valid (freeAllocation allocation).payload reference :=
+  dropped_references_invalid allocation.payload reference
+
 -- An atomic update publishes only a new state satisfying its invariant.
 def commit {State : Type} (invariant : State → Prop)
     (next : State) (proof : invariant next) : { s : State // invariant s } :=
