@@ -10,6 +10,23 @@ language design sketch; not all of it is implemented yet.
 `cargo run -- --deny-trust build examples/native.evg -o /tmp/answer` builds a
 standalone Linux x86-64 executable for the supported verified subset.
 
+### Reading the compiler
+
+| Responsibility | Code |
+| --- | --- |
+| Entry point and command handlers | [main.rs](src/main.rs), [cli](src/cli/mod.rs) |
+| Parsing and module name resolution | [syntax.rs](src/syntax.rs), [modules.rs](src/modules.rs) |
+| Symbolic verification and language rules | [verify.rs](src/verify.rs), [verification modules](src/verify) |
+| Small proof kernel and certificate replay | [kernel.rs](src/kernel.rs), [certificate.rs](src/certificate.rs) |
+| Native expression and statement emission | [native.rs](src/native.rs) |
+| Function compilation and executable packaging | [program.rs](src/native/program.rs), [elf.rs](src/native/elf.rs) |
+| Checked reference interpreter | [runtime.rs](src/runtime.rs) |
+| Optional Lean reference translation | [lean.rs](src/lean.rs) |
+
+Verifier and native regression tests live in their subsystem directories.
+[tests/verification.rs](tests/verification.rs) exercises the CLI and optional
+Lean backend.
+
 Evergreen is a systems programming language, aimed to finally be a successor to
 C and C++. Why have we failed so many times? Let's look at Rust for an example:
 

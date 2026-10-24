@@ -1,0 +1,431 @@
+//! Native execution, layouts, cleanup ordering, and resource-budget regressions.
+use super::*;
+use crate::verify::verify;
+
+#[test]
+fn native_rejects_unsupported_layouts_and_entry_assumptions() {
+    for source in [
+        "fn read(n: usize, a: [usize; n]) -> usize {n} fn main() -> usize {0}",
+        "type Dynamic struct {len: usize, data: [usize; len]} fn main() -> usize {let d = Dynamic {len: 1, data: [42]}; d.data[0]}",
+        "fn main() -> usize where (false) {0}",
+        "fn main() -> [usize; 1] {[0]}",
+    ] {
+        let program = verify(source).unwrap();
+        assert!(
+            emit(&program).is_err(),
+            "accepted unsupported native source: {source}"
+        );
+    }
+}
+
+#[test]
+fn native_stack_bound_includes_the_call_tree() {
+    let mut source = String::new();
+    for index in 0..34 {
+        source.push_str(&format!("fn f{index}() -> usize {{"));
+        for local in 0..250 {
+            source.push_str(&format!("let x{local}: usize = 0;"));
+        }
+        if index == 0 {
+            source.push_str("42}");
+        } else {
+            source.push_str(&format!("f{}()}}", index - 1));
+        }
+    }
+    source.push_str("fn main() -> usize {f33()}");
+    let program = verify(&source).unwrap();
+    assert!(emit(&program).unwrap_err().contains("stack budget"));
+    let mut source = "fn f0(a: [usize; 512]) -> usize {a[0]}".to_string();
+    for index in 1..6 {
+        source.push_str(&format!(
+            "fn f{index}(a: [usize; 512]) -> usize {{f{}(a)}}",
+            index - 1
+        ));
+    }
+    let values = vec!["0"; 512].join(",");
+    source.push_str(&format!(
+        "fn main() -> usize {{let a: [usize; 512] = [{values}]; f5(a)}}"
+    ));
+    let program = verify(&source).unwrap();
+    assert!(emit(&program).unwrap_err().contains("stack budget"));
+    let recursive = "fn recurse(n: usize) -> usize ensures(result == n) decreases(n) {let a: [usize; 128] = [VALUES]; if n == 0 {0} else {recurse(n - 1) + 1}} fn main() -> usize {recurse(1)}".replace("VALUES", &vec!["0"; 128].join(","));
+    assert!(emit(&verify(&recursive).unwrap())
+        .unwrap_err()
+        .contains("stack budget"));
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn execute_test_binary(
+    path: &std::path::Path,
+    binary: &[u8],
+    source: &str,
+) -> std::process::ExitStatus {
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+    fs::write(path, binary).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut child = Command::new(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("native test timed out: {source}");
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    status
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn native_execution_agrees_with_the_interpreter() {
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory =
+        std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let mut cases = [
+        include_str!("../../examples/partial_recursion.evg"),
+        include_str!("../../examples/ideal_bindings.evg"),
+        "type Resource struct {tag: usize} where(tag == 42); impl Drop for Resource {fn drop(self){}} ideal fn observe(r: &Resource) -> nat ensures(result == nat((*r).tag)) {nat((*r).tag)} fn main() -> usize {let r = Resource {tag: 42}; ideal let saved = observe(&r); proof correct: saved == 42; r.tag}",
+        include_str!("../../examples/erased_resources.evg"),
+        "fn answer(ideal expected: nat) -> usize where(expected == 42) ensures(result == 42) {42} fn caller(n: usize) -> usize where(n == 42) ensures(result == 42) {n = 0; answer(nat(old(n)))} fn main() -> usize {caller(42)}",
+        "fn answer(ideal data: [usize; 1]) -> usize where(data[0] == 42) ensures(result == 42) {42} fn main() -> usize {answer([42])}",
+        include_str!("../../examples/opaque_values.evg"),
+        "module a {fn get() -> usize ensures(result == 20) {20}} module b {fn get() -> usize ensures(result == 22) {22}} fn main() -> usize {a::get() + b::get()}",
+        "module owned {opaque type Resource struct {tag: usize} where(self.tag == 42); impl Drop for Resource {fn drop(self) {proof valid: self.tag == 42;}} fn make() -> Resource {Resource {tag: 42}} fn read(r: &Resource) -> usize ensures(result == (*r).tag) {(*r).tag}} fn main() -> usize {let r = owned::make(); owned::read(&r)}",
+        include_str!("../../examples/indexed_borrows.evg"),
+        include_str!("../../examples/weak_invariant.evg"),
+        "fn main() -> bool {false => true => false}",
+        "fn main() -> bool {true => false}",
+        include_str!("../../examples/array_borrows.evg"),
+        include_str!("../../examples/borrow_returns.evg"),
+        include_str!("../../examples/computed_places.evg"),
+        include_str!("../../examples/old_places.evg"),
+        include_str!("../../examples/reference_fields.evg"),
+        include_str!("../../examples/drop_effects.evg"),
+        include_str!("../../examples/drop_children.evg"),
+        include_str!("../../examples/owned_borrows.evg"),
+        include_str!("../../examples/owned_planes.evg"),
+        include_str!("../../examples/owned_result_views.evg"),
+        include_str!("../../examples/heap_updates.evg"),
+        "fn main() -> usize {let p: plane(usize) = alloc(42); *p}",
+        "fn forward(p: plane(usize)) -> plane(usize) {p} fn main() -> usize {let p = forward(alloc(42)); *p}",
+        "type Owner struct {data: plane([usize; 2])} fn main() -> usize {let owner = Owner {data: alloc([7, 42])}; (*owner.data)[1]}",
+        "fn main() -> usize {let p: plane(usize) = alloc(1); drop(p); p = alloc(42); *p}",
+        "fn main() -> isize {*alloc(42)}",
+        "type Resource struct {n: usize} impl Drop for Resource {fn drop(self){}} fn main() -> usize {(*alloc(Resource {n: 42})).n}",
+        "fn main() -> usize {let p: plane([usize; 2]) = alloc([7, 42]); (*p)[1]}",
+        "fn main() -> usize {let p: plane(plane(usize)) = alloc(alloc(42)); **p}",
+        "fn main() -> usize {let p: plane([plane(usize); 2]) = alloc([alloc(7), alloc(42)]); *(*p)[1]}",
+        "fn main() -> usize {let p: plane(usize) = alloc(41); let view = &*p; let nested = alloc(p); *view = 42; *view}",
+        "type Holder struct {owner: plane(usize)} fn main() -> usize {let p: plane(usize) = alloc(42); let view = &*p; let h = Holder {owner: p}; let Holder {owner: q} = h; *view}",
+        "type Child struct {n: usize} impl Drop for Child {fn drop(self){}} type Parent struct {child: plane(Child)} impl Drop for Parent {fn drop(self){}} fn main() -> usize {let p = alloc(Parent {child: alloc(Child {n: 42})}); (*(*p).child).n}",
+        "type Empty struct {} fn main() -> usize {let a = alloc(Empty {}); let b = alloc(Empty {}); if &*a != &*b {42} else {0}}",
+        include_str!("../../examples/borrowed_view.evg"),
+        include_str!("../../examples/borrowed_array.evg"),
+        include_str!("../../examples/borrowed_array_owners.evg"),
+        include_str!("../../examples/reference_array_inputs.evg"),
+        include_str!("../../examples/aliasing_calls.evg"),
+        include_str!("../../examples/propositional_proofs.evg"),
+        include_str!("../../examples/proof_cases.evg"),
+        include_str!("../../examples/reference_identity.evg"),
+        include_str!("../../examples/conditional_borrows.evg"),
+        "fn choose(flag: bool) -> [usize; 2] ensures((flag => result[0] == 42) && (!flag => result[1] == 42)) {if flag {[42, 7]} else {[7, 42]}} fn main() -> usize ensures(result == 42) {let data = choose(false); data[1]}",
+        include_str!("../../examples/conditional_drop.evg"),
+        include_str!("../../examples/conditional_contracts.evg"),
+        include_str!("../../examples/old_selection.evg"),
+        include_str!("../../examples/old_accessors.evg"),
+        include_str!("../../examples/array_frame_history.evg"),
+        include_str!("../../examples/array_branch_history.evg"),
+        include_str!("../../examples/array_model.evg"),
+        include_str!("../../examples/record_array_history.evg"),
+        include_str!("../../examples/record_array_values.evg"),
+        include_str!("../../examples/record_array_borrows.evg"),
+        include_str!("../../examples/update_calls.evg"),
+        include_str!("../../examples/self_observing_fields.evg"),
+        include_str!("../../examples/update_borrow_writes.evg"),
+        include_str!("../../examples/ideal_borrow_resources.evg"),
+        include_str!("../../examples/ideal_update_state.evg"),
+        include_str!("../../examples/ideal_fields.evg"),
+        include_str!("../../examples/ideal_borrow_writes.evg"),
+        "fn main() -> usize where(old(1 + 1) == 2) {42}",
+        "type Fixed struct {value: usize} where(value == 42); fn refresh(r: &Fixed) -> &Fixed modifies(&(*r).value) borrows(r) ensures((*r).value == 42 && (*result).value == 42) {(*r).value = 42; r} fn main() -> usize {let fixed = Fixed {value: 42}; let refreshed = refresh(&fixed); (*refreshed).value}",
+        include_str!("../../examples/recursion.evg"),
+        include_str!("../../examples/drop.evg"),
+        include_str!("../../examples/temporary_cleanup.evg"),
+        include_str!("../../examples/borrowed_temporaries.evg"),
+        include_str!("../../examples/native.evg"),
+        include_str!("../../examples/native_aggregates.evg"),
+        include_str!("../../examples/array_contracts.evg"),
+        include_str!("../../examples/destructure.evg"),
+        include_str!("../../examples/affine_values.evg"),
+        include_str!("../../examples/structs.evg"),
+        include_str!("../../examples/conditional_records.evg"),
+        "fn identity(a: [usize; 2]) -> [usize; 1 + 1] {a} fn main() -> usize {let input: [usize; 2] = [7, 42]; let a: [usize; 2] = identity(input); a[1]}",
+        "fn empty() -> [usize; 0] {[]} fn main() -> usize {let a = empty(); 42}",
+        "type Pair struct {left: usize, right: usize} fn pick(p: Pair, marker: usize) -> usize ensures (result == p.left) {p.left} fn set(r: &usize) -> usize modifies(r) ensures (*r == 99 && result == 0) {*r = 99; 0} fn main() -> usize ensures (result == 42) {let p = Pair {left: 42, right: 0}; pick(p, set(&p.left))}",
+        include_str!("../../examples/intermediate_states.evg"),
+        include_str!("../../examples/conditional_writes.evg"),
+        "fn head(ideal n: nat, data: &[usize; n]) -> usize where (n > 0) {(*data)[0]} fn main() -> usize {let a: [usize; 1] = [42]; head(1, &a)}",
+        "fn set(r: &usize) -> usize modifies(r) ensures (*r == 99 && result == 0) {*r = 99; 0} fn main() -> usize {let a: [usize; 1] = [42]; a[set(&a[0])]}",
+        "type Values struct {first: usize, second: usize} fn set(r: &usize) -> usize modifies(r) ensures (*r == 99 && result == 0) {*r = 99; 0} fn main() -> usize {let n: usize = 42; let v = Values {first: n, second: set(&n)}; v.first}",
+        "fn main() -> usize {let a: [usize; (1 - 2) + 2] = [7, 42]; a[1]}",
+        "fn main() -> usize {let a: [[usize; 2]; 2] = [[1, 2], [3, 42]]; a[1][1]}",
+        "fn main() -> i8 {-128}",
+        "fn main() -> u8 {255}",
+        "fn main() -> u64 {u64::MAX}",
+        "fn main() -> i64 {i64::MIN}",
+        "fn main() -> bool {let x: i64 = -1; x < 0}",
+        "fn main() -> bool {let x: u64 = u64::MAX; x > 0}",
+        "fn main() -> bool {(1 < 2) == !(3 < 2)}",
+        "fn main() -> usize {let x: usize = 42; let y = move(x); y}",
+        "fn main() -> usize {let x: usize = 1; drop(x); x = 42; x}",
+        "fn main() -> usize {let x: usize = 1; let r = &x; *r = 42; x}",
+        "fn main() -> usize {let x: usize = 1; let a = &x; let b = &x; *a = 42; *b}",
+        "fn main() -> usize {let x: usize = 42; let r = &x; let rr = &r; **rr}",
+        "fn main() -> usize {let x: usize = 1; let y: usize = 42; let r = &x; let rr = &r; r = &y; **rr}",
+        "fn read(r: &usize) -> usize ensures (result == *r) {*r} fn main() -> usize {let x: usize = 42; read(&x)}",
+        "fn flip(r: &bool) modifies(r) ensures (*r == !old(*r)) {*r = !*r;} fn main() -> bool {let x = false; flip(&x); x}",
+        "fn main() -> usize {(9 - 2) * 6}",
+        "fn main() -> bool {true && (false || true)}",
+        "fn main() -> () {()}",
+        "type Resource struct {tag: usize} where(tag == 7); impl Drop for Resource {fn drop(self){}} fn consume(r: Resource) -> usize ensures(result == 7) {r.tag} fn recurse(n: usize, r: Resource) -> usize ensures(result == 7) decreases(n) {if n == 0 {consume(r)} else {recurse(n - 1, r)}} fn main() -> usize {let r = Resource {tag: 7}; recurse(5, r)}",
+        "fn choose(a: usize, b: usize, flag: bool) -> usize ensures ((flag && result == a) || (!flag && result == b)) {if flag {a} else {b}} fn main() -> usize {choose(7, 42, false)}",
+        "fn add(a: usize, b: usize) -> usize where (a <= 10 && b <= 10) ensures (result == a + b) {a + b} fn main() -> usize {add(1, add(2, 3))}",
+        "fn sum(a: usize,b: usize,c: usize,d: usize,e: usize,f: usize,g: usize,h: usize) -> usize where (a <= 10 && b <= 10 && c <= 10 && d <= 10 && e <= 10 && f <= 10 && g <= 10 && h <= 10) {a+b+c+d+e+f+g+h} fn main() -> usize {sum(1,2,3,4,5,6,7,8)}",
+    ].map(str::to_owned).to_vec();
+    cases.push(
+        [
+            include_str!("../../stdlib/array.evg"),
+            include_str!("../../examples/array_updates.evg"),
+        ]
+        .join("\n"),
+    );
+    cases.push(
+        [
+            include_str!("../../stdlib/array.evg"),
+            include_str!("../../examples/write_borrows.evg"),
+        ]
+        .join("\n"),
+    );
+    cases.push(
+        [
+            include_str!("../../stdlib/swap.evg"),
+            include_str!("../../examples/disjoint_writes.evg"),
+        ]
+        .join("\n"),
+    );
+    cases.push(
+        [
+            include_str!("../../stdlib/counter.evg"),
+            include_str!("../../examples/counter.evg"),
+        ]
+        .join("\n"),
+    );
+    cases.push(
+        [
+            include_str!("../../stdlib/counter.evg"),
+            include_str!("../../examples/drop_helpers.evg"),
+        ]
+        .join("\n"),
+    );
+    cases.push(
+        [
+            include_str!("../../stdlib/counter.evg"),
+            include_str!("../../examples/drop_count.evg"),
+        ]
+        .join("\n"),
+    );
+    cases.push(
+        [
+            include_str!("../../proofs/rc_protocol.evg"),
+            include_str!("../../stdlib/counter.evg"),
+            include_str!("../../proofs/rc_count_refinement.evg"),
+            include_str!("../../examples/rc_count.evg"),
+        ]
+        .join("\n"),
+    );
+    cases.push(
+        [
+            include_str!("../../stdlib/counter.evg"),
+            include_str!("../../proofs/count_handles.evg"),
+            include_str!("../../examples/clone_count.evg"),
+        ]
+        .join("\n"),
+    );
+    cases.push(
+        [
+            include_str!("../../stdlib/counter.evg"),
+            include_str!("../../proofs/count_handles.evg"),
+            include_str!("../../examples/batch_count.evg"),
+        ]
+        .join("\n"),
+    );
+    let deferred = include_str!("../../examples/drop_effects.evg")
+        .split("fn main")
+        .next()
+        .unwrap();
+    for body in [
+        "let count: usize = 0; StoreOnDrop {target: &count, value: 42}; count",
+        "let count: usize = 0; let saved = StoreOnDrop {target: &count, value: 42}.value; count",
+        "let count: usize = 0; let guard = StoreOnDrop {target: &count, value: 7}; guard = StoreOnDrop {target: &count, value: 42}; drop(guard); count",
+        "let count: usize = 0; let guards: [StoreOnDrop; 2] = [StoreOnDrop {target: &count, value: 7}, StoreOnDrop {target: &count, value: 42}]; drop(guards); count",
+        "let count: usize = 0; let sum = StoreOnDrop {target: &count, value: 7}.value + StoreOnDrop {target: &count, value: 42}.value; count",
+    ] {
+        cases.push(format!("{deferred} fn main() -> usize {{{body}}}"));
+    }
+    cases.push(format!("{deferred} fn array_scope(target: &usize) modifies(target) ensures(*target == 42) {{let guards: [StoreOnDrop; 2] = [StoreOnDrop {{target: target, value: 7}}, StoreOnDrop {{target: target, value: 42}}];}} fn main() -> usize {{let count: usize = 0; array_scope(&count); count}}"));
+    for flag in [true, false] {
+        cases.push(format!("{deferred} fn choose(target: &usize, flag: bool) -> usize modifies(target) ensures(result == *target) {{if flag {{StoreOnDrop {{target: target, value: 7}}.value}} else {{StoreOnDrop {{target: target, value: 42}}.value}}}} fn main() -> usize {{let count: usize = 0; choose(&count, {flag})}}"));
+    }
+    // A factory exists only in this test fixture; the shipped credit API
+    // intentionally has no public minting operation.
+    let credit_test = include_str!("../../stdlib/credits.evg").replace(
+        "module credits {",
+        "module credits {ideal fn issue() -> Credit ensures(result.units == 42) {Credit {units: 42}}",
+    );
+    cases.push(format!("{credit_test} {} fn main() -> usize {{ideal let restored = transfer_existing(credits::issue()); proof conserved: credits::units(&restored) == 42; 42}}", include_str!("../../proofs/borrowed_credit_transfer.evg")));
+    cases.push(format!(
+        "{credit_test} {} fn main() -> usize {{use_budget(credits::issue(), 42)}}",
+        include_str!("../../proofs/ideal_credit_bindings.evg")
+    ));
+    cases.push(format!("{credit_test} {} {} fn main() -> usize {{let data: usize = 42; use_borrow_budget(credits::issue(), &data)}}",
+        include_str!("../../stdlib/borrow_credits.evg"), include_str!("../../proofs/borrow_credits.evg")));
+    cases.push(format!("{credit_test} {} {} fn main() -> usize {{let data: usize = 42; use_borrow_transfer(credits::issue(), &data)}}",
+        include_str!("../../stdlib/borrow_credits.evg"), include_str!("../../proofs/borrowed_token_transfer.evg")));
+    let updates = format!(
+        "{credit_test} {} {}",
+        include_str!("../../stdlib/borrow_credits.evg"),
+        include_str!("../../proofs/borrow_credit_updates.evg")
+    );
+    cases.push(format!("{updates} fn main() -> usize {{let count: usize = 42; release_budget(credits::issue(), &count) + 1}}"));
+    cases.push(format!("{updates} fn main() -> usize {{ideal let parts = credits::split(credits::issue(), 1); ideal let credits::Split {{left, right}} = parts; let count: usize = 1; release_budget(left, &count) + 42}}"));
+    cases.push(format!("{credit_test} {} {} fn main() -> usize {{let data: usize = 42; let carrier = carry(credits::issue(), &data); let observed = read_carrier(&carrier); consume_carrier(carrier) + observed - 42}}",
+        include_str!("../../stdlib/borrow_credits.evg"), include_str!("../../proofs/carried_borrow_credits.evg")));
+    let indexed = include_str!("../../examples/indexed_borrows.evg")
+        .split("fn main")
+        .next()
+        .unwrap();
+    for i in 0..2 {
+        for j in 0..2 {
+            cases.push(format!(
+                "{indexed} fn main() -> usize {{may_alias([7, 1], {i}, {j})}}"
+            ));
+        }
+    }
+    let swap = include_str!("../../stdlib/swap.evg");
+    cases.push(format!("{swap} fn change(data: [usize; 2], i: usize, j: usize) -> usize where(i < 2 && j < 2 && i != j) ensures(result == data[j]) {{swap_usize(&data[i], &data[j]); data[i]}} fn main() -> usize {{change([7, 42], 0, 1)}}"));
+    cases.push("fn signed(data: &[usize; 2], index: isize) -> &usize where(index >= 0 && index < 2) borrows(&(*data)[index]) {&(*data)[index]} fn main() -> usize {let a: [usize; 2] = [7, 42]; *signed(&a, 1)}".into());
+    cases.push("fn change(data: [bool; 2], i: usize, j: usize) -> bool where(i < 2 && j < 2) ensures(i == j => result) {let a = &data[i]; let b = &data[j]; *a = true; *b} fn main() -> bool {change([false, false], 0, 0)}".into());
+    let declarations = "type Resource struct {tag: usize} where (tag == 7); impl Drop for Resource {fn drop(self){}} fn make() -> Resource {Resource {tag: 7}} fn consume(r: Resource) -> usize {r.tag}";
+    for body in [
+        "let r = make(); let s = r; s.tag",
+        "let r = make(); r = make(); r.tag",
+        "let r = make(); r = move(r); r.tag",
+        "Resource {tag: 7}; 7",
+        "make().tag",
+        "let r = make(); let s = if true {move(r)} else {move(r)}; s.tag",
+        "let r = make(); if true {move(r)} else {move(r)}; 7",
+        "let r = make(); drop(r); 7",
+        "let r = make(); consume(r)",
+        "[Resource {tag: 7}]; 7",
+        "let a: [Resource; 2] = [make(), make()]; a[0].tag",
+        "let a: [Resource; 0] = []; 7",
+    ] {
+        cases.push(format!("{declarations} fn main() -> usize {{{body}}}"));
+    }
+    cases.extend(
+        crate::verify::array_model::concrete_cases()
+            .into_iter()
+            .chain(crate::verify::array_model::record_cases())
+            .map(|(source, _)| source),
+    );
+    let pair = "type Left struct {} impl Drop for Left {fn drop(self){}} type Right struct {} impl Drop for Right {fn drop(self){}} type Pair struct {left: Left, right: Right} fn take(p: Pair) -> Left {let Pair {left, right} = p; left}";
+    for body in [
+        "let p = Pair {left: Left {}, right: Right {}}; p.left = Left {}; 42",
+        "let p = Pair {left: Left {}, right: Right {}}; p = Pair {left: take(p), right: Right {}}; 42",
+    ] {
+        cases.push(format!("{pair} fn main() -> usize {{{body}}}"));
+    }
+    cases.push("type Owner struct {tag: usize} where (tag == 7); impl Drop for Owner {fn drop(self){}} type Holder struct {reference: &usize, tag: usize} where (fact live = *reference == 7; live); impl Drop for Holder {fn drop(self){proof receiver_valid: self::live;}} fn main() -> usize {let owner = Owner {tag: 7}; let value = Holder {reference: &owner.tag, tag: 42}.tag; drop(owner); value}".into());
+    for (index, source) in cases.iter().enumerate() {
+        let program = verify(source).unwrap_or_else(|error| panic!("{error}: {source}"));
+        let (value, events) = program.run_with_events().unwrap();
+        let expected = match value {
+            crate::runtime::Value::Machine(_, n) => i32::from(n as u8),
+            crate::runtime::Value::Bool(b) => i32::from(b),
+            crate::runtime::Value::Unit => 0,
+            other => panic!("unexpected native value: {other}"),
+        };
+        let mut modes = vec![(TraceMode::Value, expected)];
+        if !program.drops.is_empty() {
+            let ids = program
+                .drops
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (format!("drop {name}"), i as u64 + 1))
+                .collect::<BTreeMap<_, _>>();
+            let order = events.iter().fold(0u64, |h, event| {
+                h.wrapping_mul(167).wrapping_add(ids[event])
+            });
+            modes.push((TraceMode::Count, i32::from(events.len() as u8)));
+            modes.push((TraceMode::Order, i32::from(order as u8)));
+        }
+        for (mode_index, (mode, expected)) in modes.into_iter().enumerate() {
+            let binary =
+                emit_mode(&program, mode).unwrap_or_else(|error| panic!("{error}: {source}"));
+            assert_eq!(binary, emit_mode(&program, mode).unwrap());
+            assert_eq!(&binary[..4], b"\x7fELF");
+            let path = directory.join(format!("{index}-{mode_index}"));
+            let status = execute_test_binary(&path, &binary, source);
+            assert_eq!(
+                status.code(),
+                Some(expected),
+                "native/interpreter disagreement: {source}"
+            );
+        }
+    }
+    // These exceed the interpreter's separate host-stack budget; execute
+    // bounded native images directly and check the exact guard boundary.
+    let recursive = "fn count(n: usize) -> usize ensures(result == n) decreases(n) {if n == 0 {0} else {count(n - 1) + 1}}";
+    for (n, expected) in [(127, 127), (128, 125), (1000, 125)] {
+        let source = format!("{recursive} fn main() -> usize {{count({n})}}");
+        let program = verify(&source).unwrap();
+        let binary = emit(&program).unwrap();
+        let status = execute_test_binary(&directory.join(format!("limit-{n}")), &binary, &source);
+        assert_eq!(status.code(), Some(expected));
+    }
+    let spin = "fn spin() -> usize ensures(false) {spin()} fn main() -> usize {spin()}";
+    let binary = emit(&verify(spin).unwrap()).unwrap();
+    assert_eq!(
+        execute_test_binary(&directory.join("divergent"), &binary, spin).code(),
+        Some(125)
+    );
+    let source = format!("{recursive} fn main() -> usize {{count(127) + count(127)}}");
+    let binary = emit(&verify(&source).unwrap()).unwrap();
+    assert_eq!(
+        execute_test_binary(&directory.join("repeated-recursion"), &binary, &source).code(),
+        Some(254)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
