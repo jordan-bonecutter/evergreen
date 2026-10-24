@@ -1,5 +1,6 @@
-//! Give recursive bootstrap passes a fixed stack independently of their caller.
-//! Semantic depth and work limits remain mandatory; this is not a resource proof.
+//! Run recursive compiler operations on a worker thread with a 16 MiB stack.
+//! This keeps stack capacity consistent across CLI, tests, and library callers.
+//! Each operation still enforces its own recursion-depth and work limits.
 pub(crate) fn run<T: Send>(
     name: &str,
     operation: impl FnOnce() -> Result<T, String> + Send,
