@@ -18,6 +18,20 @@ module borrow_credits {
         Token {budget: budget, target: target}
     }
 
+    // Forward a write to an opaque credit region without knowing its fields.
+    // The target pointer is outside that footprint and remains unchanged.
+    ideal fn take(token: &Token, amount: nat) -> Token
+    where(amount <= units(token))
+    modifies(&(*token).budget)
+    borrows(target: (*token).target)
+    ensures(units(&result) == amount
+        && units(token) + units(&result) == old(units(token))) {
+        Token {
+            budget: credits::take(&(*token).budget, amount),
+            target: (*token).target
+        }
+    }
+
     ideal fn split(token: Token, amount: nat) -> Split
     where(amount <= units(&token))
     borrows(left.target: token.target, right.target: token.target)

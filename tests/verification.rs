@@ -107,6 +107,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/conditional_drop.evg",
         "examples/conditional_contracts.evg",
         "examples/old_selection.evg",
+        "examples/old_accessors.evg",
         "examples/array_frame_history.evg",
         "examples/array_branch_history.evg",
         "examples/array_model.evg",
@@ -172,6 +173,7 @@ fn ordered_proof_units_share_checked_contracts() {
             "proofs/borrow_credit_updates.evg",
             "proofs/carried_borrow_credits.evg",
             "proofs/borrowed_credit_transfer.evg",
+            "proofs/borrowed_token_transfer.evg",
         ])
         .output()
         .unwrap();

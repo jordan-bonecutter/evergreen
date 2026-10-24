@@ -905,7 +905,10 @@ impl<'a> Context<'a> {
             let supported_region = match &*place.ty {
                 Ty::Machine(_) | Ty::Bool => true,
                 Ty::Nat | Ty::Int => erased,
-                Ty::Record(_) => self.history_element(&place.ty),
+                Ty::Record(_) => {
+                    self.history_element(&place.ty)
+                        || erased && self.erased_ty(&place.ty) && self.scalar_field_value(&place.ty)
+                }
                 Ty::Array(element, _) => {
                     matches!(**element, Ty::Machine(_) | Ty::Bool)
                         || matches!(**element, Ty::Record(_)) && self.history_element(element)
@@ -1281,6 +1284,39 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
+    fn entry_observation(&self, expression: &Expr) -> bool {
+        if place_index_expression(expression) {
+            return true;
+        }
+        match &expression.kind {
+            Kind::Call(name, args) => {
+                let scalar_call = matches!(name.as_str(), "int" | "nat")
+                    || self.functions.get(name).is_some_and(|function| {
+                        !function.partial
+                            && function.modifies.is_empty()
+                            && matches!(
+                                function.ret,
+                                Type::Int | Type::Nat | Type::Bool | Type::Machine(_) | Type::Unit
+                            )
+                    });
+                scalar_call && args.iter().all(|arg| self.entry_observation(arg))
+            }
+            Kind::Field(base, _) => self.entry_observation(base),
+            Kind::Index(base, index) | Kind::Binary(_, base, index) => {
+                self.entry_observation(base) && self.entry_observation(index)
+            }
+            Kind::Unary(op, value) if matches!(op.as_str(), "-" | "*" | "!") => {
+                self.entry_observation(value)
+            }
+            Kind::If(condition, yes, no) => {
+                self.entry_observation(condition)
+                    && self.entry_observation(yes)
+                    && self.entry_observation(no)
+            }
+            _ => false,
+        }
+    }
+
     fn old_expression(&mut self, expression: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
         if let Some(key) = Self::old_key(expression) {
             return self
@@ -1289,9 +1325,9 @@ impl<'a> Context<'a> {
                 .cloned()
                 .ok_or_else(|| format!("{key} is not a function entry parameter"));
         }
-        if !place_index_expression(expression) {
+        if !self.entry_observation(expression) {
             return Err(
-                "old snapshots require pure scalar arithmetic or storage projections".into(),
+                "old snapshots require storage observations or total scalar calls without write effects".into(),
             );
         }
         let mut entry = self
@@ -2469,7 +2505,10 @@ impl<'a> Context<'a> {
     }
     // Extensional array histories can compare these values structurally.
     // Reference identity, nested arrays, and owning values need their own rules.
-    fn history_element(&self, t: &Ty) -> bool {
+    // Reference-free scalar trees can be havoced without changing storage
+    // identity, layouts, or hidden reference provenance. Affinity is a separate
+    // condition: array histories need copyable values, proof effects do not.
+    fn scalar_field_value(&self, t: &Ty) -> bool {
         fn fields(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
             match t {
                 Type::Named(name) => structs.get(name).is_some_and(|definition| {
@@ -2480,12 +2519,13 @@ impl<'a> Context<'a> {
             }
         }
         match t {
-            Ty::Record(name) => {
-                !self.ty_is_affine(t) && fields(&Type::Named(name.clone()), self.structs)
-            }
+            Ty::Record(name) => fields(&Type::Named(name.clone()), self.structs),
             Ty::Ref(_) | Ty::Array(..) => false,
             _ => true,
         }
+    }
+    fn history_element(&self, t: &Ty) -> bool {
+        !self.ty_is_affine(t) && self.scalar_field_value(t)
     }
     fn ty_has_reference(&self, t: &Ty) -> bool {
         match t {
@@ -4133,6 +4173,75 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn opaque_ideal_effect_regions_forward_and_recheck_aliases() {
+        let credits = include_str!("../stdlib/credits.evg").replace("module credits {", "module credits {ideal fn issue(n: nat) -> Credit ensures(result.units == n) {Credit {units: n}}");
+        let transfer = include_str!("../proofs/borrowed_credit_transfer.evg");
+        let library = format!(
+            "{credits} {} {transfer} {}",
+            include_str!("../stdlib/borrow_credits.evg"),
+            include_str!("../proofs/borrowed_token_transfer.evg")
+        );
+        let source = format!("{library} fn main() -> usize {{let data: usize = 42; use_borrow_transfer(credits::issue(42), &data)}}");
+        let (program, bundle) = prove(&source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(&source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let pair = "ideal fn take_pair(a: &credits::Credit, b: &credits::Credit) -> credits::Split where(credits::units(a) >= 1 && credits::units(b) >= 1) modifies(a, b) ensures(credits::units(a) + 1 == old(credits::units(a)) && credits::units(b) + 1 == old(credits::units(b))) {credits::Split {left: credits::take(a, 1), right: credits::take(b, 1)}}";
+        let separate = format!("{credits} {pair} fn main() -> usize {{ideal let a = credits::issue(1); ideal let b = credits::issue(1); ideal let parts = take_pair(&a, &b); proof empty: credits::units(&a) == 0 && credits::units(&b) == 0; 42}}");
+        assert_eq!(verify(&separate).unwrap().run().unwrap().to_string(), "42");
+        let alias = separate.replace("take_pair(&a, &b)", "take_pair(&a, &a)");
+        let error = verify(&alias).unwrap_err();
+        assert!(
+            error.contains("body recheck failed")
+                && error.contains("precondition of credits::take"),
+            "{error}"
+        );
+        let hidden_reference =
+            format!("{library} ideal fn bad(t: &borrow_credits::Token) modifies(t) {{}}");
+        assert!(verify(&hidden_reference)
+            .unwrap_err()
+            .contains("modifies targets require"));
+        let runtime_owner = "affine type Owner struct {n: usize} fn bad(r: &Owner) modifies(r) {}";
+        assert!(verify(runtime_owner)
+            .unwrap_err()
+            .contains("modifies targets require"));
+    }
+
+    #[test]
+    fn old_scalar_accessors_use_entry_storage_and_require_pure_total_calls() {
+        let source = include_str!("../examples/old_accessors.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let wrong = source.replace("old(read(value)) == 41", "old(read(value)) == 42");
+        assert!(verify(&wrong).unwrap_err().contains("postcondition"));
+        let strengthened = source.replace(
+            "-> usize ensures(result == *value)",
+            "-> usize where(*value == 42) ensures(result == *value)",
+        );
+        assert!(verify(&strengthened)
+            .unwrap_err()
+            .contains("precondition of read"));
+        for source in [
+            "fn write(r: &usize) -> usize modifies(r) {*r = 42; 42} fn bad(r: &usize) {proof wrong: old(write(r)) == 42;}",
+            "fn endless() -> usize {endless()} fn bad() {proof wrong: old(endless()) == 42;}",
+            "fn identity(r: &usize) -> &usize borrows(r) {r} fn bad(r: &usize) {proof wrong: old(identity(r)) == r;}",
+        ] {
+            let error = verify(source).unwrap_err();
+            assert!(error.contains("old snapshots require"), "{error}");
+        }
+    }
+
     #[test]
     fn borrowed_credit_transfer_conserves_quantity_and_rejects_overdrafts() {
         let credits = include_str!("../stdlib/credits.evg");

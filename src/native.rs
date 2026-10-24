@@ -1229,6 +1229,7 @@ mod tests {
             include_str!("../examples/conditional_drop.evg"),
             include_str!("../examples/conditional_contracts.evg"),
             include_str!("../examples/old_selection.evg"),
+            include_str!("../examples/old_accessors.evg"),
             include_str!("../examples/array_frame_history.evg"),
             include_str!("../examples/array_branch_history.evg"),
             include_str!("../examples/array_model.evg"),
@@ -1385,6 +1386,8 @@ mod tests {
         ));
         cases.push(format!("{credit_test} {} {} fn main() -> usize {{let data: usize = 42; use_borrow_budget(credits::issue(), &data)}}",
             include_str!("../stdlib/borrow_credits.evg"), include_str!("../proofs/borrow_credits.evg")));
+        cases.push(format!("{credit_test} {} {} fn main() -> usize {{let data: usize = 42; use_borrow_transfer(credits::issue(), &data)}}",
+            include_str!("../stdlib/borrow_credits.evg"), include_str!("../proofs/borrowed_token_transfer.evg")));
         let updates = format!(
             "{credit_test} {} {}",
             include_str!("../stdlib/borrow_credits.evg"),

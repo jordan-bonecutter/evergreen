@@ -446,6 +446,15 @@ can establish the bound for an old indexed read. Local bindings introduced after
 entry, effectful calls, and runtime uses of `old` are rejected. Snapshots do not
 recreate consumed ownership.
 
+Total scalar functions without write effects can be called inside `old`, such
+as `old(credits::units(credit))` for an incoming reference to an opaque credit.
+Arguments and accessor preconditions are checked against entry storage, and
+the call retains the defining module's representation access. This permits
+public conservation contracts without revealing private fields. Calls returning
+references or aggregates, potentially divergent calls, and address construction
+inside entry expressions remain unsupported. `examples/old_accessors.evg`
+checks both numeric and Boolean accessors against a changed live pointee.
+
 `old((*data)[index])` uses the entry index; an index outside `old`, as in
 `old(*data)[index]`, uses the surrounding proof's binding. References remain
 reference values: `old(handle.count)` snapshots the pointer, while
@@ -1257,9 +1266,14 @@ Erasure follows the target slot, not the pointer value: an ideal record can
 contain `target: &usize`, but an ideal function cannot declare
 `modifies((*record).target)` to mutate that runtime pointee. Entering a nested
 reference resets the proof-storage classification. Mathematical `int` and `nat`
-slots can be modified; whole affine aggregates and reference-slot replacement
-remain unsupported effect regions. Copyable scalar-field records retain the
-ordinary aggregate effect support. Every write during an open update, including
+slots can be modified. Whole affine ideal records are supported when their
+representation is an erased tree of scalar fields with no references or arrays.
+This allows a client to declare `modifies(credit)` for opaque credits and forward
+an authorized library write without exposing private fields. It grants neither
+permission to access the representation nor permission to copy the affine value.
+Whole runtime affine records, reference-bearing ideal regions, and reference-slot
+replacement remain unsupported effect regions. Copyable scalar-field records
+retain the ordinary aggregate effect support. Every write during an open update, including
 nested ideal calls, checks all retained invariants against actual shared memory.
 `examples/ideal_borrow_writes.evg` exercises forwarding, proof-field writes,
 transactional invariant restoration, erasure, and certificate replay.
@@ -1271,8 +1285,14 @@ quantity using `old`. Sequential calls see the updated balance; overdrafts fail
 at the next precondition. `proofs/borrowed_credit_transfer.evg` checks taking and
 rejoining existing credits. This API still has no mint operation and grants no
 allocation authority. Its footprint names its private scalar slot in the
-defining module. Abstract forwarding footprints for opaque affine regions are
-not yet supported; this example owns the incoming credit locally.
+defining module. `take_existing` forwards through a whole opaque credit footprint
+and expresses conservation through the public accessor in `old`. The borrowed
+token library forwards through its `budget` field in `borrow_credits::take`,
+leaving the target reference outside that footprint. Check
+`stdlib/credits.evg stdlib/borrow_credits.evg proofs/borrowed_token_transfer.evg`
+for taking and rejoining an existing token while preserving its target identity.
+Overlapping input regions recheck the body on actual shared storage; two aliases
+cannot independently withdraw the same last credit.
 
 `examples/ideal_fields.evg` checks affine witnesses carried through runtime
 records, complete patterns, selective proof-field updates, and parent/child Drop
