@@ -307,7 +307,18 @@ impl Parser {
             return Err(self.err("syntax nesting limit reached"));
         }
         self.depth += 1;
-        let result = if self.eat("&") {
+        let result = if self.eat("&&") {
+            // The lexer also uses && for logical conjunction. In a type it is
+            // two reference constructors, with both counted toward depth.
+            if self.depth >= 128 {
+                Err(self.err("syntax nesting limit reached"))
+            } else {
+                self.depth += 1;
+                let nested = self.ty();
+                self.depth -= 1;
+                nested.map(|ty| Type::Ref(Box::new(Type::Ref(Box::new(ty)))))
+            }
+        } else if self.eat("&") {
             Ok(Type::Ref(Box::new(self.ty()?)))
         } else if self.eat("(") {
             self.expect(")")?;

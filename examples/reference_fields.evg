@@ -1,0 +1,36 @@
+// These are borrowed counter views, not reference-count ownership or allocation.
+type CounterView struct {count: &usize}
+type NestedView struct {counter: CounterView}
+
+fn increment_view(view: CounterView) -> &usize
+where (*view.count < usize::MAX)
+modifies(view.count)
+borrows(view.count)
+ensures (*result == old(*view.count) + 1) {
+    *view.count = *view.count + 1;
+    view.count
+}
+
+fn increment_nested(view: &NestedView) -> &usize
+where (*(*view).counter.count < usize::MAX)
+modifies((*view).counter.count)
+borrows((*view).counter.count)
+ensures (*result == old(*(*view).counter.count) + 1) {
+    increment_view((*view).counter)
+}
+
+fn increment_indirect(count: &&usize)
+where (**count < usize::MAX)
+modifies(*count)
+ensures (**count == old(**count) + 1) {
+    **count = **count + 1;
+}
+
+fn main() -> usize ensures (result == 42) {
+    let count: usize = 40;
+    let pointer = &count;
+    increment_indirect(&pointer);
+    let view = NestedView {counter: CounterView {count: pointer}};
+    let updated = increment_nested(&view);
+    *updated
+}

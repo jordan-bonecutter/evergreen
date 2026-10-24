@@ -158,6 +158,26 @@ theorem modifies_sequence (region : Region) (before middle after : Store)
   intro queried outside
   rw [second queried outside, first queried outside]
 
+-- A nominal invariant can observe several planes through stored references.
+-- Its read footprint must include those targets, not just the record's header.
+def ReadsOnly (property : Store → Prop) (footprint : Region) : Prop :=
+  ∀ before after, (∀ address, footprint address → before address = after address) →
+    (property before ↔ property after)
+
+theorem frame_invariant (property : Store → Prop) (reads writes : Region)
+    (before after : Store) (observations : ReadsOnly property reads)
+    (effects : Modifies writes before after)
+    (separate : ∀ address, reads address → ¬ writes address)
+    (valid : property before) : property after := by
+  apply (observations before after ?_).mp valid
+  intro address observed
+  exact (effects address (separate address observed)).symm
+
+example (header counter : Address) (separate : header ≠ counter) :
+    write (fun _ => 1) counter 0 header = 1 ∧
+      ¬ (write (fun _ => 1) counter 0 counter > 0) := by
+  simp [write, separate]
+
 def replaceRegion (store replacement : Store) (region : Region)
     [DecidablePred region] : Store :=
   fun queried => if region queried then replacement queried else store queried

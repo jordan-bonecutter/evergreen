@@ -380,15 +380,31 @@ places share one incoming array's alias model. Run the example with
 `evg run stdlib/array.evg examples/array_updates.evg`; the same ordered unit
 supports certificate replay and native compilation.
 
-Write contracts support multiple reference parameters,
-including read-only parameters omitted from `modifies`. At each call, every
-write target must be disjoint from every other reference parameter’s region. The
-checker compares actual planes and projection paths: two distinct fields or
-array elements in one plane are disjoint. Overlapping arguments passed through
-distinct reference parameters are rejected. Read-only arguments may alias each other. This condition justifies
-the independent parameter storage used while checking the function body; broader
-overlapping effects need stronger alias-aware summaries. Reference-containing
-aggregate parameters remain unsupported in modifying functions.
+Write contracts support references stored in record parameters and behind other
+references, including `modifies(view.count)`, `modifies((*view).counter.count)`,
+and `modifies(*count)` for `count: &&usize`. Each incoming reference is identified
+by its structural argument path. At calls, every write target must be disjoint
+from the region of every other incoming reference, including nested fields and
+an enclosing reference from the same parameter. This checks hidden aliases that
+an independent-field body model cannot safely assume away. Read-only references
+may alias each other. Several projections from the same reference path still
+form a permission union and may coincide.
+
+The checker compares actual planes and projection paths: distinct fields or
+proved-distinct array cells can be disjoint within one plane. Pointer equality
+does not merge independent reference fields. Modifying interfaces still reject
+opaque arrays whose elements contain references, because their hidden reference
+graph cannot yet be summarized. `examples/reference_fields.evg` checks borrowed
+counter views, nested fields, double indirection, and returned aliases. These
+views do not represent reference-count ownership or allocation.
+
+Function bodies must preserve their original incoming typed reference views,
+even if local parameters are rebound. Calls can use that checked type-preservation
+guarantee alongside the explicit postcondition. They also recheck changed storage
+roots and the caller's typed views; caller-only enclosing invariants must follow
+from the callee's guarantees. Array elements containing references receive the
+same validity checks as record fields. An unused plain stale reference may remain
+as `never`; observing it still fails generation checking.
 
 `stdlib/swap.evg` implements verified `swap_usize` and `swap_bool` with
 `modifies(left, right)` and entry-value postconditions. Run its example with
@@ -598,8 +614,9 @@ borrows(&(*pair).right) {&(*pair).right}
 the exact incoming reference or field projection returned, not merely a value
 with equal contents. The checker compares plane identity, generation, and
 projection independently of arithmetic proofs or `trustme`. The target must
-belong to a reference parameter's incoming plane. References to local values,
-parameter slots, and a different parameter are rejected. Calls instantiate the
+come from an incoming reference value, including a reference stored in a record
+parameter. Returning a local, a parameter slot, or a reference different from the
+named origin is rejected. Calls instantiate the
 contract with the actual caller reference, so later same-layout writes remain
 visible and dropping/replacing consumed storage cannot revive the reference.
 
@@ -630,6 +647,7 @@ The optional Lean suite now checks three independent specifications:
 - `proofs/MemoryContracts.lean` models fixed-layout scalar addresses and proves
   that disjoint writes commute, writes preserve other addresses, and the swap
   postcondition and involution hold. Distinct fields of one plane are disjoint.
+  Its invariant-framing rule accounts for read footprints spanning multiple planes.
 - `proofs/Planes.lean` also proves that same-layout writes preserve references
   and restoring dropped storage does not revive old generations.
 
