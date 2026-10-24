@@ -159,17 +159,9 @@ impl Context<'_> {
             self.capture_old(&method)?;
             let inputs = self.incoming_references(&method, true)?;
             let writes = self.write_places(&method, &inputs)?;
-            for write in &writes {
-                for input in &inputs {
-                    self.charge_value_work(1)?;
-                    if input.origin != write.origin
-                        && input.reference == write.reference
-                        && !self.paths_disjoint(&write.path, &input.path)?
-                    {
-                        return Err("cleanup write overlaps another incoming reference or disjointness is unproved".into());
-                    }
-                }
-            }
+            // This method is elaborated against the actual receiver below.
+            // Its postcondition is proved again, so overlapping ports do not
+            // require the independent-input summary used by modular calls.
             let mut changed = BTreeSet::new();
             for write in &writes {
                 let id = self.memory.plane(write.reference)?;

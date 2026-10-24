@@ -32,4 +32,10 @@ module count_handles {
         let incremented = counter_increment((*handle).release.count);
         Handle {release: Release {count: (*handle).release.count}}
     }
+
+    // Consumes both handles. Shared counters require a body recheck so that
+    // the second handle is still valid after the first handle's release.
+    fn release_pair(handles: [Handle; 2])
+    modifies(handles[0].release.count, handles[1].release.count) {
+    }
 }

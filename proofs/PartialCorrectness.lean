@@ -58,6 +58,22 @@ theorem correct_sequence {Input Middle Output : Type}
     have intermediate := first_checked input value allowed step
     exact second_checked value output intermediate (by simpa [step] using returned)
 
+-- An independent-port summary covers only its disjoint input configurations.
+-- The overlapping configurations need their own proof of the SAME execution,
+-- such as checking the body with actual shared storage. Neither branch alone
+-- licenses assuming its postcondition in the other configuration.
+theorem correct_by_alias_partition {Input Output : Type}
+    (pre separate : Input → Prop) (run : Input → Option Output)
+    (post : Input → Output → Prop)
+    (disjoint_checked : Correct (fun input => pre input ∧ separate input) run post)
+    (overlap_checked : Correct (fun input => pre input ∧ ¬ separate input) run post) :
+    Correct pre run post := by
+  classical
+  intro input output allowed returned
+  by_cases disjoint : separate input
+  · exact disjoint_checked input output ⟨allowed, disjoint⟩ returned
+  · exact overlap_checked input output ⟨allowed, disjoint⟩ returned
+
 example : Correct (fun _ : Unit => True) (fun _ => (none : Option Nat))
     (fun _ _ => False) := nonreturning_has_any_partial_postcondition _ _
 

@@ -8,6 +8,7 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
+mod bodies;
 mod cleanup;
 mod returns;
 
@@ -2992,6 +2993,7 @@ impl<'a> Context<'a> {
                     self.incoming_references(f, true)?
                 };
                 let writes = self.write_places(f, &inputs)?;
+                let mut overlaps = false;
                 for write in &writes {
                     for input in &inputs {
                         self.charge_value_work(1)?;
@@ -3001,7 +3003,7 @@ impl<'a> Context<'a> {
                         if input.reference == write.reference
                             && !self.paths_disjoint(&write.path, &input.path)?
                         {
-                            return Err(format!("line {}: writable place from {} overlaps incoming reference {} or disjointness is unproved", e.line, write.origin, input.origin));
+                            overlaps = true;
                         }
                     }
                 }
@@ -3025,58 +3027,73 @@ impl<'a> Context<'a> {
                     )?;
                 }
                 let ret = self.resolve(&f.ret)?;
-                let value = if !f.borrows.is_empty() {
-                    let aliases = self.return_aliases(f, None)?;
-                    self.return_shape(&ret, &mut Vec::new(), &aliases)?
-                } else {
-                    self.arbitrary(&ret)?
-                };
                 let mut changed_roots = BTreeSet::new();
-                for write in writes {
+                for write in &writes {
                     let id = self.memory.plane(write.reference)?;
                     changed_roots.insert(id);
                     let owned = saved_roots.values().any(|p| *p == id);
                     if !self.write_permitted(write.reference, &write.path, owned)? {
                         return Err(format!("line {}: call to {name} writes through a parameter without a matching modifies contract", e.line));
                     }
-                    let mut new = self.arbitrary(&write.ty)?;
-                    self.charge_value_work(symbol_weight(self.memory.read(write.reference)?)?)?;
-                    let mut root = self.memory.read(write.reference)?.clone();
-                    self.preserve_views(project(&root, &write.path)?, &mut new)?;
-                    self.replace_projection(&mut root, &write.path, new)?;
-                    self.memory.write(id, root.clone(), false)?;
+                }
+                let value = if overlaps {
+                    self.check_aliased_body(f, &ret, writes, inputs).map_err(|error| {
+                        format!("line {}: call to {name} overlaps incoming references; body recheck failed: {error}", e.line)
+                    })?
+                } else {
+                    let value = if !f.borrows.is_empty() {
+                        let aliases = self.return_aliases(f, None)?;
+                        self.return_shape(&ret, &mut Vec::new(), &aliases)?
+                    } else {
+                        self.arbitrary(&ret)?
+                    };
+                    for write in writes {
+                        let id = self.memory.plane(write.reference)?;
+                        let mut new = self.arbitrary(&write.ty)?;
+                        self.charge_value_work(symbol_weight(self.memory.read(write.reference)?)?)?;
+                        let mut root = self.memory.read(write.reference)?.clone();
+                        self.preserve_views(project(&root, &write.path)?, &mut new)?;
+                        self.replace_projection(&mut root, &write.path, new)?;
+                        self.memory.write(id, root, false)?;
+                    }
+                    for input in &inputs {
+                        // Each input's declared type is an implicit return contract.
+                        // The body is checked to preserve these views even if the
+                        // local parameter is rebound. Caller-only enclosing types
+                        // are obligations below, not assumptions here.
+                        self.charge_value_work(symbol_weight(project(
+                            self.memory.read(input.reference)?,
+                            &input.path,
+                        )?)?)?;
+                        let target =
+                            project(self.memory.read(input.reference)?, &input.path)?.clone();
+                        self.assume_element_type(&target)?;
+                    }
+                    if !f.borrows.is_empty() {
+                        self.assume_return_type(&value, &ret)?;
+                    }
+                    self.env.insert("result".into(), value.clone());
+                    if let Some(post) = &f.post {
+                        let p = self.proposition(post)?;
+                        self.assume(&p)?;
+                    }
+                    // Alias contracts describe entry storage. After applying the
+                    // checked postcondition, revalidate the saved reference and its
+                    // current target. Havoced contents need not satisfy nominal
+                    // invariants until that postcondition has constrained them.
+                    if !f.borrows.is_empty() && !f.modifies.is_empty() {
+                        self.validate_argument(&value, e.line)?;
+                    }
+                    value
+                };
+                for root in &changed_roots {
+                    self.charge_value_work(symbol_weight(self.memory.get(*root)?)?)?;
+                    let stored = self.memory.get(*root)?.clone();
                     for (binding, plane) in &saved_roots {
-                        if *plane == id {
-                            saved.insert(binding.clone(), root.clone());
+                        if plane == root {
+                            saved.insert(binding.clone(), stored.clone());
                         }
                     }
-                }
-                for input in &inputs {
-                    // Each input's declared type is an implicit return contract.
-                    // The body is checked to preserve these views even if the
-                    // local parameter is rebound. Caller-only enclosing types
-                    // are obligations below, not assumptions here.
-                    self.charge_value_work(symbol_weight(project(
-                        self.memory.read(input.reference)?,
-                        &input.path,
-                    )?)?)?;
-                    let target = project(self.memory.read(input.reference)?, &input.path)?.clone();
-                    self.assume_element_type(&target)?;
-                }
-                if !f.borrows.is_empty() {
-                    self.assume_return_type(&value, &ret)?;
-                }
-                self.env.insert("result".into(), value.clone());
-                if let Some(post) = &f.post {
-                    let p = self.proposition(post)?;
-                    self.assume(&p)?;
-                }
-                // Alias contracts describe entry storage. After applying the
-                // checked postcondition, revalidate the saved reference and its
-                // current target. Havoced contents need not satisfy nominal
-                // invariants until that postcondition has constrained them.
-                if !f.borrows.is_empty() && !f.modifies.is_empty() {
-                    self.validate_argument(&value, e.line)?;
                 }
                 self.env = saved;
                 self.roots = saved_roots;
@@ -3689,38 +3706,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             ctx.measure = Some(ctx.nonnegative(measure, "nonnegative recursion measure")?);
             ctx.phase = execution;
         }
-        let contract_env = ctx.clone_env()?;
-        let borrowed_result = ctx.return_aliases(f, Some(&inputs))?;
-        for statement in &f.body {
-            ctx.statement(statement)?;
-        }
-        let value = ctx.scoped_eval(&f.result, Some(&ret))?;
-        ctx.check_return_aliases(&value, &borrowed_result, f.result.line)?;
-        ctx.validate_live(f.result.line)?;
-        ctx.finish_scope(f)?;
-        if type_has_reference(&f.ret, &structs) {
-            ctx.validate_argument(&value, f.result.line)?;
-        }
-        if let Some(post) = &f.post {
-            ctx.phase = Phase::Specification;
-            ctx.env = contract_env;
-            ctx.roots.clear();
-            ctx.env.insert("result".into(), value);
-            let local_facts = std::mem::take(&mut ctx.facts);
-            let p = ctx.eval(post, Some(&Ty::Bool))?.proposition()?;
-            ctx.facts = local_facts;
-            ctx.prove_with(
-                &p,
-                &format!("postcondition of {}", f.name),
-                post.line,
-                f.proof.as_deref(),
-            )?;
-        } else if f.proof.is_some() {
-            return Err(format!(
-                "line {}: a function proof block requires an ensures proposition",
-                f.line
-            ));
-        }
+        ctx.check_function_body(f, &ret, &inputs)?;
         obligations += ctx.obligations;
         f.partial = ctx.partial_execution;
         if crate::effects::invariant_independent(f, &functions, &helpers) {
@@ -3744,6 +3730,106 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn overlapping_calls_reprove_bodies_contracts_and_return_aliases() {
+        let source = include_str!("../examples/aliasing_calls.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        assert!(verify(&source.replace(
+            "proof self_swap: value == 7;",
+            "proof self_swap: value == 42;"
+        ))
+        .is_err());
+        let arrays = "fn change(data: &[usize; 2], value: &usize) modifies(data) ensures((*data)[0] == old(*value)) {(*data)[0] = *value;} fn main() -> usize ensures(result == 42) {let data: [usize; 2] = [7, 42]; change(&data, &data[1]); data[0]}";
+        assert_eq!(verify(arrays).unwrap().run().unwrap().to_string(), "42");
+        let scope = "fn write(a: &usize, b: &usize) modifies(a) {proof saved: *b <= usize::MAX; *a = 42;} fn main() -> usize ensures(result == 42) {let n: usize = 7; proof saved: n == 7; write(&n, &n); n}";
+        assert_eq!(verify(scope).unwrap().run().unwrap().to_string(), "42");
+        assert!(verify(&scope.replace(
+            "write(&n, &n); n",
+            "write(&n, &n); proof stale: n == 7 by {exact saved}; n"
+        ))
+        .is_err());
+        let private = "module hidden {opaque type View struct {a: &usize, b: &usize} fn set(view: View) modifies(view.a) {*view.a = 42;} fn write(a: &usize, b: &usize) -> usize modifies(a) {let view = View {a: a, b: b}; set(view); *b}} fn main() -> usize ensures(result == 42) {let n: usize = 7; hidden::write(&n, &n)}";
+        assert_eq!(verify(private).unwrap().run().unwrap().to_string(), "42");
+        let ordered = "fn sequence(first: &usize, second: &usize) modifies(first, second) {*first = 7; *second = 42;} fn main() -> usize ensures(result == 42) {let n: usize = 0; sequence(&n, &n); n}";
+        assert_eq!(verify(ordered).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn overlapping_calls_do_not_assume_independent_posts_or_expand_permissions() {
+        let library = "fn set(write: &usize, read: &usize) modifies(write) ensures(*write == 42 && *read == old(*read)) {*write = 42;}";
+        let invalid = format!("{library} fn main() {{let n: usize = 7; set(&n, &n);}}");
+        assert!(verify(&invalid)
+            .unwrap_err()
+            .contains("body recheck failed"));
+        // The same contract can hold for a particular aliasing input.
+        let valid = format!("{library} fn main() -> usize ensures(result == 42) {{let n: usize = 42; set(&n, &n); n}}");
+        assert_eq!(verify(&valid).unwrap().run().unwrap().to_string(), "42");
+        for caller in [
+            "fn bad(a: &usize) {set(a, a);}",
+            "fn bad(a: &usize) modifies(a) {proof call: set(a, a) == ();}",
+        ] {
+            assert!(verify(&format!("{library} {caller}")).is_err());
+        }
+        let invalidated = "type Positive struct {value: usize} where(value > 0); fn set(write: &usize, read: &usize) modifies(write) {*write = 0;} fn main() {let positive = Positive {value: 1}; set(&positive.value, &positive.value);}";
+        assert!(verify(invalidated).is_err());
+        let trusted = "fn set(write: &usize, read: &usize) modifies(write) ensures(*read == old(*read)) {*write = 42;} proof {trustme} fn main() -> usize ensures(result == 7) {let n: usize = 7; set(&n, &n); n}";
+        let (program, bundle) = prove(trusted).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().len() >= 2);
+        assert_eq!(
+            verify_with_certificate(trusted, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+    }
+
+    #[test]
+    fn overlapping_body_rechecks_share_evaluation_limits() {
+        let recursive = "fn spin(a: &usize, b: &usize) modifies(a, b) {spin(a, b);} fn main() {let value: usize = 0; spin(&value, &value);}";
+        let error = verify(recursive).unwrap_err();
+        assert!(error.contains("verification evaluation limit"), "{error}");
+    }
+
+    #[test]
+    fn aliased_count_handle_batch_cleanup_rechecks_each_remaining_owner() {
+        let library = [
+            include_str!("../stdlib/counter.evg"),
+            include_str!("../proofs/count_handles.evg"),
+        ]
+        .join("\n");
+        let source = format!("{library} {}", include_str!("../examples/batch_count.evg"));
+        let (program, bundle) = prove(&source).unwrap();
+        let (value, events) = program.run_with_events().unwrap();
+        assert_eq!(value.to_string(), "0");
+        assert_eq!(
+            events,
+            [
+                "drop count_handles::Handle",
+                "drop count_handles::Release",
+                "drop count_handles::Handle",
+                "drop count_handles::Release"
+            ]
+        );
+        assert_eq!(
+            verify_with_certificate(&source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        // Numeric constructors alone can claim two handles over count=1. Their
+        // combined release is rejected: after the first, the second is invalid.
+        let bad = format!("{library} fn main() {{let count: usize = 1; let first = count_handles::create(&count); let second = count_handles::create(&count); count_handles::release_pair([first, second]);}}");
+        assert!(verify(&bad).unwrap_err().contains("body recheck failed"));
+    }
+
     #[test]
     fn reference_returns_preserve_incoming_planes_and_reject_local_escapes() {
         let good = include_str!("../examples/borrow_returns.evg");
@@ -3809,7 +3895,7 @@ mod tests {
         let parent = "type Pair struct {left: usize, right: usize} fn set(p: &Pair) -> &Pair modifies(&(*p).left) borrows(p) {(*p).left = 7; p} fn bad(p: &Pair) modifies(&(*p).left) {let wider = set(p); (*wider).right = 42;}";
         assert!(verify(parent).unwrap_err().contains("effect contract"));
         let overlaps = "fn set(a: &usize, b: &usize) -> &usize modifies(a) borrows(b) {*a = 7; b} fn main() -> usize {let n: usize = 42; *set(&n, &n)}";
-        assert!(verify(overlaps).unwrap_err().contains("overlaps"));
+        assert_eq!(verify(overlaps).unwrap().run().unwrap().to_string(), "7");
         let setter = "fn set(r: &usize) -> &usize modifies(r) borrows(r) ensures(*result == 42) {*r = 42; r}";
         for caller in [
             "fn bad(r: &usize) -> &usize borrows(r) {set(r)}",
@@ -4513,10 +4599,13 @@ mod tests {
                 .to_string(),
             "42"
         );
-        assert!(
+        assert_eq!(
             verify(&format!("{swap} {}", wrapper.replace(" && i != j", "")))
-                .unwrap_err()
-                .contains("disjointness")
+                .unwrap()
+                .run()
+                .unwrap()
+                .to_string(),
+            "42"
         );
         let no_bound =
             "fn bad(data: &[usize; 2], i: usize) -> &usize borrows(&(*data)[i]) {&(*data)[i]}";
@@ -4654,8 +4743,8 @@ mod tests {
             "fn bad(a: &[usize; 2], i: usize) where(i == 0) modifies(&(*a)[i]) {i = 1; (*a)[i] = 42;}",
             // Broad regions forget all contents outside the checked postcondition.
             "fn change(a: &[usize; 2]) modifies(a) {(*a)[1] = 9;} fn main() -> usize ensures(result == 42) {let a: [usize; 2] = [42, 7]; change(&a); a[0]}",
-            // An independent readonly parameter cannot alias a written region.
-            "fn change(a: &[usize; 2], r: &usize) modifies(a) {(*a)[0] = *r;} fn main() {let a: [usize; 2] = [42, 7]; change(&a, &a[1]);}",
+            // Rechecking aliases cannot justify a false unchanged-cell claim.
+            "fn change(a: &[usize; 2], r: &usize) modifies(a) ensures(*r == old(*r)) {(*a)[0] = 0;} fn main() {let a: [usize; 2] = [42, 7]; change(&a, &a[0]);}",
             // A whole-array grant does not authorize writes to another parameter.
             "fn bad(a: &[usize; 2], b: &usize) modifies(a) {*b = 42;}",
             // Reference-containing elements require separate ownership semantics.
@@ -4704,7 +4793,7 @@ mod tests {
         let container = "type Container struct {pointer: &usize, value: usize} fn set(c: &Container) modifies((*c).pointer) ensures(*(*c).pointer == 42 && (*c).value == old((*c).value)) {*(*c).pointer = 42;} fn main() -> usize {let backing: usize = 1; let c = Container {pointer: &backing, value: 7}; c.pointer = &c.value; set(&c); c.value}";
         assert!(verify(container).unwrap_err().contains("overlaps"));
         let source = "type View struct {count: &usize} fn set(view: View, other: &usize) modifies(view.count) {*view.count = 42;} fn main() {let n: usize = 7; set(View {count: &n}, &n);}";
-        assert!(verify(source).unwrap_err().contains("overlaps"));
+        assert!(verify(source).is_ok());
         let source = "type View struct {count: &usize} fn set(view: View) modifies(view.count) {*view.count = 42;} fn missing(view: View) {set(view);}";
         assert!(verify(source)
             .unwrap_err()
@@ -4740,7 +4829,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_scalar_writes_require_disjoint_actual_storage() {
+    fn multiple_scalar_writes_check_disjoint_or_actual_alias_storage() {
         let library = include_str!("../stdlib/swap.evg");
         let source = format!(
             "{library}\n{}",
@@ -4752,8 +4841,14 @@ mod tests {
             "let n: usize = 1; let r = &n; swap_usize(&n, r); n",
             "let a: [usize; 2] = [1, 2]; swap_usize(&a[0], &a[0]); a[0]",
         ] {
-            let error = verify(&format!("{library} fn main() -> usize {{{body}}}")).unwrap_err();
-            assert!(error.contains("overlaps"), "{error}");
+            assert_eq!(
+                verify(&format!("{library} fn main() -> usize {{{body}}}"))
+                    .unwrap()
+                    .run()
+                    .unwrap()
+                    .to_string(),
+                "1"
+            );
         }
         for body in [
             "let a: [usize; 2] = [7, 42]; swap_usize(&a[0], &a[1]); a[0]",
@@ -4764,11 +4859,16 @@ mod tests {
             assert_eq!(verify(&source).unwrap().run().unwrap().to_string(), "42");
         }
         let copy = "fn copy(to: &usize, from: &usize) modifies(to) ensures(*to == old(*from) && *from == old(*from)) {*to = *from;}";
-        assert!(verify(&format!(
-            "{copy} fn main() -> usize {{let n: usize = 42; copy(&n, &n); n}}"
-        ))
-        .unwrap_err()
-        .contains("overlaps"));
+        assert_eq!(
+            verify(&format!(
+                "{copy} fn main() -> usize {{let n: usize = 42; copy(&n, &n); n}}"
+            ))
+            .unwrap()
+            .run()
+            .unwrap()
+            .to_string(),
+            "42"
+        );
         assert!(verify(&format!("{copy} fn main() -> usize ensures(result == 42) {{let a: usize = 0; let b: usize = 42; copy(&a, &b); a}}")).is_ok());
         assert!(
             verify("fn duplicate(r: &usize) modifies(r, r) ensures(*r == 0) {*r = 0;}").is_ok()
@@ -5464,7 +5564,7 @@ mod tests {
         let wrong = format!("{declarations} fn main() -> usize ensures(result == 0) {{let count: usize = 0; StoreOnDrop {{target: &count, value: 42}}; count}}");
         assert!(verify(&wrong).is_err());
         let alias = "type Pair struct {write: &usize, read: &usize} impl Drop for Pair {fn drop(self) modifies(self.write) {*self.write = 42;}} fn main() {let count: usize = 0; let pair = Pair {write: &count, read: &count}; drop(pair);}";
-        assert!(verify(alias).unwrap_err().contains("overlaps"));
+        assert!(verify(alias).is_ok());
         let opaque = format!("{declarations} fn consume_array(guards: [StoreOnDrop; 2]) {{}}");
         let error = verify(&opaque).unwrap_err();
         assert!(error.contains("matching modifies contract"), "{error}");

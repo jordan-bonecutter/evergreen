@@ -397,9 +397,9 @@ contents, including symbolic indices and references created before the call.
 Several projections from the same input reference form a union of permissions.
 They may coincide; listing the same place twice grants no additional authority.
 `modifies(&(*data)[left], &(*data)[right])` therefore supports both equal and
-distinct indices while framing all other cells. This differs from passing aliases
-as separate reference parameters, whose independent body models still require
-disjointness at the call boundary.
+distinct indices while framing all other cells. Separate reference parameters
+use independent body models for modular summaries; overlapping calls instead
+recheck the body against actual shared storage, as described below.
 
 `stdlib/array.evg` provides `arrays::set`, `arrays::swap`, and
 `arrays::replace_pair` in Evergreen. `swap` accepts equal indices because both
@@ -410,12 +410,30 @@ supports certificate replay and native compilation.
 Write contracts support references stored in record parameters and behind other
 references, including `modifies(view.count)`, `modifies((*view).counter.count)`,
 and `modifies(*count)` for `count: &&usize`. Each incoming reference is identified
-by its structural argument path. At calls, every write target must be disjoint
-from the region of every other incoming reference, including nested fields and
-an enclosing reference from the same parameter. This checks hidden aliases that
-an independent-field body model cannot safely assume away. Read-only references
-may alias each other. Several projections from the same reference path still
-form a permission union and may coincide.
+by its structural argument path. A modular summary requires every write target
+to be disjoint from every other incoming reference, including nested fields and
+an enclosing reference from the same parameter. Read-only references may alias
+each other. Several projections from the same reference path form a permission
+union and may coincide.
+
+If these disjointness checks fail, the verifier rechecks the function body using
+the actual incoming planes and projection paths. It grants only the declared
+writes after checking the caller's permissions, isolates the callee's local
+facts/proofs, tracks actual stores and cleanup, and proves the postcondition
+again. It does not assume the independent-port summary for this configuration.
+Returned aliases and input types must remain valid, and caller-only enclosing
+invariants are rechecked on return. Thus self-swap and self-copy are allowed;
+a false promise that an aliased read-only port stays unchanged is rejected.
+A contract can also hold for a particular aliasing input even when it would fail
+for other inputs. No programmer-supplied alias-safety marker is involved.
+
+`examples/aliasing_calls.evg` exercises self-swap and nested forwarding of a
+written reference. Body rechecks and their proof certificates share the ordinary
+evaluation depth, work, and proof-path budgets. Recursive overlapping calls may
+hit these limits even when they terminate mathematically. Disjoint calls retain
+the ordinary checked-summary path. Effectful Drop already elaborates the actual
+receiver and proves its postcondition at cleanup, so its reference fields may
+also alias when that body and its invariants remain valid.
 
 The checker compares actual planes and projection paths: distinct fields or
 proved-distinct array cells can be disjoint within one plane. Pointer equality
@@ -430,6 +448,15 @@ checks an element write, a returned alias, and an unchanged sibling.
 `examples/reference_fields.evg` checks borrowed
 counter views, nested fields, double indirection, and returned aliases. These
 views do not represent reference-count ownership or allocation.
+
+`evg run stdlib/counter.evg proofs/count_handles.evg examples/batch_count.evg`
+constructs and clones two borrowed count handles, then consumes their array
+through the library's `release_pair`. Both stored references target one counter;
+the body recheck validates each remaining handle after preceding cleanup.
+Constructing two handles over count one instead is rejected at batch release.
+This catches that invalid transition but still does not prevent numeric handle
+construction from overstating ownership; unforgeable plane authority remains
+unimplemented.
 
 Function bodies must preserve their original incoming typed reference views,
 even if local parameters are rebound. Calls can use that checked type-preservation
@@ -789,9 +816,10 @@ The symbolic store preserves conditional aliasing: writing through index `i`
 updates a tracked cell at index `j` when `i == j`, and preserves it when `i != j`.
 Ordinary scalar reads have the same array-selection consistency rule. Writable
 places passed through distinct reference parameters require a checked
-disjointness proof; different symbolic expressions alone do not establish
-different locations. Multiple projections from one incoming array share its
-alias model and may coincide.
+disjointness proof for a modular summary; otherwise their actual body must be
+rechecked. Different symbolic expressions alone do not establish different
+locations. Multiple projections from one incoming array share its alias model
+and may coincide.
 `examples/indexed_borrows.evg` verifies both outcomes of a possibly aliasing
 write and works with certificate replay and native emission. These additional
 relations remain subject to the verifier's path and proof-work limits.
