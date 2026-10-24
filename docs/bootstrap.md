@@ -650,11 +650,27 @@ identity of the returned cell. Reassigning the index variable later does not
 retarget an existing reference. An equivalent index may be used in the body
 when equality follows from the function's precondition.
 
+Place contracts also accept checked linear arithmetic, scalar field/dereference
+reads, and array lookups in indices. For example,
+`borrows(&(*data)[index + 1])` and `modifies(&(*data)[index + 1])` capture the
+entry value of that expression. Ordinary machine overflow and index bounds
+must be proved, including for the contract itself. Proof-only `int`/`nat`
+conversions can express mathematical indices; the body must still prove that
+its runtime index selects the same cell. User function calls and statement
+blocks are not place expressions in this bootstrap.
+
+`examples/computed_places.evg` checks equivalent arithmetic index expressions,
+precise writes, and a helper that advances a mutable cursor while returning a
+reference selected with its old value. Changing the cursor cannot retarget that
+reference or the function's entry write permission.
+
 The symbolic store preserves conditional aliasing: writing through index `i`
 updates a tracked cell at index `j` when `i == j`, and preserves it when `i != j`.
-Ordinary scalar reads have the same array-selection consistency rule. Multiple
-writable arguments into the same array require a checked disjointness proof;
-different symbolic expressions alone do not establish different locations.
+Ordinary scalar reads have the same array-selection consistency rule. Writable
+places passed through distinct reference parameters require a checked
+disjointness proof; different symbolic expressions alone do not establish
+different locations. Multiple projections from one incoming array share its
+alias model and may coincide.
 `examples/indexed_borrows.evg` verifies both outcomes of a possibly aliasing
 write and works with certificate replay and native emission. These additional
 relations remain subject to the verifier's path and proof-work limits.

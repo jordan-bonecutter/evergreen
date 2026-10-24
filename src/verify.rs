@@ -371,17 +371,33 @@ fn erased_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     }
 }
 
+// Address calculations are pure scalar observations of entry storage. The
+// ordinary evaluator still checks their types, arithmetic, and array bounds.
+fn place_index_expression(e: &Expr) -> bool {
+    match &e.kind {
+        Kind::Name(_) | Kind::Number(_) | Kind::Constant(..) => true,
+        Kind::Field(base, _) => place_index_expression(base),
+        Kind::Index(base, index) => place_index_expression(base) && place_index_expression(index),
+        Kind::Unary(op, value) if op == "-" || op == "*" => place_index_expression(value),
+        Kind::Binary(op, a, b) if matches!(op.as_str(), "+" | "-" | "*") => {
+            place_index_expression(a) && place_index_expression(b)
+        }
+        Kind::Call(name, args) if matches!(name.as_str(), "int" | "nat") && args.len() == 1 => {
+            place_index_expression(&args[0])
+        }
+        _ => false,
+    }
+}
+
 // Exact alias contracts may name an incoming reference or project a fixed
-// place through it using a checked scalar index. They cannot allocate, call,
-// or introduce evidence.
+// place through it using a checked scalar index. They cannot allocate, call
+// user functions, or introduce evidence.
 fn borrow_expression(e: &Expr) -> bool {
     match &e.kind {
         Kind::Name(_) => true,
         Kind::Field(e, _) => borrow_expression(e),
         Kind::Unary(op, e) if op == "&" || op == "*" => borrow_expression(e),
-        Kind::Index(e, index) => {
-            borrow_expression(e) && matches!(&index.kind, Kind::Number(_) | Kind::Name(_))
-        }
+        Kind::Index(e, index) => borrow_expression(e) && place_index_expression(index),
         _ => false,
     }
 }
@@ -3363,6 +3379,35 @@ mod tests {
                 verify(&format!("{setter} {caller}")).is_err(),
                 "accepted {caller}"
             );
+        }
+    }
+
+    #[test]
+    fn computed_place_contracts_capture_checked_entry_expressions() {
+        let source = include_str!("../examples/computed_places.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        let replayed = verify_with_certificate(source, &bundle).unwrap();
+        assert_eq!(replayed.proof_search_count(), 0);
+        assert_eq!(replayed.run().unwrap().to_string(), "42");
+        let cursor = "fn insert(data: &[usize; 3], cursor: &usize) -> &usize where(*cursor < 2) modifies(cursor, &(*data)[*cursor + 1]) borrows(&(*data)[*cursor + 1]) ensures(*result == 42 && *cursor == old(*cursor) + 1) {let selected = &(*data)[*cursor + 1]; *selected = 42; *cursor = *cursor + 1; selected} fn main() -> usize ensures(result == 42) {let data: [usize; 3] = [7, 8, 9]; let cursor: usize = 1; let selected = insert(&data, &cursor); proof cursor_changed: cursor == 2; *selected}";
+        assert_eq!(verify(cursor).unwrap().run().unwrap().to_string(), "42");
+        let math = "fn next(data: &[usize; 3], i: usize) -> &usize where(i < 2) borrows(&(*data)[int(i) + 1]) {&(*data)[i + 1]} fn main() -> usize {let a: [usize; 3] = [7, 8, 42]; *next(&a, 1)}";
+        assert_eq!(verify(math).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn computed_place_contracts_reject_overflow_bounds_and_retargeting() {
+        for source in [
+            "fn bad(a: &[usize; 2], i: usize) -> &usize where(i < 2) borrows(&(*a)[i + 1]) {&(*a)[i + 1]}",
+            "fn bad(a: &[usize; 3], i: usize) -> &usize where(i == usize::MAX) borrows(&(*a)[i + 1]) {&(*a)[0]}",
+            "fn bad(a: &[usize; 3], i: usize) -> &usize where(i < 2) borrows(&(*a)[i - 1]) {&(*a)[0]}",
+            "fn bad(a: &[usize; 3], i: usize) -> &usize where(i == 0) borrows(&(*a)[i + 1]) {i = 1; &(*a)[i + 1]}",
+            "fn bad(a: &[usize; 3], i: usize) where(i == 0) modifies(&(*a)[i + 1]) {i = 1; (*a)[i + 1] = 42;}",
+            "fn bad(a: &[usize; 3], cursor: &usize) where(*cursor == 0) modifies(cursor, &(*a)[*cursor + 1]) {*cursor = 1; (*a)[*cursor + 1] = 42;}",
+            "fn set(i: &usize) -> usize modifies(i) {*i = 0; 0} fn bad(a: &[usize; 3], i: &usize) -> &usize borrows(&(*a)[set(i)]) {&(*a)[0]}",
+        ] {
+            assert!(verify(source).is_err(), "accepted {source}");
         }
     }
 
