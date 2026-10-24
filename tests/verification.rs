@@ -112,6 +112,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/array_model.evg",
         "examples/record_array_history.evg",
         "examples/record_array_values.evg",
+        "examples/record_array_borrows.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")

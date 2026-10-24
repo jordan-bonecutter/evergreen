@@ -1497,7 +1497,33 @@ impl<'a> Context<'a> {
         lifted: &BTreeSet<String>,
     ) -> Result<()> {
         self.charge_value_work(1)?;
-        if let Symbol::Array { items, cells, .. } = value {
+        if let Symbol::Array {
+            element,
+            items,
+            cells,
+            identity,
+            ..
+        } = value
+        {
+            if matches!(**element, Ty::Record(_)) && self.history_element(element) {
+                let indices = cells
+                    .keys()
+                    .cloned()
+                    .chain(
+                        (0..items.as_ref().map_or(0, Vec::len))
+                            .map(|index| Linear::number(index as i128)),
+                    )
+                    .collect::<BTreeSet<_>>();
+                for index in indices {
+                    // Joined stores may contain views born in either branch.
+                    // Replay their value definitions and primitive type bounds
+                    // before checking nominal invariants in the merged context.
+                    let element =
+                        self.read_array(element, identity, &index, items.as_deref(), cells)?;
+                    self.validate_argument(&element, line)?;
+                }
+                return Ok(());
+            }
             for v in items.iter().flatten().chain(cells.values()) {
                 self.validate_argument(v, line)?;
             }
@@ -2440,6 +2466,9 @@ impl<'a> Context<'a> {
         cells: &BTreeMap<Linear, Symbol>,
     ) -> Result<Symbol> {
         if self.history_element(element) {
+            let observations = values_weight(cells.values())?
+                .saturating_add(values_weight(items.into_iter().flatten())?);
+            self.charge_value_work(observations)?;
             let observed = cells
                 .iter()
                 .map(|(index, value)| (index.clone(), value.clone()))
@@ -3374,23 +3403,30 @@ impl<'a> Context<'a> {
                     && ar == br
                     && ap.len() == bp.len()
                     && !ap.is_empty()
-                    && matches!(
-                        **at,
-                        Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
-                    )
-                    && ap[..ap.len() - 1] == bp[..bp.len() - 1] =>
+                    && self.history_element(at) =>
             {
-                let (Some(Projection::Index(a)), Some(Projection::Index(b))) =
-                    (ap.last(), bp.last())
+                let offset = ap
+                    .iter()
+                    .zip(bp)
+                    .position(|(a, b)| a != b)
+                    .ok_or("conditional reference paths unexpectedly coincide")?;
+                let (Projection::Index(a), Projection::Index(b)) = (&ap[offset], &bp[offset])
                 else {
                     return Err(
-                        "conditional references require a common scalar-array projection prefix"
+                        "conditional references require one differing array index and matching field paths"
                             .into(),
                     );
                 };
+                if ap[offset + 1..] != bp[offset + 1..]
+                    || ap[offset + 1..]
+                        .iter()
+                        .any(|step| !matches!(step, Projection::Field(_)))
+                {
+                    return Err("conditional references require one differing array index and matching field paths".into());
+                }
                 let index = self.arbitrary(&Ty::Nat)?.number()?;
                 let mut path = ap.clone();
-                *path.last_mut().expect("nonempty path") = Projection::Index(index.clone());
+                path[offset] = Projection::Index(index.clone());
                 let value = Symbol::Ref(at.clone(), *ar, path);
                 views.push(value.clone());
                 Ok((value, equal(&index, a)?, equal(&index, b)?))
@@ -3932,6 +3968,42 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn conditional_record_array_borrows_preserve_fields_and_storage_identity() {
+        let source = include_str!("../examples/record_array_borrows.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        for wrong in [
+            source.replace("else {&(*data)[1].left}", "else {&(*data)[1].right}"),
+            source.replace("else {&(*data)[1]}", "else {&(*data)[2]}"),
+            source.replace(
+                "borrows(&(*data)[if flag {0} else {1}])",
+                "borrows(&(*data)[0])",
+            ),
+            source.replace("    (*selected).left", "    drop(data); (*selected).left"),
+            source.replace(
+                "(*selected).right == (if flag {9} else {13})",
+                "(*selected).right == 42",
+            ),
+        ] {
+            assert!(verify(&wrong).is_err(), "accepted {wrong}");
+        }
+        let different_planes = "type Cell struct {value: usize} fn bad(flag: bool) {let a = Cell {value: 7}; let b = Cell {value: 9}; let selected = if flag {&a} else {&b};}";
+        assert!(verify(different_planes).is_err());
+        let owners = "affine type Cell struct {value: usize} fn bad(flag: bool) {let data: [Cell; 2] = [Cell {value: 7}, Cell {value: 9}]; let selected = if flag {&data[0]} else {&data[1]};}";
+        assert!(verify(owners).is_err());
+        let refined = "type Positive struct {value: usize} where(value > 0); fn choose(data: &[Positive; 2], flag: bool) -> &Positive borrows(&(*data)[if flag {0} else {1}]) {if flag {&(*data)[0]} else {&(*data)[1]}} fn read(flag: bool) -> usize ensures(result == 42) {let data: [Positive; 2] = [Positive {value: 7}, Positive {value: 9}]; let selected = choose(&data, flag); data[0].value = 42; data[1].value = 42; proof typed: (*selected).value > 0; (*selected).value} fn main() -> usize {read(false)}";
+        assert_eq!(verify(refined).unwrap().run().unwrap().to_string(), "42");
+        let nested = "type Inner struct {value: usize} type Cell struct {inner: Inner} fn read(flag: bool) -> usize ensures(result == 42) {let data: [Cell; 2] = [Cell {inner: Inner {value: 7}}, Cell {inner: Inner {value: 9}}]; let selected = if flag {&data[0].inner.value} else {&data[1].inner.value}; *selected = 42; if flag {data[0].inner.value} else {data[1].inner.value}} fn main() -> usize {read(true)}";
+        assert_eq!(verify(nested).unwrap().run().unwrap().to_string(), "42");
+    }
+
     #[test]
     fn record_array_histories_preserve_aliases_fields_and_replay() {
         let source = include_str!("../examples/record_array_history.evg");

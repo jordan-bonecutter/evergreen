@@ -44,6 +44,13 @@ def indexed (plane index : Nat) : Address := ⟨plane, [.index index]⟩
 theorem indexed_eq_iff (plane i j : Nat) : indexed plane i = indexed plane j ↔ i = j := by
   simp [indexed, Address.mk.injEq]
 
+def indexedField (plane index field : Nat) : Address :=
+  ⟨plane, [.index index, .field field]⟩
+
+theorem indexed_field_eq_iff (plane i j field : Nat) :
+    indexedField plane i field = indexedField plane j field ↔ i = j := by
+  simp [indexedField, Address.mk.injEq]
+
 def Store := Address → Int
 
 def write (store : Store) (target : Address) (value : Int) : Store :=
@@ -208,6 +215,15 @@ theorem joined_index_read (store : Store) (plane : Nat) (flag : Bool)
     (right_case : flag = false → selected = right) :
     store (indexed plane selected) =
       if flag then store (indexed plane left) else store (indexed plane right) := by
+  cases flag <;> simp_all
+
+theorem joined_index_field_read (store : Store) (plane field : Nat) (flag : Bool)
+    (left right selected : Nat)
+    (left_case : flag = true → selected = left)
+    (right_case : flag = false → selected = right) :
+    store (indexedField plane selected field) =
+      if flag then store (indexedField plane left field)
+      else store (indexedField plane right field) := by
   cases flag <;> simp_all
 
 -- A field update is a structural store of one complete record. This models

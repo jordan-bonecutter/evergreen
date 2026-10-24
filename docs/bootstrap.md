@@ -593,6 +593,8 @@ only when the indices are equal. `modifies` can grant a whole copyable record
 or an array of such records as well as individual scalar fields. Same-layout
 replacement preserves existing field borrows. Record invariants are checked
 for every materialized cell, including arrays without expanded element lists.
+Validation replays each cell's definitions and bounds, including views created
+in the other branch of a join, and charges observation scans before cloning.
 Temporary alias-merge records grant no invariant assumptions. While a modular
 call's writes and postcondition are being instantiated, array reads cannot
 assume caller-only record invariants; the caller must re-establish them.
@@ -795,14 +797,18 @@ expression evaluation. Exceeding these bootstrap limits is a compile error,
 not a trusted assumption. These limits are conservative implementation limits;
 they are not a proof of a whole-process memory or time bound.
 
-Conditional expressions can select scalar cells within one array, for example
+Conditional expressions can select scalar or copyable scalar-field record cells
+within one array, for example
 `if flag {&data[0]} else {&data[1]}`. Both alternatives must use the same live
-plane and generation, the same projection prefix, and compatible scalar types.
-Only the final array index may differ. The verifier introduces a proof-only
+plane and generation, the same projection prefix, and compatible target types.
+One array index may differ, followed by the same optional record-field path.
+For example, selecting `&data[0].point.x` or `&data[1].point.x` is supported for
+copyable record elements with scalar leaves. The verifier introduces a proof-only
 selected index tied to each branch, proves its bounds, and materializes its view
-in the joined array contents. It does not allocate a replacement target plane.
+in the joined array contents. It checks the selected record's suffix and target
+type while materializing that view. It does not allocate a replacement target plane.
 Reads, writes, identity comparisons, and later same-layout replacement continue
-to use that cell. Previously tracked scalar-array views survive the join too.
+to use that cell. Previously tracked array views survive the join too.
 References stored in conditional records use the same rule, including records
 with Drop cleanup.
 
@@ -810,10 +816,14 @@ with Drop cleanup.
 a selected reference from a helper whose exact entry-index alias is proved.
 `examples/conditional_drop.evg` selects a resource containing one of two cell
 references, then proves its destructor writes the selected cell. Both examples
-run, build, and replay with the internal verifier. Conditional scalar-array
+run, build, and replay with the internal verifier.
+`examples/record_array_borrows.evg` selects both whole record cells and scalar
+fields, proves their identities agree, and checks writes and same-layout
+replacement through those borrows. It also runs, builds, and replays internally.
+Conditional scalar-array
 values also join their contents and tracked views. Different target planes,
-different record fields, conditional storage generations, and symbolic
-aggregate-element selections remain unsupported. Returned references must match
+different record-field suffixes, conditional storage generations, and selections
+of owning or reference-bearing record elements remain unsupported. Returned references must match
 the exact entry projection declared by `borrows`, including a conditional entry
 index as described below. Selecting between different target planes in a
 contract remains unsupported.

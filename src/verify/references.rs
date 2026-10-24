@@ -56,9 +56,15 @@ impl Context<'_> {
         let Symbol::Ref(target, reference, path) = value else {
             return Err("invalid joined reference".into());
         };
-        let Some((Projection::Index(index), prefix)) = path.split_last() else {
+        let Some((offset, Projection::Index(index))) = path
+            .iter()
+            .enumerate()
+            .rfind(|(_, step)| matches!(step, Projection::Index(_)))
+        else {
             return Err("joined references require an array element".into());
         };
+        let prefix = &path[..offset];
+        let suffix = &path[offset + 1..];
         self.charge_value_work(symbol_weight(self.memory.read(*reference)?)?)?;
         let mut root = self.memory.read(*reference)?.clone();
         let Symbol::Array {
@@ -71,8 +77,10 @@ impl Context<'_> {
         else {
             return Err("joined reference prefix requires array storage".into());
         };
-        if element != target {
-            return Err("joined reference element type changed".into());
+        if !self.history_element(element) {
+            return Err(
+                "joined references require scalars or copyable scalar-field record elements".into(),
+            );
         }
         self.prove(
             &Formula::Ge(index.clone()),
@@ -85,6 +93,9 @@ impl Context<'_> {
             line,
         )?;
         let value = self.read_array(element, identity, index, items.as_deref(), cells)?;
+        if project(&value, suffix)?.ty() != **target {
+            return Err("joined reference target type changed".into());
+        }
         let Symbol::Array { cells, .. } = project_mut(&mut root, prefix)? else {
             return Err("invalid joined array storage".into());
         };
