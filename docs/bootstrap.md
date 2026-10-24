@@ -705,9 +705,10 @@ resources are consumed and runtime effects cannot be skipped by erasure. Their e
 including calls to ideal functions. Runtime arguments retain their source order.
 `examples/ideal_parameters.evg` also uses an erased natural recursion measure.
 
-This accepts `nat`, `int`, Boolean, machine and unit values, and pure ideal
-records and arrays, including affine resources. References and reference-bearing
-resources still need cross-phase ownership contracts. Proof expressions are
+This accepts `nat`, `int`, Boolean, machine and unit values, and ideal
+records and arrays, including affine resources with borrowed references.
+References may observe runtime storage, including runtime owners, without
+transferring its ownership. Proof expressions are
 non-consuming views; passing an affine resource as an erased execution argument
 consumes it, preventing duplicate witnesses.
 
@@ -1129,12 +1130,43 @@ actual expression. Proof expressions remain non-consuming views.
 `examples/erased_resources.evg` forwards a ticket once and returns 42 in both
 backends. The checker rejects duplicate forwarding, runtime inspection, and
 using `old(ticket)` to recreate a consumed ticket. Scalar `old(...)` snapshots
-remain valid erased metadata. Erased arguments may contain pure ideal records
-and arrays; reference-bearing resources still require a cross-phase ownership
-contract. Runtime owners cannot be constructed or consumed by ideal execution,
+remain valid erased metadata. Erased arguments may contain ideal records
+and arrays with borrowed references. Runtime owners cannot be constructed or consumed by ideal execution,
 and erased calls must be ideal code or checked pure scalar helpers. Thus
 erasure cannot silently skip a runtime write, move, drop, or owner-producing
 operation. This still does not supply allocation authority or `owners(plane)`.
+
+Ideal functions that return references or reference-bearing resources use the
+same exact `borrows` contracts as runtime functions: every reference leaf must
+come from a declared incoming projection, with its plane, path, and generation
+preserved. A returned reference cannot point into an ideal callee's local frame.
+Erased references are available in proofs and erased computations, and grant no
+runtime write access. Runtime code cannot use them as addresses, return values,
+or branch conditions. They still participate in alias and typed-view checks,
+including body rechecks when erased and runtime inputs overlap. Dropping and
+restoring the target does not make an old erased borrow valid again.
+
+`examples/ideal_borrow_resources.evg` attaches an opaque affine proof view to a
+resource field, passes it through an erased parameter, and reads through a
+separate runtime argument whose identity is proved equal. The resource still
+runs its ordinary Drop exactly once. The example runs, builds, and replays
+internally; `examples/reject_ideal_borrow_escape.evg` rejects runtime use of an
+erased pointer.
+
+`stdlib/borrow_credits.evg` binds existing credits to a live reference. Its opaque
+affine tokens split and join while conserving quantity and preserving the exact
+target. Joining requires equal target identities. Check the client with:
+
+```sh
+evg --deny-trust check stdlib/credits.evg stdlib/borrow_credits.evg proofs/borrow_credits.evg
+```
+
+The API has no mint operation. These are conserved proof quantities attached to
+borrowed views; they do not authorize allocation or deallocation, count actual
+owners, or implement Rc. The Lean plane model separately proves that changing
+bookkeeping while preserving a handle preserves its validity test and cannot
+revive that handle after drop and restoration. This is not a proof of Rust
+erasure or affine checking.
 
 Proof artifacts bind the regenerated verification conditions as well as the
 source. Strengthening the checker can invalidate a cache even when source text

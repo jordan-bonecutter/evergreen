@@ -1,0 +1,8 @@
+ideal fn identity(target: &usize) -> &usize borrows(target) {target}
+
+fn main() -> usize {
+    let data: usize = 42;
+    ideal let view = identity(&data);
+    // An erased pointer cannot provide a runtime address or value.
+    *view
+}

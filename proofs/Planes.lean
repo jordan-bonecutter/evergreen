@@ -62,6 +62,29 @@ theorem aliases_allowed (p : Plane) (a b : Reference)
     (ha : Valid p a) (hb : Valid p b) : Valid p a ∧ Valid p b := by
   exact ⟨ha, hb⟩
 
+-- Bookkeeping may change independently of a borrowed handle. This model does
+-- not give that handle allocation authority or prove Rust erasure/affinity.
+structure IdealBorrow (Metadata : Type) where
+  metadata : Metadata
+  reference : Reference
+
+def mapMetadata {Before After : Type} (borrow : IdealBorrow Before) (next : After) :
+    IdealBorrow After := ⟨next, borrow.reference⟩
+
+theorem metadata_preserves_validity {Before After : Type} (p : Plane)
+    (borrow : IdealBorrow Before) (next : After) :
+    Valid p (mapMetadata borrow next).reference ↔ Valid p borrow.reference := Iff.rfl
+
+theorem metadata_cannot_revive_dropped_borrow {Before After : Type} (p : Plane)
+    (borrow : IdealBorrow Before) (next : After) :
+    ¬ Valid (dropPlane p) (mapMetadata borrow next).reference :=
+  dropped_references_invalid p borrow.reference
+
+theorem metadata_cannot_revive_restored_borrow {Before After : Type} (p : Plane)
+    (borrow : IdealBorrow Before) (next : After) (valid : Valid p borrow.reference) :
+    ¬ Valid (writePlane (dropPlane p) false) (mapMetadata borrow next).reference :=
+  restore_does_not_revive p borrow.reference valid
+
 -- An atomic update publishes only a new state satisfying its invariant.
 def commit {State : Type} (invariant : State → Prop)
     (next : State) (proof : invariant next) : { s : State // invariant s } :=

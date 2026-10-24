@@ -48,7 +48,7 @@ pub(super) fn check_return_borrows(f: &Function, structs: &BTreeMap<String, Stru
     paths(&f.ret, structs, &mut Vec::new(), &mut required, &mut 0)?;
     let mut supplied = BTreeSet::new();
     for alias in &f.borrows {
-        if f.ideal || !borrow_expression(&alias.reference) || !supplied.insert(alias.path.clone()) {
+        if !borrow_expression(&alias.reference) || !supplied.insert(alias.path.clone()) {
             return Err(format!("line {}: borrows requires unique return paths and checked incoming reference projections", f.line));
         }
     }

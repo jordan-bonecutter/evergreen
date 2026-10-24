@@ -418,11 +418,11 @@ fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     }
 }
 
-// Erased ownership must belong wholly to proof data. A physical owner or a
-// reference-bearing resource needs an explicit cross-phase ownership rule.
+// Erased ownership belongs to proof data. Borrowed views can cross this phase
+// boundary; their provenance and liveness use the ordinary reference rules.
 fn erased_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match t {
-        Type::Ref(_) => false,
+        Type::Ref(_) => true,
         Type::Named(name) => structs
             .get(name)
             .is_some_and(|s| s.ideal && s.fields.iter().all(|(_, t)| erased_type(t, structs))),
@@ -940,7 +940,7 @@ impl<'a> Context<'a> {
         match value.ty() {
             Ty::Record(name) => erased_type(&Type::Named(name), self.structs),
             Ty::Array(element, _) => self.erased_ty(&element),
-            Ty::Ref(_) => false,
+            Ty::Ref(_) => true,
             _ => true,
         }
     }
@@ -948,7 +948,7 @@ impl<'a> Context<'a> {
         match ty {
             Ty::Record(name) => erased_type(&Type::Named(name.clone()), self.structs),
             Ty::Array(element, _) => self.erased_ty(element),
-            Ty::Ref(_) => false,
+            Ty::Ref(_) => true,
             _ => true,
         }
     }
@@ -3894,7 +3894,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         f.partial = !f.ideal && f.decreases.is_none() && crate::effects::recursive(f);
         for (name, ty) in &f.params {
             if f.ideal_params.contains(name) && !erased_type(ty, &structs) {
-                return Err(format!("line {}: ideal parameters require pure proof data; runtime owners and reference-bearing resources need a cross-phase ownership contract", f.line));
+                return Err(format!("line {}: ideal parameters may own only proof data; runtime owners must be borrowed", f.line));
             }
             if f.ideal && is_affine(ty, &structs, &drops) && !erased_type(ty, &structs) {
                 return Err(format!(
@@ -4026,6 +4026,100 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn erased_borrow_resources_keep_identity_generation_and_cleanup() {
+        let source = include_str!("../examples/ideal_borrow_resources.evg");
+        let (program, bundle) = prove(source).unwrap();
+        let (value, events) = program.run_with_events().unwrap();
+        assert_eq!(value.to_string(), "42");
+        assert_eq!(events, ["drop Resource"]);
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        assert!(program.trusted_assumptions().is_empty());
+        let wrong_target = source
+            .replace("read(view, &resource.value)", "read(view, &other.value)")
+            .replace(
+                "ideal let view =",
+                "let other = Resource {value: 42}; ideal let view =",
+            );
+        assert!(verify(&wrong_target)
+            .unwrap_err()
+            .contains("precondition of read"));
+        let stale = source.replace(
+            "read(view, &resource.value)",
+            "drop(resource); resource = Resource {value: 42}; read(view, &resource.value)",
+        );
+        assert!(verify(&stale).unwrap_err().contains("never"));
+        let duplicate = source.replace(
+            "read(view, &resource.value)",
+            "let first = read(view, &resource.value); read(view, &resource.value)",
+        );
+        assert!(verify(&duplicate).is_err());
+        let owner = "type Resource struct {value: usize} impl Drop for Resource {fn drop(self){}} ideal fn observe(r: &Resource) -> &Resource borrows(r) {r} fn read(ideal proof_view: &Resource, r: &Resource) -> usize where(proof_view == r) ensures(result == (*r).value) {(*r).value} fn main() -> usize {let resource = Resource {value: 42}; read(observe(&resource), &resource)}";
+        let (value, events) = verify(owner).unwrap().run_with_events().unwrap();
+        assert_eq!(value.to_string(), "42");
+        assert_eq!(events, ["drop Resource"]);
+    }
+
+    #[test]
+    fn erased_borrows_cannot_supply_runtime_values_or_mutations() {
+        for bad in [
+            "fn leak(ideal r: &usize) -> usize {*r}",
+            "fn leak(ideal r: &usize) -> &usize borrows(r) {r}",
+            "fn write(ideal r: &usize) modifies(r) {*r = 0;}",
+            "fn branch(ideal r: &usize) -> usize {if *r == 42 {42} else {0}}",
+            "ideal fn write(r: &usize) {*r = 0;}",
+            "ideal fn local(r: &usize) -> &usize borrows(r) {let n: usize = 42; &n}",
+            "ideal fn swap(r: &usize, other: &usize) -> &usize borrows(r) {other}",
+            "ideal fn forward(r: &usize) -> &usize {r}",
+            "type Resource struct {} impl Drop for Resource {fn drop(self){}} ideal affine type Bad struct {owned: Resource} fn take(ideal bad: Bad) {}",
+            "type Resource struct {} impl Drop for Resource {fn drop(self){}} ideal fn steal(r: &Resource) {drop(*r);}",
+            "fn separate(ideal view: &usize, r: &usize) -> usize ensures(view != r) {*r} fn main() -> usize {let data: usize = 42; separate(&data, &data)}",
+            "type Positive struct {value: usize} where(value > 0); fn overwrite(ideal view: &Positive, value: &usize) modifies(value) ensures(*value == 0 && (*view).value > 0) {*value = 0;} fn main() {let positive = Positive {value: 1}; overwrite(&positive, &positive.value);}",
+        ] {assert!(verify(bad).is_err(), "accepted {bad}");}
+    }
+
+    #[test]
+    fn borrowed_credit_library_conserves_units_and_reference_targets() {
+        let library = format!(
+            "{} {}",
+            include_str!("../stdlib/credits.evg"),
+            include_str!("../stdlib/borrow_credits.evg")
+        );
+        let client = include_str!("../proofs/borrow_credits.evg");
+        let source = format!("{library} {client}");
+        let (program, bundle) = prove(&source).unwrap();
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(
+            verify_with_certificate(&source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let duplicate = client.replace(
+            "borrow_credits::join(left, right)",
+            "borrow_credits::join(left, left)",
+        );
+        assert!(verify(&format!("{library} {duplicate}")).is_err());
+        let wrong_units = library.replace(
+            "units(&result.left) == amount",
+            "units(&result.left) == amount + 1",
+        );
+        assert!(verify(&format!("{wrong_units} {client}")).is_err());
+        let wrong_targets = "ideal fn wrong(a: credits::Credit, b: credits::Credit, x: &usize, y: &usize) -> borrow_credits::Token where(x != y) borrows(target: x) {let left = borrow_credits::bind(a, x); let right = borrow_credits::bind(b, y); borrow_credits::join(left, right)}";
+        assert!(verify(&format!("{library} {wrong_targets}"))
+            .unwrap_err()
+            .contains("precondition of borrow_credits::join"));
+        let forged = "ideal fn forge(target: &usize) -> borrow_credits::Token borrows(target: target) {borrow_credits::Token {budget: 42, target: target}}";
+        assert!(verify(&format!("{library} {forged}"))
+            .unwrap_err()
+            .contains("opaque representation"));
+    }
+
     #[test]
     fn updates_accept_scalar_borrow_and_index_writes_without_repeating_lvalues() {
         let source = include_str!("../examples/update_borrow_writes.evg");
@@ -5337,8 +5431,8 @@ mod tests {
         let library = include_str!("../stdlib/credits.evg");
         let bridge = "fn spend(ideal credit: credits::Credit, value: usize) -> usize ensures(result == value) {value} fn forward(ideal credit: credits::Credit, value: usize) -> usize ensures(result == value) {spend(credit, value)}";
         assert!(verify(&format!("{library} {bridge}")).is_ok());
-        let borrow = "ideal affine type WithRef struct {r: &usize} fn bad(ideal resource: WithRef) -> usize {0}";
-        assert!(verify(borrow).unwrap_err().contains("cross-phase"));
+        let borrow = "ideal affine type WithRef struct {r: &usize} fn ignore(ideal resource: WithRef) -> usize {0}";
+        assert!(verify(borrow).is_ok());
         let resource = "type Resource struct {} impl Drop for Resource {fn drop(self){}}";
         for bad in [
             "ideal fn consume_resource(resource: Resource) -> nat {1}",

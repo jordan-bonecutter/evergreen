@@ -1226,6 +1226,7 @@ mod tests {
             include_str!("../examples/update_calls.evg"),
             include_str!("../examples/self_observing_fields.evg"),
             include_str!("../examples/update_borrow_writes.evg"),
+            include_str!("../examples/ideal_borrow_resources.evg"),
             "fn main() -> usize where(old(1 + 1) == 2) {42}",
             "type Fixed struct {value: usize} where(value == 42); fn refresh(r: &Fixed) -> &Fixed modifies(&(*r).value) borrows(r) ensures((*r).value == 42 && (*result).value == 42) {(*r).value = 42; r} fn main() -> usize {let fixed = Fixed {value: 42}; let refreshed = refresh(&fixed); (*refreshed).value}",
             include_str!("../examples/recursion.evg"),
@@ -1366,6 +1367,8 @@ mod tests {
             "{credit_test} {} fn main() -> usize {{use_budget(credits::issue(), 42)}}",
             include_str!("../proofs/ideal_credit_bindings.evg")
         ));
+        cases.push(format!("{credit_test} {} {} fn main() -> usize {{let data: usize = 42; use_borrow_budget(credits::issue(), &data)}}",
+            include_str!("../stdlib/borrow_credits.evg"), include_str!("../proofs/borrow_credits.evg")));
         let indexed = include_str!("../examples/indexed_borrows.evg")
             .split("fn main")
             .next()

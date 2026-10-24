@@ -1,0 +1,18 @@
+// Check after stdlib/credits.evg and stdlib/borrow_credits.evg.
+fn read_with(ideal token: borrow_credits::Token, data: &usize) -> usize
+where(borrow_credits::target(&token) == data)
+ensures(result == *data) {*data}
+
+fn use_borrow_budget(ideal budget: credits::Credit, data: &usize) -> usize
+where(credits::units(&budget) >= 1)
+ensures(result == *data) {
+    ideal let token = borrow_credits::bind(budget, data);
+    ideal let original = borrow_credits::units(&token);
+    ideal let parts = borrow_credits::split(token, 1);
+    ideal let borrow_credits::Split {left, right} = parts;
+    proof same_targets: borrow_credits::target(&left) == data
+        && borrow_credits::target(&right) == data;
+    ideal let combined = borrow_credits::join(left, right);
+    proof conserved: borrow_credits::units(&combined) == original;
+    read_with(combined, data)
+}

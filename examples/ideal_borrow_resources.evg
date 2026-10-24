@@ -1,0 +1,23 @@
+// A borrowed proof view, not allocation or reference-count ownership authority.
+module views {
+    ideal opaque affine type View struct {target: &usize}
+
+    ideal fn observe(target: &usize) -> View
+    borrows(target: target) {View {target: target}}
+
+    ideal fn target(view: &View) -> &usize
+    borrows((*view).target) {(*view).target}
+}
+
+fn read(ideal view: views::View, target: &usize) -> usize
+where(views::target(&view) == target)
+ensures(result == *target) {*target}
+
+type Resource struct {value: usize}
+impl Drop for Resource {fn drop(self) {}}
+
+fn main() -> usize ensures(result == 42) {
+    let resource = Resource {value: 42};
+    ideal let view = views::observe(&resource.value);
+    read(view, &resource.value)
+}
