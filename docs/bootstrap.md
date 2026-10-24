@@ -1221,6 +1221,42 @@ parameters. The shipped library still has no mint operation. The optional Lean
 backend evaluates these local bindings as mathematical data in its ideal
 reference model, while Evergreen's runtime backends erase them.
 
+Runtime records can carry proof fields with `ideal field: Type`:
+
+```evergreen
+type Checked struct {value: usize, ideal expected: nat}
+where(expected == nat(value));
+```
+
+These fields remain in verification, nominal invariants, alias contracts, and
+affine ownership. They are omitted from interpreter values and native layouts,
+construction, pattern storage, and runtime cleanup. Their initializer expressions
+run in checked ideal execution and are erased completely. An affine ideal field
+makes the containing runtime value affine: moving the value transfers its proof
+resource, and reusing the old value is rejected. Erased fields may own ideal data
+and borrowed views, but cannot hide a runtime owner by value.
+
+Runtime expressions cannot read, borrow, or assign these fields. `ideal` writes
+may update an owned record's ideal fields using structural paths; they still
+recheck the record invariant. Complete runtime record patterns bind every field,
+with names from ideal fields automatically marked ideal. Drop proofs may inspect
+ideal fields, while only runtime fields participate in emitted cleanup and its
+declaration order. References inside ideal fields remain part of alias checking.
+Plane generations still apply to the whole record, so changing a proof
+aggregate's logical layout can invalidate other views of that record too.
+
+`examples/ideal_fields.evg` checks affine witnesses carried through runtime
+records, complete patterns, selective proof-field updates, and parent/child Drop
+order. It also checks distinct identities for records containing only ideal
+fields; the private ABI retains its ordinary minimum eight-byte home for them.
+The example runs, builds, and replays internally. Check
+`stdlib/credits.evg stdlib/borrow_credits.evg proofs/carried_borrow_credits.evg`
+for a runtime carrier that owns a borrowed-credit token without storing that
+token in its runtime representation. The Lean record-projection model checks
+that ideal-field replacement frames runtime-only properties, while joint
+invariants require validation. These models remain separate from implementation
+refinement and do not add allocation authority.
+
 The checker derives possible divergence rather than accepting an unchecked
 annotation. A runtime self-recursive function without `decreases` may diverge;
 that property propagates to its runtime callers. Every returning path must

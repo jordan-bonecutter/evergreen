@@ -412,7 +412,7 @@ fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
         Type::Int | Type::Nat => false,
         Type::Named(n) => structs
             .get(n)
-            .is_some_and(|s| !s.ideal && s.fields.iter().all(|(_, t)| runtime_type(t, structs))),
+            .is_some_and(|s| !s.ideal && s.runtime_fields().all(|(_, t)| runtime_type(t, structs))),
         Type::Array(t, _) | Type::Ref(t) => runtime_type(t, structs),
         _ => true,
     }
@@ -967,6 +967,15 @@ impl<'a> Context<'a> {
         }
         Ok(())
     }
+    fn field_access(&self, name: &str, field: &str, line: usize) -> Result<()> {
+        self.representation_access(name, line)?;
+        if self.phase == Phase::Runtime && self.structs[name].ideal_fields.contains(field) {
+            return Err(format!(
+                "line {line}: {name}.{field} is ideal data and cannot be accessed at runtime"
+            ));
+        }
+        Ok(())
+    }
 
     fn follows(&mut self, proposition: &Formula) -> Result<bool> {
         for path in extend(
@@ -1469,8 +1478,13 @@ impl<'a> Context<'a> {
                 self.env.clear();
                 let mut fields = BTreeMap::new();
                 for (n, t) in &def.fields {
+                    let phase = self.phase;
+                    if def.ideal_fields.contains(n) && self.phase == Phase::Runtime {
+                        self.phase = Phase::Ideal;
+                    }
                     let t = self.resolve(t)?;
                     let v = self.arbitrary(&t)?;
+                    self.phase = phase;
                     fields.insert(n.clone(), v.clone());
                     self.env.insert(n.clone(), v);
                 }
@@ -1594,7 +1608,9 @@ impl<'a> Context<'a> {
                 return Err(format!("line {}: writes through reference parameters need an effect contract; unsupported", place.line));
             }
             let old = project(self.memory.read(reference)?, &fields)?.clone();
-            if self.symbol_is_affine(&old) {
+            if self.symbol_is_affine(&old)
+                && !(self.phase == Phase::Ideal && self.erased_value(&old))
+            {
                 return Err("overwriting owned fields through references requires ownership effect proofs; unsupported".into());
             }
             let mut new = self.eval(value, Some(&old.ty()))?;
@@ -1729,8 +1745,21 @@ impl<'a> Context<'a> {
                             _ => None,
                         }
                     }
-                    let name = root(target).ok_or("ideal assignments require an ideal binding or its structural fields, without dereferencing borrowed storage")?;
-                    if !self.ideal_execution && !self.ideal_bindings.contains(name) {
+                    root(target).ok_or("ideal assignments require an ideal binding or its structural fields, without dereferencing borrowed storage")?;
+                    fn erased(context: &Context<'_>, expression: &Expr) -> bool {
+                        match &expression.kind {
+                            Kind::Name(name) => {
+                                context.ideal_execution || context.ideal_bindings.contains(name)
+                            }
+                            Kind::Index(base, _) => erased(context, base),
+                            Kind::Field(base, field) => {
+                                erased(context, base)
+                                    || matches!(context.hint(base), Some(Ty::Record(name)) if context.structs[&name].ideal_fields.contains(field))
+                            }
+                            _ => false,
+                        }
+                    }
+                    if !erased(self, target) {
                         return Err("ideal assignments cannot modify runtime storage".into());
                     }
                 }
@@ -1798,6 +1827,9 @@ impl<'a> Context<'a> {
                 };
                 for (field, name) in fields {
                     let v = values.remove(field).ok_or("missing pattern field")?;
+                    if def.ideal_fields.contains(field) {
+                        self.ideal_bindings.insert(name.clone());
+                    }
                     self.env.insert(name.clone(), v);
                 }
                 Ok(())
@@ -2164,7 +2196,7 @@ impl<'a> Context<'a> {
                 let Symbol::Record(typename, _) = project(self.memory.read(r)?, &path)? else {
                     return Err("field reference requires a record".into());
                 };
-                self.representation_access(typename, e.line)?;
+                self.field_access(typename, n, e.line)?;
                 path.push(Projection::Field(n.clone()));
                 project(self.memory.read(r)?, &path)?;
                 Ok((r, path))
@@ -2619,7 +2651,7 @@ impl<'a> Context<'a> {
                 let Symbol::Record(typename, fields) = self.storage(base)? else {
                     return Err("field access requires struct storage".into());
                 };
-                self.representation_access(&typename, e.line)?;
+                self.field_access(&typename, name, e.line)?;
                 fields
                     .get(name)
                     .cloned()
@@ -2843,7 +2875,7 @@ impl<'a> Context<'a> {
                 let Symbol::Record(typename, fields) = self.storage(base)? else {
                     return Err("field access requires a struct".into());
                 };
-                self.representation_access(&typename, e.line)?;
+                self.field_access(&typename, name, e.line)?;
                 fields
                     .get(name)
                     .cloned()
@@ -2886,6 +2918,10 @@ impl<'a> Context<'a> {
                         Type::Machine(t) => Some(Ty::Machine(*t)),
                         _ => None,
                     };
+                    let saved_phase = self.phase;
+                    if def.ideal_fields.contains(n) && self.phase == Phase::Runtime {
+                        self.phase = Phase::Ideal;
+                    }
                     let evaluated = if let Type::Array(element, _) = ty {
                         // Supply the element type now; the complete dependent
                         // field type is checked once all literal fields exist.
@@ -2897,6 +2933,7 @@ impl<'a> Context<'a> {
                     } else {
                         self.eval(value, hint.as_ref())?
                     };
+                    self.phase = saved_phase;
                     fields.insert(n.clone(), evaluated);
                 }
                 self.env = saved;
@@ -3859,7 +3896,10 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             Phase::Runtime
         };
         for (n, t) in &s.fields {
-            if !s.ideal && !runtime_type(t, &structs) {
+            if s.ideal_fields.contains(n) && !erased_type(t, &structs) {
+                return Err(format!("line {}: ideal field {n} may own only proof data; runtime owners must be borrowed", s.line));
+            }
+            if !s.ideal && !s.ideal_fields.contains(n) && !runtime_type(t, &structs) {
                 return Err(format!(
                     "line {}: field {n} needs a runtime layout; use ideal type for proof data",
                     s.line
@@ -3868,8 +3908,13 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             if n == "self" || ctx.env.contains_key(n) {
                 return Err(format!("line {}: duplicate or reserved field {n}", s.line));
             }
+            let phase = ctx.phase;
+            if s.ideal_fields.contains(n) && ctx.phase == Phase::Runtime {
+                ctx.phase = Phase::Ideal;
+            }
             let t = ctx.resolve(t)?;
             let value = ctx.arbitrary(&t)?;
+            ctx.phase = phase;
             ctx.env.insert(n.clone(), value);
         }
         let fields = ctx.clone_env()?;
@@ -4061,6 +4106,81 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ideal_record_fields_move_and_erase_with_runtime_values() {
+        let source = include_str!("../examples/ideal_fields.evg");
+        let (program, bundle) = prove(source).unwrap();
+        let (value, events) = program.run_with_events().unwrap();
+        assert_eq!(value.to_string(), "42");
+        assert_eq!(events, ["drop packets::Tagged", "drop packets::Resource"]);
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        assert!(program.trusted_assumptions().is_empty());
+        let layout =
+            crate::layout::of(&Type::Named("packets::Packet".into()), &program.structs).unwrap();
+        assert_eq!(layout.size, 8);
+        assert!(!layout.fields.contains_key("witness"));
+        let empty =
+            crate::layout::of(&Type::Named("packets::Empty".into()), &program.structs).unwrap();
+        assert_eq!(empty.size, 8);
+        assert!(empty.fields.is_empty());
+        let duplicate = source.replace(
+            "let forwarded = packets::forward(packet);",
+            "let forwarded = packets::forward(packet); let duplicate = packets::forward(packet);",
+        );
+        assert!(verify(&duplicate).is_err());
+        let bad_proof = source.replace(
+            "witness.expected == nat(value)",
+            "witness.expected == nat(value) + 1",
+        );
+        assert!(verify(&bad_proof).is_err());
+        let output = verify("type View struct {value: usize, ideal secret: nat} fn main() -> View {View {value: 42, secret: 123}}").unwrap().run().unwrap();
+        let crate::runtime::Value::Record(_, fields) = output else {
+            panic!("expected runtime record")
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields["value"].to_string(), "42");
+    }
+
+    #[test]
+    fn ideal_record_fields_cannot_leak_or_erase_runtime_effects() {
+        for bad in [
+            "type Cell struct {value: usize, ideal secret: usize} fn main() -> usize {let cell = Cell {value: 7, secret: 42}; cell.secret}",
+            "type Cell struct {ideal secret: usize} fn main() -> usize {let cell = Cell {secret: 42}; let Cell {secret} = cell; secret}",
+            "type Cell struct {ideal secret: usize} fn main() -> &usize {let cell = Cell {secret: 42}; &cell.secret}",
+            "type Resource struct {} impl Drop for Resource {fn drop(self){}} type Bad struct {ideal owner: Resource} fn main() {}",
+            "type Cell struct {value: usize, ideal secret: usize} fn write(n: &usize) -> usize modifies(n) {*n = 42; 42} fn main() {let n: usize = 0; let cell = Cell {value: 7, secret: write(&n)};}",
+            "type Cell struct {value: usize, ideal secret: usize} fn main() {let cell = Cell {value: 7, secret: 42}; ideal cell.value = 42;}",
+        ] {assert!(verify(bad).is_err(), "accepted {bad}");}
+        let invariant = "type Cell struct {value: usize, ideal expected: usize} where(value == expected); fn main() {let cell = Cell {value: 7, expected: 7}; ideal cell.expected = 42;}";
+        assert!(verify(invariant).unwrap_err().contains("invariant of Cell"));
+    }
+
+    #[test]
+    fn carried_ideal_credit_references_remain_in_the_alias_model() {
+        let credits = include_str!("../stdlib/credits.evg").replace("module credits {", "module credits {ideal fn issue() -> Credit ensures(result.units == 42) {Credit {units: 42}}");
+        let library = format!(
+            "{credits} {} {}",
+            include_str!("../stdlib/borrow_credits.evg"),
+            include_str!("../proofs/carried_borrow_credits.evg")
+        );
+        let source = format!("{library} fn main() -> usize {{let data: usize = 42; let carrier = carry(credits::issue(), &data); consume_carrier(carrier)}}");
+        let (program, bundle) = prove(&source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(&source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let wrong = format!("{library} fn separate(carrier: &Carrier) -> bool ensures((*carrier).target != borrow_credits::target(&(*carrier).token)) {{false}} fn main() -> bool {{let data: usize = 42; let carrier = carry(credits::issue(), &data); separate(&carrier)}}");
+        assert!(verify(&wrong).unwrap_err().contains("body recheck failed"));
+    }
+
     #[test]
     fn ideal_assignments_and_update_locals_preserve_erasure_and_scope() {
         let source = include_str!("../examples/ideal_update_state.evg");

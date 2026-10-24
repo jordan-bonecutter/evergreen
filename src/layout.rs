@@ -86,7 +86,7 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
                     return Err("recursive inline native layout".into());
                 }
                 let mut offset = 0usize;
-                for (name, ty) in &definition.fields {
+                for (name, ty) in definition.runtime_fields() {
                     let layout = compute(ty, structs, active)?;
                     if fields
                         .insert(

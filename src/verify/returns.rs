@@ -155,9 +155,14 @@ impl Context<'_> {
                 let module = std::mem::replace(&mut self.module, definition.module);
                 let mut fields = BTreeMap::new();
                 for (field, ty) in definition.fields {
+                    let phase = self.phase;
+                    if definition.ideal_fields.contains(&field) && self.phase == Phase::Runtime {
+                        self.phase = Phase::Ideal;
+                    }
                     let ty = self.resolve(&ty)?;
                     path.push(ReturnProjection::Field(field.clone()));
                     let value = self.return_shape(&ty, path, aliases)?;
+                    self.phase = phase;
                     path.pop();
                     self.env.insert(field.clone(), value.clone());
                     fields.insert(field, value);

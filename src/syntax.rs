@@ -147,11 +147,18 @@ impl Statement {
             _ => Vec::new(),
         }
     }
-    pub fn runtime_bindings(&self) -> Vec<&str> {
-        if matches!(self, Self::Ideal(_)) {
-            Vec::new()
-        } else {
-            self.bindings()
+    pub fn runtime_bindings(
+        &self,
+        structs: &std::collections::BTreeMap<String, Struct>,
+    ) -> Vec<&str> {
+        match self {
+            Self::Ideal(_) => Vec::new(),
+            Self::Destructure { record, fields, .. } => fields
+                .iter()
+                .filter(|(field, _)| !structs[record].ideal_fields.contains(field))
+                .map(|(_, name)| name.as_str())
+                .collect(),
+            _ => self.bindings(),
         }
     }
 }
@@ -159,6 +166,7 @@ impl Statement {
 pub struct Struct {
     pub name: String,
     pub fields: Vec<(String, Type)>,
+    pub ideal_fields: std::collections::BTreeSet<String>,
     pub invariant: Option<Expr>,
     pub line: usize,
     pub ideal: bool,
@@ -166,6 +174,13 @@ pub struct Struct {
     pub opaque: bool,
     pub module: Option<String>,
     pub facts: Vec<(String, Expr)>,
+}
+impl Struct {
+    pub fn runtime_fields(&self) -> impl Iterator<Item = &(String, Type)> {
+        self.fields
+            .iter()
+            .filter(|(name, _)| !self.ideal_fields.contains(name))
+    }
 }
 #[derive(Clone, Debug)]
 pub struct Program {
@@ -980,9 +995,14 @@ impl Parser {
         self.expect("struct")?;
         self.expect("{")?;
         let mut fields = Vec::new();
+        let mut ideal_fields = std::collections::BTreeSet::new();
         if !self.eat("}") {
             loop {
+                let erased = self.eat("ideal");
                 let n = self.name()?;
+                if erased {
+                    ideal_fields.insert(n.clone());
+                }
                 self.expect(":")?;
                 fields.push((n, self.ty()?));
                 if self.eat("}") {
@@ -1016,6 +1036,7 @@ impl Parser {
         Ok(Struct {
             name,
             fields,
+            ideal_fields,
             invariant,
             line,
             ideal,

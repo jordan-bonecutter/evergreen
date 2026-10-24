@@ -167,7 +167,7 @@ impl Emitter<'_> {
                     || self
                         .structs
                         .get(name)
-                        .is_some_and(|s| s.fields.iter().any(|(_, t)| self.has_drop(t)))
+                        .is_some_and(|s| s.runtime_fields().any(|(_, t)| self.has_drop(t)))
             }
             Type::Array(element, _) => self.has_drop(element),
             _ => false,
@@ -235,8 +235,9 @@ impl Emitter<'_> {
                     .structs
                     .get(name)
                     .ok_or("unknown native cleanup type")?
-                    .fields
-                    .clone();
+                    .runtime_fields()
+                    .cloned()
+                    .collect::<Vec<_>>();
                 let object = layout::of(ty, self.structs)?;
                 for (name, ty) in fields {
                     self.drop_frame(&ty, offset + object.fields[&name].offset as i32)?;
@@ -487,11 +488,14 @@ impl Emitter<'_> {
             Kind::Record(name, entries) => {
                 let ty = Type::Named(name.clone());
                 let object = self.allocate(&ty)?;
-                if entries.is_empty() {
+                if self.structs[name].runtime_fields().next().is_none() {
                     self.immediate(0);
                     self.copy_frame(object, &Type::Unit)?;
                 }
                 for (field, expression) in entries {
+                    if self.structs[name].ideal_fields.contains(field) {
+                        continue;
+                    }
                     let field = self.field(&ty, field)?;
                     self.expr(expression, Some(&field.ty))?;
                     self.copy_frame(object + field.offset as i32, &field.ty)?;
@@ -779,6 +783,9 @@ impl Emitter<'_> {
                 self.expr(value, Some(&ty))?;
                 self.code.extend([0x48, 0x89, 0xc6]);
                 for (field, name) in fields {
+                    if self.structs[record].ideal_fields.contains(field) {
+                        continue;
+                    }
                     let field = self.field(&ty, field)?;
                     self.code.extend([0x48, 0x8d, 0x86]);
                     self.code.extend((field.offset as i32).to_le_bytes());
@@ -817,11 +824,11 @@ fn compilation_order(program: &VerifiedProgram) -> Result<Vec<&Function>> {
     ) -> Result<()> {
         match ty {
             Type::Named(name) if seen.insert(name.clone()) => {
-                for (_, field) in &program
+                for (_, field) in program
                     .structs
                     .get(name)
                     .ok_or("unknown native cleanup dependency")?
-                    .fields
+                    .runtime_fields()
                 {
                     visit(field, program, methods, seen, output)?;
                 }
@@ -989,7 +996,12 @@ fn emit_mode(program: &VerifiedProgram, trace: TraceMode) -> Result<Vec<u8>> {
         let names = params
             .iter()
             .map(|(n, _)| n.as_str())
-            .chain(function.body.iter().flat_map(Statement::runtime_bindings))
+            .chain(
+                function
+                    .body
+                    .iter()
+                    .flat_map(|statement| statement.runtime_bindings(&program.structs)),
+            )
             .collect::<Vec<_>>();
         for name in names.into_iter().rev() {
             if emitter.alive.remove(name) {
@@ -1228,6 +1240,7 @@ mod tests {
             include_str!("../examples/update_borrow_writes.evg"),
             include_str!("../examples/ideal_borrow_resources.evg"),
             include_str!("../examples/ideal_update_state.evg"),
+            include_str!("../examples/ideal_fields.evg"),
             "fn main() -> usize where(old(1 + 1) == 2) {42}",
             "type Fixed struct {value: usize} where(value == 42); fn refresh(r: &Fixed) -> &Fixed modifies(&(*r).value) borrows(r) ensures((*r).value == 42 && (*result).value == 42) {(*r).value = 42; r} fn main() -> usize {let fixed = Fixed {value: 42}; let refreshed = refresh(&fixed); (*refreshed).value}",
             include_str!("../examples/recursion.evg"),
@@ -1377,6 +1390,8 @@ mod tests {
         );
         cases.push(format!("{updates} fn main() -> usize {{let count: usize = 42; release_budget(credits::issue(), &count) + 1}}"));
         cases.push(format!("{updates} fn main() -> usize {{ideal let parts = credits::split(credits::issue(), 1); ideal let credits::Split {{left, right}} = parts; let count: usize = 1; release_budget(left, &count) + 42}}"));
+        cases.push(format!("{credit_test} {} {} fn main() -> usize {{let data: usize = 42; let carrier = carry(credits::issue(), &data); let observed = read_carrier(&carrier); consume_carrier(carrier) + observed - 42}}",
+            include_str!("../stdlib/borrow_credits.evg"), include_str!("../proofs/carried_borrow_credits.evg")));
         let indexed = include_str!("../examples/indexed_borrows.evg")
             .split("fn main")
             .next()

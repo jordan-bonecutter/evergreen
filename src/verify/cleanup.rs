@@ -73,10 +73,10 @@ impl Context<'_> {
                 self.destructors
                     .get(name)
                     .is_some_and(|f| !f.modifies.is_empty())
-                    || self
-                        .structs
-                        .get(name)
-                        .is_some_and(|s| s.fields.iter().any(|(_, t)| self.cleanup_effects_type(t)))
+                    || self.structs.get(name).is_some_and(|s| {
+                        s.runtime_fields()
+                            .any(|(_, t)| self.cleanup_effects_type(t))
+                    })
             }
             Type::Array(element, _) => self.cleanup_effects_type(element),
             _ => false, // References do not own their pointees.
@@ -122,8 +122,7 @@ impl Context<'_> {
                     .structs
                     .get(&name)
                     .ok_or("unknown cleanup type")?
-                    .fields
-                    .iter()
+                    .runtime_fields()
                     .map(|(name, _)| name.clone())
                     .collect::<Vec<_>>();
                 for name in order {

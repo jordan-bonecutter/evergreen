@@ -232,6 +232,9 @@ impl Evaluator<'_> {
                         return Err("record pattern requires a record".into());
                     };
                     for (field, name) in fields {
+                        if self.structs[record].ideal_fields.contains(field) {
+                            continue;
+                        }
                         env.insert(
                             name.clone(),
                             values.remove(field).ok_or("missing pattern field")?,
@@ -288,11 +291,11 @@ impl Evaluator<'_> {
             .filter(|(n, _)| !f.ideal_params.contains(n))
             .map(|(n, _)| n.clone())
             .collect::<Vec<_>>();
-        names.extend(
-            f.body
-                .iter()
-                .flat_map(|s| s.runtime_bindings().into_iter().map(str::to_owned)),
-        );
+        names.extend(f.body.iter().flat_map(|s| {
+            s.runtime_bindings(self.structs)
+                .into_iter()
+                .map(str::to_owned)
+        }));
         for name in names.into_iter().rev() {
             let live = if let Some(id) = self.roots.get(&name) {
                 if self.memory.get(*id).is_err() {
@@ -348,8 +351,7 @@ impl Evaluator<'_> {
                     .structs
                     .get(&name)
                     .ok_or("unknown drop layout")?
-                    .fields
-                    .iter()
+                    .runtime_fields()
                     .map(|(n, _)| n.clone())
                     .collect::<Vec<_>>();
                 for field in order {
@@ -539,6 +541,9 @@ impl Evaluator<'_> {
                 let def = self.structs.get(name).ok_or("unknown struct")?;
                 let mut fields = BTreeMap::new();
                 for (n, e) in entries {
+                    if def.ideal_fields.contains(n) {
+                        continue;
+                    }
                     let t = def
                         .fields
                         .iter()

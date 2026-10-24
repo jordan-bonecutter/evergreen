@@ -85,6 +85,28 @@ theorem metadata_cannot_revive_restored_borrow {Before After : Type} (p : Plane)
     ¬ Valid (writePlane (dropPlane p) false) (mapMetadata borrow next).reference :=
   restore_does_not_revive p borrow.reference valid
 
+-- Erasing record fields is modeled as a projection. Replacing proof fields
+-- frames runtime-only properties, but a joint record invariant still needs a
+-- new check. This specifies separation, not the Rust/native representation.
+structure PhasedRecord (Runtime Ideal : Type) where
+  runtime : Runtime
+  ideal : Ideal
+
+def replaceIdeal {Runtime Before After : Type} (record : PhasedRecord Runtime Before)
+    (next : After) : PhasedRecord Runtime After := ⟨record.runtime, next⟩
+
+theorem ideal_field_replacement_erases {Runtime Before After : Type}
+    (record : PhasedRecord Runtime Before) (next : After) :
+    (replaceIdeal record next).runtime = record.runtime := rfl
+
+theorem ideal_fields_frame_runtime_property {Runtime Before After : Type}
+    (record : PhasedRecord Runtime Before) (next : After) (property : Runtime → Prop)
+    (valid : property record.runtime) : property (replaceIdeal record next).runtime := valid
+
+example : (⟨7, 7⟩ : PhasedRecord Nat Nat).runtime = 7 ∧
+    (replaceIdeal (⟨7, 7⟩ : PhasedRecord Nat Nat) 42).runtime ≠
+      (replaceIdeal (⟨7, 7⟩ : PhasedRecord Nat Nat) 42).ideal := by decide
+
 -- An atomic update publishes only a new state satisfying its invariant.
 def commit {State : Type} (invariant : State → Prop)
     (next : State) (proof : invariant next) : { s : State // invariant s } :=
