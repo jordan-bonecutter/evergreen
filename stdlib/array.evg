@@ -11,7 +11,7 @@ module arrays {
     // In particular, swapping a cell with itself is valid.
     fn swap(ideal n: nat, data: &[usize; n], left: usize, right: usize)
     where (int(left) < int(n) && int(right) < int(n))
-    modifies(data)
+    modifies(&(*data)[left], &(*data)[right])
     ensures (
         (*data)[left] == old(*data)[right] &&
         (*data)[right] == old(*data)[left]

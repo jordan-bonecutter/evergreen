@@ -334,6 +334,13 @@ Existing element references keep their storage identity and read the new
 contents, including symbolic indices and references created before the call.
 `old(*data)[index]` reads from the entry snapshot.
 
+Several projections from the same input reference form a union of permissions.
+They may coincide; listing the same place twice grants no additional authority.
+`modifies(&(*data)[left], &(*data)[right])` therefore supports both equal and
+distinct indices while framing all other cells. This differs from passing aliases
+as separate reference parameters, whose independent body models still require
+disjointness at the call boundary.
+
 `stdlib/array.evg` provides `arrays::set`, `arrays::swap`, and
 `arrays::replace_pair` in Evergreen. `swap` accepts equal indices because both
 places share one incoming array's alias model. Run the example with

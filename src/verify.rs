@@ -528,10 +528,22 @@ impl<'a> Context<'a> {
             {
                 return Err("modifies cannot acquire a different plane's write permission".into());
             }
+            // Permissions form a union of places. Two projections from the
+            // same input can coincide, including after actual arguments bind
+            // symbolic indices. Independent input origins still undergo the
+            // separate cross-parameter disjointness check at the call boundary.
+            let mut redundant = false;
             for previous in &places {
-                if previous.reference == reference && self.paths_equal(&previous.path, &path)? {
-                    return Err("duplicate modifies place overlaps an existing write target".into());
+                if previous.origin == origin
+                    && previous.reference == reference
+                    && self.paths_equal(&previous.path, &path)?
+                {
+                    redundant = true;
+                    break;
                 }
+            }
+            if redundant {
+                continue;
             }
             places.push(WritePlace {
                 origin,
@@ -3960,7 +3972,9 @@ mod tests {
         .unwrap_err()
         .contains("overlaps"));
         assert!(verify(&format!("{copy} fn main() -> usize ensures(result == 42) {{let a: usize = 0; let b: usize = 42; copy(&a, &b); a}}")).is_ok());
-        assert!(verify("fn duplicate(r: &usize) modifies(r, r) {*r = 0;}").is_err());
+        assert!(
+            verify("fn duplicate(r: &usize) modifies(r, r) ensures(*r == 0) {*r = 0;}").is_ok()
+        );
         assert!(verify("fn missing(r: &usize) modifies(no_such_param) {*r = 0;}").is_err());
     }
 

@@ -117,6 +117,21 @@ def Region := Address → Prop
 def Modifies (region : Region) (before after : Store) : Prop :=
   ∀ queried, ¬ region queried → after queried = before queried
 
+-- Repeated or coincident places form an idempotent permission union.
+theorem modifies_repeated (region : Region) (before after : Store) :
+    Modifies (fun queried => region queried ∨ region queried) before after ↔
+      Modifies region before after := by
+  simp only [Modifies, or_self]
+
+theorem swap_modifies_union (store : Store) (a b : Address) :
+    Modifies (fun queried => queried = a ∨ queried = b) store (swap store a b) := by
+  intro queried outside
+  apply swap_frame
+  · intro equal
+    exact outside (Or.inl equal)
+  · intro equal
+    exact outside (Or.inr equal)
+
 def within (root queried : Address) : Prop :=
   queried.plane = root.plane ∧ root.path <+: queried.path
 
