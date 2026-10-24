@@ -127,6 +127,8 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        "fn sum(ideal n: nat, a: &[u8; n], ideal m: nat, b: &[u8; m]) -> u16 where(n > 0 && m > 0) {u16((*a)[0]) + u16((*b)[0])} fn main() -> u16 {let a: [u8; 1] = [40]; let b: [u8; 2] = [2, 3]; sum(&a, &b)}",
+        "fn main() -> usize {let data: [usize; 2] = [7, 1]; arrays::set(&data, 1, 42); data[1]}",
         include_str!("../../../examples/owned_return_cleanup.evg"),
         include_str!("../../../examples/owned_destructor_cleanup.evg"),
         include_str!("../../../examples/integer_conversions.evg"),
@@ -507,11 +509,7 @@ fn native_syscalls_write_exact_bytes_and_preserve_results() {
     let directory =
         std::env::temp_dir().join(format!("evergreen-io-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
-    let hello = [
-        include_str!("../../../stdlib/linux_io.evg"),
-        include_str!("../../../examples/hello.evg"),
-    ]
-    .join("\n");
+    let hello = include_str!("../../../examples/hello.evg").to_owned();
     let packed = "extern syscall(1) fn write(fd: usize, bytes: &[u8; 3], count: usize) -> isize where(count <= 3); proof {trustme} fn main() -> usize {let bytes: [u8; 3] = [195, 169, 10]; if write(1, &bytes, 3) == 3 {0} else {1}}";
     let error = "extern syscall(1) fn write(fd: usize, byte: &u8, count: usize) -> isize where(count <= 1); proof {trustme} fn main() -> usize {let byte: u8 = 42; if write(usize::MAX, &byte, 1) == -9 {0} else {1}}";
     let eof = "extern syscall(0) fn read(fd: usize, byte: &u8, count: usize) -> isize where(count <= 1) modifies(byte) ensures(result == 0 => *byte == old(*byte)); proof {trustme} fn main() -> usize {let byte: u8 = 42; let received = read(0, &byte, 1); if received == 0 && byte == 42 {0} else {1}}";
@@ -520,7 +518,7 @@ fn native_syscalls_write_exact_bytes_and_preserve_results() {
     let large = format!("{} fn main() -> usize {{let bytes: [u8; 257] = [{large_bytes}]; if linux_io::print_bytes(257, &bytes) == 257 {{0}} else {{1}}}}", include_str!("../../../stdlib/linux_io.evg"));
     let large_expected = vec![65; 257];
     let empty = format!("{} fn main() -> usize {{let bytes: [u8; 0] = []; if linux_io::print_bytes(0, &bytes) == 0 {{0}} else {{1}}}}", include_str!("../../../stdlib/linux_io.evg"));
-    let prefix = format!("{} fn main() -> usize {{let bytes: [u8; 3] = [65, 66, 67]; if linux_io::write(1, &bytes, 2, 3) == 2 {{0}} else {{1}}}}", include_str!("../../../stdlib/linux_io.evg"));
+    let prefix = format!("{} fn main() -> usize {{let bytes: [u8; 3] = [65, 66, 67]; if linux_io::write(1, &bytes, 2) == 2 {{0}} else {{1}}}}", include_str!("../../../stdlib/linux_io.evg"));
     for (source, expected) in [
         (hello.as_str(), b"Hello, Evergreen\n".as_slice()),
         (large.as_str(), large_expected.as_slice()),

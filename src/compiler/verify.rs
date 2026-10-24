@@ -3057,7 +3057,16 @@ impl<'a> Context<'a> {
                     }
                     return Ok(value);
                 }
-                let f = self.functions.get(name).ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration; ideal recursion requires decreases"))?;
+                let f = self.functions.get(name).ok_or_else(|| {
+                    if self.current.as_ref() == Some(name) {
+                        format!(
+                            "line {}: recursive ideal function {name} requires a decreases clause",
+                            e.line
+                        )
+                    } else {
+                        format!("line {}: unknown function {name}", e.line)
+                    }
+                })?;
                 if self.phase == Phase::Runtime
                     && !self.opened_planes.is_empty()
                     && !self.cleanup_helpers.contains(name)
@@ -3098,13 +3107,13 @@ impl<'a> Context<'a> {
                         "{name} is ideal code and cannot be called at runtime"
                     ));
                 }
-                if args.len() != f.params.len() {
-                    return Err(format!("{name} expects {} arguments", f.params.len()));
-                }
+                let supplied = f
+                    .supplied_parameters(args.len())
+                    .map_err(|error| format!("line {}: {error}", e.line))?;
                 // Evaluate actuals in the caller; dependent parameter types in an
                 // isolated callee environment. Restore the caller on completion.
-                let mut actuals = Vec::new();
-                for ((parameter, t), arg) in f.params.iter().zip(args) {
+                let mut actuals = BTreeMap::new();
+                for ((parameter, t), arg) in supplied.into_iter().zip(args) {
                     let hint = match t {
                         Type::Nat => Some(Ty::Nat),
                         Type::Int => Some(Ty::Int),
@@ -3133,13 +3142,14 @@ impl<'a> Context<'a> {
                     };
                     self.phase = saved_specification;
                     self.validate_argument(&value, e.line)?;
-                    actuals.push(value);
+                    actuals.insert(parameter.clone(), value);
                 }
                 // A later argument can consume storage borrowed by an earlier
                 // argument. Recheck the complete actual list at the call boundary.
-                for value in &actuals {
+                for value in actuals.values() {
                     self.validate_argument(value, e.line)?;
                 }
+                let actuals = self.complete_arguments(f, actuals, e.line)?;
                 let mut saved = std::mem::take(&mut self.env);
                 let saved_roots = std::mem::take(&mut self.roots);
                 let saved_old = std::mem::take(&mut self.old_values);
@@ -3718,23 +3728,26 @@ impl VerifiedProgram {
 }
 
 pub fn verify(source: &str) -> Result<VerifiedProgram> {
+    let source = super::sources::load(source)?;
     let mut session = Session::search();
-    let program = verify_using(source, &mut session)?;
+    let program = verify_using(source.program, &mut session)?;
     session.finish()?;
     Ok(program)
 }
 
 pub fn prove(source: &str) -> Result<(VerifiedProgram, ProofBundle)> {
+    let source = super::sources::load(source)?;
     let mut session = Session::recording();
-    let program = verify_using(source, &mut session)?;
+    let program = verify_using(source.program, &mut session)?;
     session.finish()?;
-    Ok((program, session.bundle(source)?))
+    Ok((program, session.bundle(&source.fingerprint)?))
 }
 
 pub fn verify_with_certificate(source: &str, bundle: &ProofBundle) -> Result<VerifiedProgram> {
-    bundle.check_source(source)?;
+    let source = super::sources::load(source)?;
+    bundle.check_source(&source.fingerprint)?;
     let mut session = Session::replay(bundle);
-    let program = verify_using(source, &mut session)?;
+    let program = verify_using(source.program, &mut session)?;
     session.finish()?;
     Ok(program)
 }
@@ -3771,12 +3784,11 @@ fn check_type_expansion(structs: &[Struct]) -> Result<()> {
     Ok(())
 }
 
-fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> {
-    crate::shared::worker::run("evergreen-verifier", || verify_inner(source, session))
+fn verify_using(parsed: syntax::Program, session: &mut Session) -> Result<VerifiedProgram> {
+    crate::shared::worker::run("evergreen-verifier", || verify_inner(parsed, session))
 }
 
-fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> {
-    let parsed = syntax::parse(source)?;
+fn verify_inner(parsed: syntax::Program, session: &mut Session) -> Result<VerifiedProgram> {
     check_type_expansion(&parsed.structs)?;
     let mut structs = BTreeMap::new();
     let empty_functions = BTreeMap::new();

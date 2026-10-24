@@ -773,9 +773,10 @@ impl Evaluator<'_> {
                     .iter()
                     .find(|f| f.name == *name)
                     .ok_or("unknown function")?;
+                let supplied = function.supplied_parameters(args.len())?;
                 let values = args
                     .iter()
-                    .zip(&function.params)
+                    .zip(supplied)
                     .filter(|(_, (name, _))| !function.ideal_params.contains(name))
                     .map(|(x, (_, t))| self.expr(x, env, Some(t)))
                     .collect::<Result<Vec<_>>>()?;

@@ -1657,3 +1657,34 @@ its owned allocation before child cleanup frees it. Released roots are not
 revalidated as live post-state objects, and stale references remain invalid.
 These rules still require write footprints for borrowed, externally owned data
 and preserve payload invariants on actual writes.
+
+
+### Bundled standard library
+
+Internal `check`, `prove`, `run`, and `build` resolve bundled stdlib dependencies
+automatically, including transitive dependencies. For example, build
+`examples/hello.evg` by itself; mentioning `linux_io::print_bytes` loads its
+Evergreen implementation. Dependencies are embedded in the compiler, so the
+executable need not run from the repository directory. Explicitly listing stdlib
+files remains supported and does not load the same module twice.
+
+Loading is demand-driven: an arithmetic-only program does not acquire the IO or
+atomic trusted contracts. Referenced external declarations remain audited, and
+`--deny-trust` still rejects them. Certificates bind the bytes of automatically
+loaded dependencies as well as the input source. User expression line numbers
+are preserved instead of shifting when a stdlib file is added. The optional
+legacy Lean translator retains its existing supported subset.
+
+Unknown-function diagnostics now report that error alone; the decreases-clause
+hint is emitted specifically for an undeclared self-call in an ideal function,
+not appended to every missing-name error.
+
+
+Ideal scalar extents can now be inferred from array argument types. For example,
+`linux_io::write(1, &bytes, 2)` infers the proof-only capacity from `bytes`; the
+runtime count remains explicit. Calls may supply all arguments as before, or
+omit all ideal arguments. Inference currently handles direct named array
+extents, including nested references and ideals in different parameter positions.
+It rejects inconsistent lengths and asks for an explicit value when an ideal
+parameter is not determined by an argument type. This is type-based inference,
+not a runtime capacity argument or a proof-search guess.

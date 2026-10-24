@@ -10,6 +10,9 @@ language design sketch; not all of it is implemented yet.
 `cargo run -- --deny-trust build examples/native.evg -o /tmp/answer` builds a
 standalone Linux x86-64 executable for the supported verified subset.
 
+Bundled stdlib dependencies load automatically. For byte output, try
+`cargo run -- build examples/hello.evg -o /tmp/hello` and run `/tmp/hello`.
+
 ### Reading the compiler
 
 | Responsibility | Code |

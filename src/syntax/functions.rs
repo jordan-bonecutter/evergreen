@@ -183,3 +183,30 @@ impl Parser {
         Ok(borrows)
     }
 }
+
+impl Function {
+    /// Calls may provide every parameter, or omit all erased parameters for inference.
+    pub(crate) fn supplied_parameters(&self, count: usize) -> Result<Vec<&(String, Type)>, String> {
+        if count == self.params.len() {
+            return Ok(self.params.iter().collect());
+        }
+        let runtime = self
+            .params
+            .iter()
+            .filter(|(name, _)| !self.ideal_params.contains(name))
+            .collect::<Vec<_>>();
+        if count == runtime.len() && !self.ideal_params.is_empty() {
+            return Ok(runtime);
+        }
+        Err(if self.ideal_params.is_empty() {
+            format!("{} expects {} arguments", self.name, self.params.len())
+        } else {
+            format!(
+                "{} expects {} runtime arguments, or {} arguments including explicit ideal values",
+                self.name,
+                runtime.len(),
+                self.params.len()
+            )
+        })
+    }
+}

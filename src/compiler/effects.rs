@@ -141,10 +141,8 @@ fn expression(
                 return None;
             }
             let f = functions.get(n)?;
-            if f.params.len() != args.len() {
-                return None;
-            }
-            for ((name, t), e) in f.params.iter().zip(args) {
+            let supplied = f.supplied_parameters(args.len()).ok()?;
+            for ((name, t), e) in supplied.into_iter().zip(args) {
                 if f.ideal_params.contains(name) {
                     continue;
                 }

@@ -481,12 +481,7 @@ fn syscall_declarations_cannot_bypass_deny_trust() {
     );
     assert_eq!(String::from_utf8_lossy(&atomic.stdout).trim(), "42");
     let output = Command::new(cli)
-        .args([
-            "--deny-trust",
-            "check",
-            "stdlib/linux_io.evg",
-            "examples/hello.evg",
-        ])
+        .args(["--deny-trust", "check", "examples/hello.evg"])
         .output()
         .unwrap();
     assert!(!output.status.success());

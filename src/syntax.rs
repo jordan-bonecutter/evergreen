@@ -203,6 +203,7 @@ impl Struct {
 
 #[derive(Clone, Debug)]
 pub struct Program {
+    pub modules: std::collections::BTreeSet<String>,
     pub structs: Vec<Struct>,
     pub functions: Vec<Function>,
     pub destructors: Vec<(String, Function)>,
@@ -838,6 +839,7 @@ pub fn parse(source: &str) -> Result<Program, String> {
         return Err("expected at least one function".into());
     }
     let mut program = Program {
+        modules,
         structs,
         functions,
         destructors,

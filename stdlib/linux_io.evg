@@ -14,7 +14,7 @@ module linux_io {
     where(count <= 1)
     ensures(result <= 1) {
         let bytes: [u8; 1] = [*byte];
-        write(fd, &bytes, count, 1)
+        write(fd, &bytes, count)
     }
 
     fn stdout_byte(byte: &u8) -> bool {
@@ -24,6 +24,6 @@ module linux_io {
     // One write attempt. Preserve short counts and negative error codes.
     fn print_bytes(length: usize, bytes: &[u8; length]) -> isize
     ensures(int(result) <= int(length)) {
-        write(1, bytes, length, nat(length))
+        write(1, bytes, length)
     }
 }

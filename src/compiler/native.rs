@@ -776,11 +776,9 @@ impl Emitter<'_> {
             }
             Kind::Call(name, args) => {
                 let function = self.functions.get(name).ok_or("unknown native callee")?;
-                if function.params.len() != args.len() {
-                    return Err("native argument count mismatch".into());
-                }
+                let supplied = function.supplied_parameters(args.len())?;
                 let saved_temporary = self.temporary;
-                for ((parameter, ty), arg) in function.params.iter().zip(args) {
+                for ((parameter, ty), arg) in supplied.into_iter().zip(args) {
                     if function.ideal_params.contains(parameter) {
                         continue;
                     }
