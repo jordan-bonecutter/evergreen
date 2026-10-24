@@ -210,4 +210,39 @@ theorem joined_index_read (store : Store) (plane : Nat) (flag : Bool)
       if flag then store (indexed plane left) else store (indexed plane right) := by
   cases flag <;> simp_all
 
+-- A field update is a structural store of one complete record. This models
+-- value framing, not record layouts, references, destructors, or Rust lowering.
+def RecordArray := Nat → Nat → Int
+
+def storeRecord (data : RecordArray) (index : Nat) (value : Nat → Int) : RecordArray :=
+  fun queried => if queried = index then value else data queried
+
+def storeField (data : RecordArray) (index field : Nat) (value : Int) : RecordArray :=
+  storeRecord data index (fun queried => if queried = field then value else data index queried)
+
+theorem record_field_store (data : RecordArray) (index field queried selected : Nat)
+    (value : Int) :
+    storeField data index field value queried selected =
+      if queried = index ∧ selected = field then value else data queried selected := by
+  by_cases same_record : queried = index <;>
+    by_cases same_field : selected = field <;>
+    simp_all [storeField, storeRecord]
+
+theorem store_record_preserves_invariant (data : RecordArray) (index : Nat)
+    (value : Nat → Int) (invariant : (Nat → Int) → Prop)
+    (before : ∀ queried, invariant (data queried))
+    (validated : invariant value) :
+    ∀ queried, invariant (storeRecord data index value queried) := by
+  intro queried
+  by_cases same : queried = index
+  · simp [storeRecord, same, validated]
+  · simp [storeRecord, same, before queried]
+
+-- The updated record's validity is an obligation; the store cannot grant it.
+theorem stored_record_requires_invariant (data : RecordArray) (index : Nat)
+    (value : Nat → Int) (invariant : (Nat → Int) → Prop)
+    (after : ∀ queried, invariant (storeRecord data index value queried)) :
+    invariant value := by
+  simpa [storeRecord] using after index
+
 end Evergreen.MemoryContracts

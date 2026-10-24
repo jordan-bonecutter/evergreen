@@ -24,8 +24,9 @@ named `fact` declarations, preconditions (`where`), postconditions (`ensures`),
 length-indexed arrays (`[T; n]`), array literals, calls to earlier verified
 functions, and conditional expressions. Conditionals can select scalar values,
 unit, or records with scalar fields, including nested records. Their checked
-relations preserve which branch supplied each result field; array and reference
-joins remain unsupported. See `examples/conditional_records.evg`.
+relations preserve which branch supplied each result field. Matching array
+layouts and scalar-array references within one plane also support guarded joins,
+as described below. See `examples/conditional_records.evg`.
 Array access requires a proof of its bound.
 A semicolon discards an expression and cleans up its temporary, including at the
 end of a function. A returned tail expression has no semicolon.
@@ -449,7 +450,8 @@ Write contracts can name scalar projections of incoming references, such as
 `modifies(&(*data)[index])` or `modifies(&(*pair).left)`. Bounds and the
 projection are checked under the entry precondition. Permission stays attached
 to that entry place if an index variable later changes; sibling cells remain
-unchanged. Targets support machine scalars, Booleans, and arrays of those scalars.
+unchanged. Targets support machine scalars, Booleans, copyable scalar-field
+records, and arrays of these values.
 
 `modifies(data)` for an incoming scalar-array reference grants permission to
 write its cells or replace its contents with the same array layout. The call
@@ -572,7 +574,9 @@ it on only one branch is rejected until conditional shapes are implemented.
 `examples/conditional_writes.evg` checks nested effects, aliases, and framed
 sibling fields. These proof snapshots do not introduce runtime transactions.
 
-Scalar-array versions now record immutable store and conditional-join histories.
+Arrays of scalars and copyable scalar-field records record immutable store and
+conditional-join histories. Nested record fields are supported; elements that
+contain arrays, references, affine fields, or destructors need further rules.
 A cell first observed after a write still obeys the store rule: it has the stored
 value at the written index and the predecessor's value elsewhere. Reads after a
 join inspect each predecessor under its own guard, preserving branch-local
@@ -581,7 +585,29 @@ proof valid only in the first read's context. Reading through a reference or
 capturing `old(*reference)` uses the same semantics. These histories are proof
 metadata; they neither allocate runtime storage nor grant write permissions.
 History reads have depth at most 64 and charge expansion work to the ordinary
-verifier budget. Opaque aggregate-element histories remain unsupported.
+verifier budget.
+
+A field write in one of these records stores the complete updated element in
+the history. It preserves the other fields and affects another index's view
+only when the indices are equal. `modifies` can grant a whole copyable record
+or an array of such records as well as individual scalar fields. Same-layout
+replacement preserves existing field borrows. Record invariants are checked
+for every materialized cell, including arrays without expanded element lists.
+Temporary alias-merge records grant no invariant assumptions. While a modular
+call's writes and postcondition are being instantiated, array reads cannot
+assume caller-only record invariants; the caller must re-establish them.
+Replaying an intermediate summary version later cannot grant its invariant
+either; derived record values rely on their structural history relations.
+The callee's declared input types remain implicit checked return contracts.
+
+`examples/record_array_history.evg` exercises conditional field writes and old
+field snapshots at symbolic indices. `examples/record_array_values.evg` replaces
+whole refined records with nested record fields, preserving field borrows and
+unchanged data. Both run, replay certificates, and build natively. An independent
+two-field Rust model checks sixteen combinations of indices and conditional
+overlapping helper calls, including rejection of wrong result contracts.
+`examples/reject_record_array_invariant.evg` rejects a scalar helper call that
+would break a record invariant in its caller's array.
 
 `examples/array_frame_history.evg` proves a conditional write changes the selected
 cell and preserves its previously unobserved sibling. It also exercises overflow
@@ -899,6 +925,8 @@ The optional Lean suite checks independent specifications:
   postcondition and involution hold. Distinct fields of one plane are disjoint.
   Its invariant-framing rule accounts for read footprints spanning multiple planes.
   Guarded index joins preserve bounds and read the selected cell in one plane.
+  Its structural record-array model proves the field-store rule and makes
+  validity of the replacement record an explicit invariant-preservation premise.
 - `proofs/PropositionalProofs.lean` defines contextual derivations for the
   structural propositional rules and proves their soundness under a valuation.
   Implication introduction extends only its subproof's context; application

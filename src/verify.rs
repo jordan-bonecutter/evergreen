@@ -882,13 +882,17 @@ impl<'a> Context<'a> {
         let mut places: Vec<WritePlace> = Vec::new();
         for expression in &function.modifies {
             let place = self.incoming_place(expression, inputs, None)?;
-            let scalar_region = match &*place.ty {
+            let supported_region = match &*place.ty {
                 Ty::Machine(_) | Ty::Bool => true,
-                Ty::Array(element, _) => matches!(**element, Ty::Machine(_) | Ty::Bool),
+                Ty::Record(_) => self.history_element(&place.ty),
+                Ty::Array(element, _) => {
+                    matches!(**element, Ty::Machine(_) | Ty::Bool)
+                        || matches!(**element, Ty::Record(_)) && self.history_element(element)
+                }
                 _ => false,
             };
-            if !scalar_region {
-                return Err("modifies targets require machine scalars, Booleans, or arrays of those scalars".into());
+            if !supported_region {
+                return Err("modifies targets require machine scalars, Booleans, copyable scalar-field records, or arrays of those values".into());
             }
             // Permissions form a union for one structural input origin. Pointer
             // equality cannot merge independently modeled reference fields.
@@ -1027,7 +1031,7 @@ impl<'a> Context<'a> {
         if self.follows(&aliases.clone().not())? {
             return Ok(previous.clone());
         }
-        let result = self.arbitrary(&previous.ty())?;
+        let result = self.history_value(&previous.ty())?;
         let relation = aliases
             .clone()
             .and(self.symbol_equal(&result, new)?)
@@ -1057,12 +1061,25 @@ impl<'a> Context<'a> {
             },
         ) = (&path[0], &mut *value)
         {
-            if path.len() == 1
-                && matches!(
-                    **element,
-                    Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
-                )
-            {
+            if self.history_element(element) {
+                // Updating a record field is a store of the complete updated
+                // element. All other index views see that same structural value.
+                let replacement = if path.len() == 1 {
+                    new
+                } else {
+                    // The location was materialized before the store. Do not
+                    // assume its nominal invariant while a call summary is
+                    // still assembling multiple field updates.
+                    let mut value = cells
+                        .get(target)
+                        .or_else(|| {
+                            constant_index(target).and_then(|index| items.as_ref()?.get(index))
+                        })
+                        .cloned()
+                        .ok_or("missing record array write view")?;
+                    self.replace_projection(&mut value, &path[1..], new)?;
+                    value
+                };
                 let mut observed = cells.clone();
                 if let Some(values) = items.take() {
                     for (index, value) in values.into_iter().enumerate() {
@@ -1087,17 +1104,17 @@ impl<'a> Context<'a> {
                     ArrayHistory::Store {
                         base: identity.clone(),
                         index: target.clone(),
-                        value: new.clone(),
+                        value: replacement.clone(),
                     },
                 );
                 let mut updated = BTreeMap::new();
                 for (index, previous) in observed {
                     updated.insert(
                         index.clone(),
-                        self.updated_cell(target, &index, &previous, &new)?,
+                        self.updated_cell(target, &index, &previous, &replacement)?,
                     );
                 }
-                updated.insert(target.clone(), new);
+                updated.insert(target.clone(), replacement);
                 *cells = updated;
                 *identity = next;
                 return Ok(());
@@ -1480,11 +1497,8 @@ impl<'a> Context<'a> {
         lifted: &BTreeSet<String>,
     ) -> Result<()> {
         self.charge_value_work(1)?;
-        if let Symbol::Array {
-            items: Some(items), ..
-        } = value
-        {
-            for v in items {
+        if let Symbol::Array { items, cells, .. } = value {
+            for v in items.iter().flatten().chain(cells.values()) {
                 self.validate_argument(v, line)?;
             }
             return Ok(());
@@ -1945,11 +1959,7 @@ impl<'a> Context<'a> {
                     cells,
                     ..
                 },
-            ) if matches!(
-                **element,
-                Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
-            ) =>
-            {
+            ) if self.history_element(element) => {
                 self.charge_value_work(observed.len())?;
                 for index in observed.keys() {
                     let value =
@@ -2038,6 +2048,7 @@ impl<'a> Context<'a> {
                         Ok(true)
                     }
                     _ => Ok(ai == bi
+                        || self.history_element(element)
                         || matches!(
                             **element,
                             Ty::Int | Ty::Nat | Ty::Machine(_) | Ty::Bool | Ty::Ref(_) | Ty::Unit
@@ -2104,17 +2115,10 @@ impl<'a> Context<'a> {
                 let literal = constant_index(&index)
                     .and_then(|i| items.as_ref().and_then(|items| items.get(i)));
                 if !cells.contains_key(&index)
-                    && (literal.is_none()
-                        || matches!(
-                            *element,
-                            Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
-                        ))
+                    && (literal.is_none() || self.history_element(element.as_ref()))
                 {
-                    if !matches!(
-                        *element,
-                        Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
-                    ) {
-                        return Err("borrowing opaque array elements currently requires a scalar element layout".into());
+                    if !self.history_element(element.as_ref()) {
+                        return Err("borrowing opaque array elements requires scalars or copyable scalar-field records".into());
                     }
                     let value =
                         self.read_array(&element, &identity, &index, items.as_deref(), &cells)?;
@@ -2324,6 +2328,26 @@ impl<'a> Context<'a> {
             _ => false,
         }
     }
+    // Extensional array histories can compare these values structurally.
+    // Reference identity, nested arrays, and owning values need their own rules.
+    fn history_element(&self, t: &Ty) -> bool {
+        fn fields(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
+            match t {
+                Type::Named(name) => structs.get(name).is_some_and(|definition| {
+                    definition.fields.iter().all(|(_, ty)| fields(ty, structs))
+                }),
+                Type::Ref(_) | Type::Array(..) => false,
+                _ => true,
+            }
+        }
+        match t {
+            Ty::Record(name) => {
+                !self.ty_is_affine(t) && fields(&Type::Named(name.clone()), self.structs)
+            }
+            Ty::Ref(_) | Ty::Array(..) => false,
+            _ => true,
+        }
+    }
     fn ty_has_reference(&self, t: &Ty) -> bool {
         match t {
             Ty::Ref(_) => true,
@@ -2345,6 +2369,11 @@ impl<'a> Context<'a> {
         for bound in bounds {
             if self.paths.iter().any(|path| !path.contains(&bound)) {
                 self.assume(&Formula::Ge(bound))?;
+            }
+        }
+        if let Symbol::Array { items, cells, .. } = value {
+            for element in items.iter().flatten().chain(cells.values()) {
+                self.assume_element_type(element)?;
             }
         }
         if let Symbol::Record(name, fields) = value {
@@ -2410,10 +2439,7 @@ impl<'a> Context<'a> {
         items: Option<&[Symbol]>,
         cells: &BTreeMap<Linear, Symbol>,
     ) -> Result<Symbol> {
-        if matches!(
-            element,
-            Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
-        ) {
+        if self.history_element(element) {
             let observed = cells
                 .iter()
                 .map(|(index, value)| (index.clone(), value.clone()))
@@ -2461,14 +2487,17 @@ impl<'a> Context<'a> {
         let key = (identity.to_owned(), index.clone());
         if let Some(value) = self.array_reads.get(&key).cloned() {
             // Replay type facts, never facts specific to the first read's path.
-            self.assume_element_type(&value)?;
+            self.assume_history_type(&value, !self.array_history.contains_key(identity))?;
             return Ok(value);
         }
-        let value = self.arbitrary(element)?;
-        if matches!(
-            element,
-            Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
-        ) {
+        let value = if self.history_element(element) {
+            let value = self.history_value(element)?;
+            self.assume_history_type(&value, !self.array_history.contains_key(identity))?;
+            value
+        } else {
+            self.arbitrary(element)?
+        };
+        if self.history_element(element) {
             let observations = self
                 .array_reads
                 .iter()
@@ -2537,10 +2566,7 @@ impl<'a> Context<'a> {
                     "storage index < length",
                     e.line,
                 )?;
-                if matches!(
-                    *element,
-                    Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
-                ) {
+                if self.history_element(element.as_ref()) {
                     return self.read_array(&element, &identity, &index, items.as_deref(), &cells);
                 }
                 if index.terms.is_empty() {
@@ -2918,10 +2944,7 @@ impl<'a> Context<'a> {
                     "array index < length",
                     e.line,
                 )?;
-                if matches!(
-                    *element,
-                    Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
-                ) {
+                if self.history_element(&element) {
                     return self.read_array(&element, &identity, &index, items.as_deref(), &cells);
                 }
                 if index.terms.is_empty() {
@@ -3401,10 +3424,7 @@ impl<'a> Context<'a> {
             ) if element == be
                 && len == bl
                 && a.len() == b.len()
-                && !matches!(
-                    **element,
-                    Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
-                ) =>
+                && !self.history_element(element) =>
             {
                 let mut values = Vec::new();
                 let mut left = Formula::True;
@@ -3442,13 +3462,7 @@ impl<'a> Context<'a> {
                     cells: b_cells,
                     identity: b_id,
                 },
-            ) if element == b_element
-                && len == b_len
-                && matches!(
-                    **element,
-                    Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
-                ) =>
-            {
+            ) if element == b_element && len == b_len && self.history_element(element) => {
                 if a_id == b_id {
                     let mut cells = a_cells.clone();
                     for (index, value) in b_cells {
@@ -3918,6 +3932,76 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn record_array_histories_preserve_aliases_fields_and_replay() {
+        let source = include_str!("../examples/record_array_history.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let nested = include_str!("../examples/record_array_values.evg");
+        let (program, bundle) = prove(nested).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(nested, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        for wrong in [
+            source.replace("(*data)[index].left == 42", "(*data)[index].left == 43"),
+            source.replace("old((*data)[index].right)", "42"),
+            source.replace(
+                "modifies(&(*data)[index].left)",
+                "modifies(&(*data)[index].right)",
+            ),
+        ] {
+            assert!(verify(&wrong).is_err(), "accepted {wrong}");
+        }
+        let replacement = "type Cell struct {value: usize} fn replace(data: [Cell; 2], i: usize) -> usize where(i < 2) ensures(result == 42) {let selected = &data[i].value; data = [Cell {value: 42}, Cell {value: 42}]; *selected} fn main() -> usize {replace([Cell {value: 7}, Cell {value: 9}], 1)}";
+        assert_eq!(
+            verify(replacement).unwrap().run().unwrap().to_string(),
+            "42"
+        );
+    }
+
+    #[test]
+    fn record_array_writes_must_preserve_element_invariants() {
+        let definition = "type Positive struct {value: usize} where(value > 0);";
+        let setter = "fn set(value: &usize) modifies(value) ensures(*value == 42) {*value = 42;}";
+        let caller = "fn change(data: [Positive; 2], i: usize) -> usize where(i < 2) ensures(result == 42) {let chosen = &data[i].value; set(&data[i].value); *chosen} fn main() -> usize {change([Positive {value: 7}, Positive {value: 9}], 1)}";
+        let valid = format!("{definition} {setter} {caller}");
+        assert_eq!(verify(&valid).unwrap().run().unwrap().to_string(), "42");
+        let wrong = valid.replace("42", "0");
+        let error = verify(&wrong).unwrap_err();
+        assert!(error.contains("invariant of Positive"), "{error}");
+        let direct = format!("{definition} fn bad(data: &[Positive; 2], i: usize) where(i < 2) modifies(&(*data)[i].value) {{(*data)[i].value = 0;}}");
+        let error = verify(&direct).unwrap_err();
+        assert!(error.contains("invariant of Positive"), "{error}");
+        // An invariant on a generated alias-merge candidate must not erase
+        // exactly the branch on which the store would violate that invariant.
+        let conditional = format!("{definition} fn bad(data: [Positive; 2], i: usize, j: usize) where(i < 2 && j < 2) {{let observed = &data[j].value; data[i].value = if i == j {{0}} else {{42}};}}");
+        let error = verify(&conditional).unwrap_err();
+        assert!(error.contains("invariant of Positive"), "{error}");
+        let intermediate = "type Balanced struct {left: usize, right: usize} where(left == right); fn set(left: &usize, right: &usize) modifies(left, right) ensures(*left == 42 && *right == 42) {*left = 42; *right = 42;} fn change(data: [Balanced; 2], i: usize) -> usize where(i < 2) ensures(result == 42) {let selected = &data[i].left; set(&data[i].left, &data[i].right); *selected} fn main() -> usize {change([Balanced {left: 7, right: 7}, Balanced {left: 9, right: 9}], 1)}";
+        let (program, bundle) = prove(intermediate).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(intermediate, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        assert!(
+            verify(&intermediate.replace("ensures(result == 42)", "ensures(result == 43)"))
+                .is_err()
+        );
+    }
+
     #[test]
     fn array_histories_frame_cells_first_read_after_writes_and_branches() {
         for source in [
