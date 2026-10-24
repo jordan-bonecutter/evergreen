@@ -419,9 +419,15 @@ form a permission union and may coincide.
 
 The checker compares actual planes and projection paths: distinct fields or
 proved-distinct array cells can be disjoint within one plane. Pointer equality
-does not merge independent reference fields. Modifying interfaces still reject
-opaque arrays whose elements contain references, because their hidden reference
-graph cannot yet be summarized. `examples/reference_fields.evg` checks borrowed
+does not merge independent reference fields. Fixed-size input arrays containing
+references now model each element's reference ports once. Contracts may name
+`refs[1]` or `(*views)[1].target`, including arrays nested in records. Known
+reference ports remain stable across reads and forwarding calls. Per-array
+materialization is bounded to 2048 elements, with the general symbolic work and
+fresh-value limits also applying. Symbolic-size arrays with hidden references
+remain unsupported in modifying interfaces. `examples/reference_array_inputs.evg`
+checks an element write, a returned alias, and an unchanged sibling.
+`examples/reference_fields.evg` checks borrowed
 counter views, nested fields, double indirection, and returned aliases. These
 views do not represent reference-count ownership or allocation.
 
@@ -694,7 +700,9 @@ checked arithmetic. Reference-bearing return arrays currently require literal
 extents and alias expansion is bounded to 2048 visited type nodes and depth 64.
 `examples/borrowed_array.evg` demonstrates forwarding and later writes;
 `examples/borrowed_array_owners.evg` returns an array of resources whose Drop
-writes through the declared references. Arrays are cleaned in ascending order.
+writes through the declared references. Its consuming function declares the
+implicit cleanup writes through its incoming array elements. Arrays are cleaned
+in ascending order.
 Symbolic-size reference arrays and conditional alias contracts remain unsupported.
 All call arguments are rechecked together after evaluation, preventing a later
 argument from consuming storage borrowed by an earlier one.
@@ -738,9 +746,10 @@ these cell observations with guarded value relations.
 the internal native backend. It returns references from a length-indexed helper,
 writes one cell, and proves that the other cell is unchanged. This initial lazy
 representation now supports scalar elements at proved symbolic indices too, as
-described below. Opaque aggregate/reference-bearing elements still require
-additional projection and alias rules; known literal aggregate elements retain
-their existing support.
+described below. Fixed-size reference-bearing input arrays also support literal
+index projections through their modeled elements. Symbolic indices into
+reference-bearing elements still require additional alias rules; symbolic-size
+arrays with hidden references remain opaque.
 
 Logical implication is written `premise => consequence`. It has lower precedence
 than `||` and associates to the right: `a => b => c` means `a => (b => c)`.

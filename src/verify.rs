@@ -1304,13 +1304,34 @@ impl<'a> Context<'a> {
                 self.assume(&Formula::Ge(Linear::number(1).sub(&n)?))?;
                 Ok(Symbol::Bool(equal(&n, &Linear::number(1))?))
             }
-            Ty::Array(element, len) => Ok(Symbol::Array {
-                element: element.clone(),
-                len: len.clone(),
-                items: None,
-                cells: BTreeMap::new(),
-                identity: name,
-            }),
+            Ty::Array(element, len) => {
+                // Reference ports must be stable across every observation of an
+                // incoming fixed array. Model each port once, rather than
+                // manufacturing a new pointee whenever an element is read.
+                let items = if self.ty_has_reference(element) && len.terms.is_empty() {
+                    let length = usize::try_from(len.constant)
+                        .map_err(|_| "invalid reference array extent")?;
+                    if length > 2048 {
+                        return Err(
+                            "incoming reference array expansion limit reached (2048)".into()
+                        );
+                    }
+                    let mut items = Vec::with_capacity(length);
+                    for _ in 0..length {
+                        items.push(self.arbitrary(element)?);
+                    }
+                    Some(items)
+                } else {
+                    None
+                };
+                Ok(Symbol::Array {
+                    element: element.clone(),
+                    len: len.clone(),
+                    items,
+                    cells: BTreeMap::new(),
+                    identity: name,
+                })
+            }
             Ty::Record(name) => {
                 let def = self.structs.get(name).ok_or("unknown struct")?;
                 let saved = std::mem::take(&mut self.env);
@@ -2017,7 +2038,50 @@ impl<'a> Context<'a> {
             Type::Array(..) => None,
         }
     }
+    // Read types from already modeled storage without evaluation or proof
+    // assumptions. This includes arrays behind record fields and references;
+    // dependent extents cannot be reconstructed from a field declaration alone.
+    fn stored_hint(&self, expression: &Expr) -> Option<&Symbol> {
+        match &expression.kind {
+            Kind::Name(name) => {
+                if let Some(plane) = self.roots.get(name) {
+                    self.memory.get(*plane).ok()
+                } else {
+                    self.env.get(name)
+                }
+            }
+            Kind::Field(base, field) => match self.stored_hint(base)? {
+                Symbol::Record(_, fields) => fields.get(field),
+                _ => None,
+            },
+            Kind::Unary(op, base) if op == "*" => match self.stored_hint(base)? {
+                Symbol::Ref(_, reference, path) => {
+                    project(self.memory.read(*reference).ok()?, path).ok()
+                }
+                _ => None,
+            },
+            Kind::Index(base, index) => {
+                let index = match index.kind {
+                    Kind::Number(index) | Kind::Constant(_, index) => {
+                        usize::try_from(index).ok()?
+                    }
+                    _ => return None,
+                };
+                match self.stored_hint(base)? {
+                    Symbol::Array {
+                        items: Some(items), ..
+                    } => items.get(index),
+                    Symbol::Array { cells, .. } => cells.get(&Linear::number(index as i128)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
     fn hint(&self, e: &Expr) -> Option<Ty> {
+        if let Some(value) = self.stored_hint(e) {
+            return Some(value.ty());
+        }
         match &e.kind {
             Kind::Bool(_) => Some(Ty::Bool),
             Kind::Call(name, args) if name == "old" && args.len() == 1 => Self::old_key(&args[0])
@@ -2042,19 +2106,6 @@ impl<'a> Context<'a> {
                 _ => None,
             },
             Kind::Field(base, field) => {
-                fn stored<'a>(e: &Expr, env: &'a BTreeMap<String, Symbol>) -> Option<&'a Symbol> {
-                    match &e.kind {
-                        Kind::Name(n) => env.get(n),
-                        Kind::Field(base, field) => match stored(base, env)? {
-                            Symbol::Record(_, fields) => fields.get(field),
-                            _ => None,
-                        },
-                        _ => None,
-                    }
-                }
-                if let Some(Symbol::Record(_, fields)) = stored(base, &self.env) {
-                    return fields.get(field).map(Symbol::ty);
-                }
                 let Ty::Record(name) = self.hint(base)? else {
                     return None;
                 };
@@ -3849,6 +3900,54 @@ mod tests {
     }
 
     #[test]
+    fn fixed_reference_array_inputs_have_stable_ports_and_frame_siblings() {
+        let source = include_str!("../examples/reference_array_inputs.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let by_value = "fn set(refs: [&usize; 2]) modifies(refs[1]) ensures(*refs[1] == 42 && *refs[0] == old(*refs[0])) {*refs[1] = 42;} fn main() -> usize ensures(result == 42) {let a: usize = 7; let b: usize = 0; set([&a, &b]); proof framed: a == 7; b}";
+        assert_eq!(verify(by_value).unwrap().run().unwrap().to_string(), "42");
+        assert!(verify(&by_value.replace("set([&a, &b])", "set([&a, &a])"))
+            .unwrap_err()
+            .contains("overlaps"));
+        let nested = "type Shelf struct {views: [[&usize; 1]; 2]} fn set(shelf: &Shelf) modifies((*shelf).views[1][0]) ensures(*(*shelf).views[1][0] == 42 && *(*shelf).views[0][0] == old(*(*shelf).views[0][0])) {*(*shelf).views[1][0] = 42;} fn main() -> usize ensures(result == 42) {let a: usize = 7; let b: usize = 0; let shelf = Shelf {views: [[&a], [&b]]}; set(&shelf); proof framed: a == 7; b}";
+        assert_eq!(verify(nested).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn fixed_reference_array_inputs_cannot_hide_aliases_or_escape_origins() {
+        let declarations = include_str!("../examples/reference_array_inputs.evg")
+            .split("fn main")
+            .next()
+            .unwrap();
+        let overlap = format!("{declarations} fn main() {{let n: usize = 0; let views: [View; 2] = [View {{target: &n}}, View {{target: &n}}]; set_second(&views, 42);}}");
+        assert!(verify(&overlap).unwrap_err().contains("overlaps"));
+        for source in [
+            "fn hidden(refs: [&usize; 2]) {*refs[1] = 42;}",
+            "fn bad(refs: [&usize; 2]) modifies(refs[1]) {refs = [refs[1], refs[0]]; *refs[1] = 42;}",
+            "fn bad(refs: [&usize; 2]) -> &usize borrows(refs[0]) {refs[1]}",
+            "fn bad(refs: [&usize; 2]) -> &&usize borrows(&refs[0]) {&refs[0]}",
+            "fn bad(ideal n: nat, refs: [&usize; n]) modifies(refs[0]) {*refs[0] = 42;}",
+        ] {
+            assert!(verify(source).is_err(), "accepted {source}");
+        }
+        let invalidated = format!("{declarations} type Positive struct {{target: &usize}} where(*target > 0); fn main() {{let a: usize = 7; let b: usize = 1; let positive = Positive {{target: &b}}; let views: [View; 2] = [View {{target: &a}}, View {{target: &b}}]; set_second(&views, 0);}}");
+        assert!(verify(&invalidated).is_err());
+        let large = "fn oversized(refs: [&usize; 2049]) {}";
+        assert!(verify(large)
+            .unwrap_err()
+            .contains("incoming reference array expansion"));
+        let dangling = include_str!("../examples/reference_array_inputs.evg")
+            .replace("set_second(&views, 42);", "drop(last); last = 42;");
+        assert!(verify(&dangling).is_err());
+    }
+
+    #[test]
     fn returned_reference_arrays_preserve_nested_origins_and_replay() {
         let source = include_str!("../examples/borrowed_array.evg");
         let (program, bundle) = prove(source).unwrap();
@@ -5367,6 +5466,10 @@ mod tests {
         let alias = "type Pair struct {write: &usize, read: &usize} impl Drop for Pair {fn drop(self) modifies(self.write) {*self.write = 42;}} fn main() {let count: usize = 0; let pair = Pair {write: &count, read: &count}; drop(pair);}";
         assert!(verify(alias).unwrap_err().contains("overlaps"));
         let opaque = format!("{declarations} fn consume_array(guards: [StoreOnDrop; 2]) {{}}");
+        let error = verify(&opaque).unwrap_err();
+        assert!(error.contains("matching modifies contract"), "{error}");
+        let opaque =
+            format!("{declarations} fn consume_array(ideal n: nat, guards: [StoreOnDrop; n]) {{}}");
         let error = verify(&opaque).unwrap_err();
         assert!(error.contains("opaque arrays"), "{error}");
         let empty = format!("{declarations} fn empty(guards: [StoreOnDrop; 0]) {{}} fn main() -> usize {{let guards: [StoreOnDrop; 0] = []; empty(guards); 42}}");

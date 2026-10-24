@@ -90,6 +90,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/borrowed_view.evg",
         "examples/borrowed_array.evg",
         "examples/borrowed_array_owners.evg",
+        "examples/reference_array_inputs.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")

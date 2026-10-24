@@ -12,11 +12,17 @@ ensures(result[0].value == 7 && result[1].value == 42) {
      DeferredStore {target: second, value: 42}]
 }
 
+// The callee consumes both resources and declares their implicit Drop writes.
+fn consume(pending: [DeferredStore; 2])
+modifies(pending[0].target, pending[1].target)
+ensures(*pending[0].target == pending[0].value && *pending[1].target == pending[1].value) {
+}
+
 fn main() -> usize ensures(result == 42) {
     let first: usize = 0;
     let second: usize = 0;
     let pending = stores(&first, &second);
-    drop(pending);
+    consume(pending);
     proof first_written: first == 7;
     second
 }
