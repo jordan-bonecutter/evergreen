@@ -139,8 +139,10 @@ symbolic indices, including aliasing as described below.
 Reference returns require the exact alias contracts described below. Scalar writes
 require the explicit contracts described below.
 
-Self recursion requires `decreases (measure)` after the postcondition. The
-measure must be an integer proved nonnegative; every recursive call must prove that its value
+Ideal recursion requires `decreases (measure)` after the postcondition. Runtime
+recursion may omit it, in which case safety and return contracts are checked
+without a termination claim. A supplied measure must be an integer proved
+nonnegative; every recursive call must prove that its value
 is strictly smaller than the entry measure. The callee contract is available
 only under this well-founded induction rule. Recursive calls in specifications
 are rejected. Mutual recursion is not implemented yet.
@@ -419,8 +421,8 @@ Comparison instructions respect signed versus unsigned machine types.
 The entry function's scalar result supplies the low eight bits of the process
 exit status. The executable uses a private 64 KiB writable stack, with separate
 read/execute code pages. Emission checks the entire static call-tree stack bound.
-Native self-recursion with a checked `decreases` clause is supported with a
-128-activation budget shared by functions declaring `decreases`. Exceeding that budget
+Native self-recursion is supported with a 128-activation budget shared by
+self-recursive functions, whether or not a termination measure is supplied. Exceeding that budget
 terminates with exit status 125. The static stack estimate reserves space for
 all permitted recursive frames before accepting the executable. This estimate
 is conservative and can reject large frames or nested recursive callees even
@@ -705,3 +707,23 @@ splits an existing ideal budget and consumes each part once through erased
 parameters. The shipped library still has no mint operation. The optional Lean
 backend evaluates these local bindings as mathematical data in its ideal
 reference model, while Evergreen's runtime backends erase them.
+
+The checker derives possible divergence rather than accepting an unchecked
+annotation. A runtime self-recursive function without `decreases` may diverge;
+that property propagates to its runtime callers. Every returning path must
+still satisfy its postcondition, and all ordinary safety checks remain active.
+Providing a decreasing measure proves totality only when its callees also have
+proved totality. Ideal recursion always requires the termination proof.
+
+Potentially divergent functions cannot be called from proofs, ideal bindings,
+erased arguments, or contracts. This prevents a nonreturning function with
+`ensures(false)` from becoming logical evidence of falsehood. The CLI reports
+when a checked unit contains functions that may diverge. Execution remains
+bounded: interpreter exhaustion is an error, and native recursive exhaustion
+exits with status 125. Neither is a normal function return.
+
+`examples/partial_recursion.evg` returns 42 without a termination annotation;
+`examples/reject_divergent_proof.evg` is rejected. The optional Lean suite also
+checks `proofs/PartialCorrectness.lean`, which separates a postcondition on
+return from the existence of a return and proves partial-contract composition.
+As with the other specifications, this is not an implementation-refinement proof.

@@ -31,6 +31,7 @@ fn proof_kernel_accepts_and_rejects() {
         "proofs/Planes.lean",
         "proofs/LinearCertificates.lean",
         "proofs/MemoryContracts.lean",
+        "proofs/PartialCorrectness.lean",
     ] {
         let output = Command::new(&lean).arg(specification).output().unwrap();
         assert!(
@@ -333,4 +334,32 @@ fn native_cli_builds_without_external_tools_and_preserves_failed_outputs() {
         include_str!("../examples/native.evg")
     );
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn runtime_divergence_is_reported_and_cannot_escape_into_logic() {
+    let cli = env!("CARGO_BIN_EXE_evg");
+    let checked = Command::new(cli)
+        .args(["--deny-trust", "check", "examples/partial_recursion.evg"])
+        .output()
+        .unwrap();
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    assert!(String::from_utf8_lossy(&checked.stdout).contains("functions may diverge"));
+    let ran = Command::new(cli)
+        .args(["run", "examples/partial_recursion.evg"])
+        .output()
+        .unwrap();
+    assert!(ran.status.success());
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "42");
+    let rejected = Command::new(cli)
+        .args(["check", "examples/reject_divergent_proof.evg"])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("potentially divergent"));
 }

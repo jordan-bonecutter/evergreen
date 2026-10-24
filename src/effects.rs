@@ -136,6 +136,7 @@ pub(crate) fn invariant_independent(
     safe: &BTreeSet<String>,
 ) -> bool {
     if f.ideal
+        || f.partial
         || !f.modifies.is_empty()
         || !scalar(&f.ret)
         || f.params
@@ -145,6 +146,11 @@ pub(crate) fn invariant_independent(
     {
         return false;
     }
+    // Purity of a self-recursive body is a fixed-point check. Totality has
+    // already been established, and every non-self effect is still inspected.
+    let mut recursive_safe = safe.clone();
+    recursive_safe.insert(f.name.clone());
+    let safe = &recursive_safe;
     let mut env: BTreeMap<String, Type> = f
         .params
         .iter()
@@ -181,4 +187,32 @@ pub(crate) fn invariant_independent(
         }
     }
     expression(&f.result, Some(&f.ret), &env, functions, safe).is_some()
+}
+
+pub(crate) fn recursive(function: &Function) -> bool {
+    fn expression(e: &Expr, name: &str) -> bool {
+        match &e.kind {
+            Kind::Call(target, args) => target == name || args.iter().any(|e| expression(e, name)),
+            Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => expression(e, name),
+            Kind::Binary(_, a, b) | Kind::Index(a, b) => expression(a, name) || expression(b, name),
+            Kind::If(c, a, b) => expression(c, name) || expression(a, name) || expression(b, name),
+            Kind::Array(items) => items.iter().any(|e| expression(e, name)),
+            Kind::Record(_, fields) => fields.iter().any(|(_, e)| expression(e, name)),
+            _ => false,
+        }
+    }
+    fn statement(s: &Statement, name: &str) -> bool {
+        match s {
+            Statement::Ideal(_) | Statement::Fact { .. } | Statement::Proof { .. } => false,
+            Statement::Let { value, .. }
+            | Statement::Destructure { value, .. }
+            | Statement::Effect(value) => expression(value, name),
+            Statement::Assign { target, value } => {
+                expression(target, name) || expression(value, name)
+            }
+            Statement::Update { body, .. } => body.iter().any(|s| statement(s, name)),
+        }
+    }
+    function.body.iter().any(|s| statement(s, &function.name))
+        || expression(&function.result, &function.name)
 }

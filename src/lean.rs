@@ -174,6 +174,7 @@ impl Emitter {
     }
     fn function(&mut self, f: &Function, run: bool) -> Result<(String, bool)> {
         if f.module.is_some()
+            || f.partial
             || !f.ideal
             || f.decreases.is_some()
             || f.borrows.is_some()

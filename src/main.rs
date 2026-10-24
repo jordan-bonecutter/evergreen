@@ -172,13 +172,19 @@ fn execute() -> Result<(), String> {
 }
 
 fn status(program: &evergreen::verify::VerifiedProgram) -> String {
-    if program.trusted_assumptions().is_empty() {
+    let base = if program.trusted_assumptions().is_empty() {
         "verified".into()
     } else {
         format!(
             "checked with {} trusted assumptions",
             program.trusted_assumptions().len()
         )
+    };
+    let divergent = program.potentially_diverging_functions().count();
+    if divergent == 0 {
+        base
+    } else {
+        format!("{base} (safety; {divergent} functions may diverge)")
     }
 }
 fn enforce_trust(program: &evergreen::verify::VerifiedProgram, deny: bool) -> Result<(), String> {

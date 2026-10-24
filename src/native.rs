@@ -912,7 +912,7 @@ fn emit_mode(program: &VerifiedProgram, trace: TraceMode) -> Result<Vec<u8>> {
             .map(|(_, ty)| layout::of(ty, &program.structs).map(|l| l.size))
             .collect::<Result<Vec<_>>>()?;
         let offset = code.len();
-        let recursive = function.decreases.is_some();
+        let recursive = crate::effects::recursive(function);
         if recursive {
             // The source proves termination; this guard enforces the bootstrap
             // execution budget before another frame can consume stack storage.
@@ -1172,6 +1172,7 @@ mod tests {
             std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
         fs::create_dir(&directory).unwrap();
         let mut cases = [
+            include_str!("../examples/partial_recursion.evg"),
             include_str!("../examples/ideal_bindings.evg"),
             "type Resource struct {tag: usize} where(tag == 42); impl Drop for Resource {fn drop(self){}} ideal fn observe(r: &Resource) -> nat ensures(result == nat((*r).tag)) {nat((*r).tag)} fn main() -> usize {let r = Resource {tag: 42}; ideal let saved = observe(&r); proof correct: saved == 42; r.tag}",
             include_str!("../examples/erased_resources.evg"),
@@ -1351,6 +1352,12 @@ mod tests {
                 execute_test_binary(&directory.join(format!("limit-{n}")), &binary, &source);
             assert_eq!(status.code(), Some(expected));
         }
+        let spin = "fn spin() -> usize ensures(false) {spin()} fn main() -> usize {spin()}";
+        let binary = emit(&verify(spin).unwrap()).unwrap();
+        assert_eq!(
+            execute_test_binary(&directory.join("divergent"), &binary, spin).code(),
+            Some(125)
+        );
         let source = format!("{recursive} fn main() -> usize {{count(127) + count(127)}}");
         let binary = emit(&verify(&source).unwrap()).unwrap();
         assert_eq!(

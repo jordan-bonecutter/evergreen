@@ -1,0 +1,9 @@
+// Safety and the result on return are checked; termination is not claimed.
+fn countdown(n: usize) -> usize
+ensures (result == n) {
+    if n == 0 {0} else {countdown(n - 1) + 1}
+}
+
+fn main() -> usize ensures (result == 42) {
+    countdown(42)
+}

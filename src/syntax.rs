@@ -182,6 +182,8 @@ pub struct Function {
     pub modifies: Vec<String>,
     pub ideal_params: Vec<String>,
     pub module: Option<String>,
+    /// Derived by verification: contracts hold on return, but totality is unproved.
+    pub partial: bool,
 }
 
 struct Parser {
@@ -802,6 +804,7 @@ impl Parser {
             modifies,
             ideal_params,
             module: None,
+            partial: false,
         })
     }
 

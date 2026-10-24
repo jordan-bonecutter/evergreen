@@ -368,6 +368,7 @@ struct Context<'a> {
     module: Option<String>,
     declaring: Option<String>,
     ideal_execution: bool,
+    partial_execution: bool,
     structs: &'a BTreeMap<String, Struct>,
     env: BTreeMap<String, Symbol>,
     facts: BTreeMap<String, Expr>,
@@ -579,6 +580,7 @@ impl<'a> Context<'a> {
             module: None,
             declaring: None,
             ideal_execution: false,
+            partial_execution: false,
             structs,
             env: BTreeMap::new(),
             facts: BTreeMap::new(),
@@ -2192,7 +2194,13 @@ impl<'a> Context<'a> {
                     self.validate_argument(&value, e.line)?;
                     return Ok(if name == "drop" { Symbol::Unit } else { value });
                 }
-                let f = self.functions.get(name).ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration; self recursion requires decreases"))?;
+                let f = self.functions.get(name).ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration; ideal recursion requires decreases"))?;
+                if f.partial {
+                    if self.phase != Phase::Runtime {
+                        return Err("potentially divergent functions cannot be used in proofs or ideal execution".into());
+                    }
+                    self.partial_execution = true;
+                }
                 if !f.modifies.is_empty() && self.phase == Phase::Specification {
                     return Err("modifying calls are forbidden in proof expressions".into());
                 }
@@ -2286,7 +2294,7 @@ impl<'a> Context<'a> {
                     let p = self.proposition(pre)?;
                     self.prove(&p, &format!("precondition of {name}"), e.line)?;
                 }
-                if self.current.as_ref() == Some(name) {
+                if self.current.as_ref() == Some(name) && !f.partial {
                     let entry = self
                         .measure
                         .clone()
@@ -2630,6 +2638,12 @@ impl VerifiedProgram {
     pub fn trusted_assumptions(&self) -> &[crate::certificate::TrustedAssumption] {
         &self.trusted
     }
+    pub fn potentially_diverging_functions(&self) -> impl Iterator<Item = &str> {
+        self.functions
+            .iter()
+            .filter(|f| f.partial)
+            .map(|f| f.name.as_str())
+    }
     pub fn proof_search_count(&self) -> usize {
         self.proof_searches
     }
@@ -2808,7 +2822,8 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
     let mut all_functions = parsed.functions;
     all_functions.extend(parsed.destructors.into_iter().map(|(_, f)| f));
     let mut obligations = 0;
-    for f in &all_functions {
+    for f in &mut all_functions {
+        f.partial = !f.ideal && f.decreases.is_none() && crate::effects::recursive(f);
         for (name, ty) in &f.params {
             if f.ideal_params.contains(name) && !erased_type(ty, &structs) {
                 return Err(format!("line {}: ideal parameters require pure proof data; runtime owners and reference-bearing resources need a cross-phase ownership contract", f.line));
@@ -2869,12 +2884,13 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         if functions.contains_key(&f.name) {
             return Err(format!("line {}: duplicate function {}", f.line, f.name));
         }
-        if f.decreases.is_some() {
+        if f.decreases.is_some() || f.partial {
             functions.insert(f.name.clone(), f.clone());
         }
         let mut ctx = Context::new(&functions, &structs, &drops, &helpers, session);
         ctx.module = f.module.clone();
         ctx.ideal_execution = f.ideal;
+        ctx.partial_execution = f.partial;
         ctx.dropping = f.drop_target.is_some();
         let execution = if f.ideal {
             Phase::Ideal
@@ -2976,6 +2992,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             ));
         }
         obligations += ctx.obligations;
+        f.partial = ctx.partial_execution;
         if crate::effects::invariant_independent(f, &functions, &helpers) {
             helpers.insert(f.name.clone());
         }
@@ -3835,6 +3852,75 @@ mod tests {
         assert!(verify("fn escape() -> &usize {let x: usize = 1; &x}").is_err());
         assert!(verify("fn write(r: &usize) -> () { *r = 1; () }").is_err());
         assert!(verify("fn f(n: usize) -> usize ensures (result == move(n)) { n }").is_err());
+    }
+
+    #[test]
+    fn runtime_divergence_is_inferred_and_cannot_become_proof_evidence() {
+        let source = include_str!("../examples/partial_recursion.evg");
+        let program = verify(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            program
+                .potentially_diverging_functions()
+                .collect::<Vec<_>>(),
+            ["countdown", "main"]
+        );
+        assert!(program.trusted_assumptions().is_empty());
+        let spin = "fn spin() -> usize ensures(false) {spin()}";
+        assert!(verify(spin).is_ok());
+        let chain = "fn first() -> usize ensures(false) {first()} fn second() -> usize ensures(false) {first()} fn third() -> usize ensures(false) {second()}";
+        assert_eq!(
+            verify(chain)
+                .unwrap()
+                .potentially_diverging_functions()
+                .count(),
+            3
+        );
+        let measured = "fn relay(n: usize) -> usize decreases(n) {spin()}";
+        assert_eq!(
+            verify(&format!("{spin} {measured}"))
+                .unwrap()
+                .potentially_diverging_functions()
+                .count(),
+            2
+        );
+        assert!(verify(include_str!("../examples/reject_divergent_proof.evg")).is_err());
+        for observer in [
+            "ideal fn unsound() -> nat {nat(spin())}",
+            "fn unsound() -> usize {proof lie: spin() == 0; 0}",
+            "fn unsound() -> usize {ideal let lie = spin(); 0}",
+            "fn unsound() -> usize where(spin() == 0) {0}",
+        ] {
+            let error = verify(&format!("{spin} {observer}")).unwrap_err();
+            assert!(error.contains("potentially divergent"), "{error}");
+        }
+        assert!(verify("ideal fn spin() -> nat {spin()}").is_err());
+        assert!(verify("fn lie() -> usize ensures(false) {0}").is_err());
+        assert!(verify(
+            "fn lie(n: usize) -> usize ensures(false) {if n == 0 {0} else {lie(n - 1)}}"
+        )
+        .is_err());
+        let namespaced = "fn spin() -> usize ensures(result == 42) {42} module looping {fn spin() -> usize ensures(false) {spin()}} ideal fn observe() -> nat ensures(result == 42) {nat(spin())}";
+        assert_eq!(
+            verify(namespaced)
+                .unwrap()
+                .potentially_diverging_functions()
+                .collect::<Vec<_>>(),
+            ["looping::spin"]
+        );
+        assert!(verify(&format!(
+            "{namespaced} ideal fn bad() -> nat {{nat(looping::spin())}}"
+        ))
+        .is_err());
+        assert!(verify("fn unsafe_loop(n: usize) -> usize {unsafe_loop(n + 1)}").is_err());
+        let run = verify("fn spin() -> usize ensures(false) {spin()} fn main() -> usize {spin()}")
+            .unwrap();
+        assert!(run.run().unwrap_err().contains("execution"));
+        // A proved decreasing, pure runtime function is usable as ideal data.
+        let total = "fn count(n: usize) -> usize ensures(result == n) decreases(n) {if n == 0 {0} else {count(n - 1) + 1}} fn main() -> usize ensures(result == 42) {ideal let expected = nat(count(42)); proof established: expected == 42; 42}";
+        let program = verify(total).unwrap();
+        assert_eq!(program.potentially_diverging_functions().count(), 0);
+        assert_eq!(program.run().unwrap().to_string(), "42");
     }
 
     #[test]
