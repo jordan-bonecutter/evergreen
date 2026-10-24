@@ -173,10 +173,15 @@ pub struct Program {
     pub functions: Vec<Function>,
     pub destructors: Vec<(String, Function)>,
 }
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ReturnProjection {
+    Field(String),
+    Index(usize),
+}
 #[derive(Clone, Debug)]
 pub struct ReturnBorrow {
-    /// Empty for a direct reference return; otherwise an inline record field path.
-    pub fields: Vec<String>,
+    /// Empty for a direct reference return; otherwise a path in the returned value.
+    pub path: Vec<ReturnProjection>,
     pub reference: Expr,
 }
 #[derive(Clone, Debug)]
@@ -683,16 +688,30 @@ impl Parser {
             loop {
                 let expression = self.expr(0)?;
                 if self.eat(":") {
-                    fn fields(e: &Expr, out: &mut Vec<String>) -> Result<(), String> {
+                    fn fields(e: &Expr, out: &mut Vec<ReturnProjection>) -> Result<(), String> {
                         match &e.kind {
-                            Kind::Name(n) => out.push(n.clone()),
+                            Kind::Name(n) if n == "result" => {}
+                            Kind::Name(n) => out.push(ReturnProjection::Field(n.clone())),
                             Kind::Field(base, n) => {
                                 fields(base, out)?;
-                                out.push(n.clone());
+                                out.push(ReturnProjection::Field(n.clone()));
+                            }
+                            Kind::Index(base, index) => {
+                                fields(base, out)?;
+                                let Kind::Number(index) = index.kind else {
+                                    return Err(
+                                        "return alias indices must be integer literals".into()
+                                    );
+                                };
+                                out.push(ReturnProjection::Index(
+                                    usize::try_from(index)
+                                        .map_err(|_| "return alias index is out of range")?,
+                                ));
                             }
                             _ => {
                                 return Err(
-                                    "borrow targets require a return record field path".into()
+                                    "borrow targets require return field or literal index paths"
+                                        .into(),
                                 )
                             }
                         }
@@ -701,15 +720,15 @@ impl Parser {
                     let mut path = Vec::new();
                     fields(&expression, &mut path)?;
                     borrows.push(ReturnBorrow {
-                        fields: path,
+                        path,
                         reference: self.expr(0)?,
                     });
                 } else {
                     if !borrows.is_empty() {
-                        return Err(self.err("structured borrows entries require field: reference"));
+                        return Err(self.err("structured borrows entries require path: reference"));
                     }
                     borrows.push(ReturnBorrow {
-                        fields: Vec::new(),
+                        path: Vec::new(),
                         reference: expression,
                     });
                     self.expect(")")?;

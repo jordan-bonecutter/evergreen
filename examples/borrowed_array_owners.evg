@@ -1,0 +1,22 @@
+type DeferredStore struct {target: &usize, value: usize}
+impl Drop for DeferredStore {
+    fn drop(self) modifies(self.target) ensures(*self.target == self.value) {
+        *self.target = self.value;
+    }
+}
+
+fn stores(first: &usize, second: &usize) -> [DeferredStore; 2]
+borrows(result[0].target: first, result[1].target: second)
+ensures(result[0].value == 7 && result[1].value == 42) {
+    [DeferredStore {target: first, value: 7},
+     DeferredStore {target: second, value: 42}]
+}
+
+fn main() -> usize ensures(result == 42) {
+    let first: usize = 0;
+    let second: usize = 0;
+    let pending = stores(&first, &second);
+    drop(pending);
+    proof first_written: first == 7;
+    second
+}

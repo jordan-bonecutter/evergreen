@@ -677,9 +677,27 @@ array with a dependent extent. `proofs/count_handles.evg` and
 cloning, and nested cleanup written in Evergreen. This is a borrowed numeric
 count model, not allocation authority or a proof of actual Rc ownership.
 
-Reference-bearing array returns and conditional alias contracts remain
-unsupported. All call arguments are rechecked together after evaluation,
-preventing a later argument from consuming storage borrowed by an earlier one.
+Literal-size arrays can also return references and owning records containing
+references. Use `result[0]` for a top-level element or `items[0].target` for an
+array nested in a returned record. Every reference leaf needs one exact alias:
+
+```evergreen
+fn neighbors(data: &[usize; 3], index: usize) -> [&usize; 2]
+where(index < 2)
+borrows(result[0]: &(*data)[index], result[1]: &(*data)[index + 1]) {
+    [&(*data)[index], &(*data)[index + 1]]
+}
+```
+
+Target indices must be nonnegative integer literals; incoming indices may use
+checked arithmetic. Reference-bearing return arrays currently require literal
+extents and alias expansion is bounded to 2048 visited type nodes and depth 64.
+`examples/borrowed_array.evg` demonstrates forwarding and later writes;
+`examples/borrowed_array_owners.evg` returns an array of resources whose Drop
+writes through the declared references. Arrays are cleaned in ascending order.
+Symbolic-size reference arrays and conditional alias contracts remain unsupported.
+All call arguments are rechecked together after evaluation, preventing a later
+argument from consuming storage borrowed by an earlier one.
 
 The optional Lean suite now checks three independent specifications:
 

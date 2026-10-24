@@ -1205,6 +1205,8 @@ mod tests {
             include_str!("../examples/drop_children.evg"),
             include_str!("../examples/owned_borrows.evg"),
             include_str!("../examples/borrowed_view.evg"),
+            include_str!("../examples/borrowed_array.evg"),
+            include_str!("../examples/borrowed_array_owners.evg"),
             "fn main() -> usize where(old(1 + 1) == 2) {42}",
             "type Fixed struct {value: usize} where(value == 42); fn refresh(r: &Fixed) -> &Fixed modifies(&(*r).value) borrows(r) ensures((*r).value == 42 && (*result).value == 42) {(*r).value = 42; r} fn main() -> usize {let fixed = Fixed {value: 42}; let refreshed = refresh(&fixed); (*refreshed).value}",
             include_str!("../examples/recursion.evg"),

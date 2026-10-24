@@ -3842,8 +3842,62 @@ mod tests {
             .unwrap();
         let invalid = format!("{declarations} type PositiveView struct {{target: &usize}} where(*target > 0); fn bad(target: &usize) -> PositiveView where(*target > 0) modifies(target) borrows(target: target) {{let cleanup = StoreOnDrop {{target: target, value: 0}}; PositiveView {{target: target}}}}");
         assert!(verify(&invalid).is_err());
+        let invalid_array = format!("{declarations} type PositiveView struct {{target: &usize}} where(*target > 0); fn bad(target: &usize) -> [PositiveView; 1] where(*target > 0) modifies(target) borrows(result[0].target: target) {{let cleanup = StoreOnDrop {{target: target, value: 0}}; [PositiveView {{target: target}}]}}");
+        assert!(verify(&invalid_array).is_err());
         let broken = format!("{declarations} fn main() -> usize {{let count: usize = 0; let guard = make(&count, 42); drop(count); drop(guard); 0}}");
         assert!(verify(&broken).is_err());
+    }
+
+    #[test]
+    fn returned_reference_arrays_preserve_nested_origins_and_replay() {
+        let source = include_str!("../examples/borrowed_array.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let owned = include_str!("../examples/borrowed_array_owners.evg");
+        let (program, bundle) = prove(owned).unwrap();
+        let (value, events) = program.run_with_events().unwrap();
+        assert_eq!(value.to_string(), "42");
+        assert_eq!(events, ["drop DeferredStore", "drop DeferredStore"]);
+        assert_eq!(
+            verify_with_certificate(owned, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let nested = "type Views struct {items: [[&usize; 1]; 2]} fn views(a: &usize, b: &usize) -> Views borrows(items[0][0]: a, items[1][0]: b) {Views {items: [[a], [b]]}} fn main() -> usize ensures(result == 42) {let a: usize = 0; let b: usize = 1; let v = views(&a, &b); *v.items[1][0] = 42; b}";
+        assert_eq!(verify(nested).unwrap().run().unwrap().to_string(), "42");
+        let elements = "type View struct {value: &usize} fn views(a: &usize, b: &usize) -> [View; 2] borrows(result[0].value: a, result[1].value: b) {[View {value: a}, View {value: b}]} fn main() -> usize ensures(result == 42) {let a: usize = 0; let b: usize = 1; let v = views(&a, &b); *v[1].value = 42; b}";
+        assert_eq!(verify(elements).unwrap().run().unwrap().to_string(), "42");
+        assert!(verify(&source.replace("data[1] = 42;", "drop(data);")).is_err());
+        assert!(
+            verify(&source.replace("data[1] = 42;", "drop(data); data = [7, 42, 11];")).is_err()
+        );
+    }
+
+    #[test]
+    fn returned_reference_arrays_reject_missing_duplicate_and_forged_origins() {
+        for source in [
+            "fn bad(a: &usize) -> [&usize; 2] borrows(result[0]: a) {[a, a]}",
+            "fn bad(a: &usize) -> [&usize; 1] borrows(result[0]: a, result[0]: a) {[a]}",
+            "fn bad(a: &usize) -> [&usize; 1] borrows(result[1]: a) {[a]}",
+            "fn bad(a: &usize, b: &usize) -> [&usize; 2] borrows(result[0]: a, result[1]: b) {[b, a]}",
+            "fn bad(a: &usize) -> [&usize; 1] borrows(result[0]: a) {let local: usize = 42; [&local]}",
+            "fn bad(a: &usize) -> [&usize; 1] borrows(result[0]: &a) {[a]}",
+            "fn bad(a: &usize) -> [&usize; 1] borrows(result[0 + 0]: a) {[a]}",
+            "fn bad(a: &usize) -> [&usize; 1] borrows(result[0]: a) {proof cheat: false by {trustme}; let local: usize = 42; [&local]}",
+        ] {
+            assert!(verify(source).is_err(), "accepted {source}");
+        }
+        let expansion = "fn bad(a: &usize) -> [[[&usize; 0]; 2048]; 2048] {}";
+        assert!(verify(expansion)
+            .unwrap_err()
+            .contains("return alias expansion"));
     }
 
     #[test]

@@ -1,0 +1,18 @@
+// Each returned reference retains the caller's actual plane and element path.
+fn neighbors(data: &[usize; 3], index: usize) -> [&usize; 2]
+where (index < 2)
+borrows(result[0]: &(*data)[index], result[1]: &(*data)[index + 1]) {
+    [&(*data)[index], &(*data)[index + 1]]
+}
+
+fn forward(data: &[usize; 3]) -> [&usize; 2]
+borrows(result[0]: &(*data)[0], result[1]: &(*data)[1]) {
+    neighbors(data, 0)
+}
+
+fn main() -> usize ensures(result == 42) {
+    let data: [usize; 3] = [7, 9, 11];
+    let references = forward(&data);
+    data[1] = 42;
+    *references[1]
+}
