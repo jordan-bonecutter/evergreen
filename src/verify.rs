@@ -3146,6 +3146,7 @@ impl<'a> Context<'a> {
                 self.memory = self.clone_store(&store)?;
                 let mut state_a = Formula::True;
                 let mut state_b = Formula::True;
+                let mut views = Vec::new();
                 let a_states = a_store.states();
                 let b_states = b_store.states();
                 for (index, (id, generation, original)) in store.states().into_iter().enumerate() {
@@ -3156,7 +3157,7 @@ impl<'a> Context<'a> {
                     }
                     match (av, bv) {
                         (Some(av), Some(bv)) if *ag == generation => {
-                            let (joined, left, right) = self.join_value(av, bv)?;
+                            let (joined, left, right) = self.join_value(av, bv, &mut views)?;
                             self.memory.write(id, joined, false)?;
                             state_a = state_a.and(left);
                             state_b = state_b.and(right);
@@ -3174,9 +3175,9 @@ impl<'a> Context<'a> {
                         self.env.insert(name.clone(), value.clone());
                     }
                 }
-                let result = self.arbitrary(&a.ty())?;
-                let relation_a = state_a.and(self.symbol_equal(&result, &a)?);
-                let relation_b = state_b.and(self.symbol_equal(&result, &b)?);
+                let (result, left, right) = self.join_value(&a, &b, &mut views)?;
+                let relation_a = state_a.and(left);
+                let relation_b = state_b.and(right);
                 let mut paths = extend(&a_paths, &relation_a, false)?;
                 paths.extend(extend(&b_paths, &relation_b, false)?);
                 // Drop infeasible branch combinations only with a checked
@@ -3186,11 +3187,25 @@ impl<'a> Context<'a> {
                     return Err("verification path limit reached (64)".into());
                 }
                 self.paths = paths;
+                for view in views {
+                    self.materialize_joined_reference(&view, e.line)?;
+                }
+                for (name, id) in &self.roots {
+                    if let Ok(value) = self.memory.get(*id) {
+                        self.env.insert(name.clone(), value.clone());
+                    }
+                }
                 Ok(result)
             }
         }
     }
-    fn join_value(&mut self, a: &Symbol, b: &Symbol) -> Result<(Symbol, Formula, Formula)> {
+    fn join_value(
+        &mut self,
+        a: &Symbol,
+        b: &Symbol,
+        views: &mut Vec<Symbol>,
+    ) -> Result<(Symbol, Formula, Formula)> {
+        self.charge_value_work(1)?;
         if a == b {
             return Ok((a.clone(), Formula::True, Formula::True));
         }
@@ -3211,13 +3226,39 @@ impl<'a> Context<'a> {
                     self.symbol_equal(&value, b)?,
                 ))
             }
+            (Symbol::Ref(at, ar, ap), Symbol::Ref(bt, br, bp))
+                if at == bt
+                    && ar == br
+                    && ap.len() == bp.len()
+                    && !ap.is_empty()
+                    && matches!(
+                        **at,
+                        Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
+                    )
+                    && ap[..ap.len() - 1] == bp[..bp.len() - 1] =>
+            {
+                let (Some(Projection::Index(a)), Some(Projection::Index(b))) =
+                    (ap.last(), bp.last())
+                else {
+                    return Err(
+                        "conditional references require a common scalar-array projection prefix"
+                            .into(),
+                    );
+                };
+                let index = self.arbitrary(&Ty::Nat)?.number()?;
+                let mut path = ap.clone();
+                *path.last_mut().expect("nonempty path") = Projection::Index(index.clone());
+                let value = Symbol::Ref(at.clone(), *ar, path);
+                views.push(value.clone());
+                Ok((value, equal(&index, a)?, equal(&index, b)?))
+            }
             (Symbol::Record(an, a), Symbol::Record(bn, b)) if an == bn && a.len() == b.len() => {
                 let mut fields = BTreeMap::new();
                 let mut left = Formula::True;
                 let mut right = Formula::True;
                 for (name, value) in a {
                     let (value, l, r) =
-                        self.join_value(value, b.get(name).ok_or("branch fields differ")?)?;
+                        self.join_value(value, b.get(name).ok_or("branch fields differ")?, views)?;
                     fields.insert(name.clone(), value);
                     left = left.and(l);
                     right = right.and(r);
@@ -3237,12 +3278,19 @@ impl<'a> Context<'a> {
                     items: Some(b),
                     ..
                 },
-            ) if element == be && len == bl && a.len() == b.len() => {
+            ) if element == be
+                && len == bl
+                && a.len() == b.len()
+                && !matches!(
+                    **element,
+                    Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
+                ) =>
+            {
                 let mut values = Vec::new();
                 let mut left = Formula::True;
                 let mut right = Formula::True;
                 for (a, b) in a.iter().zip(b) {
-                    let (value, l, r) = self.join_value(a, b)?;
+                    let (value, l, r) = self.join_value(a, b, views)?;
                     values.push(value);
                     left = left.and(l);
                     right = right.and(r);
@@ -3338,7 +3386,7 @@ impl<'a> Context<'a> {
                         Some(value) => value.clone(),
                         None => self.array_read(element, b_id, &offset)?,
                     };
-                    let (value, l, r) = self.join_value(&a, &b)?;
+                    let (value, l, r) = self.join_value(&a, &b, views)?;
                     cells.insert(index, value);
                     left = left.and(l);
                     right = right.and(r);
@@ -3733,6 +3781,46 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn conditional_array_references_preserve_origins_and_old_views() {
+        for source in [
+            include_str!("../examples/conditional_borrows.evg"),
+            include_str!("../examples/conditional_drop.evg"),
+        ] {
+            let (program, bundle) = prove(source).unwrap();
+            assert_eq!(program.run().unwrap().to_string(), "42");
+            assert_eq!(
+                verify_with_certificate(source, &bundle)
+                    .unwrap()
+                    .proof_search_count(),
+                0
+            );
+        }
+        let replaced = "fn read(flag: bool, i: usize) -> usize where(i < 2) ensures(result == 42) {let data: [usize; 2] = [7, 9]; let observed = &data[i]; let selected = if flag {&data[0]} else {&data[1]}; data = [42, 42]; proof old_view: *observed == 42; *selected} fn main() -> usize {read(false, 0)}";
+        assert_eq!(verify(replaced).unwrap().run().unwrap().to_string(), "42");
+        let nested = "type Buffer struct {data: [usize; 2]} fn read(flag: bool) -> usize ensures(result == 42) {let buffer = Buffer {data: [7, 9]}; let selected = if flag {&buffer.data[0]} else {&buffer.data[1]}; *selected = 42; if flag {buffer.data[0]} else {buffer.data[1]}} fn main() -> usize {read(false)}";
+        assert_eq!(verify(nested).unwrap().run().unwrap().to_string(), "42");
+        let rebound = "fn read(flag: bool) -> usize ensures(result == 42) {let data: [usize; 2] = [7, 9]; let selected = &data[0]; let indirect = &selected; selected = if flag {&data[0]} else {&data[1]}; **indirect = 42; if flag {data[0]} else {data[1]}} fn main() -> usize {read(true)}";
+        assert_eq!(verify(rebound).unwrap().run().unwrap().to_string(), "42");
+        let array = "fn choose(flag: bool) -> [usize; 2] ensures((flag => result[0] == 42) && (!flag => result[1] == 42)) {if flag {[42, 7]} else {[7, 42]}} fn main() -> usize ensures(result == 42) {let data = choose(false); data[1]}";
+        assert_eq!(verify(array).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn conditional_references_cannot_change_origins_or_escape_generation_checks() {
+        let source = include_str!("../examples/conditional_borrows.evg");
+        assert!(
+            verify(&source.replace("borrows(&(*data)[index])", "borrows(&(*data)[0])")).is_err()
+        );
+        assert!(verify(&source.replace("data[1] = 42;", "drop(data); data = [7, 42];")).is_err());
+        for source in [
+            "fn bad(a: &usize, b: &usize, flag: bool) -> &usize borrows(a) {if flag {a} else {b}}",
+            "fn bad(flag: bool) -> usize {let data: [usize; 2] = [7, 9]; let selected = if flag {&data[0]} else {&data[1]}; drop(data); *selected}",
+            "fn bad(data: &[usize; 2], i: usize) -> &usize where(i < 2) borrows(&(*data)[i]) {i = 0; if i == 0 {&(*data)[0]} else {&(*data)[1]}}",
+            "type Pair struct {a: usize, b: usize} fn bad(flag: bool) {let pair = Pair {a: 7, b: 9}; let selected = if flag {&pair.a} else {&pair.b};}",
+        ] {assert!(verify(source).is_err(), "accepted {source}");}
+    }
+
     #[test]
     fn reference_equality_checks_identity_and_symbolic_projections() {
         let source = include_str!("../examples/reference_identity.evg");

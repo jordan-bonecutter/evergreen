@@ -1,0 +1,26 @@
+fn select(data: &[usize; 2], index: usize) -> &usize
+where(index < 2)
+borrows(&(*data)[index]) {
+    if index == 0 {&(*data)[0]} else {&(*data)[1]}
+}
+
+fn choose(flag: bool) -> usize ensures(result == 42) {
+    let data: [usize; 2] = [7, 9];
+    let first = &data[0];
+    let selected = if flag {&data[0]} else {&data[1]};
+    proof exact_place: (flag => selected == &data[0]) && (!flag => selected == &data[1]);
+    *selected = 42;
+    proof selected_written: *selected == 42;
+    proof first_view: (flag => *first == 42) && (!flag => *first == 7);
+    if flag {*first} else {data[1]}
+}
+
+fn main() -> usize ensures(result == 42) {
+    let data: [usize; 2] = [7, 9];
+    let selected = select(&data, 1);
+    data[1] = 42;
+    proof current_cell: *selected == 42;
+    let other = choose(false);
+    let current = choose(true);
+    current + other + *selected - 84
+}

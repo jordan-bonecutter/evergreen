@@ -44,3 +44,52 @@ impl Context<'_> {
         Ok(false)
     }
 }
+
+impl Context<'_> {
+    // Join constraints must be installed before checking the selected index or
+    // materializing its view. No new plane is allocated for a conditional borrow.
+    pub(super) fn materialize_joined_reference(
+        &mut self,
+        value: &Symbol,
+        line: usize,
+    ) -> Result<()> {
+        let Symbol::Ref(target, reference, path) = value else {
+            return Err("invalid joined reference".into());
+        };
+        let Some((Projection::Index(index), prefix)) = path.split_last() else {
+            return Err("joined references require an array element".into());
+        };
+        self.charge_value_work(symbol_weight(self.memory.read(*reference)?)?)?;
+        let mut root = self.memory.read(*reference)?.clone();
+        let Symbol::Array {
+            element,
+            len,
+            items,
+            cells,
+            identity,
+        } = project(&root, prefix)?
+        else {
+            return Err("joined reference prefix requires array storage".into());
+        };
+        if element != target {
+            return Err("joined reference element type changed".into());
+        }
+        self.prove(
+            &Formula::Ge(index.clone()),
+            "joined reference index is nonnegative",
+            line,
+        )?;
+        self.prove(
+            &Formula::Ge(len.sub(index)?.add(&Linear::number(-1))?),
+            "joined reference index < length",
+            line,
+        )?;
+        let value = self.read_array(element, identity, index, items.as_deref(), cells)?;
+        let Symbol::Array { cells, .. } = project_mut(&mut root, prefix)? else {
+            return Err("invalid joined array storage".into());
+        };
+        cells.insert(index.clone(), value);
+        let plane = self.memory.plane(*reference)?;
+        self.memory.write(plane, root, false)
+    }
+}

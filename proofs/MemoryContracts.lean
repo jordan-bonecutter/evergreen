@@ -192,4 +192,22 @@ theorem replace_region_read (store replacement : Store) (region : Region)
     replaceRegion store replacement region queried = replacement queried := by
   simp [replaceRegion, inside]
 
+-- A conditional reference stays in one plane. Guarded index equalities and
+-- branch-local bounds justify the selected view; an unconstrained fresh index
+-- would not establish either theorem.
+theorem joined_index_bounds (flag : Bool) (length left right selected : Nat)
+    (left_bound : flag = true → left < length)
+    (right_bound : flag = false → right < length)
+    (left_case : flag = true → selected = left)
+    (right_case : flag = false → selected = right) : selected < length := by
+  cases flag <;> simp_all
+
+theorem joined_index_read (store : Store) (plane : Nat) (flag : Bool)
+    (left right selected : Nat)
+    (left_case : flag = true → selected = left)
+    (right_case : flag = false → selected = right) :
+    store (indexed plane selected) =
+      if flag then store (indexed plane left) else store (indexed plane right) := by
+  cases flag <;> simp_all
+
 end Evergreen.MemoryContracts

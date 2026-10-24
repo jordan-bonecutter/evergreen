@@ -730,6 +730,28 @@ expression evaluation. Exceeding these bootstrap limits is a compile error,
 not a trusted assumption. These limits are conservative implementation limits;
 they are not a proof of a whole-process memory or time bound.
 
+Conditional expressions can select scalar cells within one array, for example
+`if flag {&data[0]} else {&data[1]}`. Both alternatives must use the same live
+plane and generation, the same projection prefix, and compatible scalar types.
+Only the final array index may differ. The verifier introduces a proof-only
+selected index tied to each branch, proves its bounds, and materializes its view
+in the joined array contents. It does not allocate a replacement target plane.
+Reads, writes, identity comparisons, and later same-layout replacement continue
+to use that cell. Previously tracked scalar-array views survive the join too.
+References stored in conditional records use the same rule, including records
+with Drop cleanup.
+
+`examples/conditional_borrows.evg` checks both selections at runtime and returns
+a selected reference from a helper whose exact entry-index alias is proved.
+`examples/conditional_drop.evg` selects a resource containing one of two cell
+references, then proves its destructor writes the selected cell. Both examples
+run, build, and replay with the internal verifier. Conditional scalar-array
+values also join their contents and tracked views. Different target planes,
+different record fields, conditional storage generations, and symbolic
+aggregate-element selections remain unsupported. General conditional alias
+contracts are still unsupported; returned references must match the exact
+entry projection declared by `borrows`.
+
 A reference return requires an exact alias contract, for example:
 
 ```evergreen
@@ -812,6 +834,7 @@ The optional Lean suite checks independent specifications:
   that disjoint writes commute, writes preserve other addresses, and the swap
   postcondition and involution hold. Distinct fields of one plane are disjoint.
   Its invariant-framing rule accounts for read footprints spanning multiple planes.
+  Guarded index joins preserve bounds and read the selected cell in one plane.
 - `proofs/PropositionalProofs.lean` defines contextual derivations for the
   structural propositional rules and proves their soundness under a valuation.
   Implication introduction extends only its subproof's context; application
