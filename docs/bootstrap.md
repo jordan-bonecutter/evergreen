@@ -1753,7 +1753,8 @@ This is a machine-word specialization with explicit reallocation, not yet the
 README's generic vector. All capacity slots are initialized copyable values;
 uninitialized slots and arbitrary element destructors need further work. The
 checker proves access bounds, ownership, and the length/capacity invariant. Prefix
-copying is implemented in Evergreen with bounded recursive execution and exercised
-in interpreter/native comparisons; its contract does not yet prove preservation
+copying is implemented in Evergreen with a checked decreasing measure proving
+termination, subject to the bootstrap execution limits. Interpreter/native
+comparisons exercise its behavior; its contract does not yet prove preservation
 of every copied element. No vector-specific compiler primitive or trusted proof
 was added.

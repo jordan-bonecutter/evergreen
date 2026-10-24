@@ -2702,6 +2702,11 @@ fn runtime_divergence_is_inferred_and_cannot_become_proof_evidence() {
     let total = "fn count(n: usize) -> usize ensures(result == n) decreases(n) {if n == 0 {0} else {count(n - 1) + 1}} fn main() -> usize ensures(result == 42) {ideal let expected = nat(count(42)); proof established: expected == 42; 42}";
     let program = verify(total).unwrap();
     assert_eq!(program.potentially_diverging_functions().count(), 0);
+    let checked_pop = "fn main() -> usize ensures(result == 42) {let v = vec::new(2); vec::push(&v, 7); vec::push(&v, 42); vec::pop(&v)}";
+    assert_eq!(
+        verify(checked_pop).unwrap().run().unwrap().to_string(),
+        "42"
+    );
     assert_eq!(program.run().unwrap().to_string(), "42");
 }
 
@@ -3194,6 +3199,7 @@ fn cleanup_can_write_live_owned_heap_and_pending_return_allocations() {
 fn owned_word_vectors_check_capacity_and_reference_lifetimes() {
     let source = include_str!("../../../examples/vec.evg");
     let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.potentially_diverging_functions().count(), 0);
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.trusted_assumptions().is_empty());
     assert_eq!(
@@ -3215,4 +3221,18 @@ fn owned_word_vectors_check_capacity_and_reference_lifetimes() {
     let source = "type Buffer struct {cap: usize, data: plane(usize, cap)} fn main() -> usize {let cap: usize = 7; let data: plane(usize, 2) = alloc(2, 42); let buffer = Buffer {cap: 2, data: data}; (*buffer.data)[1]}";
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     assert!(verify(&source.replace("Buffer {cap: 2", "Buffer {cap: 3")).is_err());
+}
+
+#[test]
+fn owned_dependent_parameters_resolve_in_the_callee_scope() {
+    let source = "fn consume(count: usize, owner: plane(usize, count)) -> usize where(count > 0) {(*owner)[0]} fn main() -> usize {let count: usize = 7; let owner: plane(usize, 2) = alloc(2, 42); consume(2, owner)}";
+    assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+    assert!(verify(&source.replace("consume(2, owner)", "consume(3, owner)")).is_err());
+    let forward = source
+        .replace(
+            "count: usize, owner: plane(usize, count)",
+            "owner: plane(usize, count), count: usize",
+        )
+        .replace("consume(2, owner)", "consume(owner, 2)");
+    assert_eq!(verify(&forward).unwrap().run().unwrap().to_string(), "42");
 }

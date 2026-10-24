@@ -31,7 +31,8 @@ module vec {
     fn push(value: &Vec, item: usize)
     where((*value).len < (*value).cap)
     modifies(&(*value).len, &(*(*value).data)[(*value).len])
-    ensures((*value).len == old((*value).len) + 1) {
+    ensures((*value).len == old((*value).len) + 1
+        && (*(*value).data)[old((*value).len)] == item) {
         (*(*value).data)[(*value).len] = item;
         (*value).len = (*value).len + 1;
     }
@@ -39,7 +40,8 @@ module vec {
     fn pop(value: &Vec) -> usize
     where((*value).len > 0)
     modifies(&(*value).len)
-    ensures((*value).len + 1 == old((*value).len)) {
+    ensures((*value).len + 1 == old((*value).len)
+        && result == old((*(*value).data)[(*value).len - 1])) {
         let item = (*(*value).data)[(*value).len - 1];
         (*value).len = (*value).len - 1;
         item
@@ -51,7 +53,7 @@ module vec {
         target: linear_plane(usize, target_capacity), index: usize) -> usize
     where(index < source_capacity && index < target_capacity)
     modifies(&(*target)[index])
-    ensures(result == index + 1) {
+    ensures(result == index + 1 && (*target)[index] == (*source)[index]) {
         (*target)[index] = (*source)[index];
         index + 1
     }
@@ -61,7 +63,8 @@ module vec {
         target_capacity: usize,
         target: linear_plane(usize, target_capacity), count: usize, index: usize)
     where(index <= count && count <= source_capacity && count <= target_capacity)
-    modifies(target) {
+    modifies(target)
+    decreases(count - index) {
         if index == count { () } else {
             copy_prefix(source_capacity, source, target_capacity, target, count,
                 copy_one(source_capacity, source, target_capacity, target, index))

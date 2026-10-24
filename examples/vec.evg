@@ -3,5 +3,5 @@ fn main() -> usize {
     vec::push(&values, 7);
     vec::push(&values, 42);
     values = vec::reallocate(&values, 8);
-    vec::pop(&values)
+    if *vec::get(&values, 0) == 7 { vec::pop(&values) } else { 0 }
 }

@@ -1530,6 +1530,9 @@ impl<'a> Context<'a> {
             Type::Ref(inner) => Ok(self
                 .literal_element_hint(inner)?
                 .map(|t| Ty::Ref(Box::new(t)))),
+            Type::Plane(inner) => Ok(self
+                .literal_element_hint(inner)?
+                .map(|t| Ty::Plane(Box::new(t)))),
             _ => self.resolve(t).map(Some),
         }
     }
@@ -3140,7 +3143,7 @@ impl<'a> Context<'a> {
                         Type::Int => Some(Ty::Int),
                         Type::Bool => Some(Ty::Bool),
                         Type::Machine(t) => Some(Ty::Machine(*t)),
-                        Type::Plane(_) => Some(self.resolve(t)?),
+                        Type::Plane(_) => self.literal_element_hint(t)?,
                         _ => None,
                     };
                     let saved_specification = self.phase;

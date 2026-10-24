@@ -128,6 +128,7 @@ fn native_execution_agrees_with_the_interpreter() {
     fs::create_dir(&directory).unwrap();
     let mut cases = [
         include_str!("../../../examples/vec.evg"),
+        "fn consume(owner: plane(usize, count), count: usize) -> usize where(count > 0) {(*owner)[0]} fn main() -> usize {let count: usize = 7; let owner: plane(usize, 2) = alloc(2, 42); consume(owner, 2)}",
         "fn main() -> usize {let v = vec::new(0); v = vec::reallocate(&v, 2); vec::push(&v, 42); let p = vec::get(&v, 0); vec::push(&v, 7); *p}",
         include_str!("../../../examples/runtime_planes.evg"),
         "fn main() -> usize {let a: plane(usize, 0) = alloc(0, 7); let b: plane(usize, 0) = alloc(0, 9); if &*a != &*b {42} else {1}}",
