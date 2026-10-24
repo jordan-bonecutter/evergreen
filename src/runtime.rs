@@ -179,6 +179,7 @@ impl Evaluator<'_> {
                 Some(Type::Bool)
             }
             Kind::Binary(_, a, b) => self.hint(a, env).or_else(|| self.hint(b, env)),
+            Kind::If(_, a, b) => self.hint(a, env).or_else(|| self.hint(b, env)),
             Kind::Call(n, _) => self
                 .functions
                 .iter()

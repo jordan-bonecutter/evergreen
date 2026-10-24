@@ -93,3 +93,36 @@ impl Context<'_> {
         self.memory.write(plane, root, false)
     }
 }
+
+impl Context<'_> {
+    pub(super) fn materialize_live_reference_views(
+        &mut self,
+        value: &Symbol,
+        line: usize,
+    ) -> Result<()> {
+        self.charge_value_work(1)?;
+        match value {
+            Symbol::Ref(_, reference, path) => {
+                // An old stale handle stays stale; observing it later will
+                // fail. Never replace its generation or allocate new storage.
+                if let Ok(root) = self.memory.read(*reference) {
+                    if project(root, path).is_err() {
+                        self.materialize_joined_reference(value, line)?;
+                    }
+                }
+            }
+            Symbol::Record(_, fields) => {
+                for value in fields.values() {
+                    self.materialize_live_reference_views(value, line)?;
+                }
+            }
+            Symbol::Array { items, cells, .. } => {
+                for value in items.iter().flatten().chain(cells.values()) {
+                    self.materialize_live_reference_views(value, line)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}

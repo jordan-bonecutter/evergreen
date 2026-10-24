@@ -414,12 +414,24 @@ fn erased_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
 // ordinary evaluator still checks their types, arithmetic, and array bounds.
 fn place_index_expression(e: &Expr) -> bool {
     match &e.kind {
-        Kind::Name(_) | Kind::Number(_) | Kind::Constant(..) => true,
+        Kind::Name(_) | Kind::Number(_) | Kind::Constant(..) | Kind::Bool(_) => true,
         Kind::Field(base, _) => place_index_expression(base),
         Kind::Index(base, index) => place_index_expression(base) && place_index_expression(index),
-        Kind::Unary(op, value) if op == "-" || op == "*" => place_index_expression(value),
-        Kind::Binary(op, a, b) if matches!(op.as_str(), "+" | "-" | "*") => {
+        Kind::Unary(op, value) if matches!(op.as_str(), "-" | "*" | "!") => {
+            place_index_expression(value)
+        }
+        Kind::Binary(op, a, b)
+            if matches!(
+                op.as_str(),
+                "+" | "-" | "*" | "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||" | "=>"
+            ) =>
+        {
             place_index_expression(a) && place_index_expression(b)
+        }
+        Kind::If(condition, yes, no) => {
+            place_index_expression(condition)
+                && place_index_expression(yes)
+                && place_index_expression(no)
         }
         Kind::Call(name, args) if matches!(name.as_str(), "int" | "nat") && args.len() == 1 => {
             place_index_expression(&args[0])
@@ -1182,9 +1194,12 @@ impl<'a> Context<'a> {
         std::mem::swap(&mut self.memory, &mut entry.memory);
         std::mem::swap(&mut self.module, &mut entry.module);
         self.old_memory = Some(entry);
-        // Projections and arithmetic cannot construct addresses. Reference
-        // values therefore retain real incoming handles: dereferencing one
-        // outside old(...) uses the live store and its generation checks.
+        // Pure entry expressions cannot construct addresses. Conditional
+        // selections may introduce a new symbolic cell path on an incoming
+        // handle. Materialize its LIVE view separately from the frozen read.
+        if let Ok(value) = &value {
+            self.materialize_live_reference_views(value, expression.line)?;
+        }
         value
     }
     fn old_key(e: &Expr) -> Option<String> {
@@ -2154,6 +2169,7 @@ impl<'a> Context<'a> {
                 Some(Ty::Bool)
             }
             Kind::Binary(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
+            Kind::If(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
             Kind::Call(n, _) => self
                 .functions
                 .get(n)
@@ -3781,6 +3797,61 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn conditional_contract_indices_and_entry_snapshots_replay() {
+        for source in [
+            include_str!("../examples/conditional_contracts.evg"),
+            include_str!("../examples/old_selection.evg"),
+        ] {
+            let (program, bundle) = prove(source).unwrap();
+            assert_eq!(program.run().unwrap().to_string(), "42");
+            assert_eq!(
+                verify_with_certificate(source, &bundle)
+                    .unwrap()
+                    .proof_search_count(),
+                0
+            );
+        }
+        let variables = "fn at(data: &[usize; 2], flag: bool, i: usize, j: usize) -> &usize where(i < 2 && j < 2) borrows(&(*data)[if flag {i} else {j}]) {if flag {&(*data)[i]} else {&(*data)[j]}} fn main() -> usize ensures(result == 42) {let data: [usize; 2] = [7, 42]; *at(&data, false, 0, 1)}";
+        assert_eq!(verify(variables).unwrap().run().unwrap().to_string(), "42");
+        let numeric = "fn at(data: &[usize; 2], i: usize) -> &usize where(i < 2) borrows(&(*data)[if i == 0 {0} else {1}]) {&(*data)[i]} fn main() -> usize {let data: [usize; 2] = [7, 42]; *at(&data, 1)}";
+        assert_eq!(verify(numeric).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn conditional_contract_indices_cannot_retarget_or_execute_effects() {
+        for source in [
+            "fn bad(data: &[usize; 2], flag: bool) -> &usize borrows(&(*data)[if flag {0} else {1}]) {flag = !flag; if flag {&(*data)[0]} else {&(*data)[1]}}",
+            "fn bad(data: &[usize; 2], flag: bool) modifies(&(*data)[if flag {0} else {1}]) {flag = !flag; (*data)[if flag {0} else {1}] = 42;}",
+            "fn bad(data: &[usize; 2], cursor: &usize) where(*cursor == 0) modifies(cursor, &(*data)[if *cursor == 0 {0} else {1}]) {*cursor = 1; (*data)[if *cursor == 0 {0} else {1}] = 42;}",
+            "fn side(cursor: &usize) -> bool modifies(cursor) {*cursor = 0; true} fn bad(data: &[usize; 2], cursor: &usize) -> &usize borrows(&(*data)[if side(cursor) {0} else {1}]) {&(*data)[0]}",
+            "fn bad(data: &[usize; 2], flag: bool) -> &usize borrows(&(*data)[if flag {0} else {2}]) {if flag {&(*data)[0]} else {&(*data)[1]}}",
+            "fn bad(data: &[usize; 2], flag: bool) {proof wrong: old((*data)[if flag {0} else {1}]) == 42;}",
+        ] {assert!(verify(source).is_err(), "accepted {source}");}
+        let effectful_old = "fn side() -> bool {true} fn bad(data: &[usize; 2]) {proof wrong: old((*data)[if side() {0} else {1}]) == 42;}";
+        assert!(verify(effectful_old).is_err());
+    }
+
+    #[test]
+    fn identity_sensitive_conditional_contracts_recheck_actual_aliases() {
+        let correct = "fn at(data: &[usize; 2], a: &usize, b: &usize) -> &usize borrows(&(*data)[if a == b {0} else {1}]) {if a == b {&(*data)[0]} else {&(*data)[1]}} fn main() -> usize ensures(result == 42) {let data: [usize; 2] = [42, 7]; let n: usize = 0; *at(&data, &n, &n)}";
+        let (program, bundle) = prove(correct).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(correct, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let incorrect = correct.replace(
+            "{if a == b {&(*data)[0]} else {&(*data)[1]}}",
+            "{&(*data)[1]}",
+        );
+        assert!(verify(&incorrect)
+            .unwrap_err()
+            .contains("body recheck failed"));
+    }
+
     #[test]
     fn conditional_array_references_preserve_origins_and_old_views() {
         for source in [

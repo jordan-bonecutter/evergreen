@@ -406,8 +406,9 @@ to a modifying helper. `examples/write_contracts.evg` checks composition,
 aliases, overflow bounds, and preservation of an unrelated sibling field.
 
 `old` also accepts entry-state field, dereference, and indexed projections, plus
-checked scalar arithmetic: `old((*pair).left)`, `old(*handle.count)`, or
-`old((*data)[index])`. All names and dereferences inside the expression use the
+checked scalar arithmetic, comparisons, Boolean predicates, and conditionals:
+`old((*pair).left)`, `old(*handle.count)`, or
+`old((*data)[if flag {0} else {1}])`. All names and dereferences inside the expression use the
 function's entry bindings and memory. Only functions that use these compound
 forms capture an entry store; the snapshot is proof-only and its copying work
 counts against the verifier's limits. Reads are checked when used, so a branch
@@ -421,7 +422,12 @@ reference values: `old(handle.count)` snapshots the pointer, while
 `old(*handle.count)` snapshots its pointee's value. A dereference outside `old`
 uses live memory and the ordinary generation checks. `examples/old_places.evg`
 exercises nested snapshots, rebinding a pointer field, and preserving a caller's
-entry state across multiple modifying calls.
+entry state across multiple modifying calls. `examples/old_selection.evg`
+changes both an array and its selector, then proves that a conditional snapshot
+still reads the entry array using the entry selector. Address construction and
+user function calls remain forbidden inside snapshots. Existing reference
+values retain their incoming handles; a newly selected symbolic path gets a
+separate live view when needed, without reviving a stale generation.
 
 Write contracts can name scalar projections of incoming references, such as
 `modifies(&(*data)[index])` or `modifies(&(*pair).left)`. Bounds and the
@@ -748,9 +754,10 @@ references, then proves its destructor writes the selected cell. Both examples
 run, build, and replay with the internal verifier. Conditional scalar-array
 values also join their contents and tracked views. Different target planes,
 different record fields, conditional storage generations, and symbolic
-aggregate-element selections remain unsupported. General conditional alias
-contracts are still unsupported; returned references must match the exact
-entry projection declared by `borrows`.
+aggregate-element selections remain unsupported. Returned references must match
+the exact entry projection declared by `borrows`, including a conditional entry
+index as described below. Selecting between different target planes in a
+contract remains unsupported.
 
 A reference return requires an exact alias contract, for example:
 
@@ -759,6 +766,27 @@ fn identity(r: &usize) -> &usize borrows(r) {r}
 fn right(pair: &Pair) -> &usize
 borrows(&(*pair).right) {&(*pair).right}
 ```
+
+Index expressions in `borrows` and `modifies` can use pure comparisons, Boolean
+conditions, and `if`, for example:
+
+```evergreen
+fn select(data: &[usize; 2], flag: bool) -> &usize
+borrows(&(*data)[if flag {0} else {1}]) {
+    if flag {&(*data)[0]} else {&(*data)[1]}
+}
+```
+
+The selection is evaluated at entry. Rebinding a Boolean selector or updating a
+scalar used by its condition cannot retarget the permission or returned alias.
+Each selected index must be proved nonnegative and within the array. Conditions
+may inspect entry scalar storage or compare incoming references; user calls,
+address construction inside indices, ownership operations, and proof escape
+hatches remain excluded. Overlapping input reference regions trigger the normal
+body recheck, including identity-sensitive selections. `examples/conditional_contracts.evg`
+combines a conditional returned alias with a conditional write footprint and
+checks both choices at runtime. These expressions remain subject to the same
+64-path and symbolic-work limits as other verification code.
 
 `borrows` follows `where`/`modifies` and precedes `ensures`. The contract names
 the exact incoming reference or field projection returned, not merely a value
@@ -820,7 +848,8 @@ extents and alias expansion is bounded to 2048 visited type nodes and depth 64.
 writes through the declared references. Its consuming function declares the
 implicit cleanup writes through its incoming array elements. Arrays are cleaned
 in ascending order.
-Symbolic-size reference arrays and conditional alias contracts remain unsupported.
+Symbolic-size reference arrays and contracts selecting between different target
+planes remain unsupported.
 All call arguments are rechecked together after evaluation, preventing a later
 argument from consuming storage borrowed by an earlier one.
 

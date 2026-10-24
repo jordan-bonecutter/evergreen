@@ -1,0 +1,9 @@
+fn reset(data: &[usize; 2], flag: bool)
+where((*data)[0] == 7 && (*data)[1] == 9)
+modifies(data) {
+    *data = [42, 42];
+    flag = !flag;
+    proof snapshot: old((*data)[if flag {0} else {1}]) == (if old(flag) {7} else {9});
+    proof history: old((*data)[0] == 7 && (*data)[1] == 9);
+}
+fn main() -> usize {let data: [usize; 2] = [7, 9]; reset(&data, false); 42}

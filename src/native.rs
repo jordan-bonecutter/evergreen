@@ -1215,6 +1215,8 @@ mod tests {
             include_str!("../examples/conditional_borrows.evg"),
             "fn choose(flag: bool) -> [usize; 2] ensures((flag => result[0] == 42) && (!flag => result[1] == 42)) {if flag {[42, 7]} else {[7, 42]}} fn main() -> usize ensures(result == 42) {let data = choose(false); data[1]}",
             include_str!("../examples/conditional_drop.evg"),
+            include_str!("../examples/conditional_contracts.evg"),
+            include_str!("../examples/old_selection.evg"),
             "fn main() -> usize where(old(1 + 1) == 2) {42}",
             "type Fixed struct {value: usize} where(value == 42); fn refresh(r: &Fixed) -> &Fixed modifies(&(*r).value) borrows(r) ensures((*r).value == 42 && (*result).value == 42) {(*r).value = 42; r} fn main() -> usize {let fixed = Fixed {value: 42}; let refreshed = refresh(&fixed); (*refreshed).value}",
             include_str!("../examples/recursion.evg"),
