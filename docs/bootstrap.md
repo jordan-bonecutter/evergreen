@@ -310,7 +310,7 @@ borrowed writes. This primitive is unique allocation ownership, not Rc or Arc:
 shared ownership authority and atomic state transitions still need language
 support and library implementations.
 
-`src/memory.rs` provides the internal generation-checked plane store used by
+`src/shared/planes.rs` provides the internal generation-checked plane store used by
 both verification and execution. Arena identities prevent handles from crossing
 stores. Allocation has a 100,000-plane limit. `proofs/Planes.lean` separately
 specifies plane identity, epochs, invalidation,
@@ -344,7 +344,7 @@ These finite checks are regression evidence, not a compiler correctness proof.
 
 The internal pipeline is syntax → symbolic elaboration → verification
 conditions → certificate search → independent certificate checking. The small
-checker in `src/kernel.rs` accepts nonnegative weighted sums of integer linear
+checker in `src/compiler/kernel.rs` accepts nonnegative weighted sums of integer linear
 inequalities that establish a contradiction. Proof search uses bounded
 Fourier–Motzkin elimination. Search failure, overflow, and resource limits all
 fail verification. Integer strict inequalities are normalized with a unit gap.

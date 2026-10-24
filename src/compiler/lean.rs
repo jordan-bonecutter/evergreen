@@ -347,3 +347,6 @@ pub fn emit(source: &str, run: bool) -> Result<String> {
     out.push_str("end EvgProgram\n");
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests;

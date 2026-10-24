@@ -1,8 +1,9 @@
 //! Internal elaboration and verification-condition generation.
+use crate::shared::ownership::is_affine;
 use crate::{
-    certificate::{ProofBundle, Session},
-    kernel::Linear,
-    memory::{Memory, PlaneId, Projection, Reference},
+    compiler::certificate::{ProofBundle, Session},
+    compiler::kernel::Linear,
+    shared::planes::{Memory, PlaneId, Projection, Reference},
     syntax::{self, Expr, Function, Kind, MachineInt, Statement, Struct, Type},
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -397,23 +398,6 @@ fn clauses<'a>(expression: &'a Expr, out: &mut Vec<&'a Expr>) {
     out.push(expression);
 }
 
-pub(crate) fn is_affine(
-    t: &Type,
-    structs: &BTreeMap<String, Struct>,
-    drops: &BTreeSet<String>,
-) -> bool {
-    match t {
-        Type::Plane(_) => true,
-        Type::Named(n) => {
-            drops.contains(n)
-                || structs.get(n).is_some_and(|s| {
-                    s.affine || s.fields.iter().any(|(_, t)| is_affine(t, structs, drops))
-                })
-        }
-        Type::Array(t, _) => is_affine(t, structs, drops),
-        _ => false,
-    }
-}
 fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match t {
         Type::Int | Type::Nat => false,
@@ -1464,7 +1448,7 @@ impl<'a> Context<'a> {
                 if !runtime_type(t, self.structs) || !heap::payload_type(t, self.structs) {
                     return Err("owned planes require runtime payloads without borrowed references".into());
                 }
-                crate::layout::of(t, self.structs)?;
+                crate::compiler::layout::of(t, self.structs)?;
                 Ok(Ty::Plane(Box::new(self.resolve(t)?)))
             }
             Type::Named(n) => {
@@ -3584,7 +3568,7 @@ pub struct VerifiedProgram {
     pub obligations: usize,
     pub(crate) drops: BTreeSet<String>,
     pub(crate) cleanup_helpers: BTreeSet<String>,
-    trusted: Vec<crate::certificate::TrustedAssumption>,
+    trusted: Vec<crate::compiler::certificate::TrustedAssumption>,
     proof_searches: usize,
 }
 
@@ -3594,7 +3578,7 @@ impl VerifiedProgram {
             .iter()
             .any(|f| heap::function_uses_planes(f, &self.structs))
     }
-    pub fn trusted_assumptions(&self) -> &[crate::certificate::TrustedAssumption] {
+    pub fn trusted_assumptions(&self) -> &[crate::compiler::certificate::TrustedAssumption] {
         &self.trusted
     }
     pub fn potentially_diverging_functions(&self) -> impl Iterator<Item = &str> {
@@ -3607,7 +3591,7 @@ impl VerifiedProgram {
         self.proof_searches
     }
     pub(crate) fn check_entry(&self) -> Result<()> {
-        crate::bounded::run("evergreen-entry-checker", || self.check_entry_inner())
+        crate::shared::worker::run("evergreen-entry-checker", || self.check_entry_inner())
     }
     fn check_entry_inner(&self) -> Result<()> {
         let main = self
@@ -3702,7 +3686,7 @@ fn check_type_expansion(structs: &[Struct]) -> Result<()> {
 }
 
 fn verify_using(source: &str, session: &mut Session) -> Result<VerifiedProgram> {
-    crate::bounded::run("evergreen-verifier", || verify_inner(source, session))
+    crate::shared::worker::run("evergreen-verifier", || verify_inner(source, session))
 }
 fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> {
     let parsed = syntax::parse(source)?;
@@ -3807,7 +3791,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
     let mut obligations = 0;
     for f in &mut all_functions {
         f.entry_memory = needs_old_memory(f);
-        f.partial = !f.ideal && f.decreases.is_none() && crate::effects::recursive(f);
+        f.partial = !f.ideal && f.decreases.is_none() && crate::compiler::effects::recursive(f);
         for (name, ty) in &f.params {
             if f.ideal_params.contains(name) && !erased_type(ty, &structs) {
                 return Err(format!("line {}: ideal parameters may own only proof data; runtime owners must be borrowed", f.line));
@@ -3919,10 +3903,10 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         ctx.check_function_body(f, &ret, &inputs, true)?;
         obligations += ctx.obligations;
         f.partial = ctx.partial_execution;
-        if crate::effects::invariant_independent(f, &functions, &helpers) {
+        if crate::compiler::effects::invariant_independent(f, &functions, &helpers) {
             helpers.insert(f.name.clone());
         }
-        if crate::effects::ownership_free(f, &functions, &cleanup_helpers) {
+        if crate::compiler::effects::ownership_free(f, &functions, &cleanup_helpers) {
             cleanup_helpers.insert(f.name.clone());
         }
         functions.insert(f.name.clone(), f.clone());

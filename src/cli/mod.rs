@@ -5,7 +5,7 @@ mod output;
 
 use args::{Action, Cli};
 use clap::Parser;
-use evergreen::{certificate::ProofBundle, verify::VerifiedProgram};
+use evergreen::compiler::{certificate::ProofBundle, verify::VerifiedProgram};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -47,9 +47,9 @@ fn checked_program(
 ) -> Result<VerifiedProgram, String> {
     let program = if let Some(path) = proof {
         let bundle = ProofBundle::read(path)?;
-        evergreen::verify::verify_with_certificate(source, &bundle)?
+        evergreen::compiler::verify::verify_with_certificate(source, &bundle)?
     } else {
-        evergreen::verify::verify(source)?
+        evergreen::compiler::verify::verify(source)?
     };
     enforce_trust(&program, deny_trust)?;
     Ok(program)
@@ -63,7 +63,7 @@ fn build(
     deny_trust: bool,
 ) -> Result<(), String> {
     let program = checked_program(source, proof, deny_trust)?;
-    let binary = evergreen::native::emit(&program)?;
+    let binary = evergreen::compiler::native::emit(&program)?;
     output::write_executable(destination, &binary, files)?;
     println!(
         "{}; built {} (Linux x86-64)",
@@ -108,7 +108,7 @@ fn prove(
     destination: &Path,
     deny_trust: bool,
 ) -> Result<(), String> {
-    let (program, bundle) = evergreen::verify::prove(source)?;
+    let (program, bundle) = evergreen::compiler::verify::prove(source)?;
     enforce_trust(&program, deny_trust)?;
     output::write_text(destination, &bundle.to_text(), files)?;
     println!(
@@ -123,13 +123,13 @@ fn prove(
 
 fn run_program(source: &str, deny_trust: bool) -> Result<(), String> {
     let program = checked_program(source, None, deny_trust)?;
-    println!("{}", program.run()?);
+    println!("{}", evergreen::interpreter::run(&program)?);
     report_trust(&program);
     Ok(())
 }
 
 fn emit(source: &str, files: &[PathBuf], destination: Option<&Path>) -> Result<(), String> {
-    let lean = evergreen::emit(source, false)?;
+    let lean = evergreen::compiler::lean::emit(source, false)?;
     if let Some(path) = destination {
         output::write_text(path, &lean, files)?;
     } else {

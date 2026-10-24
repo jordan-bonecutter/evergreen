@@ -1,4 +1,4 @@
-//! Run recursive compiler operations on a worker thread with a 16 MiB stack.
+//! Run recursive operations on a worker thread with a 16 MiB stack.
 //! This keeps stack capacity consistent across CLI, tests, and library callers.
 //! Each operation still enforces its own recursion-depth and work limits.
 pub(crate) fn run<T: Send>(

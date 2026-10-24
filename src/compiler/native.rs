@@ -1,9 +1,9 @@
 //! Small Linux x86-64 backend. Source verification is required before emission.
 //! This backend is trusted code, not a machine-checked compiler-correctness proof.
 use crate::{
-    layout,
+    compiler::layout,
+    compiler::verify::VerifiedProgram,
     syntax::{Expr, Function, Kind, MachineInt, Statement, Struct, Type},
-    verify::VerifiedProgram,
 };
 use std::collections::{BTreeMap, BTreeSet};
 type Result<T> = std::result::Result<T, String>;
@@ -505,7 +505,7 @@ impl Emitter<'_> {
             }
             Kind::Name(n) => {
                 let ty = self.load(n)?;
-                if crate::verify::is_affine(&ty, self.structs, self.drops) {
+                if crate::shared::ownership::is_affine(&ty, self.structs, self.drops) {
                     self.alive.remove(n);
                 }
                 ty

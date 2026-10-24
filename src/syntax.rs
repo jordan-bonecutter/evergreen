@@ -1,5 +1,8 @@
 //! Shared, source-located syntax for the internal compiler pipeline.
-use crate::{lex, Token};
+use lexer::{lex, Token};
+
+mod lexer;
+mod modules;
 
 mod functions;
 mod statements;
@@ -803,7 +806,7 @@ pub fn parse(source: &str) -> Result<Program, String> {
         functions,
         destructors,
     };
-    crate::modules::qualify(&mut program);
+    modules::qualify(&mut program);
     Ok(program)
 }
 

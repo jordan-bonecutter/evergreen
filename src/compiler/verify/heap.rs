@@ -124,7 +124,7 @@ impl Context<'_> {
         if !runtime_type(&syntax, self.structs) || !payload_type(&syntax, self.structs) {
             return Err("owned planes require runtime payloads without borrowed references".into());
         }
-        crate::layout::of(&syntax, self.structs)?;
+        crate::compiler::layout::of(&syntax, self.structs)?;
         self.validate_argument(&value, line)?;
         let plane = self.memory.allocate(value)?;
         Ok(Symbol::Plane(Box::new(ty), self.memory.borrow(plane)?))

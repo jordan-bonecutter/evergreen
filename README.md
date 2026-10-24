@@ -15,13 +15,19 @@ standalone Linux x86-64 executable for the supported verified subset.
 | Responsibility | Code |
 | --- | --- |
 | Entry point and command handlers | [main.rs](src/main.rs), [cli](src/cli/mod.rs) |
-| Parsing and module name resolution | [syntax.rs](src/syntax.rs), [modules.rs](src/modules.rs) |
-| Symbolic verification and language rules | [verify.rs](src/verify.rs), [verification modules](src/verify) |
-| Small proof kernel and certificate replay | [kernel.rs](src/kernel.rs), [certificate.rs](src/certificate.rs) |
-| Native expression and statement emission | [native.rs](src/native.rs) |
-| Function compilation and executable packaging | [program.rs](src/native/program.rs), [elf.rs](src/native/elf.rs) |
-| Checked reference interpreter | [runtime.rs](src/runtime.rs) |
-| Optional Lean reference translation | [lean.rs](src/lean.rs) |
+| Shared syntax, parsing, and name resolution | [syntax.rs](src/syntax.rs), [syntax modules](src/syntax) |
+| Symbolic verification and language rules | [compiler/verify.rs](src/compiler/verify.rs), [verification modules](src/compiler/verify) |
+| Small proof kernel and certificate replay | [compiler/kernel.rs](src/compiler/kernel.rs), [compiler/certificate.rs](src/compiler/certificate.rs) |
+| Native expression and statement emission | [compiler/native.rs](src/compiler/native.rs) |
+| Function compilation and executable packaging | [program.rs](src/compiler/native/program.rs), [elf.rs](src/compiler/native/elf.rs) |
+| Executing a verified program | [interpreter](src/interpreter/mod.rs) |
+| Shared plane model and ownership rules | [shared](src/shared/mod.rs) |
+| Optional Lean reference translation | [compiler/lean.rs](src/compiler/lean.rs) |
+
+The interpreter accepts a `VerifiedProgram` produced by the compiler. The
+compiler does not execute the interpreter. Shared code contains the generic
+plane store, type ownership classification, and host worker utility; each side
+keeps its own values and execution/checking logic.
 
 Verifier and native regression tests live in their subsystem directories.
 [tests/verification.rs](tests/verification.rs) exercises the CLI and optional

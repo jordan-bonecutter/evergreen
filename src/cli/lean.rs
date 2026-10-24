@@ -17,7 +17,7 @@ pub(super) fn run(source: &str) -> Result<(), String> {
 }
 
 fn execute(source: &str, evaluate: bool) -> Result<String, String> {
-    let lean = evergreen::emit(source, evaluate)?;
+    let lean = evergreen::compiler::lean::emit(source, evaluate)?;
     let dir = env::temp_dir().join(format!("evergreen-{}", super::temporary_id()?));
     fs::create_dir(&dir).map_err(|e| e.to_string())?;
     let result = verify_in(&dir, &lean);

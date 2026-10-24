@@ -120,7 +120,7 @@ fn small_array_model_agrees_with_proofs_execution_and_replay() {
     }
     // One proof of the symbolic helper; this main observes all sixteen input
     // combinations and returns a failure count without cancellation or wrapping.
-    check_case(include_str!("../../examples/array_model.evg"), 42);
+    check_case(include_str!("../../../examples/array_model.evg"), 42);
 }
 
 #[test]
@@ -133,7 +133,7 @@ fn record_fields_agree_with_independent_model_and_wrong_contracts_fail() {
 #[test]
 #[ignore = "exhaustive symbolic-entry proof audit; run explicitly"]
 fn symbolic_array_entries_each_reject_a_wrong_contract() {
-    let definitions = include_str!("../../examples/array_model.evg")
+    let definitions = include_str!("../../../examples/array_model.evg")
         .split("fn main")
         .next()
         .unwrap();

@@ -91,7 +91,7 @@ impl<'a> ProgramEmitter<'a> {
         }
         let parameters = ParameterLayout::new(function, &self.program.structs)?;
         let offset = self.code.len();
-        let recursive = crate::effects::recursive(function);
+        let recursive = crate::compiler::effects::recursive(function);
         let frame_fixup = self.begin_function(&function.name, offset, recursive);
         let mut emitter = Emitter {
             code: &mut self.code,

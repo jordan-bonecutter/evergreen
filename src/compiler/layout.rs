@@ -148,7 +148,7 @@ mod tests {
         assert_eq!(of(&Type::Named("Storage".into()), &defs).unwrap().size, 16);
         let source = "type Storage struct {data: [usize; (1 - 2) + 2]} fn main() -> usize {let s = Storage {data: [7, 42]}; s.data[1]}";
         assert_eq!(
-            crate::verify::verify(source)
+            crate::compiler::verify::verify(source)
                 .unwrap()
                 .run()
                 .unwrap()

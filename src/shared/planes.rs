@@ -1,5 +1,7 @@
 //! Generation-based plane store shared by elaboration and reference execution.
 //! Handles are opaque; invalidation is checked independently of the prover.
+//! The checker and interpreter instantiate this store with their own value types.
+//! Generated executables use the native backend's Linux allocator.
 use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT_ARENA: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

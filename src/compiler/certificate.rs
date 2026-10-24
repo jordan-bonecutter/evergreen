@@ -1,6 +1,6 @@
 //! Portable, untrusted arithmetic proof artifacts. Replay regenerates all VCs
 //! with the current frontend and checks every certificate against those VCs.
-use crate::kernel::{self, Certificate, Linear};
+use crate::compiler::kernel::{self, Certificate, Linear};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, io::Read, path::Path, sync::Arc};
 type Result<T> = std::result::Result<T, String>;
@@ -412,21 +412,21 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::verify::{prove, verify, verify_with_certificate};
+    use crate::compiler::verify::{prove, verify, verify_with_certificate};
     #[test]
     fn checked_in_protocol_artifact_replays_without_search() {
-        let bundle = ProofBundle::parse(include_str!("../proofs/rc_protocol.evgproof")).unwrap();
+        let bundle = ProofBundle::parse(include_str!("../../proofs/rc_protocol.evgproof")).unwrap();
         let program =
-            verify_with_certificate(include_str!("../proofs/rc_protocol.evg"), &bundle).unwrap();
+            verify_with_certificate(include_str!("../../proofs/rc_protocol.evg"), &bundle).unwrap();
         assert_eq!(program.proof_search_count(), 0);
         assert!(program.trusted_assumptions().is_empty());
     }
     #[test]
     fn opaque_credit_interfaces_replay_without_search() {
         let source = [
-            include_str!("../stdlib/credits.evg"),
-            include_str!("../proofs/opaque_credits.evg"),
-            include_str!("../proofs/ideal_credit_bindings.evg"),
+            include_str!("../../stdlib/credits.evg"),
+            include_str!("../../proofs/opaque_credits.evg"),
+            include_str!("../../proofs/ideal_credit_bindings.evg"),
         ]
         .join("\n");
         let (_, bundle) = prove(&source).unwrap();
@@ -437,8 +437,8 @@ mod tests {
     #[test]
     fn disjoint_write_contracts_replay_without_search() {
         let source = [
-            include_str!("../stdlib/swap.evg"),
-            include_str!("../examples/disjoint_writes.evg"),
+            include_str!("../../stdlib/swap.evg"),
+            include_str!("../../examples/disjoint_writes.evg"),
         ]
         .join("\n");
         let (_, bundle) = prove(&source).unwrap();
@@ -449,10 +449,10 @@ mod tests {
     #[test]
     fn erased_count_refinement_replays_and_executes_without_search() {
         let source = [
-            include_str!("../proofs/rc_protocol.evg"),
-            include_str!("../stdlib/counter.evg"),
-            include_str!("../proofs/rc_count_refinement.evg"),
-            include_str!("../examples/rc_count.evg"),
+            include_str!("../../proofs/rc_protocol.evg"),
+            include_str!("../../stdlib/counter.evg"),
+            include_str!("../../proofs/rc_count_refinement.evg"),
+            include_str!("../../examples/rc_count.evg"),
         ]
         .join("\n");
         let (_, bundle) = prove(&source).unwrap();
@@ -467,27 +467,27 @@ mod tests {
     #[test]
     fn replay_checks_certificates_without_search() {
         for source in [
-            include_str!("../examples/partial_recursion.evg"),
-            include_str!("../examples/ideal_bindings.evg"),
-            include_str!("../examples/erased_resources.evg"),
-            include_str!("../examples/opaque_values.evg"),
-            include_str!("../examples/indexed_borrows.evg"),
-            include_str!("../examples/weak_invariant.evg"),
-            include_str!("../examples/array_borrows.evg"),
-            include_str!("../examples/borrow_returns.evg"),
-            include_str!("../examples/contracts.evg"),
-            include_str!("../examples/drop.evg"),
-            include_str!("../examples/selective_update.evg"),
-            include_str!("../examples/conditional_records.evg"),
-            include_str!("../examples/affine_values.evg"),
-            include_str!("../examples/destructure.evg"),
-            include_str!("../proofs/affine_credits.evg"),
-            include_str!("../examples/write_contracts.evg"),
-            include_str!("../examples/conditional_writes.evg"),
-            include_str!("../stdlib/counter.evg"),
-            include_str!("../examples/ideal_parameters.evg"),
-            include_str!("../examples/array_contracts.evg"),
-            include_str!("../proofs/rc_protocol.evg"),
+            include_str!("../../examples/partial_recursion.evg"),
+            include_str!("../../examples/ideal_bindings.evg"),
+            include_str!("../../examples/erased_resources.evg"),
+            include_str!("../../examples/opaque_values.evg"),
+            include_str!("../../examples/indexed_borrows.evg"),
+            include_str!("../../examples/weak_invariant.evg"),
+            include_str!("../../examples/array_borrows.evg"),
+            include_str!("../../examples/borrow_returns.evg"),
+            include_str!("../../examples/contracts.evg"),
+            include_str!("../../examples/drop.evg"),
+            include_str!("../../examples/selective_update.evg"),
+            include_str!("../../examples/conditional_records.evg"),
+            include_str!("../../examples/affine_values.evg"),
+            include_str!("../../examples/destructure.evg"),
+            include_str!("../../proofs/affine_credits.evg"),
+            include_str!("../../examples/write_contracts.evg"),
+            include_str!("../../examples/conditional_writes.evg"),
+            include_str!("../../stdlib/counter.evg"),
+            include_str!("../../examples/ideal_parameters.evg"),
+            include_str!("../../examples/array_contracts.evg"),
+            include_str!("../../proofs/rc_protocol.evg"),
         ] {
             let (original, bundle) = prove(source).unwrap();
             let text = bundle.to_text();
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn replay_rejects_forged_missing_and_extra_evidence() {
-        let source = include_str!("../examples/contracts.evg");
+        let source = include_str!("../../examples/contracts.evg");
         let (_, bundle) = prove(source).unwrap();
         let mut forged = bundle.clone();
         let record = Arc::make_mut(&mut forged.records)
@@ -522,7 +522,7 @@ mod tests {
 
     #[test]
     fn trust_is_explicit_and_cannot_be_hidden_in_artifacts() {
-        let source = include_str!("../examples/trustme.evg");
+        let source = include_str!("../../examples/trustme.evg");
         let (program, bundle) = prove(source).unwrap();
         assert_eq!(program.trusted_assumptions().len(), 1);
         assert_eq!(bundle.trusted_assumption_count(), 1);

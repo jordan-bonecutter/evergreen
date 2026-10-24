@@ -3,7 +3,7 @@ use super::*;
 
 #[test]
 fn result_borrows_are_anchored_in_surviving_returned_owners() {
-    let source = include_str!("../../examples/owned_result_views.evg");
+    let source = include_str!("../../../examples/owned_result_views.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.trusted_assumptions().is_empty());
@@ -73,7 +73,7 @@ fn result_owned_alias_selection_is_checked_after_destructor_effects() {
 
 #[test]
 fn heap_record_updates_track_physical_planes_and_retained_requirements() {
-    let source = include_str!("../../examples/heap_updates.evg");
+    let source = include_str!("../../../examples/heap_updates.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.trusted_assumptions().is_empty());
@@ -107,7 +107,7 @@ fn heap_record_updates_track_physical_planes_and_retained_requirements() {
     assert!(verify(&no_permission)
         .unwrap_err()
         .contains("matching modifies contract"));
-    let pulse = include_str!("../../examples/reject_heap_update_intermediate.evg");
+    let pulse = include_str!("../../../examples/reject_heap_update_intermediate.evg");
     assert!(verify(pulse).unwrap_err().contains("invariant of Ledger"));
     let reverse_release = source.replace("ideal (*ledger).owners = (*ledger).owners - 1;\n            (*ledger).count = (*ledger).count - 1;", "(*ledger).count = (*ledger).count - 1; ideal (*ledger).owners = (*ledger).owners - 1;");
     assert!(verify(&reverse_release)
@@ -124,7 +124,7 @@ fn heap_record_updates_track_physical_planes_and_retained_requirements() {
 
 #[test]
 fn dormant_heap_views_preserve_other_container_requirements() {
-    let source = include_str!("../../examples/heap_updates.evg");
+    let source = include_str!("../../../examples/heap_updates.evg");
     let views = source
         .replace(
             "type Holder",
@@ -166,7 +166,7 @@ fn explicit_ideal_borrowed_writes_reset_erasure_at_pointer_edges() {
 
 #[test]
 fn owned_planes_keep_identity_across_moves_and_cleanup_nested_payloads() {
-    let source = include_str!("../../examples/owned_planes.evg");
+    let source = include_str!("../../../examples/owned_planes.evg");
     let (program, bundle) = prove(source).unwrap();
     let (result, events) = program.run_with_events().unwrap();
     assert_eq!(result.to_string(), "42");
@@ -198,9 +198,9 @@ fn owned_planes_keep_identity_across_moves_and_cleanup_nested_payloads() {
 #[test]
 fn heap_ownership_rejects_dangling_duplicates_and_erased_effects() {
     for (source, diagnostic) in [
-        (include_str!("../../examples/reject_heap_use_after_free.evg"), "never"),
-        (include_str!("../../examples/reject_heap_duplicate_owner.evg"), "shape(T)"),
-        (include_str!("../../examples/reject_heap_borrow_write.evg"), "effect contract"),
+        (include_str!("../../../examples/reject_heap_use_after_free.evg"), "never"),
+        (include_str!("../../../examples/reject_heap_duplicate_owner.evg"), "shape(T)"),
+        (include_str!("../../../examples/reject_heap_borrow_write.evg"), "effect contract"),
         ("fn main() -> usize {let owner: plane(usize) = alloc(7); let view = &*owner; drop(owner); owner = alloc(42); *view}", "never"),
         ("fn bad(owner: plane(usize), view: &usize) -> &usize borrows(view) {view} fn main() -> usize {let owner: plane(usize) = alloc(42); let view = &*owner; *bad(owner, view)}", "never"),
         ("fn change(owner: plane(usize)) -> usize {*owner = 42; 42} fn main() -> usize ensures(result == 42) {let owner: plane(usize) = alloc(7); proof wrong: change(owner) == 42; *owner}", "proof calls must borrow heap owners"),
@@ -218,12 +218,12 @@ fn heap_ownership_rejects_dangling_duplicates_and_erased_effects() {
 
 #[test]
 fn opaque_ideal_effect_regions_forward_and_recheck_aliases() {
-    let credits = include_str!("../../stdlib/credits.evg").replace("module credits {", "module credits {ideal fn issue(n: nat) -> Credit ensures(result.units == n) {Credit {units: n}}");
-    let transfer = include_str!("../../proofs/borrowed_credit_transfer.evg");
+    let credits = include_str!("../../../stdlib/credits.evg").replace("module credits {", "module credits {ideal fn issue(n: nat) -> Credit ensures(result.units == n) {Credit {units: n}}");
+    let transfer = include_str!("../../../proofs/borrowed_credit_transfer.evg");
     let library = format!(
         "{credits} {} {transfer} {}",
-        include_str!("../../stdlib/borrow_credits.evg"),
-        include_str!("../../proofs/borrowed_token_transfer.evg")
+        include_str!("../../../stdlib/borrow_credits.evg"),
+        include_str!("../../../proofs/borrowed_token_transfer.evg")
     );
     let source = format!("{library} fn main() -> usize {{let data: usize = 42; use_borrow_transfer(credits::issue(42), &data)}}");
     let (program, bundle) = prove(&source).unwrap();
@@ -256,7 +256,7 @@ fn opaque_ideal_effect_regions_forward_and_recheck_aliases() {
 
 #[test]
 fn old_scalar_accessors_use_entry_storage_and_require_pure_total_calls() {
-    let source = include_str!("../../examples/old_accessors.evg");
+    let source = include_str!("../../../examples/old_accessors.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -286,10 +286,10 @@ fn old_scalar_accessors_use_entry_storage_and_require_pure_total_calls() {
 
 #[test]
 fn borrowed_credit_transfer_conserves_quantity_and_rejects_overdrafts() {
-    let credits = include_str!("../../stdlib/credits.evg");
+    let credits = include_str!("../../../stdlib/credits.evg");
     let source = format!(
         "{credits}\n{}",
-        include_str!("../../proofs/borrowed_credit_transfer.evg")
+        include_str!("../../../proofs/borrowed_credit_transfer.evg")
     );
     let (program, bundle) = prove(&source).unwrap();
     assert!(program.trusted_assumptions().is_empty());
@@ -314,7 +314,7 @@ fn borrowed_credit_transfer_conserves_quantity_and_rejects_overdrafts() {
 
 #[test]
 fn ideal_borrow_writes_have_checked_erased_footprints() {
-    let source = include_str!("../../examples/ideal_borrow_writes.evg");
+    let source = include_str!("../../../examples/ideal_borrow_writes.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.trusted_assumptions().is_empty());
@@ -360,7 +360,7 @@ fn erased_pointer_values_never_authorize_erased_runtime_writes() {
 
 #[test]
 fn ideal_record_fields_move_and_erase_with_runtime_values() {
-    let source = include_str!("../../examples/ideal_fields.evg");
+    let source = include_str!("../../../examples/ideal_fields.evg");
     let (program, bundle) = prove(source).unwrap();
     let (value, events) = program.run_with_events().unwrap();
     assert_eq!(value.to_string(), "42");
@@ -373,10 +373,13 @@ fn ideal_record_fields_move_and_erase_with_runtime_values() {
     );
     assert!(program.trusted_assumptions().is_empty());
     let layout =
-        crate::layout::of(&Type::Named("packets::Packet".into()), &program.structs).unwrap();
+        crate::compiler::layout::of(&Type::Named("packets::Packet".into()), &program.structs)
+            .unwrap();
     assert_eq!(layout.size, 8);
     assert!(!layout.fields.contains_key("witness"));
-    let empty = crate::layout::of(&Type::Named("packets::Empty".into()), &program.structs).unwrap();
+    let empty =
+        crate::compiler::layout::of(&Type::Named("packets::Empty".into()), &program.structs)
+            .unwrap();
     assert_eq!(empty.size, 8);
     assert!(empty.fields.is_empty());
     let duplicate = source.replace(
@@ -390,7 +393,7 @@ fn ideal_record_fields_move_and_erase_with_runtime_values() {
     );
     assert!(verify(&bad_proof).is_err());
     let output = verify("type View struct {value: usize, ideal secret: nat} fn main() -> View {View {value: 42, secret: 123}}").unwrap().run().unwrap();
-    let crate::runtime::Value::Record(_, fields) = output else {
+    let crate::interpreter::Value::Record(_, fields) = output else {
         panic!("expected runtime record")
     };
     assert_eq!(fields.len(), 1);
@@ -413,11 +416,11 @@ fn ideal_record_fields_cannot_leak_or_erase_runtime_effects() {
 
 #[test]
 fn carried_ideal_credit_references_remain_in_the_alias_model() {
-    let credits = include_str!("../../stdlib/credits.evg").replace("module credits {", "module credits {ideal fn issue() -> Credit ensures(result.units == 42) {Credit {units: 42}}");
+    let credits = include_str!("../../../stdlib/credits.evg").replace("module credits {", "module credits {ideal fn issue() -> Credit ensures(result.units == 42) {Credit {units: 42}}");
     let library = format!(
         "{credits} {} {}",
-        include_str!("../../stdlib/borrow_credits.evg"),
-        include_str!("../../proofs/carried_borrow_credits.evg")
+        include_str!("../../../stdlib/borrow_credits.evg"),
+        include_str!("../../../proofs/carried_borrow_credits.evg")
     );
     let source = format!("{library} fn main() -> usize {{let data: usize = 42; let carrier = carry(credits::issue(), &data); consume_carrier(carrier)}}");
     let (program, bundle) = prove(&source).unwrap();
@@ -434,7 +437,7 @@ fn carried_ideal_credit_references_remain_in_the_alias_model() {
 
 #[test]
 fn ideal_assignments_and_update_locals_preserve_erasure_and_scope() {
-    let source = include_str!("../../examples/ideal_update_state.evg");
+    let source = include_str!("../../../examples/ideal_update_state.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -477,10 +480,10 @@ fn ideal_assignments_cannot_write_runtime_storage_or_revive_owners() {
 fn affine_credit_bookkeeping_can_be_replaced_inside_updates() {
     let library = format!(
         "{} {}",
-        include_str!("../../stdlib/credits.evg"),
-        include_str!("../../stdlib/borrow_credits.evg")
+        include_str!("../../../stdlib/credits.evg"),
+        include_str!("../../../stdlib/borrow_credits.evg")
     );
-    let client = include_str!("../../proofs/borrow_credit_updates.evg");
+    let client = include_str!("../../../proofs/borrow_credit_updates.evg");
     let source = format!("{library} {client}");
     let (program, bundle) = prove(&source).unwrap();
     assert!(program.trusted_assumptions().is_empty());
@@ -515,7 +518,7 @@ fn affine_credit_bookkeeping_can_be_replaced_inside_updates() {
 
 #[test]
 fn erased_borrow_resources_keep_identity_generation_and_cleanup() {
-    let source = include_str!("../../examples/ideal_borrow_resources.evg");
+    let source = include_str!("../../../examples/ideal_borrow_resources.evg");
     let (program, bundle) = prove(source).unwrap();
     let (value, events) = program.run_with_events().unwrap();
     assert_eq!(value.to_string(), "42");
@@ -574,10 +577,10 @@ fn erased_borrows_cannot_supply_runtime_values_or_mutations() {
 fn borrowed_credit_library_conserves_units_and_reference_targets() {
     let library = format!(
         "{} {}",
-        include_str!("../../stdlib/credits.evg"),
-        include_str!("../../stdlib/borrow_credits.evg")
+        include_str!("../../../stdlib/credits.evg"),
+        include_str!("../../../stdlib/borrow_credits.evg")
     );
-    let client = include_str!("../../proofs/borrow_credits.evg");
+    let client = include_str!("../../../proofs/borrow_credits.evg");
     let source = format!("{library} {client}");
     let (program, bundle) = prove(&source).unwrap();
     assert!(program.trusted_assumptions().is_empty());
@@ -609,7 +612,7 @@ fn borrowed_credit_library_conserves_units_and_reference_targets() {
 
 #[test]
 fn updates_accept_scalar_borrow_and_index_writes_without_repeating_lvalues() {
-    let source = include_str!("../../examples/update_borrow_writes.evg");
+    let source = include_str!("../../../examples/update_borrow_writes.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -634,7 +637,7 @@ fn updates_accept_scalar_borrow_and_index_writes_without_repeating_lvalues() {
 
 #[test]
 fn update_borrow_writes_keep_retained_and_unopened_invariants() {
-    let source = include_str!("../../examples/reject_update_borrow_write.evg");
+    let source = include_str!("../../../examples/reject_update_borrow_write.evg");
     let line = source
         .lines()
         .position(|line| line.trim() == "*ledger.count = 0;")
@@ -660,7 +663,7 @@ fn update_borrow_writes_keep_retained_and_unopened_invariants() {
 
 #[test]
 fn self_observing_invariants_use_the_resulting_store() {
-    let source = include_str!("../../examples/self_observing_fields.evg");
+    let source = include_str!("../../../examples/self_observing_fields.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -678,7 +681,7 @@ fn self_observing_invariants_use_the_resulting_store() {
 
 #[test]
 fn self_observing_invalid_stores_fail_before_a_later_restore() {
-    let source = include_str!("../../examples/reject_self_observing_write.evg");
+    let source = include_str!("../../../examples/reject_self_observing_write.evg");
     let line = source
         .lines()
         .position(|line| line.trim() == "view.value = 0;")
@@ -699,7 +702,7 @@ fn self_observing_invalid_stores_fail_before_a_later_restore() {
 
 #[test]
 fn scalar_write_helpers_work_inside_selective_updates() {
-    let source = include_str!("../../examples/update_calls.evg");
+    let source = include_str!("../../../examples/update_calls.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -767,7 +770,7 @@ fn update_calls_still_require_permissions_and_ownership_free_bodies() {
 
 #[test]
 fn conditional_record_array_borrows_preserve_fields_and_storage_identity() {
-    let source = include_str!("../../examples/record_array_borrows.evg");
+    let source = include_str!("../../../examples/record_array_borrows.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -803,7 +806,7 @@ fn conditional_record_array_borrows_preserve_fields_and_storage_identity() {
 
 #[test]
 fn record_array_histories_preserve_aliases_fields_and_replay() {
-    let source = include_str!("../../examples/record_array_history.evg");
+    let source = include_str!("../../../examples/record_array_history.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -812,7 +815,7 @@ fn record_array_histories_preserve_aliases_fields_and_replay() {
             .proof_search_count(),
         0
     );
-    let nested = include_str!("../../examples/record_array_values.evg");
+    let nested = include_str!("../../../examples/record_array_values.evg");
     let (program, bundle) = prove(nested).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -873,8 +876,8 @@ fn record_array_writes_must_preserve_element_invariants() {
 #[test]
 fn array_histories_frame_cells_first_read_after_writes_and_branches() {
     for source in [
-        include_str!("../../examples/array_frame_history.evg"),
-        include_str!("../../examples/array_branch_history.evg"),
+        include_str!("../../../examples/array_frame_history.evg"),
+        include_str!("../../../examples/array_branch_history.evg"),
     ] {
         let (program, bundle) = prove(source).unwrap();
         assert_eq!(program.run().unwrap().to_string(), "42");
@@ -934,8 +937,8 @@ fn array_history_expansion_stops_before_unbounded_recursion() {
 #[test]
 fn conditional_contract_indices_and_entry_snapshots_replay() {
     for source in [
-        include_str!("../../examples/conditional_contracts.evg"),
-        include_str!("../../examples/old_selection.evg"),
+        include_str!("../../../examples/conditional_contracts.evg"),
+        include_str!("../../../examples/old_selection.evg"),
     ] {
         let (program, bundle) = prove(source).unwrap();
         assert_eq!(program.run().unwrap().to_string(), "42");
@@ -989,8 +992,8 @@ fn identity_sensitive_conditional_contracts_recheck_actual_aliases() {
 #[test]
 fn conditional_array_references_preserve_origins_and_old_views() {
     for source in [
-        include_str!("../../examples/conditional_borrows.evg"),
-        include_str!("../../examples/conditional_drop.evg"),
+        include_str!("../../../examples/conditional_borrows.evg"),
+        include_str!("../../../examples/conditional_drop.evg"),
     ] {
         let (program, bundle) = prove(source).unwrap();
         assert_eq!(program.run().unwrap().to_string(), "42");
@@ -1013,7 +1016,7 @@ fn conditional_array_references_preserve_origins_and_old_views() {
 
 #[test]
 fn conditional_references_cannot_change_origins_or_escape_generation_checks() {
-    let source = include_str!("../../examples/conditional_borrows.evg");
+    let source = include_str!("../../../examples/conditional_borrows.evg");
     assert!(verify(&source.replace("borrows(&(*data)[index])", "borrows(&(*data)[0])")).is_err());
     assert!(verify(&source.replace("data[1] = 42;", "drop(data); data = [7, 42];")).is_err());
     for source in [
@@ -1026,7 +1029,7 @@ fn conditional_references_cannot_change_origins_or_escape_generation_checks() {
 
 #[test]
 fn reference_equality_checks_identity_and_symbolic_projections() {
-    let source = include_str!("../../examples/reference_identity.evg");
+    let source = include_str!("../../../examples/reference_identity.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -1082,7 +1085,7 @@ fn reference_identity_cannot_observe_stale_storage_or_compare_different_types() 
 
 #[test]
 fn propositional_proof_scripts_check_rules_and_replay_without_search() {
-    let source = include_str!("../../examples/propositional_proofs.evg");
+    let source = include_str!("../../../examples/propositional_proofs.evg");
     let (program, bundle) = prove(source).unwrap();
     assert!(program.trusted_assumptions().is_empty());
     assert_eq!(program.run().unwrap().to_string(), "42");
@@ -1105,7 +1108,7 @@ fn propositional_proof_scripts_check_rules_and_replay_without_search() {
 
 #[test]
 fn proof_cases_check_both_branches_and_decompose_conjunctions() {
-    let source = include_str!("../../examples/proof_cases.evg");
+    let source = include_str!("../../../examples/proof_cases.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.trusted_assumptions().is_empty());
@@ -1177,7 +1180,7 @@ fn propositional_hypotheses_cannot_escape_or_prove_the_wrong_goal() {
 
 #[test]
 fn overlapping_calls_reprove_bodies_contracts_and_return_aliases() {
-    let source = include_str!("../../examples/aliasing_calls.evg");
+    let source = include_str!("../../../examples/aliasing_calls.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -1248,13 +1251,13 @@ fn overlapping_body_rechecks_share_evaluation_limits() {
 #[test]
 fn aliased_count_handle_batch_cleanup_rechecks_each_remaining_owner() {
     let library = [
-        include_str!("../../stdlib/counter.evg"),
-        include_str!("../../proofs/count_handles.evg"),
+        include_str!("../../../stdlib/counter.evg"),
+        include_str!("../../../proofs/count_handles.evg"),
     ]
     .join("\n");
     let source = format!(
         "{library} {}",
-        include_str!("../../examples/batch_count.evg")
+        include_str!("../../../examples/batch_count.evg")
     );
     let (program, bundle) = prove(&source).unwrap();
     let (value, events) = program.run_with_events().unwrap();
@@ -1282,7 +1285,7 @@ fn aliased_count_handle_batch_cleanup_rechecks_each_remaining_owner() {
 
 #[test]
 fn reference_returns_preserve_incoming_planes_and_reject_local_escapes() {
-    let good = include_str!("../../examples/borrow_returns.evg");
+    let good = include_str!("../../../examples/borrow_returns.evg");
     assert_eq!(verify(good).unwrap().run().unwrap().to_string(), "42");
     for source in [
         "fn bad(r: &usize) -> &usize borrows(r) {let local = *r; &local}",
@@ -1308,10 +1311,10 @@ fn reference_returns_preserve_incoming_planes_and_reject_local_escapes() {
 
 #[test]
 fn modifying_reference_returns_keep_the_entry_alias_and_replay() {
-    let library = include_str!("../../stdlib/array.evg");
+    let library = include_str!("../../../stdlib/array.evg");
     let source = format!(
         "{library} {}",
-        include_str!("../../examples/write_borrows.evg")
+        include_str!("../../../examples/write_borrows.evg")
     );
     let (program, bundle) = prove(&source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
@@ -1364,7 +1367,7 @@ fn modifying_returns_cannot_change_aliases_or_bypass_write_permissions() {
 
 #[test]
 fn computed_place_contracts_capture_checked_entry_expressions() {
-    let source = include_str!("../../examples/computed_places.evg");
+    let source = include_str!("../../../examples/computed_places.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     let replayed = verify_with_certificate(source, &bundle).unwrap();
@@ -1394,8 +1397,8 @@ fn computed_place_contracts_reject_overflow_bounds_and_retargeting() {
 #[test]
 fn owning_return_records_preserve_aliases_extents_and_cleanup() {
     for source in [
-        include_str!("../../examples/owned_borrows.evg"),
-        include_str!("../../examples/borrowed_view.evg"),
+        include_str!("../../../examples/owned_borrows.evg"),
+        include_str!("../../../examples/borrowed_view.evg"),
     ] {
         let (program, bundle) = prove(source).unwrap();
         assert_eq!(program.run().unwrap().to_string(), "42");
@@ -1424,7 +1427,7 @@ fn owning_return_aliases_cannot_escape_local_storage_or_forge_origins() {
     ] {
         assert!(verify(&format!("{view} {function}")).is_err(), "accepted {function}");
     }
-    let declarations = include_str!("../../examples/owned_borrows.evg")
+    let declarations = include_str!("../../../examples/owned_borrows.evg")
         .split("fn main")
         .next()
         .unwrap();
@@ -1438,7 +1441,7 @@ fn owning_return_aliases_cannot_escape_local_storage_or_forge_origins() {
 
 #[test]
 fn fixed_reference_array_inputs_have_stable_ports_and_frame_siblings() {
-    let source = include_str!("../../examples/reference_array_inputs.evg");
+    let source = include_str!("../../../examples/reference_array_inputs.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -1458,7 +1461,7 @@ fn fixed_reference_array_inputs_have_stable_ports_and_frame_siblings() {
 
 #[test]
 fn fixed_reference_array_inputs_cannot_hide_aliases_or_escape_origins() {
-    let declarations = include_str!("../../examples/reference_array_inputs.evg")
+    let declarations = include_str!("../../../examples/reference_array_inputs.evg")
         .split("fn main")
         .next()
         .unwrap();
@@ -1479,14 +1482,14 @@ fn fixed_reference_array_inputs_cannot_hide_aliases_or_escape_origins() {
     assert!(verify(large)
         .unwrap_err()
         .contains("incoming reference array expansion"));
-    let dangling = include_str!("../../examples/reference_array_inputs.evg")
+    let dangling = include_str!("../../../examples/reference_array_inputs.evg")
         .replace("set_second(&views, 42);", "drop(last); last = 42;");
     assert!(verify(&dangling).is_err());
 }
 
 #[test]
 fn returned_reference_arrays_preserve_nested_origins_and_replay() {
-    let source = include_str!("../../examples/borrowed_array.evg");
+    let source = include_str!("../../../examples/borrowed_array.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -1495,7 +1498,7 @@ fn returned_reference_arrays_preserve_nested_origins_and_replay() {
             .proof_search_count(),
         0
     );
-    let owned = include_str!("../../examples/borrowed_array_owners.evg");
+    let owned = include_str!("../../../examples/borrowed_array_owners.evg");
     let (program, bundle) = prove(owned).unwrap();
     let (value, events) = program.run_with_events().unwrap();
     assert_eq!(value.to_string(), "42");
@@ -1537,9 +1540,9 @@ fn returned_reference_arrays_reject_missing_duplicate_and_forged_origins() {
 #[test]
 fn language_count_handle_constructors_clones_and_drops_compose() {
     let source = [
-        include_str!("../../stdlib/counter.evg"),
-        include_str!("../../proofs/count_handles.evg"),
-        include_str!("../../examples/clone_count.evg"),
+        include_str!("../../../stdlib/counter.evg"),
+        include_str!("../../../proofs/count_handles.evg"),
+        include_str!("../../../examples/clone_count.evg"),
     ]
     .join("\n");
     let (program, bundle) = prove(&source).unwrap();
@@ -1652,7 +1655,7 @@ fn borrowed_temporaries_keep_their_drop_receiver_valid_until_scope_exit() {
 
 #[test]
 fn array_read_facts_survive_contracts_and_branch_scope_changes() {
-    let source = include_str!("../../examples/array_contracts.evg");
+    let source = include_str!("../../../examples/array_contracts.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     assert!(verify(&source.replace("{data}", "{[data[1], data[0]]}")).is_err());
     let branch = "fn select(data: [usize; 2], index: usize, flag: bool) -> usize where (index < 2) ensures (result == data[index]) {if flag {data[index]} else {data[index]}}";
@@ -1690,7 +1693,7 @@ fn field_assignment_cannot_resurrect_siblings_consumed_by_its_rhs() {
 
 #[test]
 fn ideal_parameters_are_checked_and_erased_without_runtime_access() {
-    let source = include_str!("../../examples/ideal_parameters.evg");
+    let source = include_str!("../../../examples/ideal_parameters.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     assert!(verify(&source.replace("countdown(5, 5)", "countdown(5, 6)")).is_err());
     assert!(verify(&source.replace(
@@ -1733,7 +1736,7 @@ fn ideal_parameters_are_checked_and_erased_without_runtime_access() {
 
 #[test]
 fn evergreen_counter_library_checks_boundaries_and_refines_rc_counts() {
-    let library = include_str!("../../stdlib/counter.evg");
+    let library = include_str!("../../../stdlib/counter.evg");
     for initial in [0u64, 1, u64::MAX - 1, u64::MAX] {
         let expected = initial.saturating_add(1);
         let success = initial < u64::MAX;
@@ -1753,19 +1756,22 @@ fn evergreen_counter_library_checks_boundaries_and_refines_rc_counts() {
         }
     }
     for bad in [
-        include_str!("../../examples/reject_counter_underflow.evg"),
-        include_str!("../../examples/reject_counter_overflow.evg"),
+        include_str!("../../../examples/reject_counter_underflow.evg"),
+        include_str!("../../../examples/reject_counter_overflow.evg"),
     ] {
         assert!(verify(&format!("{library}\n{bad}")).is_err());
     }
     let source = [
-        include_str!("../../proofs/rc_protocol.evg"),
+        include_str!("../../../proofs/rc_protocol.evg"),
         library,
-        include_str!("../../proofs/rc_count_refinement.evg"),
+        include_str!("../../../proofs/rc_count_refinement.evg"),
     ]
     .join("\n");
     assert!(verify(&source).is_ok());
-    let executed = format!("{source}\n{}", include_str!("../../examples/rc_count.evg"));
+    let executed = format!(
+        "{source}\n{}",
+        include_str!("../../../examples/rc_count.evg")
+    );
     let program = verify(&executed).unwrap();
     assert!(program.trusted_assumptions().is_empty());
     assert_eq!(program.run().unwrap().to_string(), "0");
@@ -1804,7 +1810,7 @@ fn symbolic_array_reads_are_versioned_after_writes() {
 
 #[test]
 fn conditional_stores_join_effects_without_leaking_branch_assumptions() {
-    let source = include_str!("../../examples/conditional_writes.evg");
+    let source = include_str!("../../../examples/conditional_writes.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     assert!(verify(&source.replace(
         "maybe_increment(alias, false)",
@@ -1861,7 +1867,7 @@ fn branches_must_agree_on_consumed_ownership() {
 
 #[test]
 fn ideal_bindings_are_erased_and_keep_affine_ownership() {
-    let source = include_str!("../../examples/ideal_bindings.evg");
+    let source = include_str!("../../../examples/ideal_bindings.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     for body in [
         "ideal let n: usize = 42; n",
@@ -1876,8 +1882,8 @@ fn ideal_bindings_are_erased_and_keep_affine_ownership() {
             "{body}"
         );
     }
-    let library = include_str!("../../stdlib/credits.evg");
-    let client = include_str!("../../proofs/ideal_credit_bindings.evg");
+    let library = include_str!("../../../stdlib/credits.evg");
+    let client = include_str!("../../../proofs/ideal_credit_bindings.evg");
     assert!(verify(&format!("{library} {client}")).is_ok());
     assert!(verify(&format!(
         "{library} {}",
@@ -1904,7 +1910,7 @@ fn ideal_bindings_are_erased_and_keep_affine_ownership() {
 
 #[test]
 fn erased_affine_resources_move_without_runtime_values_or_effects() {
-    let source = include_str!("../../examples/erased_resources.evg");
+    let source = include_str!("../../../examples/erased_resources.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     let declarations = source.split("fn main").next().unwrap();
     for bad in [
@@ -1920,7 +1926,7 @@ fn erased_affine_resources_move_without_runtime_values_or_effects() {
     assert!(verify(&format!("{declarations} {proof_view}")).is_ok());
     let old_scalar = "fn answer(ideal expected: nat) -> usize where(expected == 42) ensures(result == 42) {42} fn caller(n: usize) -> usize where(n == 42) ensures(result == 42) {n = 0; answer(nat(old(n)))} fn main() -> usize {caller(42)}";
     assert_eq!(verify(old_scalar).unwrap().run().unwrap().to_string(), "42");
-    let library = include_str!("../../stdlib/credits.evg");
+    let library = include_str!("../../../stdlib/credits.evg");
     let bridge = "fn spend(ideal credit: credits::Credit, value: usize) -> usize ensures(result == value) {value} fn forward(ideal credit: credits::Credit, value: usize) -> usize ensures(result == value) {spend(credit, value)}";
     assert!(verify(&format!("{library} {bridge}")).is_ok());
     let borrow = "ideal affine type WithRef struct {r: &usize} fn ignore(ideal resource: WithRef) -> usize {0}";
@@ -1937,7 +1943,7 @@ fn erased_affine_resources_move_without_runtime_values_or_effects() {
 
 #[test]
 fn opaque_module_representations_are_checked_without_client_privileges() {
-    let source = include_str!("../../examples/opaque_values.evg");
+    let source = include_str!("../../../examples/opaque_values.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     let declarations = source.split("fn main").next().unwrap();
     for body in [
@@ -1982,10 +1988,10 @@ fn opaque_module_representations_are_checked_without_client_privileges() {
 
 #[test]
 fn opaque_affine_credits_can_be_rearranged_but_not_forged_or_duplicated() {
-    let library = include_str!("../../stdlib/credits.evg");
+    let library = include_str!("../../../stdlib/credits.evg");
     assert!(verify(&format!(
         "{library} {}",
-        include_str!("../../proofs/opaque_credits.evg")
+        include_str!("../../../proofs/opaque_credits.evg")
     ))
     .is_ok());
     for client in [
@@ -2001,7 +2007,7 @@ fn opaque_affine_credits_can_be_rearranged_but_not_forged_or_duplicated() {
 
 #[test]
 fn dynamic_array_projections_preserve_aliasing_and_prove_disjointness() {
-    let source = include_str!("../../examples/indexed_borrows.evg");
+    let source = include_str!("../../../examples/indexed_borrows.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     assert_eq!(
         verify(
@@ -2037,7 +2043,7 @@ fn dynamic_array_projections_preserve_aliasing_and_prove_disjointness() {
             .to_string(),
         "42"
     );
-    let swap = include_str!("../../stdlib/swap.evg");
+    let swap = include_str!("../../../stdlib/swap.evg");
     let wrapper = "fn dynamic_swap(data: [usize; 2], i: usize, j: usize) -> usize where(i < 2 && j < 2 && i != j) ensures(result == data[j]) {swap_usize(&data[i], &data[j]); data[i]} fn main() -> usize ensures(result == 42) {dynamic_swap([7, 42], 0, 1)}";
     assert_eq!(
         verify(&format!("{swap} {wrapper}"))
@@ -2064,7 +2070,7 @@ fn dynamic_array_projections_preserve_aliasing_and_prove_disjointness() {
 
 #[test]
 fn implication_and_unlifted_weaker_invariants_check_each_store() {
-    let source = include_str!("../../examples/weak_invariant.evg");
+    let source = include_str!("../../../examples/weak_invariant.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     let bad = source.replace("ledger.count = 42;", "ledger.count = 0;");
     assert!(verify(&bad).is_err());
@@ -2104,7 +2110,7 @@ fn implication_and_unlifted_weaker_invariants_check_each_store() {
 
 #[test]
 fn opaque_array_borrows_share_cells_bounds_and_branch_state() {
-    let source = include_str!("../../examples/array_borrows.evg");
+    let source = include_str!("../../../examples/array_borrows.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     let declarations = source.split("fn main").next().unwrap();
     let branch = "fn choose(data: &[usize; 2], flag: bool) -> usize ensures(result == (*data)[0]) {if flag {*first(2, data)} else {(*data)[0]}} fn main() -> usize ensures(result == 42) {let data: [usize; 2] = [42, 7]; choose(&data, true)}";
@@ -2144,10 +2150,10 @@ fn projected_effects_frame_siblings_and_preserve_array_views() {
 
 #[test]
 fn scalar_array_regions_preserve_aliases_and_replay_without_search() {
-    let library = include_str!("../../stdlib/array.evg");
+    let library = include_str!("../../../stdlib/array.evg");
     let source = format!(
         "{library} {}",
-        include_str!("../../examples/array_updates.evg")
+        include_str!("../../../examples/array_updates.evg")
     );
     let (program, bundle) = prove(&source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
@@ -2183,7 +2189,7 @@ fn scalar_array_regions_preserve_aliases_and_replay_without_search() {
 
 #[test]
 fn array_effects_do_not_gain_permissions_or_keep_old_contents() {
-    let library = include_str!("../../stdlib/array.evg");
+    let library = include_str!("../../../stdlib/array.evg");
     for caller in [
         // A projected grant cannot authorize an entire-array write.
         "fn bad(a: &[usize; 2]) modifies(&(*a)[0]) {arrays::replace_pair(a, 1, 2);}",
@@ -2204,7 +2210,7 @@ fn array_effects_do_not_gain_permissions_or_keep_old_contents() {
 
 #[test]
 fn reference_field_effects_and_borrows_replay_and_preserve_origin_paths() {
-    let source = include_str!("../../examples/reference_fields.evg");
+    let source = include_str!("../../../examples/reference_fields.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     let replayed = verify_with_certificate(source, &bundle).unwrap();
@@ -2278,10 +2284,10 @@ fn modified_input_views_preserve_types_even_after_parameter_rebinding() {
 
 #[test]
 fn multiple_scalar_writes_check_disjoint_or_actual_alias_storage() {
-    let library = include_str!("../../stdlib/swap.evg");
+    let library = include_str!("../../../stdlib/swap.evg");
     let source = format!(
         "{library}\n{}",
-        include_str!("../../examples/disjoint_writes.evg")
+        include_str!("../../../examples/disjoint_writes.evg")
     );
     assert_eq!(verify(&source).unwrap().run().unwrap().to_string(), "42");
     for body in [
@@ -2324,7 +2330,7 @@ fn multiple_scalar_writes_check_disjoint_or_actual_alias_storage() {
 
 #[test]
 fn scalar_write_contracts_update_aliases_and_frame_other_fields() {
-    let source = include_str!("../../examples/write_contracts.evg");
+    let source = include_str!("../../../examples/write_contracts.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     assert!(verify(&source.replace("modifies(r)", "")).is_err());
     assert!(verify(&source.replace("where (*r < usize::MAX)", "")).is_err());
@@ -2356,7 +2362,7 @@ fn scalar_write_contracts_update_aliases_and_frame_other_fields() {
 
 #[test]
 fn compound_old_snapshots_freeze_entry_storage_and_pointer_targets() {
-    let source = include_str!("../../examples/old_places.evg");
+    let source = include_str!("../../../examples/old_places.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     let replayed = verify_with_certificate(source, &bundle).unwrap();
@@ -2417,7 +2423,7 @@ fn boolean_write_contracts_use_entry_snapshots() {
 
 #[test]
 fn complete_patterns_transfer_each_field_without_partial_moves() {
-    let source = include_str!("../../examples/destructure.evg");
+    let source = include_str!("../../../examples/destructure.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     for replacement in [
         "Pair {left: first}",
@@ -2436,18 +2442,18 @@ fn complete_patterns_transfer_each_field_without_partial_moves() {
     assert!(verify(destructor).unwrap_err().contains("bypass"));
     let ideal = "ideal affine type Ticket struct {tag: nat} ideal type Pair struct {left: Ticket, right: Ticket} ideal fn split() -> nat {let pair = Pair {left: Ticket {tag: 2}, right: Ticket {tag: 3}}; let Pair {left, right} = pair; left.tag + right.tag}";
     assert!(verify(ideal).is_ok());
-    let credits = include_str!("../../proofs/affine_credits.evg");
+    let credits = include_str!("../../../proofs/affine_credits.evg");
     assert!(verify(credits).is_ok());
     let duplicate = format!(
         "{credits}\n{}",
-        include_str!("../../proofs/reject_duplicate_credit.evg")
+        include_str!("../../../proofs/reject_duplicate_credit.evg")
     );
     assert!(verify(&duplicate).unwrap_err().contains("shape(T)"));
 }
 
 #[test]
 fn affine_values_move_without_requiring_a_destructor() {
-    let source = include_str!("../../examples/affine_values.evg");
+    let source = include_str!("../../../examples/affine_values.evg");
     let program = verify(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.drops.is_empty());
@@ -2472,7 +2478,7 @@ fn affine_values_move_without_requiring_a_destructor() {
 
 #[test]
 fn conditional_records_preserve_branch_relations_and_nested_types() {
-    let source = include_str!("../../examples/conditional_records.evg");
+    let source = include_str!("../../../examples/conditional_records.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     assert!(verify(&source.replace(
         "Pair {chosen: Checked {value: 42}",
@@ -2498,11 +2504,11 @@ fn trusted_function_contracts_remain_audited_at_callers() {
 
 #[test]
 fn checks_contracts_and_bounds_internally() {
-    let p = verify(include_str!("../../examples/contracts.evg")).unwrap();
+    let p = verify(include_str!("../../../examples/contracts.evg")).unwrap();
     assert!(p.obligations >= 3);
     for source in [
-        include_str!("../../examples/reject_bounds.evg"),
-        include_str!("../../examples/reject_contract.evg"),
+        include_str!("../../../examples/reject_bounds.evg"),
+        include_str!("../../../examples/reject_contract.evg"),
     ] {
         assert!(verify(source).is_err());
     }
@@ -2626,7 +2632,7 @@ fn reference_updates_recheck_invariants_and_cannot_escape() {
 
 #[test]
 fn runtime_divergence_is_inferred_and_cannot_become_proof_evidence() {
-    let source = include_str!("../../examples/partial_recursion.evg");
+    let source = include_str!("../../../examples/partial_recursion.evg");
     let program = verify(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -2654,7 +2660,7 @@ fn runtime_divergence_is_inferred_and_cannot_become_proof_evidence() {
             .count(),
         2
     );
-    assert!(verify(include_str!("../../examples/reject_divergent_proof.evg")).is_err());
+    assert!(verify(include_str!("../../../examples/reject_divergent_proof.evg")).is_err());
     for observer in [
         "ideal fn unsound() -> nat {nat(spin())}",
         "fn unsound() -> usize {proof lie: spin() == 0; 0}",
@@ -2785,10 +2791,10 @@ fn incomplete_states_cannot_be_observed_as_the_refined_type() {
 
 #[test]
 fn library_rc_protocol_is_verified_without_compiler_special_cases() {
-    let source = include_str!("../../proofs/rc_protocol.evg");
+    let source = include_str!("../../../proofs/rc_protocol.evg");
     assert!(verify(source).unwrap().obligations >= 50);
     assert!(verify(&source.replace("RcProtocol", "OrdinaryUserState")).is_ok());
-    assert!(verify(include_str!("../../proofs/reject_rc_unbalanced.evg")).is_err());
+    assert!(verify(include_str!("../../../proofs/reject_rc_unbalanced.evg")).is_err());
     let double_publish = format!("{source}\nideal fn duplicate_credit(s: RcProtocol) -> RcProtocol where (s.credits == 1) {{publish(publish(s))}}");
     assert!(verify(&double_publish)
         .unwrap_err()
@@ -2866,8 +2872,8 @@ fn destructors_are_proved_and_effects_require_explicit_support() {
 fn destructors_use_checked_scalar_helpers_without_gaining_external_effects() {
     let source = format!(
         "{} {}",
-        include_str!("../../stdlib/counter.evg"),
-        include_str!("../../examples/drop_helpers.evg")
+        include_str!("../../../stdlib/counter.evg"),
+        include_str!("../../../examples/drop_helpers.evg")
     );
     let (program, bundle) = prove(&source).unwrap();
     let (value, events) = program.run_with_events().unwrap();
@@ -2876,7 +2882,7 @@ fn destructors_use_checked_scalar_helpers_without_gaining_external_effects() {
     let replayed = verify_with_certificate(&source, &bundle).unwrap();
     assert_eq!(replayed.proof_search_count(), 0);
     assert_eq!(replayed.run().unwrap().to_string(), "42");
-    let swaps = format!("{} type Pair struct {{left: usize, right: usize}} impl Drop for Pair {{fn drop(self) {{let left = self.left; let right = self.right; swap_usize(&self.left, &self.right); proof swapped: self.left == right && self.right == left;}}}} fn main() -> usize {{let pair = Pair {{left: 1, right: 2}}; 42}}", include_str!("../../stdlib/swap.evg"));
+    let swaps = format!("{} type Pair struct {{left: usize, right: usize}} impl Drop for Pair {{fn drop(self) {{let left = self.left; let right = self.right; swap_usize(&self.left, &self.right); proof swapped: self.left == right && self.right == left;}}}} fn main() -> usize {{let pair = Pair {{left: 1, right: 2}}; 42}}", include_str!("../../../stdlib/swap.evg"));
     assert_eq!(verify(&swaps).unwrap().run().unwrap().to_string(), "42");
     let returned = "fn reset(r: &usize) -> &usize modifies(r) borrows(r) ensures(*result == 0) {*r = 0; r} type Resource struct {value: usize} impl Drop for Resource {fn drop(self){let r = reset(&self.value); proof updated: *r == 0 && self.value == 0;}} fn main() -> usize {let r = Resource {value: 42}; 42}";
     assert_eq!(verify(returned).unwrap().run().unwrap().to_string(), "42");
@@ -2893,7 +2899,7 @@ fn destructor_helper_summaries_reject_hidden_cleanup_divergence_and_external_wri
         let error = verify(source).unwrap_err();
         assert!(error.contains("ownership-free"), "{error}: {source}");
     }
-    let library = include_str!("../../stdlib/counter.evg");
+    let library = include_str!("../../../stdlib/counter.evg");
     for body in [
         "let zero = counter_decrement(self.target);",
         "*self.target = 0;",
@@ -2911,7 +2917,7 @@ fn destructor_helper_summaries_reject_hidden_cleanup_divergence_and_external_wri
 
 #[test]
 fn destructor_effects_cover_explicit_scope_temporary_and_replacement_cleanup() {
-    let example = include_str!("../../examples/drop_effects.evg");
+    let example = include_str!("../../../examples/drop_effects.evg");
     let (program, bundle) = prove(example).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     let replayed = verify_with_certificate(example, &bundle).unwrap();
@@ -2933,7 +2939,7 @@ fn destructor_effects_cover_explicit_scope_temporary_and_replacement_cleanup() {
 
 #[test]
 fn parent_cleanup_uses_final_child_fields_and_declared_effects() {
-    let source = include_str!("../../examples/drop_children.evg");
+    let source = include_str!("../../../examples/drop_children.evg");
     let (program, bundle) = prove(source).unwrap();
     let (value, events) = program.run_with_events().unwrap();
     assert_eq!(value.to_string(), "42");
@@ -2945,7 +2951,7 @@ fn parent_cleanup_uses_final_child_fields_and_declared_effects() {
         0
     );
     assert!(verify(&source.replace("modifies(self.child.target)", "")).is_err());
-    let declarations = include_str!("../../examples/drop_effects.evg")
+    let declarations = include_str!("../../../examples/drop_effects.evg")
         .split("fn main")
         .next()
         .unwrap();
@@ -2963,8 +2969,8 @@ fn parent_cleanup_uses_final_child_fields_and_declared_effects() {
 fn parent_is_consumed_before_count_releasing_field_cleanup() {
     let source = format!(
         "{} {}",
-        include_str!("../../stdlib/counter.evg"),
-        include_str!("../../examples/drop_count.evg")
+        include_str!("../../../stdlib/counter.evg"),
+        include_str!("../../../examples/drop_count.evg")
     );
     let (program, bundle) = prove(&source).unwrap();
     let (value, events) = program.run_with_events().unwrap();
@@ -2976,13 +2982,13 @@ fn parent_is_consumed_before_count_releasing_field_cleanup() {
             .proof_search_count(),
         0
     );
-    let direct = format!("{} type Counted struct {{count: &usize}} where(*count > 0); impl Drop for Counted {{fn drop(self) modifies(self.count) {{let zero = counter_decrement(self.count);}}}}", include_str!("../../stdlib/counter.evg"));
+    let direct = format!("{} type Counted struct {{count: &usize}} where(*count > 0); impl Drop for Counted {{fn drop(self) modifies(self.count) {{let zero = counter_decrement(self.count);}}}}", include_str!("../../../stdlib/counter.evg"));
     assert!(verify(&direct).is_err());
 }
 
 #[test]
 fn implicit_cleanup_cannot_hide_writes_or_keep_stale_proofs() {
-    let declarations = include_str!("../../examples/drop_effects.evg")
+    let declarations = include_str!("../../../examples/drop_effects.evg")
         .split("fn main")
         .next()
         .unwrap();
@@ -3022,7 +3028,7 @@ fn cleanup_cannot_observe_a_borrow_of_an_already_dropped_plane() {
 
 #[test]
 fn independent_calls_and_scalar_borrows_are_allowed_inside_updates() {
-    let source = include_str!("../../examples/update_helpers.evg");
+    let source = include_str!("../../../examples/update_helpers.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     let missing_restore = source.replace("pair.right = read(view);", "pair.right = 0;");
     assert!(verify(&missing_restore).is_err());
@@ -3043,9 +3049,9 @@ fn calls_with_unproven_effects_cannot_observe_open_invariants() {
 
 #[test]
 fn fact_definitions_are_not_proofs_or_assumptions() {
-    let source = include_str!("../../examples/named_facts.evg");
+    let source = include_str!("../../../examples/named_facts.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
-    assert!(verify(include_str!("../../examples/reject_false_proof.evg")).is_err());
+    assert!(verify(include_str!("../../../examples/reject_false_proof.evg")).is_err());
     assert!(
         verify("fn main() -> usize {fact false_claim = 1 == 2; proof exploit: 2 == 3; 0}").is_err()
     );
@@ -3098,7 +3104,7 @@ fn proof_views_and_ideal_contracts_are_erased_before_execution() {
 
 #[test]
 fn lifted_requirements_are_named_and_selective() {
-    let source = include_str!("../../examples/selective_update.evg");
+    let source = include_str!("../../../examples/selective_update.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     let bounded_violation = source.replace(
         "pair.left = 42;",
@@ -3131,16 +3137,16 @@ fn named_type_facts_do_not_add_unproven_assumptions() {
 
 #[test]
 fn rc_and_arc_share_a_lifting_free_ideal_count_protocol() {
-    let protocol = include_str!("../../proofs/rc_protocol.evg");
+    let protocol = include_str!("../../../proofs/rc_protocol.evg");
     assert!(!protocol.contains("lifts"));
     let model = format!(
         "{protocol}\n{}",
-        include_str!("../../proofs/arc_interleavings.evg")
+        include_str!("../../../proofs/arc_interleavings.evg")
     );
     assert!(verify(&model).is_ok());
     let stale = format!(
         "{protocol}\n{}",
-        include_str!("../../proofs/reject_arc_stale_check.evg")
+        include_str!("../../../proofs/reject_arc_stale_check.evg")
     );
     assert!(verify(&stale)
         .unwrap_err()
