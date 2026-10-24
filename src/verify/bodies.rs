@@ -1,9 +1,9 @@
-//! Calls whose reference ports overlap are checked against actual shared storage.
-//! Their independent-port summary is never assumed in that alias configuration.
+//! Calls with overlapping ports or open invariants use actual shared storage.
+//! Their modular summary cannot hide aliasing or intermediate writes.
 use super::*;
 
 impl Context<'_> {
-    pub(super) fn check_aliased_body(
+    pub(super) fn check_actual_body(
         &mut self,
         function: &Function,
         result_type: &Ty,
@@ -16,6 +16,8 @@ impl Context<'_> {
         let facts = std::mem::take(&mut self.facts);
         let proofs = std::mem::take(&mut self.proofs);
         let opened = std::mem::take(&mut self.opened);
+        // Keep opened_planes: their unlifted requirements apply after every
+        // actual write, including writes in further nested helper calls.
         let temporaries = std::mem::take(&mut self.temporaries);
         let current = self.current.replace(function.name.clone());
         let measure = self.measure.take();

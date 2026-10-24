@@ -252,6 +252,10 @@ impl Evaluator<'_> {
                                 locals.push(name.clone());
                             }
                             Statement::Fact { .. } | Statement::Proof { .. } => {}
+                            Statement::Effect(expression) => {
+                                let value = self.expr(expression, &env, None)?;
+                                self.drop_value(value)?;
+                            }
                             _ => return Err("unverified operation in update".into()),
                         }
                         self.finish_temporaries(0)?;

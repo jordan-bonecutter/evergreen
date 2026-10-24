@@ -1,0 +1,52 @@
+// A numeric ledger, not allocation ownership or an Rc implementation.
+type Ledger struct {count: usize, owners: usize} where (
+    fact accurate = count == owners;
+    fact zero_is_safe = count == 0 => owners == 0;
+    accurate && zero_is_safe
+);
+
+type BorrowedLedger struct {count: &usize, owners: usize} where (
+    fact accurate = *count == owners;
+    fact zero_is_safe = *count == 0 => owners == 0;
+    accurate && zero_is_safe
+);
+
+fn set(slot: &usize, value: usize) -> &usize
+modifies(slot) borrows(slot) ensures(*slot == value) {
+    *slot = value;
+    slot
+}
+
+fn forward(slot: &usize, value: usize)
+modifies(slot) ensures(*slot == value) {
+    set(slot, value);
+}
+
+fn local() -> usize ensures(result == 42) {
+    let ledger = Ledger {count: 41, owners: 41};
+    let dormant = &ledger;
+    update(ledger) lifts accurate {
+        let changed = set(&ledger.count, 42);
+        proof weak: ledger::zero_is_safe;
+        forward(&ledger.owners, *changed);
+    }
+    (*dormant).count
+}
+
+fn external() -> usize ensures(result == 42) {
+    let count: usize = 41;
+    let ledger = BorrowedLedger {count: &count, owners: 41};
+    let dormant = &ledger;
+    update(ledger) lifts accurate {
+        let changed = set(ledger.count, 42);
+        proof weak: ledger::zero_is_safe;
+        forward(&ledger.owners, *changed);
+    }
+    *(*dormant).count
+}
+
+fn main() -> usize ensures(result == 42) {
+    let first = local();
+    let second = external();
+    first + second - 42
+}

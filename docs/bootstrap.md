@@ -40,11 +40,11 @@ does not require it to hold: only the final `where` proposition imposes a
 constraint. Lifted names must be declared facts used as independent conjuncts
 of that constraint. `Type::name` can qualify a lifted selector. Its body allows
 checked scalar-field writes, local scalar values/borrows, and pure facts; each
-invariant must hold again on exit. Calls with a checked invariant-independent
-effect summary are permitted. The current effect analysis accepts scalar values
-and read-only borrows of scalar storage, with scalar returns, no allocation or
-cleanup effects, and no access to a whole refined object. Summaries compose
-through previously checked helpers. `examples/update_helpers.evg` demonstrates
+invariant must hold again on exit. Runtime calls require an inferred scalar
+ownership-free effect summary: total execution, scalar values or scalar-reference
+interfaces, no allocation or cleanup effects, and no access to a whole refined
+object. Summaries compose through previously checked helpers.
+`examples/update_helpers.evg` demonstrates
 this distinction: `&pair.left` and a read-only scalar helper work while `&pair`
 and a whole-object observer cannot rely on the open invariant. Unknown effects,
 allocation, moves, drops, early exits, and suspension remain rejected. Borrow
@@ -177,8 +177,8 @@ add preconditions. They permit scalar work, borrows, facts, and calls with a
 checked scalar ownership-free effect summary. This summary is inferred from
 the verified body and its callees: it requires total execution, a scalar/reference
 interface, and no creation, transfer, or cleanup of runtime ownership. It is not
-a programmer-supplied marker. Unlike invariant-independent helpers, these
-helpers may write through their explicit `modifies` contracts.
+a programmer-supplied marker. These helpers may write through their explicit
+`modifies` contracts and are also usable in selective invariant updates.
 
 A destructor can pass its own scalar fields to modifying helpers, and can declare
 external writes with `modifies(self.target)` or another incoming reference path.
@@ -562,9 +562,29 @@ as `never`; observing it still fails generation checking.
 `modifies(left, right)` and entry-value postconditions. Run its example with
 `evg run stdlib/swap.evg examples/disjoint_writes.evg`; the same ordered unit can
 be proved or built natively. Swapping needs no compiler-specific operation.
-Modifying calls inside invariant updates await suitable checked effect
+Modifying calls inside invariant updates use these scalar ownership-free effect
 summaries. Modifying calls in proof expressions and ideal functions are rejected. There are no
 concurrency or atomic-operation guarantees in this rule.
+
+While an update is open, every modifying helper call is checked against actual
+storage, including its nested calls. Lifted requirements stay attached to the
+opened planes across lexical function scopes. After every actual store the
+checker verifies all remaining requirements of every opened object, including
+requirements that read through references into other planes. A checked final
+postcondition cannot hide an unsafe intermediate store. Ordinary write grants,
+preconditions, and exact returned-alias contracts still apply. Calls with unknown
+effects, runtime ownership operations, and whole-object observation remain
+rejected. Helper body rechecks share the ordinary evaluation and proof budgets.
+
+`examples/update_calls.evg` returns a scalar field borrow from a modifying helper,
+uses a nested forwarding helper to restore the lifted accounting fact, and then
+uses an older whole-object borrow after closure. It runs, builds, and replays
+internally. `examples/reject_update_call_intermediate.evg` rejects a helper that
+temporarily sets an external counter to zero while owners remain, even though
+its final postcondition restores the old valid state. The independent trace
+model in `proofs/PartialCorrectness.lean` separates validity at every state from
+an endpoint postcondition and proves composition of checked traces. This remains
+a specification rather than a proof of the Rust implementation.
 
 Scalar modifying calls also work inside conditional expressions. Verification
 forks the symbolic store, checks each branch, and joins changed values with

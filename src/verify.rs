@@ -669,6 +669,7 @@ struct Context<'a> {
     current: Option<String>,
     measure: Option<Linear>,
     opened: BTreeMap<String, BTreeSet<String>>,
+    opened_planes: BTreeMap<PlaneId, BTreeSet<String>>,
     drops: &'a BTreeSet<String>,
     destructors: &'a BTreeMap<String, Function>,
     cleanup_depth: usize,
@@ -1172,6 +1173,7 @@ impl<'a> Context<'a> {
             current: None,
             measure: None,
             opened: BTreeMap::new(),
+            opened_planes: BTreeMap::new(),
             drops,
             destructors,
             cleanup_depth: 0,
@@ -1490,6 +1492,16 @@ impl<'a> Context<'a> {
     fn record_valid(&mut self, value: &Symbol, line: usize) -> Result<()> {
         self.record_valid_with(value, line, &BTreeSet::new())
     }
+    fn validate_opened_planes(&mut self, line: usize) -> Result<()> {
+        let planes = self.opened_planes.keys().copied().collect::<Vec<_>>();
+        for plane in planes {
+            self.charge_value_work(symbol_weight(self.memory.get(plane)?)?)?;
+            let value = self.memory.get(plane)?.clone();
+            let lifted = self.opened_planes[&plane].clone();
+            self.record_valid_with(&value, line, &lifted)?;
+        }
+        Ok(())
+    }
     fn record_valid_with(
         &mut self,
         value: &Symbol,
@@ -1592,14 +1604,15 @@ impl<'a> Context<'a> {
             }
             let mut root = self.memory.read(reference)?.clone();
             self.replace_projection(&mut root, &fields, new)?;
-            self.record_valid(&root, place.line)?;
+            let lifted = self.opened_planes.get(&id).cloned().unwrap_or_default();
+            self.record_valid_with(&root, place.line, &lifted)?;
             self.memory.write(id, root.clone(), replace_plane)?;
             for (n, plane) in &self.roots {
                 if *plane == id {
                     self.env.insert(n.clone(), root.clone());
                 }
             }
-            return Ok(());
+            return self.validate_opened_planes(place.line);
         }
         fn path(e: &Expr, fields: &mut Vec<String>) -> Result<String> {
             match &e.kind {
@@ -1681,7 +1694,7 @@ impl<'a> Context<'a> {
             self.memory.write(*id, root.clone(), replace_plane)?;
         }
         self.env.insert(name, root);
-        Ok(())
+        self.validate_opened_planes(place.line)
     }
 
     fn statement(&mut self, s: &Statement) -> Result<()> {
@@ -1825,7 +1838,7 @@ impl<'a> Context<'a> {
     fn update_expression(&self, e: &Expr) -> bool {
         match &e.kind {
             Kind::Call(name, args) => {
-                self.helpers.contains(name)
+                self.cleanup_helpers.contains(name)
                     && self.functions.get(name).is_some_and(|f| {
                         f.params.len() == args.len()
                             && f.params.iter().zip(args).all(|((parameter, _), e)| {
@@ -1861,7 +1874,7 @@ impl<'a> Context<'a> {
                 _ => None,
             }
         }
-        if !self.opened.is_empty() {
+        if !self.opened_planes.is_empty() {
             return Err("nested invariant updates are not supported yet".into());
         }
         let roots: BTreeSet<_> = places.iter().cloned().collect();
@@ -1919,6 +1932,14 @@ impl<'a> Context<'a> {
             return Err(format!("line {line}: lifts must name declared facts used as independent where requirements of an opened place"));
         }
         self.opened = opened;
+        for name in places {
+            let (reference, _) = self.location(&Expr {
+                kind: Kind::Name(name.clone()),
+                line,
+            })?;
+            self.opened_planes
+                .insert(self.memory.plane(reference)?, self.opened[name].clone());
+        }
         let mut locals = Vec::new();
         let mut local_facts = Vec::new();
         let mut local_proofs = Vec::new();
@@ -1942,6 +1963,7 @@ impl<'a> Context<'a> {
                     self.statement(statement)?; local_facts.push(name.clone());
                 }
                 Statement::Proof {name, proposition, ..} if self.update_expression(proposition) => {self.statement(statement)?; local_proofs.push(name.clone());},
+                Statement::Effect(value) if self.update_expression(value) => {self.statement(statement)?;},
                 _ => return Err(format!("line {line}: this operation needs invariant-independent effects; moves, drops, exits, and unknown effects are forbidden while invariants are open")),
             }
         }
@@ -1954,6 +1976,7 @@ impl<'a> Context<'a> {
             self.record_valid(&value, line)?;
         }
         self.opened.clear();
+        self.opened_planes.clear();
         for name in locals.into_iter().rev() {
             if let Some(id) = self.roots.remove(&name) {
                 self.memory.take(id)?;
@@ -2685,21 +2708,39 @@ impl<'a> Context<'a> {
             .iter()
             .filter_map(|(name, value)| {
                 if let Some(id) = self.roots.get(name) {
-                    self.memory.get(*id).ok().cloned()
+                    self.memory
+                        .get(*id)
+                        .ok()
+                        .cloned()
+                        .map(|value| (Some(*id), value))
                 } else {
-                    Some(value.clone())
+                    Some((None, value.clone()))
                 }
             })
             .collect::<Vec<_>>();
-        for value in values {
-            if let Symbol::Ref(_, reference, _) = &value {
+        for (plane, value) in values {
+            if let Symbol::Ref(_, reference, path) = &value {
                 // A stale plain reference can remain as never until observed.
                 if self.memory.read(*reference).is_err() {
                     continue;
                 }
+                // A dormant whole-object view cannot be observed while its
+                // invariant is lifted. Its own future use still checks the
+                // complete target type; remaining requirements are checked here.
+                if path.is_empty()
+                    && self
+                        .opened_planes
+                        .contains_key(&self.memory.plane(*reference)?)
+                {
+                    continue;
+                }
                 self.validate_argument(&value, line)?;
             } else {
-                self.record_valid(&value, line)?;
+                let lifted = plane
+                    .and_then(|plane| self.opened_planes.get(&plane))
+                    .cloned()
+                    .unwrap_or_default();
+                self.record_valid_with(&value, line, &lifted)?;
             }
         }
         // Rebinding a parameter cannot discard the caller's original typed
@@ -2709,7 +2750,8 @@ impl<'a> Context<'a> {
             .iter()
             .try_for_each(|input| self.validate_reference(input.reference, &input.path, line));
         self.input_references = inputs;
-        result
+        result?;
+        self.validate_opened_planes(line)
     }
     fn eval_inner(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
         match &e.kind {
@@ -3030,6 +3072,11 @@ impl<'a> Context<'a> {
                     return Err("recursive calls are forbidden in specifications".into());
                 }
                 if name == "move" || name == "drop" {
+                    if self.phase == Phase::Runtime && !self.opened_planes.is_empty() {
+                        return Err(
+                            "moves and drops are forbidden while invariants are open".into()
+                        );
+                    }
                     if self.dropping {
                         return Err(
                             "destructors cannot transfer ownership or invoke nested cleanup".into(),
@@ -3069,6 +3116,12 @@ impl<'a> Context<'a> {
                     return Ok(value);
                 }
                 let f = self.functions.get(name).ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration; ideal recursion requires decreases"))?;
+                if self.phase == Phase::Runtime
+                    && !self.opened_planes.is_empty()
+                    && !self.cleanup_helpers.contains(name)
+                {
+                    return Err("calls while invariants are open require checked scalar ownership-free effects".into());
+                }
                 if self.dropping
                     && self.phase == Phase::Runtime
                     && !self.cleanup_helpers.contains(name)
@@ -3202,10 +3255,20 @@ impl<'a> Context<'a> {
                         return Err(format!("line {}: call to {name} writes through a parameter without a matching modifies contract", e.line));
                     }
                 }
-                let value = if overlaps {
-                    self.check_aliased_body(f, &ret, writes, inputs).map_err(|error| {
-                        format!("line {}: call to {name} overlaps incoming references; body recheck failed: {error}", e.line)
-                    })?
+                let value = if overlaps || !self.opened_planes.is_empty() && !f.modifies.is_empty()
+                {
+                    let reason = if overlaps {
+                        "overlaps incoming references"
+                    } else {
+                        "writes while invariants are open"
+                    };
+                    self.check_actual_body(f, &ret, writes, inputs)
+                        .map_err(|error| {
+                            format!(
+                                "line {}: call to {name} {reason}; body recheck failed: {error}",
+                                e.line
+                            )
+                        })?
                 } else {
                     let value = if !f.borrows.is_empty() {
                         let aliases = self.return_aliases(f, None)?;
@@ -3270,7 +3333,8 @@ impl<'a> Context<'a> {
                 for root in changed_roots {
                     self.charge_value_work(symbol_weight(self.memory.get(root)?)?)?;
                     let stored = self.memory.get(root)?.clone();
-                    self.record_valid(&stored, e.line)?;
+                    let lifted = self.opened_planes.get(&root).cloned().unwrap_or_default();
+                    self.record_valid_with(&stored, e.line, &lifted)?;
                 }
                 if !f.modifies.is_empty() {
                     self.validate_live(e.line)?;
@@ -3968,6 +4032,70 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scalar_write_helpers_work_inside_selective_updates() {
+        let source = include_str!("../examples/update_calls.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        assert!(program.trusted_assumptions().is_empty());
+        let proof_too_early = source.replace(
+            "proof weak: ledger::zero_is_safe;",
+            "proof weak: ledger::accurate;",
+        );
+        assert!(verify(&proof_too_early).is_err());
+        assert!(verify(&source.replace("forward(&ledger.owners, *changed);", "")).is_err());
+        let alias = source.replace("fn local()", "fn both(a: &usize, b: &usize) modifies(a, b) ensures(*a == 42 && *b == 42) {*a = 42; *b = 42;} fn local()")
+            .replace("let changed = set(&ledger.count, 42);", "both(&ledger.count, &ledger.count); let changed = &ledger.count;");
+        assert_eq!(verify(&alias).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn update_helper_postconditions_cannot_hide_unsafe_intermediate_writes() {
+        let helpers = "fn pulse(slot: &usize) modifies(slot) ensures(*slot == 42) {*slot = 0; *slot = 42;} fn forward(slot: &usize) modifies(slot) ensures(*slot == 42) {pulse(slot);}";
+        for field in ["count: usize", "count: &usize"] {
+            let indirect = field.contains('&');
+            let count = if indirect { "*count" } else { "count" };
+            let initial = if indirect { "&storage" } else { "42" };
+            let argument = if indirect {
+                "ledger.count"
+            } else {
+                "&ledger.count"
+            };
+            for callee in ["pulse", "forward"] {
+                let source = format!("type Ledger struct {{{field}, owners: usize}} where(fact accurate = {count} == owners; fact weak = {count} == 0 => owners == 0; accurate && weak); {helpers} fn main() {{let storage: usize = 42; let ledger = Ledger {{count: {initial}, owners: 42}}; update(ledger) lifts accurate {{{callee}({argument});}}}}");
+                let error = verify(&source).unwrap_err();
+                assert!(error.contains("invariant of Ledger"), "{error}\n{source}");
+                assert!(error.contains("body recheck failed"), "{error}");
+            }
+        }
+        let conditional = "type Ledger struct {count: usize, owners: usize} where(fact accurate = count == owners; fact weak = count == 0 => owners == 0; accurate && weak); fn pulse(slot: &usize) modifies(slot) ensures(*slot == 42) {*slot = 0; *slot = 42;} fn maybe(slot: &usize, flag: bool) where(*slot == 42) modifies(slot) ensures(*slot == 42) {let effect = if flag {pulse(slot)} else {()};} fn main() {let ledger = Ledger {count: 42, owners: 42}; update(ledger) lifts accurate {maybe(&ledger.count, false);}}";
+        assert!(verify(conditional).is_ok());
+        assert!(verify(
+            &conditional.replace("maybe(&ledger.count, false)", "maybe(&ledger.count, true)")
+        )
+        .unwrap_err()
+        .contains("invariant of Ledger"));
+    }
+
+    #[test]
+    fn update_calls_still_require_permissions_and_ownership_free_bodies() {
+        let source = "type Pair struct {left: usize, right: usize} where(fact balanced = left == right; balanced); fn set(slot: &usize) modifies(slot) ensures(*slot == 42) {*slot = 42;} fn hidden(slot: &usize) {let pair = Pair {left: 7, right: 7}; update(pair) lifts balanced {set(slot);}}";
+        assert!(verify(source)
+            .unwrap_err()
+            .contains("matching modifies contract"));
+        // A dereference must not bypass effect checking of its inner call.
+        let source = "type Resource struct {} impl Drop for Resource {fn drop(self) {}} type Pair struct {left: usize, right: usize} where(fact balanced = left == right; balanced); fn hidden(slot: &usize) -> &usize borrows(slot) {let resource = Resource {}; slot} fn main() {let pair = Pair {left: 7, right: 7}; update(pair) lifts balanced {pair.left = *hidden(&pair.left); pair.right = pair.left;}}";
+        assert!(verify(source)
+            .unwrap_err()
+            .contains("ownership-free effects"));
+    }
+
     #[test]
     fn conditional_record_array_borrows_preserve_fields_and_storage_identity() {
         let source = include_str!("../examples/record_array_borrows.evg");

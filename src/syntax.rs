@@ -838,10 +838,14 @@ impl Parser {
                         updates.push(Statement::Fact { name, value });
                     } else {
                         let target = self.expr(0)?;
-                        self.expect("=")?;
-                        let value = self.expr(0)?;
-                        self.expect(";")?;
-                        updates.push(Statement::Assign { target, value });
+                        if self.eat("=") {
+                            let value = self.expr(0)?;
+                            self.expect(";")?;
+                            updates.push(Statement::Assign { target, value });
+                        } else {
+                            self.expect(";")?;
+                            updates.push(Statement::Effect(target));
+                        }
                     }
                 }
                 body.push(Statement::Update {

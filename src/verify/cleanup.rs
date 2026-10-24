@@ -12,6 +12,7 @@ struct Scope {
     current: Option<String>,
     measure: Option<Linear>,
     opened: BTreeMap<String, BTreeSet<String>>,
+    opened_planes: BTreeMap<PlaneId, BTreeSet<String>>,
     dropping: bool,
     writable: Vec<WritePlace>,
     inputs: Vec<InputReference>,
@@ -32,6 +33,7 @@ impl Scope {
             current: ctx.current.replace(f.name.clone()),
             measure: ctx.measure.take(),
             opened: std::mem::take(&mut ctx.opened),
+            opened_planes: std::mem::take(&mut ctx.opened_planes),
             dropping: std::mem::replace(&mut ctx.dropping, true),
             writable: std::mem::take(&mut ctx.writable),
             inputs: std::mem::take(&mut ctx.input_references),
@@ -53,6 +55,7 @@ impl Scope {
         ctx.current = self.current;
         ctx.measure = self.measure;
         ctx.opened = self.opened;
+        ctx.opened_planes = self.opened_planes;
         ctx.dropping = self.dropping;
         ctx.writable = self.writable;
         ctx.input_references = self.inputs;

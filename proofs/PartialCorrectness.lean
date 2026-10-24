@@ -82,4 +82,31 @@ example : ¬ Total (fun _ : Unit => True) (fun _ => (none : Option Nat)) := by
   obtain ⟨output, returned⟩ := terminates () True.intro
   contradiction
 
+-- A helper's endpoint postcondition cannot establish a retained invariant at
+-- intermediate writes. An actual trace supplies that separate obligation.
+def Maintains {State : Type} (retained : State → Prop) (states : List State) : Prop :=
+  ∀ state ∈ states, retained state
+
+theorem maintains_append {State : Type} (retained : State → Prop)
+    (first second : List State) :
+    Maintains retained (first ++ second) ↔
+      Maintains retained first ∧ Maintains retained second := by
+  simp only [Maintains, List.mem_append]
+  constructor
+  · intro checked
+    exact ⟨fun state present => checked state (Or.inl present),
+      fun state present => checked state (Or.inr present)⟩
+  · rintro ⟨left, right⟩ state (present | present)
+    · exact left state present
+    · exact right state present
+
+theorem update_exit {State : Type} (retained lifted : State → Prop)
+    (initial final : State) (body : List State)
+    (checked : Maintains retained (initial :: body ++ [final]))
+    (restored : lifted final) : retained final ∧ lifted final := by
+  exact ⟨checked final (by simp), restored⟩
+
+example : Maintains (fun n : Nat => n > 0) [1, 2, 1] := by simp [Maintains]
+example : (1 : Nat) > 0 ∧ ¬ Maintains (fun n : Nat => n > 0) [1, 0, 1] := by simp [Maintains]
+
 end Evergreen.PartialCorrectness
