@@ -89,6 +89,7 @@ enum Symbol {
         element: Box<Ty>,
         len: Linear,
         items: Option<Vec<Symbol>>,
+        cells: BTreeMap<usize, Symbol>,
         identity: String,
     },
     Record(String, BTreeMap<String, Symbol>),
@@ -136,6 +137,9 @@ fn project<'a>(value: &'a Symbol, path: &[Projection]) -> Result<&'a Symbol> {
                 items: Some(items), ..
             },
         ) => items.get(*i).ok_or("reference index out of bounds")?,
+        (Projection::Index(i), Symbol::Array { cells, .. }) => cells
+            .get(i)
+            .ok_or("array reference cell has not been materialized")?,
         _ => {
             return Err(
                 "reference projection requires a known struct field or array element".into(),
@@ -144,11 +148,34 @@ fn project<'a>(value: &'a Symbol, path: &[Projection]) -> Result<&'a Symbol> {
     };
     project(value, &path[1..])
 }
+fn project_mut<'a>(value: &'a mut Symbol, path: &[Projection]) -> Result<&'a mut Symbol> {
+    if path.is_empty() {
+        return Ok(value);
+    }
+    let child = match (&path[0], value) {
+        (Projection::Field(n), Symbol::Record(_, fields)) => {
+            fields.get_mut(n).ok_or("unknown reference field")?
+        }
+        (
+            Projection::Index(i),
+            Symbol::Array {
+                items: Some(items), ..
+            },
+        ) => items.get_mut(*i).ok_or("reference index out of bounds")?,
+        (Projection::Index(i), Symbol::Array { cells, .. }) => {
+            cells.get_mut(i).ok_or("unknown array reference cell")?
+        }
+        _ => return Err("invalid reference projection".into()),
+    };
+    project_mut(child, &path[1..])
+}
+
 fn replace_projection(
     value: &mut Symbol,
     path: &[Projection],
     new: Symbol,
     fresh: &mut usize,
+    reads: &BTreeMap<(String, Linear), Symbol>,
 ) -> Result<()> {
     if path.is_empty() {
         *value = new;
@@ -170,9 +197,28 @@ fn replace_projection(
             *identity = format!("evg_{}", fresh);
             items.get_mut(*i).ok_or("reference index out of bounds")?
         }
+        (
+            Projection::Index(i),
+            Symbol::Array {
+                cells, identity, ..
+            },
+        ) => {
+            // Preserve observations of untouched scalar cells when contents
+            // receive a new version. Storage identity itself remains unchanged.
+            for ((observed, index), value) in reads {
+                if observed == identity && index.terms.is_empty() {
+                    if let Ok(index) = usize::try_from(index.constant) {
+                        cells.entry(index).or_insert_with(|| value.clone());
+                    }
+                }
+            }
+            *fresh += 1;
+            *identity = format!("evg_{}", fresh);
+            cells.get_mut(i).ok_or("unknown array reference cell")?
+        }
         _ => return Err("invalid reference projection".into()),
     };
-    replace_projection(value, &path[1..], new, fresh)
+    replace_projection(value, &path[1..], new, fresh, reads)
 }
 
 fn type_has_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
@@ -354,7 +400,7 @@ struct Context<'a> {
     writable: BTreeSet<PlaneId>,
     old_values: BTreeMap<String, Symbol>,
     ideal_bindings: BTreeSet<String>,
-    array_reads: BTreeMap<String, Symbol>,
+    array_reads: BTreeMap<(String, Linear), Symbol>,
     temporaries: Vec<(Symbol, usize)>,
 }
 
@@ -566,6 +612,7 @@ impl<'a> Context<'a> {
                 element: element.clone(),
                 len: len.clone(),
                 items: None,
+                cells: BTreeMap::new(),
                 identity: name,
             }),
             Ty::Record(name) => {
@@ -669,7 +716,7 @@ impl<'a> Context<'a> {
             let new = self.eval(value, Some(&old.ty()))?;
             let replace_plane = !self.same_layout(&old, &new)?;
             let mut root = self.memory.read(reference)?.clone();
-            replace_projection(&mut root, &fields, new, &mut self.fresh)?;
+            replace_projection(&mut root, &fields, new, &mut self.fresh, &self.array_reads)?;
             self.record_valid(&root, place.line)?;
             self.memory.write(id, root.clone(), replace_plane)?;
             for (n, plane) in &self.roots {
@@ -1035,6 +1082,7 @@ impl<'a> Context<'a> {
                     items: av,
                     element,
                     identity: ai,
+                    ..
                 },
                 Symbol::Array {
                     len: b,
@@ -1108,9 +1156,41 @@ impl<'a> Context<'a> {
                         "reference projections currently need a statically known index".into(),
                     );
                 }
-                let index =
+                let mut root = self.memory.read(r)?.clone();
+                let array = project(&root, &path)?.clone();
+                let Symbol::Array {
+                    element,
+                    len,
+                    items,
+                    cells,
+                    identity,
+                } = array
+                else {
+                    return Err("reference index requires array storage".into());
+                };
+                self.prove(
+                    &Formula::Ge(len.sub(&index)?.add(&Linear::number(-1))?),
+                    "reference index < length",
+                    e.line,
+                )?;
+                let offset =
                     usize::try_from(index.constant).map_err(|_| "invalid reference index")?;
-                path.push(Projection::Index(index));
+                if items.is_none() && !cells.contains_key(&offset) {
+                    if !matches!(
+                        *element,
+                        Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
+                    ) {
+                        return Err("borrowing opaque array elements currently requires a scalar element layout".into());
+                    }
+                    let value = self.array_read(&element, &identity, &index)?;
+                    let Symbol::Array { cells, .. } = project_mut(&mut root, &path)? else {
+                        return Err("invalid array storage".into());
+                    };
+                    cells.insert(offset, value);
+                    let plane = self.memory.plane(r)?;
+                    self.memory.write(plane, root, false)?;
+                }
+                path.push(Projection::Index(offset));
                 project(self.memory.read(r)?, &path)?;
                 Ok((r, path))
             }
@@ -1378,7 +1458,7 @@ impl<'a> Context<'a> {
         if self.ty_has_reference(element) {
             return Err("symbolic reads of reference-containing array elements need an alias contract; unsupported".into());
         }
-        let key = format!("evg_read_{identity}_{index:?}");
+        let key = (identity.to_owned(), index.clone());
         if let Some(value) = self.array_reads.get(&key).cloned() {
             // Replay type facts, never facts specific to the first read's path.
             self.assume_element_type(&value)?;
@@ -1421,6 +1501,7 @@ impl<'a> Context<'a> {
                     element,
                     len,
                     items,
+                    cells,
                     identity,
                 } = array
                 else {
@@ -1437,6 +1518,13 @@ impl<'a> Context<'a> {
                         .and_then(|xs| usize::try_from(index.constant).ok().and_then(|i| xs.get(i)))
                     {
                         return Ok(v.clone());
+                    }
+                }
+                if index.terms.is_empty() {
+                    if let Ok(i) = usize::try_from(index.constant) {
+                        if let Some(value) = cells.get(&i) {
+                            return Ok(value.clone());
+                        }
                     }
                 }
                 self.array_read(&element, &identity, &index)
@@ -1730,6 +1818,7 @@ impl<'a> Context<'a> {
                     element: Box::new(element),
                     len: Linear::number(values.len() as i128),
                     items: Some(values),
+                    cells: BTreeMap::new(),
                     identity: self.fresh_name(),
                 })
             }
@@ -1740,6 +1829,7 @@ impl<'a> Context<'a> {
                     element,
                     len,
                     items,
+                    cells,
                     identity,
                 } = array
                 else {
@@ -1756,6 +1846,13 @@ impl<'a> Context<'a> {
                         .and_then(|v| usize::try_from(index.constant).ok().and_then(|i| v.get(i)))
                     {
                         return Ok(value.clone());
+                    }
+                }
+                if index.terms.is_empty() {
+                    if let Ok(i) = usize::try_from(index.constant) {
+                        if let Some(value) = cells.get(&i) {
+                            return Ok(value.clone());
+                        }
                     }
                 }
                 self.array_read(&element, &identity, &index)
@@ -1948,7 +2045,13 @@ impl<'a> Context<'a> {
                     }
                     let new = self.arbitrary(&ty)?;
                     let mut root = self.memory.read(reference)?.clone();
-                    replace_projection(&mut root, &fields, new, &mut self.fresh)?;
+                    replace_projection(
+                        &mut root,
+                        &fields,
+                        new,
+                        &mut self.fresh,
+                        &self.array_reads,
+                    )?;
                     self.memory.write(id, root.clone(), false)?;
                     for (binding, plane) in &saved_roots {
                         if *plane == id {
@@ -2107,6 +2210,97 @@ impl<'a> Context<'a> {
                         element: element.clone(),
                         len: len.clone(),
                         items: Some(values),
+                        cells: BTreeMap::new(),
+                        identity: self.fresh_name(),
+                    },
+                    left,
+                    right,
+                ))
+            }
+            (
+                Symbol::Array {
+                    element,
+                    len,
+                    items: a_items,
+                    cells: a_cells,
+                    identity: a_id,
+                },
+                Symbol::Array {
+                    element: b_element,
+                    len: b_len,
+                    items: b_items,
+                    cells: b_cells,
+                    identity: b_id,
+                },
+            ) if element == b_element
+                && len == b_len
+                && matches!(
+                    **element,
+                    Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
+                ) =>
+            {
+                if a_id == b_id {
+                    let mut cells = a_cells.clone();
+                    for (index, value) in b_cells {
+                        if cells.get(index).is_some_and(|existing| existing != value) {
+                            return Err(
+                                "inconsistent materialization of one array contents identity"
+                                    .into(),
+                            );
+                        }
+                        cells.insert(*index, value.clone());
+                    }
+                    return Ok((
+                        Symbol::Array {
+                            element: element.clone(),
+                            len: len.clone(),
+                            items: a_items.clone(),
+                            cells,
+                            identity: a_id.clone(),
+                        },
+                        Formula::True,
+                        Formula::True,
+                    ));
+                }
+                let indices = a_cells
+                    .keys()
+                    .chain(b_cells.keys())
+                    .copied()
+                    .chain(0..a_items.as_ref().map_or(0, Vec::len))
+                    .chain(0..b_items.as_ref().map_or(0, Vec::len))
+                    .collect::<BTreeSet<_>>();
+                let mut cells = BTreeMap::new();
+                let mut left = Formula::True;
+                let mut right = Formula::True;
+                for index in indices {
+                    let a = a_items
+                        .as_ref()
+                        .and_then(|items| items.get(index))
+                        .or_else(|| a_cells.get(&index));
+                    let b = b_items
+                        .as_ref()
+                        .and_then(|items| items.get(index))
+                        .or_else(|| b_cells.get(&index));
+                    let offset = Linear::number(index as i128);
+                    let a = match a {
+                        Some(value) => value.clone(),
+                        None => self.array_read(element, a_id, &offset)?,
+                    };
+                    let b = match b {
+                        Some(value) => value.clone(),
+                        None => self.array_read(element, b_id, &offset)?,
+                    };
+                    let (value, l, r) = self.join_value(&a, &b)?;
+                    cells.insert(index, value);
+                    left = left.and(l);
+                    right = right.and(r);
+                }
+                Ok((
+                    Symbol::Array {
+                        element: element.clone(),
+                        len: len.clone(),
+                        items: None,
+                        cells,
                         identity: self.fresh_name(),
                     },
                     left,
@@ -2506,7 +2700,7 @@ mod tests {
         );
         assert!(verify(&replaced).is_err());
         let array = "fn first(a: &[usize; 2]) -> &usize borrows(&(*a)[0]) {&(*a)[0]} fn main() -> usize {let a: [usize; 2] = [42, 7]; *first(&a)}";
-        assert!(verify(array).is_err());
+        assert_eq!(verify(array).unwrap().run().unwrap().to_string(), "42");
     }
 
     #[test]
@@ -2766,6 +2960,35 @@ mod tests {
             "let x = if true {consume(t)} else {consume(t)}; t.tag",
         );
         assert!(verify(&format!("{declarations}\n{invalid}")).is_err());
+    }
+
+    #[test]
+    fn opaque_array_borrows_share_cells_bounds_and_branch_state() {
+        let source = include_str!("../examples/array_borrows.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        let declarations = source.split("fn main").next().unwrap();
+        let branch = "fn choose(data: &[usize; 2], flag: bool) -> usize ensures(result == (*data)[0]) {if flag {*first(2, data)} else {(*data)[0]}} fn main() -> usize ensures(result == 42) {let data: [usize; 2] = [42, 7]; choose(&data, true)}";
+        assert_eq!(
+            verify(&format!("{declarations} {branch}"))
+                .unwrap()
+                .run()
+                .unwrap()
+                .to_string(),
+            "42"
+        );
+        for bad in [
+            source.replace("where (n > 0)", ""),
+            source.replace("    *right\n}", "    drop(data);\n    *right\n}"),
+            source.replace("first(2, &data)", "first(0, &data)"),
+        ] {
+            assert!(verify(&bad).is_err());
+        }
+        let frame = "fn set(r: &usize) modifies(r) ensures(*r == 42) {*r = 42;} fn change(data: [usize; 2], flag: bool) -> usize ensures(result == data[1]) {let r = &data[0]; let before = data[1]; let x = if flag {set(r)} else {()}; data[1]} fn main() -> usize ensures(result == 42) {change([7, 42], true)}";
+        assert_eq!(verify(frame).unwrap().run().unwrap().to_string(), "42");
+        let bad = "fn local(data: [usize; 1]) -> &usize borrows(&data[0]) {&data[0]}";
+        assert!(verify(bad).is_err());
+        let fake = "fn bad(data: &[usize; 2]) -> usize ensures(result == 0) {if *first(2, data) == 0 {*first(2, data)} else {*first(2, data)}}";
+        assert!(verify(&format!("{declarations} {fake}")).is_err());
     }
 
     #[test]

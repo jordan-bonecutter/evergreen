@@ -539,8 +539,8 @@ visible and dropping/replacing consumed storage cannot revive the reference.
 
 This initial contract supports direct reference returns and fixed record
 projections in the interpreter and native backend. Reference-bearing aggregate
-returns, conditional aliases, projections into opaque array contents, and
-combining reference returns with `modifies` remain unsupported. These need
+returns, conditional aliases, and combining reference returns with `modifies`
+remain unsupported. Opaque scalar array cells are supported as described below. These need
 stronger summaries rather than fabricated fresh reference storage. All call
 arguments are rechecked together after evaluation, preventing a later argument
 from consuming storage borrowed by an earlier one.
@@ -562,3 +562,27 @@ are specifications of the rules, not proofs that the Rust implementation,
 i128 overflow handling, parser, or native instructions refine those rules.
 Run them with the optional ignored integration test described above. Ordinary
 Evergreen verification continues to use the internal checker alone.
+
+Array references now also work through abstract array parameters. For example:
+
+```evergreen
+fn first(ideal n: nat, data: &[usize; n]) -> &usize
+where (n > 0)
+borrows(&(*data)[0]) {&(*data)[0]}
+```
+
+The checker proves the index bound and records the selected scalar cell lazily
+in the array's existing plane. It does not allocate a separate plane or expand
+the whole array. The reference retains the root generation and index path, so
+ordinary reads, returned aliases, and scalar writes observe the same cell.
+Writes change the array contents version while preserving storage identity;
+previously observed constant-index siblings remain framed. Branch joins merge
+these cell observations with guarded value relations.
+
+`examples/array_borrows.evg` runs, replays from a proof artifact, and builds with
+the internal native backend. It returns references from a length-indexed helper,
+writes one cell, and proves that the other cell is unchanged. This initial lazy
+representation supports scalar elements at statically known indices. Borrowing
+a dynamically selected cell or an opaque aggregate/reference-bearing element
+still requires additional projection and alias rules; known literal aggregate
+elements retain their existing support.

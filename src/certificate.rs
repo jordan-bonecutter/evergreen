@@ -446,6 +446,7 @@ mod tests {
     #[test]
     fn replay_checks_certificates_without_search() {
         for source in [
+            include_str!("../examples/array_borrows.evg"),
             include_str!("../examples/borrow_returns.evg"),
             include_str!("../examples/contracts.evg"),
             include_str!("../examples/drop.evg"),

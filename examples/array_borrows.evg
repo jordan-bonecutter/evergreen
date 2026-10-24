@@ -1,0 +1,20 @@
+fn first(ideal n: nat, data: &[usize; n]) -> &usize
+where (n > 0)
+borrows(&(*data)[0])
+ensures (*result == (*data)[0]) {
+    &(*data)[0]
+}
+
+fn second(data: &[usize; 2]) -> &usize
+borrows(&(*data)[1]) {
+    &(*data)[1]
+}
+
+fn main() -> usize ensures (result == 42) {
+    let data: [usize; 2] = [7, 1];
+    let left = first(2, &data);
+    let right = second(&data);
+    *right = 42;
+    proof framed: *left == 7;
+    *right
+}
