@@ -1187,6 +1187,7 @@ mod tests {
             "fn main() -> bool {true => false}",
             include_str!("../examples/array_borrows.evg"),
             include_str!("../examples/borrow_returns.evg"),
+            "type Fixed struct {value: usize} where(value == 42); fn refresh(r: &Fixed) -> &Fixed modifies(&(*r).value) borrows(r) ensures((*r).value == 42 && (*result).value == 42) {(*r).value = 42; r} fn main() -> usize {let fixed = Fixed {value: 42}; let refreshed = refresh(&fixed); (*refreshed).value}",
             include_str!("../examples/recursion.evg"),
             include_str!("../examples/drop.evg"),
             include_str!("../examples/temporary_cleanup.evg"),
@@ -1235,6 +1236,13 @@ mod tests {
             [
                 include_str!("../stdlib/array.evg"),
                 include_str!("../examples/array_updates.evg"),
+            ]
+            .join("\n"),
+        );
+        cases.push(
+            [
+                include_str!("../stdlib/array.evg"),
+                include_str!("../examples/write_borrows.evg"),
             ]
             .join("\n"),
         );

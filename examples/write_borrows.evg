@@ -1,0 +1,24 @@
+fn forward(data: &[usize; 2], index: usize) -> &usize
+where (index < 2)
+modifies(&(*data)[index])
+borrows(&(*data)[index])
+ensures (*result == 42) {
+    arrays::set_get(2, data, index, 42)
+}
+
+fn change(index: usize) -> usize
+where (index < 2)
+ensures (result == 42) {
+    let data: [usize; 2] = [7, 9];
+    let earlier = &data[index];
+    let updated = forward(&data, index);
+    proof updated_alias: *earlier == 42;
+    *updated = 17;
+    proof earlier_sees_write: *earlier == 17;
+    data = [42, 42];
+    *updated
+}
+
+fn main() -> usize ensures (result == 42) {
+    change(1)
+}

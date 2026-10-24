@@ -7,6 +7,15 @@ module arrays {
         (*data)[index] = value;
     }
 
+    fn set_get(ideal n: nat, data: &[usize; n], index: usize, value: usize) -> &usize
+    where (int(index) < int(n))
+    modifies(&(*data)[index])
+    borrows(&(*data)[index])
+    ensures (*result == value) {
+        set(n, data, index, value);
+        &(*data)[index]
+    }
+
     // One incoming array describes aliases between the two indexed places.
     // In particular, swapping a cell with itself is valid.
     fn swap(ideal n: nat, data: &[usize; n], left: usize, right: usize)

@@ -2626,6 +2626,13 @@ impl<'a> Context<'a> {
                     let p = self.proposition(post)?;
                     self.assume(&p)?;
                 }
+                // Alias contracts describe entry storage. After applying the
+                // checked postcondition, revalidate the saved reference and its
+                // current target. Havoced contents need not satisfy nominal
+                // invariants until that postcondition has constrained them.
+                if f.borrows.is_some() && !f.modifies.is_empty() {
+                    self.validate_argument(&value, e.line)?;
+                }
                 self.env = saved;
                 self.roots = saved_roots;
                 self.old_values = saved_old;
@@ -3147,12 +3154,8 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));
         }
         if let Some(reference) = &f.borrows {
-            if f.ideal
-                || !f.modifies.is_empty()
-                || !matches!(f.ret, Type::Ref(_))
-                || !borrow_expression(reference)
-            {
-                return Err(format!("line {}: borrows requires a reference return, a checked incoming reference projection, and no modifies effects", f.line));
+            if f.ideal || !matches!(f.ret, Type::Ref(_)) || !borrow_expression(reference) {
+                return Err(format!("line {}: borrows requires a reference return and a checked incoming reference projection", f.line));
             }
         } else if type_has_reference(&f.ret, &structs) {
             return Err(format!("line {}: returning references requires an explicit borrows contract; reference-bearing aggregate returns are unsupported", f.line));
@@ -3306,6 +3309,61 @@ mod tests {
         assert!(verify(&replaced).is_err());
         let array = "fn first(a: &[usize; 2]) -> &usize borrows(&(*a)[0]) {&(*a)[0]} fn main() -> usize {let a: [usize; 2] = [42, 7]; *first(&a)}";
         assert_eq!(verify(array).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn modifying_reference_returns_keep_the_entry_alias_and_replay() {
+        let library = include_str!("../stdlib/array.evg");
+        let source = format!(
+            "{library} {}",
+            include_str!("../examples/write_borrows.evg")
+        );
+        let (program, bundle) = prove(&source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        let replayed = verify_with_certificate(&source, &bundle).unwrap();
+        assert_eq!(replayed.proof_search_count(), 0);
+        assert_eq!(replayed.run().unwrap().to_string(), "42");
+        let scalar = "fn increment(r: &usize) -> &usize where(*r < usize::MAX) modifies(r) borrows(r) ensures(*result == old(*r) + 1) {*r = *r + 1; r} fn main() -> usize ensures(result == 42) {let n: usize = 41; let original = &n; let updated = increment(&n); proof visible: *original == 42; *updated}";
+        assert_eq!(verify(scalar).unwrap().run().unwrap().to_string(), "42");
+        let frame = "fn set(a: &[usize; 2]) -> &usize modifies(&(*a)[0]) borrows(&(*a)[0]) ensures(*result == 42) {(*a)[0] = 42; &(*a)[0]} fn main() -> usize ensures(result == 49) {let a: [usize; 2] = [1, 7]; let r = set(&a); *r + a[1]}";
+        assert_eq!(verify(frame).unwrap().run().unwrap().to_string(), "49");
+        let parent = "type Pair struct {left: usize, right: usize} fn set(p: &Pair) -> &Pair modifies(&(*p).left) borrows(p) ensures((*result).left == 7) {(*p).left = 7; p} fn main() -> usize ensures(result == 42) {let p = Pair {left: 0, right: 42}; let q = set(&p); (*q).right}";
+        assert_eq!(verify(parent).unwrap().run().unwrap().to_string(), "42");
+        let invariant = "type Fixed struct {value: usize} where(value == 42); fn refresh(r: &Fixed) -> &Fixed modifies(&(*r).value) borrows(r) ensures((*r).value == 42 && (*result).value == 42) {(*r).value = 42; r} fn main() -> usize ensures(result == 42) {let fixed = Fixed {value: 42}; let refreshed = refresh(&fixed); (*refreshed).value}";
+        assert_eq!(verify(invariant).unwrap().run().unwrap().to_string(), "42");
+        let readonly = "fn set(a: &usize, b: &usize) -> &usize modifies(a) borrows(b) ensures(*a == 7 && *result == old(*b)) {*a = 7; b} fn main() -> usize ensures(result == 42) {let a: usize = 0; let b: usize = 42; *set(&a, &b)}";
+        assert_eq!(verify(readonly).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn modifying_returns_cannot_change_aliases_or_bypass_write_permissions() {
+        for source in [
+            "fn bad(r: &usize) -> &usize modifies(r) borrows(r) {*r = 42; let local: usize = 42; &local}",
+            "fn bad(r: &usize, other: &usize) -> &usize modifies(r) borrows(r) {*r = 42; other}",
+            "fn bad(a: &[usize; 2], i: usize) -> &usize where(i == 0) modifies(&(*a)[i]) borrows(&(*a)[i]) {(*a)[i] = 42; i = 1; &(*a)[i]}",
+            "fn bad(a: &[usize; 2]) -> &usize modifies(a) borrows(&(*a)[0]) {*a = [42]; &(*a)[0]}",
+            "fn bad(r: &usize) -> &usize modifies(r) borrows(r) {drop(*r); r}",
+            "ideal fn bad(r: &usize) -> &usize modifies(r) borrows(r) {r}",
+        ] {
+            assert!(verify(source).is_err(), "accepted {source}");
+        }
+        let parent = "type Pair struct {left: usize, right: usize} fn set(p: &Pair) -> &Pair modifies(&(*p).left) borrows(p) {(*p).left = 7; p} fn bad(p: &Pair) modifies(&(*p).left) {let wider = set(p); (*wider).right = 42;}";
+        assert!(verify(parent).unwrap_err().contains("effect contract"));
+        let overlaps = "fn set(a: &usize, b: &usize) -> &usize modifies(a) borrows(b) {*a = 7; b} fn main() -> usize {let n: usize = 42; *set(&n, &n)}";
+        assert!(verify(overlaps).unwrap_err().contains("overlaps"));
+        let setter = "fn set(r: &usize) -> &usize modifies(r) borrows(r) ensures(*result == 42) {*r = 42; r}";
+        for caller in [
+            "fn bad(r: &usize) -> &usize borrows(r) {set(r)}",
+            "fn bad(r: &usize) {proof cannot_erase_write: *set(r) == 42;}",
+            "fn main() -> usize {let n: usize = 1; let r = set(&n); drop(n); *r}",
+            "fn main() -> usize {let n: usize = 1; let r = set(&n); drop(n); n = 42; *r}",
+            "fn main() -> usize ensures(result == 0) {let n: usize = 0; *set(&n)}",
+        ] {
+            assert!(
+                verify(&format!("{setter} {caller}")).is_err(),
+                "accepted {caller}"
+            );
+        }
     }
 
     #[test]

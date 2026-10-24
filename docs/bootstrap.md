@@ -570,13 +570,23 @@ parameter slots, and a different parameter are rejected. Calls instantiate the
 contract with the actual caller reference, so later same-layout writes remain
 visible and dropping/replacing consumed storage cannot revive the reference.
 
-This initial contract supports direct reference returns and fixed record
-projections in the interpreter and native backend. Reference-bearing aggregate
-returns, conditional aliases, and combining reference returns with `modifies`
-remain unsupported. Opaque scalar array cells are supported as described below. These need
-stronger summaries rather than fabricated fresh reference storage. All call
-arguments are rechecked together after evaluation, preventing a later argument
-from consuming storage borrowed by an earlier one.
+This contract supports direct reference returns, record projections, and scalar
+array elements in the interpreter and native backend. It can be combined with
+`modifies`: the returned alias is fixed at entry, writes follow the declared
+footprint, and the reference is checked again after the write summary. A returned
+reference exposes current contents; it does not grant a caller additional write
+permission. Returning a parent record after changing one field still requires
+preserving that record's invariants.
+
+`arrays::set_get` in `stdlib/array.evg` updates one cell and returns its reference.
+`evg run stdlib/array.evg examples/write_borrows.evg` exercises forwarding that
+contract, existing aliases, and later same-layout replacement. An index rebound
+inside the function cannot retarget its entry alias contract.
+
+Reference-bearing aggregate returns and conditional alias contracts remain
+unsupported. They need stronger summaries rather than fabricated fresh reference
+storage. All call arguments are rechecked together after evaluation, preventing
+a later argument from consuming storage borrowed by an earlier one.
 
 The optional Lean suite now checks three independent specifications:
 
