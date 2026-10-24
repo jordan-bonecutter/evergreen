@@ -35,6 +35,13 @@ inductive Derives : List Formula → Formula → Prop where
       Derives (a :: context) b → Derives context (.implies a b)
   | apply {context : List Formula} {a b : Formula} :
       Derives context (.implies a b) → Derives context a → Derives context b
+  | decompose {context : List Formula} {a b p : Formula} :
+      Derives context (.conj a b) → Derives (a :: b :: context) p → Derives context p
+  | alternatives {context : List Formula} {a b p : Formula} :
+      Derives context (.disj a b) → Derives (a :: context) p →
+      Derives (b :: context) p → Derives context p
+  | absurd {context : List Formula} {p : Formula} :
+      Derives context .bot → Derives context p
   | negate {context : List Formula} {a : Formula} :
       Derives (a :: context) .bot → Derives context (.neg a)
   | refute {context : List Formula} {a : Formula} :
@@ -67,6 +74,36 @@ theorem sound {context : List Formula} {p : Formula}
   | apply _ _ implication premise =>
     intro known
     exact (implication known) (premise known)
+  | decompose _ _ pair checked =>
+    intro known
+    have parts := pair known
+    apply checked
+    intro q member
+    rcases List.mem_cons.mp member with same | remaining
+    · subst q
+      exact parts.1
+    · rcases List.mem_cons.mp remaining with same | previous
+      · subst q
+        exact parts.2
+      · exact known q previous
+  | alternatives _ _ _ choice first second =>
+    intro known
+    rcases choice known with left | right
+    · apply first
+      intro q member
+      rcases List.mem_cons.mp member with same | previous
+      · subst q
+        exact left
+      · exact known q previous
+    · apply second
+      intro q member
+      rcases List.mem_cons.mp member with same | previous
+      · subst q
+        exact right
+      · exact known q previous
+  | absurd _ checked =>
+    intro known
+    exact False.elim (checked known)
   | negate _ checked =>
     intro known premise
     apply checked

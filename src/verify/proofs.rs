@@ -56,6 +56,41 @@ impl Context<'_> {
         Ok(a.normalized() == b.normalized())
     }
 
+    fn with_proof_hypotheses(
+        &mut self,
+        hypotheses: &[(&str, &Formula)],
+        line: usize,
+        check: impl FnOnce(&mut Self) -> Result<()>,
+    ) -> Result<()> {
+        let mut names = BTreeSet::new();
+        for (name, premise) in hypotheses {
+            self.fresh_binding(name, line)?;
+            if !names.insert(*name) {
+                return Err(format!("line {line}: duplicate proof hypothesis {name}"));
+            }
+            self.charge_value_work(symbol_weight(&Symbol::Bool((*premise).clone()))?)?;
+        }
+        let snapshot_work = self.paths.iter().fold(0usize, |total, path| {
+            path.iter().fold(total, |total, row| {
+                total.saturating_add(1usize.saturating_add(row.terms.len()))
+            })
+        });
+        self.charge_value_work(snapshot_work)?;
+        let paths = self.paths.clone();
+        let result = (|| {
+            for (name, premise) in hypotheses {
+                self.proofs.insert((*name).into(), (*premise).clone());
+                self.assume(premise)?;
+            }
+            check(self)
+        })();
+        for (name, _) in hypotheses {
+            self.proofs.remove(*name);
+        }
+        self.paths = paths;
+        result
+    }
+
     fn proof_goal(
         &mut self,
         goal: &Formula,
@@ -133,22 +168,45 @@ impl Context<'_> {
                     }
                 };
                 let name = &step[6..];
-                self.fresh_binding(name, line)?;
-                let snapshot_work = self.paths.iter().fold(0usize, |total, path| {
-                    path.iter().fold(total, |total, row| {
-                        total.saturating_add(1usize.saturating_add(row.terms.len()))
-                    })
-                });
-                self.charge_value_work(snapshot_work)?;
-                self.charge_value_work(symbol_weight(&Symbol::Bool(premise.clone()))?)?;
-                let paths = self.paths.clone();
-                self.proofs.insert(name.into(), premise.clone());
-                let result = self.assume(premise).and_then(|()| {
-                    self.proof_goal(consequence, label, line, steps, next, depth + 1)
-                });
-                self.proofs.remove(name);
-                self.paths = paths;
-                result
+                self.with_proof_hypotheses(&[(name, premise)], line, |ctx| {
+                    ctx.proof_goal(consequence, label, line, steps, next, depth + 1)
+                })
+            }
+            _ if step.starts_with("cases ") => {
+                let parts = step.split_whitespace().collect::<Vec<_>>();
+                if let ["cases", name] = parts.as_slice() {
+                    if !matches!(self.proofs.get(*name), Some(Formula::False)) {
+                        return Err(format!("line {line}: cases {name} without a pattern requires a checked proof of false"));
+                    }
+                    self.obligations += 1;
+                    return Ok(());
+                }
+                let ["cases", name, "with", first, separator, second] = parts.as_slice() else {
+                    return Err(format!("line {line}: malformed cases step"));
+                };
+                let theorem =
+                    self.proofs.get(*name).cloned().ok_or_else(|| {
+                        format!("line {line}: cases {name} requires a checked proof")
+                    })?;
+                match (theorem, *separator) {
+                    (Formula::And(a, b), ",") => {
+                        self.with_proof_hypotheses(&[(first, &a), (second, &b)], line, |ctx| {
+                            ctx.proof_goal(goal, label, line, steps, next, depth + 1)
+                        })
+                    }
+                    (Formula::Or(a, b), "|") => {
+                        // Validate both names before starting either branch.
+                        self.fresh_binding(first, line)?;
+                        self.fresh_binding(second, line)?;
+                        self.with_proof_hypotheses(&[(first, &a)], line, |ctx| {
+                            ctx.proof_goal(goal, label, line, steps, next, depth + 1)
+                        })?;
+                        self.with_proof_hypotheses(&[(second, &b)], line, |ctx| {
+                            ctx.proof_goal(goal, label, line, steps, next, depth + 1)
+                        })
+                    }
+                    _ => Err(format!("line {line}: cases requires a conjunction with ',' or a disjunction with '|'")),
+                }
             }
             _ if step.starts_with("apply ") => {
                 let name = &step[6..];

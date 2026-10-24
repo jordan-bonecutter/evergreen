@@ -68,7 +68,7 @@ fn increment(n: usize) -> usize where (n < usize::MAX) ensures (result > n) {
 ```
 
 Proof scripts support `intro hypothesis`, `apply proof_name`, `constructor`,
-`left`, `right`, `assumption`, and `exact proof_name`. Separate steps with
+`left`, `right`, `cases`, `assumption`, and `exact proof_name`. Separate steps with
 semicolons. `intro` opens an implication (or negation) and makes its premise a
 local checked hypothesis; that hypothesis and its path assumptions leave scope
 when the subgoal closes. `apply` uses a checked implication and creates its
@@ -78,6 +78,16 @@ apply a checked negation to prove false. `constructor` proves both conjuncts;
 proof or introduced hypothesis; it does not invoke arithmetic search or treat a
 raw fact as a proof. `exact` requires the same normalized proposition, rather
 than merely another true statement.
+
+`cases h with first | second` requires a checked disjunction and creates two
+proof goals. The first branch assumes only its first alternative; the second
+starts again from the original context and assumes only its second alternative.
+`cases h with first, second` requires a checked conjunction and provides both
+conjuncts for one subproof. These names leave scope when their subproof ends;
+the original proof `h` remains available. Separate branches may reuse the same
+name, but the two names of a conjunction must differ. `cases impossible` closes
+a goal only when `impossible` is a checked proof of false. These operations
+inspect logical proofs; they do not destructure runtime data or move resources.
 
 ```evergreen
 proof combined: a => b => (a && b) by {
@@ -96,11 +106,17 @@ Scripts must finish every generated goal and consume every supplied step.
 Unknown steps, escaped hypotheses, raw facts passed to `apply`, and incomplete
 scripts are rejected. `examples/reject_proof_scope.evg` fails in both backends
 because an introduced hypothesis leaves scope before the next conjunct.
-Scripts have at most 1024 steps and goal nesting depth 64,
-within the general symbolic work limits. `examples/propositional_proofs.evg`
+Scripts have at most 1024 steps in either backend. The internal verifier also
+bounds goal nesting to depth 64 and charges saved branch contexts against its
+symbolic work limit. `examples/propositional_proofs.evg`
 checks implication composition and logical introduction rules, runs, replays,
 and builds natively. `examples/lean_propositional.evg` checks the corresponding
 scripts with Lean's own tactics through the optional reference backend.
+`examples/proof_cases.evg` exercises conjunction and disjunction elimination,
+including repeated names in separate branches; it runs, replays, and builds.
+`examples/lean_proof_cases.evg` checks these scripts in Lean. The invalid
+`examples/reject_case_scope.evg` is rejected by both backends for using one
+case's hypothesis in the other case.
 Arbitrary Lean source and unproven axioms are not accepted. Lean warnings are
 errors; `sorry` is unavailable. Explicit audited `trustme` is described below. A fact name denotes its
 proposition in proof code, never a runtime boolean. Local fact definitions are
@@ -775,7 +791,9 @@ The optional Lean suite checks independent specifications:
 - `proofs/PropositionalProofs.lean` defines contextual derivations for the
   structural propositional rules and proves their soundness under a valuation.
   Implication introduction extends only its subproof's context; application
-  requires both the implication and its premise. It also proves the classical
+  requires both the implication and its premise. Case analysis requires both
+  disjunction branches and confines their hypotheses to their respective
+  contexts. It also proves the classical
   implication/disjunction identity and that false has no closed derivation.
 - `proofs/Planes.lean` also proves that same-layout writes preserve references
   and restoring dropped storage does not revive old generations.

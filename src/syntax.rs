@@ -566,9 +566,28 @@ impl Parser {
                 "omega" | "rfl" | "simp_all" | "decide" | "assumption" | "trustme"
                 | "constructor" | "left" | "right" => s,
                 "exact" | "intro" | "apply" => format!("{s} {}", self.name()?),
+                "cases" => {
+                    let proof = self.name()?;
+                    if self.eat("with") {
+                        let first = self.name()?;
+                        let separator = if self.eat("|") {
+                            "|"
+                        } else {
+                            self.expect(",")?;
+                            ","
+                        };
+                        let second = self.name()?;
+                        format!("cases {proof} with {first} {separator} {second}")
+                    } else {
+                        format!("cases {proof}")
+                    }
+                }
                 _ => return Err(self.err("unsupported proof step; unproven axioms are forbidden")),
             };
             steps.push(step);
+            if steps.len() > 1024 {
+                return Err(self.err("proof script limit reached (1024 steps)"));
+            }
             if self.eat("}") {
                 break;
             }

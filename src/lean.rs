@@ -15,6 +15,8 @@ impl Emitter {
             return Err("trustme declares a trusted assumption; the optional Lean reference backend requires checked proofs".into());
         }
         let mut known = self.proofs.clone();
+        let mut case_index = 0usize;
+        let mut emitted = Vec::new();
         for step in steps {
             if let Some(name) = step.strip_prefix("intro ") {
                 if self.env.contains_key(name)
@@ -25,6 +27,44 @@ impl Emitter {
                 }
                 known.insert(name.into());
             }
+            if step.starts_with("cases ") {
+                let parts = step.split_whitespace().collect::<Vec<_>>();
+                if let ["cases", name] = parts.as_slice() {
+                    if !known.contains(*name) {
+                        return Err(format!("cases {name} requires a checked proof"));
+                    }
+                    emitted.push(step.clone());
+                    continue;
+                }
+                let ["cases", name, "with", first, separator, second] = parts.as_slice() else {
+                    return Err("malformed cases step".into());
+                };
+                if !known.contains(*name) {
+                    return Err(format!("cases {name} requires a checked proof"));
+                }
+                for name in [first, second] {
+                    if self.env.contains_key(*name)
+                        || self.facts.contains(*name)
+                        || self.proofs.contains(*name)
+                    {
+                        return Err(format!("duplicate proof binding {name}"));
+                    }
+                    known.insert((*name).into());
+                }
+                // The parser reserves evg_ names, so these cannot shadow
+                // source bindings. Each cases step gets a distinct copy.
+                let temporary = format!("evg_case_{case_index}");
+                case_index += 1;
+                // Destruct a fresh copy so the original theorem remains usable.
+                emitted.push(format!("have {temporary} := {name}"));
+                let pattern = match *separator {
+                    "|" => format!("{first} | {second}"),
+                    "," => format!("⟨{first}, {second}⟩"),
+                    _ => return Err("invalid cases pattern".into()),
+                };
+                emitted.push(format!("rcases {temporary} with {pattern}"));
+                continue;
+            }
             if let Some(name) = step
                 .strip_prefix("exact ")
                 .or_else(|| step.strip_prefix("apply "))
@@ -33,8 +73,9 @@ impl Emitter {
                     return Err(format!("{step} must reference a checked proof declaration or introduced hypothesis"));
                 }
             }
+            emitted.push(step.clone());
         }
-        Ok(steps.join("; "))
+        Ok(emitted.join("; "))
     }
     fn fresh(&self, name: &str) -> Result<()> {
         if self.env.contains_key(name) || self.facts.contains(name) || self.proofs.contains(name) {

@@ -1,0 +1,35 @@
+fn commute(a: bool, b: bool) -> usize ensures(result == 42) {
+    proof explosion: false => a by {intro impossible; cases impossible};
+    proof disjunction: (a || b) => (b || a) by {
+        intro either;
+        cases either with first | second;
+        right;
+        exact first;
+        left;
+        exact second
+    };
+    proof conjunction: (a && b) => (b && a) by {
+        intro both;
+        cases both with first, second;
+        constructor;
+        exact second;
+        exact first
+    };
+    42
+}
+
+fn reuse_names(a: bool, b: bool) -> usize {
+    proof same: (a || b) => (a || b) by {
+        intro either;
+        cases either with part | part;
+        left;
+        exact part;
+        right;
+        exact part
+    };
+    42
+}
+
+fn main() -> usize ensures(result == 42) {
+    commute(true, false)
+}

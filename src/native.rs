@@ -1210,6 +1210,7 @@ mod tests {
             include_str!("../examples/reference_array_inputs.evg"),
             include_str!("../examples/aliasing_calls.evg"),
             include_str!("../examples/propositional_proofs.evg"),
+            include_str!("../examples/proof_cases.evg"),
             "fn main() -> usize where(old(1 + 1) == 2) {42}",
             "type Fixed struct {value: usize} where(value == 42); fn refresh(r: &Fixed) -> &Fixed modifies(&(*r).value) borrows(r) ensures((*r).value == 42 && (*result).value == 42) {(*r).value = 42; r} fn main() -> usize {let fixed = Fixed {value: 42}; let refreshed = refresh(&fixed); (*refreshed).value}",
             include_str!("../examples/recursion.evg"),

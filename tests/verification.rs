@@ -9,6 +9,7 @@ fn proof_kernel_accepts_and_rejects() {
         "examples/lean_reference.evg",
         "examples/lean_implication.evg",
         "examples/lean_propositional.evg",
+        "examples/lean_proof_cases.evg",
     ] {
         let output = Command::new(cli).args(["lean-run", file]).output().unwrap();
         assert!(
@@ -22,6 +23,7 @@ fn proof_kernel_accepts_and_rejects() {
         "examples/reject_bounds.evg",
         "examples/reject_contract.evg",
         "examples/reject_proof_scope.evg",
+        "examples/reject_case_scope.evg",
     ] {
         let output = Command::new(cli)
             .args(["lean-check", file])
@@ -99,6 +101,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/reference_array_inputs.evg",
         "examples/aliasing_calls.evg",
         "examples/propositional_proofs.evg",
+        "examples/proof_cases.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")
@@ -121,6 +124,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/reject_overflow.evg",
         "examples/reject_false_proof.evg",
         "examples/reject_proof_scope.evg",
+        "examples/reject_case_scope.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")

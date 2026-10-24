@@ -3757,6 +3757,48 @@ mod tests {
     }
 
     #[test]
+    fn proof_cases_check_both_branches_and_decompose_conjunctions() {
+        let source = include_str!("../examples/proof_cases.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        for source in [
+            "fn absurd(a: bool) {proof explosion: false => a by {intro impossible; cases impossible};}",
+            "fn same(a: bool, b: bool) {proof either: (a || b) => (a || b) by {intro h; cases h with part | part; left; exact part; right; exact part};}",
+            "fn retain(a: bool, b: bool) {proof same: (a || b) => (a || b) by {intro h; cases h with first | second; exact h; exact h};}",
+            "fn retain(a: bool, b: bool) {proof same: (a && b) => (a && b) by {intro h; cases h with first, second; exact h};}",
+            "fn nested(a: bool, b: bool, c: bool) {proof grouped: (a || (b || c)) => ((a || b) || c) by {intro h; cases h with ha | rest; left; left; exact ha; cases rest with hb | hc; left; right; exact hb; right; exact hc};}",
+        ] {assert!(verify(source).is_ok(), "rejected {source}");}
+    }
+
+    #[test]
+    fn proof_cases_cannot_leak_hypotheses_or_ignore_an_alternative() {
+        for source in [
+            "fn bad(a: bool, b: bool) {proof false_case: (a || b) => a by {intro h; cases h with first | second; exact first; exact second};}",
+            "fn bad(a: bool, b: bool) {proof leaked: (a || b) => a by {intro h; cases h with first | second; exact first; exact first};}",
+            "fn bad(a: bool, b: bool) {proof incomplete: (a || b) => (b || a) by {intro h; cases h with first | second; right; exact first};}",
+            "fn bad(a: bool, b: bool) {proof wrong: (a || b) => a by {intro h; cases h with first, second; exact first};}",
+            "fn bad(a: bool, b: bool) {proof wrong: (a && b) => a by {intro h; cases h with first | second; exact first; exact second};}",
+            "fn bad(a: bool, b: bool) {proof wrong: (a && b) => a by {intro h; cases h with part, part; exact part};}",
+            "fn bad(a: bool, b: bool) {proof wrong: (a && b) => a by {intro h; cases h with a, other; exact a};}",
+            "fn bad(a: bool, b: bool) {proof wrong: (a && b) => a by {intro h; cases h with h, other; exact h};}",
+            "fn bad(a: bool, b: bool) {fact h = a || b; proof raw: a || b by {cases h with first | second; left; exact first; right; exact second};}",
+            "fn bad() {proof missing: true by {cases absent with first | second; omega; omega};}",
+            "fn bad() {proof present: true; proof wrong: true by {cases present};}",
+            "fn bad(a: bool, b: bool) {proof identity: (a || b) => (a || b) by {intro h; cases h};}",
+            "fn bad() {proof malformed: true by {cases absent with first second; omega};}",
+            "fn bad() {proof witness: (true && true) => true by {intro h; cases h with first, second; exact first}; proof escaped: true by {exact second};}",
+            "fn bad(a: bool) {proof reflexive: (a && a) => a by {intro h; cases h with first, second; exact first}; proof leaked_path: a;}",
+        ] {assert!(verify(source).is_err(), "accepted {source}");}
+    }
+
+    #[test]
     fn propositional_hypotheses_cannot_escape_or_prove_the_wrong_goal() {
         for source in [
             "fn bad(a: bool, b: bool) {proof wrong: a => b by {intro h; exact h};}",
