@@ -1,27 +1,29 @@
-// Linux x86-64 external boundary. The OS implementation and frame contract are
-// trusted. This writes raw bytes; it makes no claim about text encoding.
+// Linux x86-64 external boundary. Raw bytes carry no text encoding assumption.
 module linux_io {
-    extern syscall(1) fn write_byte(fd: usize, byte: &u8, count: usize) -> isize
-    where(count <= 1)
-    ensures(result <= 1);
+    extern syscall(1) fn write(
+        fd: usize,
+        bytes: &[u8; capacity],
+        count: usize,
+        ideal capacity: nat
+    ) -> isize
+    where(int(count) <= int(capacity))
+    ensures(int(result) <= int(count));
     proof {trustme}
+
+    fn write_byte(fd: usize, byte: &u8, count: usize) -> isize
+    where(count <= 1)
+    ensures(result <= 1) {
+        let bytes: [u8; 1] = [*byte];
+        write(fd, &bytes, count, 1)
+    }
 
     fn stdout_byte(byte: &u8) -> bool {
         write_byte(1, byte, 1) == 1
     }
 
-    // No allocation or encoding machinery. Stop on a short or failed write.
-    // Recursion currently shares the native execution depth limit.
-    fn print_from(length: usize, bytes: &[u8; length], index: usize) -> bool
-    where(index <= length) {
-        if index == length {true} else {
-            if stdout_byte(&(*bytes)[index]) {
-                print_from(length, bytes, index + 1)
-            } else {false}
-        }
-    }
-
-    fn print_bytes(length: usize, bytes: &[u8; length]) -> bool {
-        print_from(length, bytes, 0)
+    // One write attempt. Preserve short counts and negative error codes.
+    fn print_bytes(length: usize, bytes: &[u8; length]) -> isize
+    ensures(int(result) <= int(length)) {
+        write(1, bytes, length, nat(length))
     }
 }

@@ -19,6 +19,7 @@ mod bodies;
 mod cleanup;
 mod external;
 mod heap;
+mod parameters;
 mod paths;
 mod proofs;
 mod references;
@@ -3140,16 +3141,7 @@ impl<'a> Context<'a> {
                 self.ideal_bindings = f.ideal_params.iter().cloned().collect();
                 self.env.clear();
                 self.roots.clear();
-                for ((n, t), value) in f.params.iter().zip(actuals) {
-                    let saved_specification = self.phase;
-                    if f.ideal_params.contains(n) {
-                        self.phase = Phase::Specification;
-                    }
-                    let t = self.resolve(t)?;
-                    self.phase = saved_specification;
-                    self.compatible(&value.ty(), &t, e.line)?;
-                    self.env.insert(n.clone(), value);
-                }
+                self.bind_arguments(f, actuals, e.line)?;
                 self.capture_old(f)?;
                 if let Some(pre) = &f.pre {
                     let p = self.proposition(pre)?;
@@ -3954,20 +3946,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         ctx.phase = execution;
         ctx.ideal_bindings = f.ideal_params.iter().cloned().collect();
         ctx.current = Some(f.name.clone());
-        for (n, t) in &f.params {
-            if ctx.env.contains_key(n) {
-                return Err(format!("line {}: duplicate parameter {n}", f.line));
-            }
-            ctx.phase = if f.ideal_params.contains(n) {
-                Phase::Specification
-            } else {
-                execution
-            };
-            let ty = ctx.resolve(t)?;
-            let value = ctx.arbitrary(&ty)?;
-            ctx.phase = execution;
-            ctx.env.insert(n.clone(), value);
-        }
+        ctx.declare_parameters(f)?;
         ctx.capture_old(f)?;
         if let Some(pre) = &f.pre {
             ctx.phase = Phase::Specification;

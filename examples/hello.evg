@@ -1,5 +1,5 @@
 // Build with stdlib/linux_io.evg. Raw UTF-8/ASCII bytes, with no string built-in.
 fn main() -> usize {
     let message: [u8; 17] = [72, 101, 108, 108, 111, 44, 32, 69, 118, 101, 114, 103, 114, 101, 101, 110, 10];
-    if linux_io::print_bytes(17, &message) {0} else {1}
+    if linux_io::print_bytes(17, &message) == 17 {0} else {1}
 }

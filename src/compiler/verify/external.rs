@@ -5,12 +5,16 @@ use super::*;
 impl Context<'_> {
     pub(super) fn check_external(&mut self, function: &Function, result: &Ty) -> Result<()> {
         if function.ideal
-            || !function.ideal_params.is_empty()
             || function.decreases.is_some()
             || function.drop_target.is_some()
             || function.name == "main"
             || !function.borrows.is_empty()
-            || function.params.len() > 6
+            || function
+                .params
+                .iter()
+                .filter(|(name, _)| !function.ideal_params.contains(name))
+                .count()
+                > 6
             || function.ret != Type::Machine(MachineInt::parse("isize").unwrap())
         {
             return Err("syscall declarations require at most six runtime arguments and an isize result, without decreases, borrows, Drop, or ideal execution".into());
@@ -18,13 +22,22 @@ impl Context<'_> {
         if !matches!(function.proof.as_deref(), Some([step]) if step == "trustme") {
             return Err("external syscall contracts require an explicit proof {trustme}".into());
         }
-        for (_, ty) in &function.params {
+        for (name, ty) in &function.params {
+            if function.ideal_params.contains(name) {
+                continue;
+            }
             match ty {
                 Type::Machine(integer) if integer.bits == 64 => {}
                 Type::Ref(inner)
                     if !type_has_reference(inner, self.structs)
                         && !heap::owns_planes_type(inner, self.structs) => {
-                    crate::compiler::layout::of(inner, self.structs)?;
+                    // Borrowed arrays carry a checked symbolic extent; only
+                    // their element stride needs a static physical layout.
+                    let storage = match inner.as_ref() {
+                        Type::Array(element, _) => element,
+                        other => other,
+                    };
+                    crate::compiler::layout::of(storage, self.structs)?;
                 }
                 _ => return Err("syscall arguments require 64-bit integers or borrows of fixed-layout data without pointers or owners".into()),
             }
@@ -125,6 +138,27 @@ mod tests {
             "{io} fn main() -> isize {{let byte: u8 = 42; linux_io::write_byte(1, &byte, 2)}}"
         ))
         .is_err());
+        for call in [
+            "linux_io::write(1, &bytes, 3, 2)",
+            "linux_io::write(1, &bytes, 2, 3)",
+        ] {
+            assert!(
+                verify(&format!(
+                    "{io} fn main() -> isize {{let bytes: [u8; 2] = [65, 66]; {call}}}"
+                ))
+                .is_err(),
+                "accepted {call}"
+            );
+        }
+        let prefix = format!("{io} fn main() -> isize {{let bytes: [u8; 3] = [65, 66, 67]; linux_io::write(1, &bytes, 2, 3)}}");
+        let (program, bundle) = prove(&prefix).unwrap();
+        assert_eq!(program.trusted_assumptions().len(), 1);
+        assert_eq!(
+            verify_with_certificate(&prefix, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
         let undeclared_write = "extern syscall(0) fn read(fd: usize, byte: &u8, count: usize) -> isize where(count <= 1) modifies(byte); proof {trustme} fn forward(byte: &u8) -> isize {read(0, byte, 1)} fn main() -> usize {42}";
         assert!(verify(undeclared_write).unwrap_err().contains("modifies"));
         let invalid_exit_index = "extern syscall(0) fn bad(index: &usize, data: &[u8; 1]) -> isize where(*index == 0) modifies(index) ensures((*data)[*index] == 0); proof {trustme} fn main() -> usize {42}";

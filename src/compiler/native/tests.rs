@@ -114,6 +114,7 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        "fn first(bytes: &[u8; length], length: usize) -> u8 where(length > 0) {(*bytes)[0]} fn change(length: &usize) -> usize modifies(length) ensures(result == 2 && *length == 2) {*length = 2; 2} fn main() -> u8 {let length: usize = 1; let bytes: [u8; 2] = [42, 7]; let byte = first(&bytes, change(&length)); if byte == 42 && length == 2 {42} else {1}}",
         include_str!("../../../examples/native_layouts.evg"),
         "type Tiny struct {data: [u8; 3]} impl Drop for Tiny {fn drop(self) {}} fn forward(value: Tiny) -> Tiny {value} fn main() -> u8 {let item = forward(Tiny {data: [1, 2, 42]}); item.data[2]}",
         "fn main() -> u8 {let data: [[u64; 0]; 2] = [[], []]; if &data[0] != &data[1] {42} else {1}}",
@@ -484,8 +485,16 @@ fn native_syscalls_write_exact_bytes_and_preserve_results() {
     let error = "extern syscall(1) fn write(fd: usize, byte: &u8, count: usize) -> isize where(count <= 1); proof {trustme} fn main() -> usize {let byte: u8 = 42; if write(usize::MAX, &byte, 1) == -9 {0} else {1}}";
     let eof = "extern syscall(0) fn read(fd: usize, byte: &u8, count: usize) -> isize where(count <= 1) modifies(byte) ensures(result == 0 => *byte == old(*byte)); proof {trustme} fn main() -> usize {let byte: u8 = 42; let received = read(0, &byte, 1); if received == 0 && byte == 42 {0} else {1}}";
     let pid = "extern syscall(39) fn getpid() -> isize; proof {trustme} fn main() -> usize {if getpid() > 0 {0} else {1}}";
+    let large_bytes = std::iter::repeat_n("65", 257).collect::<Vec<_>>().join(",");
+    let large = format!("{} fn main() -> usize {{let bytes: [u8; 257] = [{large_bytes}]; if linux_io::print_bytes(257, &bytes) == 257 {{0}} else {{1}}}}", include_str!("../../../stdlib/linux_io.evg"));
+    let large_expected = vec![65; 257];
+    let empty = format!("{} fn main() -> usize {{let bytes: [u8; 0] = []; if linux_io::print_bytes(0, &bytes) == 0 {{0}} else {{1}}}}", include_str!("../../../stdlib/linux_io.evg"));
+    let prefix = format!("{} fn main() -> usize {{let bytes: [u8; 3] = [65, 66, 67]; if linux_io::write(1, &bytes, 2, 3) == 2 {{0}} else {{1}}}}", include_str!("../../../stdlib/linux_io.evg"));
     for (source, expected) in [
         (hello.as_str(), b"Hello, Evergreen\n".as_slice()),
+        (large.as_str(), large_expected.as_slice()),
+        (prefix.as_str(), b"AB".as_slice()),
+        (empty.as_str(), b"".as_slice()),
         (packed, "é\n".as_bytes()),
         (error, b"".as_slice()),
         (pid, b"".as_slice()),

@@ -1486,8 +1486,11 @@ proof {trustme}
 Arguments follow the [Linux x86-64 syscall register order](https://man7.org/linux/man-pages/man2/syscall.2.html):
 rdi, rsi, rdx, r10, r8, r9. The raw
 result is a signed 64-bit integer, including negative error codes. Declarations
-accept up to six 64-bit integers or references to fixed-layout data without
-embedded references or owners. No ownership or borrowed references can be
+accept up to six runtime arguments: 64-bit integers or references to data without
+embedded references or owners. Borrowed arrays may have symbolic lengths with
+fixed-layout elements. Scalar parameters are in scope throughout a signature,
+including when the length parameter follows the buffer. Existing `ideal`
+parameters can describe capacities and contracts; they consume no OS arguments. No ownership or borrowed references can be
 returned. Referenced array elements use their physical packed representation;
 a declaration borrowing `[u8; 3]` can pass all three bytes to `write` in one call.
 
@@ -1504,8 +1507,23 @@ General foreign linking, foreign aggregate ABIs, and interpreter OS emulation
 remain unsupported.
 
 `linux_io::print_bytes(length, bytes)` accepts a borrow of `[u8; length]` and
-returns whether every byte was written. Its initial implementation performs one
-syscall per byte, stops on failure, and uses recursion subject to native stack
-and recursion limits. It is suitable for short experiments, not bulk output.
-It neither validates nor assumes UTF-8; encoding validity belongs in an Evergreen
-library refinement over the bytes, not in the compiler.
+attempts one write of the entire buffer. It returns the raw `isize` byte count
+or negative error code. The hello example checks that the returned count equals
+17; a nonnegative short count is not full success. The library does not yet retry
+short writes or interrupted calls. Printing no longer recurses or makes one
+syscall per byte.
+
+The library has one trusted declaration. `write_byte` and `stdout_byte` are
+ordinary checked Evergreen wrappers. The generic external `write` also takes an
+erased capacity, allowing a checked prefix write:
+
+```evg
+let bytes: [u8; 3] = [65, 66, 67];
+let written = linux_io::write(1, &bytes, 2, 3);
+```
+
+This attempts to write `AB`. The checker rejects a count exceeding capacity or a
+capacity inconsistent with the actual borrowed array. Capacity is a proof
+argument; Linux receives only the file descriptor, buffer address, and count.
+The library neither validates nor assumes UTF-8; encoding validity belongs in an
+Evergreen library refinement over the bytes, not in the compiler.

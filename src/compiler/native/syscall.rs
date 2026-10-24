@@ -5,7 +5,12 @@ use super::*;
 impl Emitter<'_> {
     pub(super) fn syscall(&mut self, function: &Function, number: u32) -> Result<()> {
         // Loading a binding uses rax only, so earlier argument registers survive.
-        for (index, (name, _)) in function.params.iter().enumerate() {
+        for (index, (name, _)) in function
+            .params
+            .iter()
+            .filter(|(name, _)| !function.ideal_params.contains(name))
+            .enumerate()
+        {
             self.load(name)?;
             self.code.extend(match index {
                 0 => &[0x48, 0x89, 0xc7][..], // rdi
