@@ -309,6 +309,13 @@ The `reject_heap_*` examples reject duplicates, use after free, and undeclared
 borrowed writes. This primitive is unique allocation ownership, not Rc or Arc:
 shared ownership authority and atomic state transitions still need language
 support and library implementations.
+The [shared ownership implementation obligations](shared-ownership.md) describe
+the missing allocation capabilities and concurrency contracts.
+`proofs/SharedOwnership.lean` now checks an identity-based per-allocation ledger:
+all finite modeled interleavings preserve accounting and unique token IDs,
+pending tokens prevent reclamation, and only the final decrement grants the
+single-use reclamation phase. This is a protocol specification, not verified
+Evergreen Rc/Arc code or a weak-memory proof.
 
 `src/shared/planes.rs` provides the internal generation-checked plane store used by
 both verification and execution. Arena identities prevent handles from crossing

@@ -39,6 +39,7 @@ fn proof_kernel_accepts_and_rejects() {
         "proofs/Planes.lean",
         "proofs/LinearCertificates.lean",
         "proofs/MemoryContracts.lean",
+        "proofs/SharedOwnership.lean",
         "proofs/PartialCorrectness.lean",
         "proofs/PropositionalProofs.lean",
     ] {
