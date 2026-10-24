@@ -27,6 +27,8 @@ unit, or records with scalar fields, including nested records. Their checked
 relations preserve which branch supplied each result field; array and reference
 joins remain unsupported. See `examples/conditional_records.evg`.
 Array access requires a proof of its bound.
+A semicolon discards an expression and cleans up its temporary, including at the
+end of a function. A returned tail expression has no semicolon.
 Nominal structs support dependent fields and `where` invariants. Construction
 and field assignments must establish those invariants. `update(place, ...) lifts
 fact_name, ... { ... }` explicitly opens selected named requirements on local
@@ -133,13 +135,38 @@ interface, and no creation, transfer, or cleanup of runtime ownership. It is not
 a programmer-supplied marker. Unlike invariant-independent helpers, these
 helpers may write through their explicit `modifies` contracts.
 
-A destructor can pass its own scalar fields to modifying helpers. The ordinary
-plane permissions and nominal invariants are still checked, and returned
-references stay local to cleanup. Writes through stored references to external
-storage remain rejected: those require cleanup effects in the caller's proof at
-every drop, replacement, and scope exit. Record construction, destructuring,
-ownership transfer, and explicit nested cleanup remain unsupported in Drop
-bodies. The invariant-update rules are unchanged.
+A destructor can pass its own scalar fields to modifying helpers, and can declare
+external writes with `modifies(self.target)` or another incoming reference path.
+Every explicit drop, discarded temporary, scope exit, and replacement checks
+that the caller owns the target or has matching write permission. A function
+consuming such an owner must include its cleanup writes in its own effect
+contract. The ordinary alias checks, plane validity, and nominal invariants still
+apply. Returning from a function preserves the value computed before cleanup,
+even when cleanup changes referenced storage.
+
+Effectful cleanup bodies are elaborated against the actual receiver. Child
+cleanup uses fields left by the parent body, follows declaration order, and must
+fit the parent's declared effects. Local scope cleanup runs in reverse binding
+order; expression temporaries clean up in reverse creation order. Proof bundles
+include the resulting conditions. This bootstrap currently rechecks effectful
+bodies at cleanup sites; it does not yet have reusable summaries of final receiver
+state. Their helper callees must be verified before the consuming function. Opaque arrays with effectful element cleanup require element summaries and
+are rejected; known array values are supported.
+
+Receiver invariants must remain valid while their body runs. Record construction,
+destructuring, ownership transfer, and explicit nested cleanup remain unsupported
+in Drop bodies. The invariant-update rules are unchanged. `Drop` postconditions
+use entry parameter bindings like other functions: `*self.target` follows that
+entry pointer into current memory, while `old(*self.target)` reads entry memory.
+`examples/drop_effects.evg` checks caller effects and saved return values;
+`examples/drop_children.evg` checks final child fields. These are generic cleanup
+examples, not an RC ownership or allocation implementation.
+
+`evg run stdlib/counter.evg examples/drop_count.evg` demonstrates the type boundary:
+the parent's invariant requires a positive count while its body runs; after the
+parent is consumed, a field destructor can release the final count to zero. The
+same write in the live parent's body is rejected. This checks a sequential count
+transition, not a correspondence between counters and actual allocation owners.
 
 `evg run stdlib/counter.evg examples/drop_helpers.evg` checks scalar cleanup
 helpers and read-only observations. The native backend compiles these helpers

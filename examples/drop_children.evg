@@ -1,0 +1,27 @@
+type Child struct {target: &usize, tag: usize}
+
+impl Drop for Child {
+    fn drop(self)
+    modifies(self.target)
+    ensures (*self.target == self.tag) {
+        *self.target = self.tag;
+    }
+}
+
+type Parent struct {child: Child}
+
+impl Drop for Parent {
+    fn drop(self)
+    modifies(self.child.target)
+    ensures (*self.child.target == 42) {
+        // Child cleanup must use this final tag, rather than the entry tag.
+        self.child.tag = 42;
+    }
+}
+
+fn main() -> usize ensures (result == 42) {
+    let count: usize = 0;
+    let parent = Parent {child: Child {target: &count, tag: 1}};
+    drop(parent);
+    count
+}

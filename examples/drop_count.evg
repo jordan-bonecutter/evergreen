@@ -1,0 +1,32 @@
+// A sequential count transition demonstrating the cleanup boundary.
+// This does not establish allocation authority or count actual owners.
+type ReleaseCount struct {count: &usize}
+
+impl Drop for ReleaseCount {
+    fn drop(self)
+    modifies(self.count)
+    ensures (nat(*self.count) == nat(old(*self.count)) - 1) {
+        let zero = if *self.count > 0 {
+            counter_decrement(self.count)
+        } else {false};
+    }
+}
+
+type Counted struct {release: ReleaseCount}
+where (*release.count > 0);
+
+impl Drop for Counted {
+    fn drop(self)
+    modifies(self.release.count) {
+        proof still_live: *self.release.count > 0;
+        // Counted is consumed before its ReleaseCount field is cleaned up.
+    }
+}
+
+fn main() -> usize ensures (result == 0) {
+    let count: usize = 1;
+    let owner = Counted {release: ReleaseCount {count: &count}};
+    drop(owner);
+    proof final_release: count == 0;
+    count
+}

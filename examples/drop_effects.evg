@@ -1,0 +1,33 @@
+// A deferred store, not an RC implementation or allocation capability.
+type StoreOnDrop struct {target: &usize, value: usize}
+
+impl Drop for StoreOnDrop {
+    fn drop(self)
+    modifies(self.target)
+    ensures (*self.target == self.value) {
+        *self.target = self.value;
+    }
+}
+
+fn consume(guard: StoreOnDrop)
+modifies(guard.target)
+ensures (*guard.target == guard.value) {
+    // Scope cleanup performs the declared store.
+}
+
+fn returned_before_cleanup(target: &usize) -> usize
+modifies(target)
+ensures (result == old(*target) && *target == 42) {
+    let guard = StoreOnDrop {target: target, value: 42};
+    *target
+}
+
+fn main() -> usize ensures (result == 42) {
+    let count: usize = 0;
+    let guard = StoreOnDrop {target: &count, value: 42};
+    consume(guard);
+    count = 0;
+    let before = returned_before_cleanup(&count);
+    proof saved_before_cleanup: before == 0;
+    before + count
+}

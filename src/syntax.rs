@@ -791,7 +791,7 @@ impl Parser {
                     });
                     continue;
                 }
-                if self.eat(";") && self.peek() != "}" {
+                if self.eat(";") {
                     body.push(Statement::Effect(value));
                     continue;
                 }
@@ -861,7 +861,6 @@ impl Parser {
             || function.pre.is_some()
             || function.decreases.is_some()
             || function.borrows.is_some()
-            || !function.modifies.is_empty()
             || !function.ideal_params.is_empty()
         {
             return Err(

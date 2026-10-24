@@ -8,6 +8,7 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
+mod cleanup;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Formula {
@@ -589,6 +590,8 @@ struct Context<'a> {
     measure: Option<Linear>,
     opened: BTreeMap<String, BTreeSet<String>>,
     drops: &'a BTreeSet<String>,
+    destructors: &'a BTreeMap<String, Function>,
+    cleanup_depth: usize,
     dropping: bool,
     helpers: &'a BTreeSet<String>,
     cleanup_helpers: &'a BTreeSet<String>,
@@ -609,12 +612,23 @@ impl<'a> Context<'a> {
         path: &[Projection<Linear>],
         owned: bool,
     ) -> Result<bool> {
+        let grants = std::mem::take(&mut self.writable);
+        let result = self.write_permitted_by(&grants, reference, path, owned);
+        self.writable = grants;
+        result
+    }
+    fn write_permitted_by(
+        &mut self,
+        grants: &[WritePlace],
+        reference: Reference,
+        path: &[Projection<Linear>],
+        owned: bool,
+    ) -> Result<bool> {
         if owned {
             return Ok(true);
         }
         let plane = self.memory.plane(reference)?;
-        let grants = self
-            .writable
+        let grants = grants
             .iter()
             .filter(|grant| {
                 self.memory.plane(grant.reference).ok() == Some(plane)
@@ -1012,6 +1026,7 @@ impl<'a> Context<'a> {
         functions: &'a BTreeMap<String, Function>,
         structs: &'a BTreeMap<String, Struct>,
         drops: &'a BTreeSet<String>,
+        destructors: &'a BTreeMap<String, Function>,
         helpers: &'a BTreeSet<String>,
         cleanup_helpers: &'a BTreeSet<String>,
         session: &'a mut Session,
@@ -1039,6 +1054,8 @@ impl<'a> Context<'a> {
             measure: None,
             opened: BTreeMap::new(),
             drops,
+            destructors,
+            cleanup_depth: 0,
             dropping: false,
             helpers,
             cleanup_helpers,
@@ -1471,6 +1488,7 @@ impl<'a> Context<'a> {
         }
         if old_live && self.symbol_is_affine(&old) {
             self.validate_argument(&old, place.line)?;
+            self.cleanup_value(old, place.line)?;
         }
         let mut root = if let Some(value) = self
             .roots
@@ -1503,6 +1521,7 @@ impl<'a> Context<'a> {
         for (value, line) in self.temporaries.split_off(start).into_iter().rev() {
             self.validate_argument(&value, line)
                 .map_err(|e| format!("line {line}: implicit temporary cleanup: {e}"))?;
+            self.cleanup_value(value, line)?;
         }
         Ok(())
     }
@@ -1592,7 +1611,7 @@ impl<'a> Context<'a> {
                 if self.symbol_is_affine(&value) {
                     self.validate_argument(&value, e.line)?;
                 }
-                Ok(())
+                self.cleanup_value(value, e.line)
             }
             Statement::Let { name, ty, value } => {
                 self.fresh_binding(name, value.line)?;
@@ -2223,13 +2242,17 @@ impl<'a> Context<'a> {
                 }
                 self.memory.take(*id)?
             } else {
-                self.env
-                    .get(&name)
-                    .cloned()
-                    .ok_or("unknown cleanup binding")?
+                self.env.remove(&name).ok_or("unknown cleanup binding")?
             };
             if self.symbol_is_affine(&value) {
                 self.validate_argument(&value, f.result.line)?;
+            }
+            if self.phase == Phase::Runtime && !self.ideal_bindings.contains(&name) {
+                if name == "self" && f.drop_target.is_some() {
+                    self.cleanup_fields(value, f.result.line)?;
+                } else {
+                    self.cleanup_value(value, f.result.line)?;
+                }
             }
         }
         Ok(())
@@ -2810,7 +2833,11 @@ impl<'a> Context<'a> {
                     self.record_valid(&stored, e.line)?;
                     let value = self.memory.take(id)?;
                     self.validate_argument(&value, e.line)?;
-                    return Ok(if name == "drop" { Symbol::Unit } else { value });
+                    if name == "drop" {
+                        self.cleanup_value(value, e.line)?;
+                        return Ok(Symbol::Unit);
+                    }
+                    return Ok(value);
                 }
                 let f = self.functions.get(name).ok_or_else(|| format!("unknown function {name}; calls require an earlier verified declaration; ideal recursion requires decreases"))?;
                 if self.dropping
@@ -3328,11 +3355,13 @@ impl VerifiedProgram {
                 .map(|f| (f.name.clone(), f.clone()))
                 .collect();
             let helpers = BTreeSet::new();
+            let destructors = BTreeMap::new();
             let mut session = Session::search();
             let mut ctx = Context::new(
                 &functions,
                 &self.structs,
                 &self.drops,
+                &destructors,
                 &helpers,
                 &helpers,
                 &mut session,
@@ -3406,6 +3435,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
     let mut structs = BTreeMap::new();
     let empty_functions = BTreeMap::new();
     let empty_drops = BTreeSet::new();
+    let empty_destructors = BTreeMap::new();
     for s in &parsed.structs {
         if structs.contains_key(&s.name) {
             return Err(format!("line {}: duplicate struct {}", s.line, s.name));
@@ -3414,6 +3444,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             &empty_functions,
             &structs,
             &empty_drops,
+            &empty_destructors,
             &empty_drops,
             &empty_drops,
             session,
@@ -3479,6 +3510,15 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             return Err(format!("line {}: destructor effects require proofs; Drop bodies allow scalar work, checked scalar helpers, borrows, and facts without constructing or destructuring ownership", f.line));
         }
     }
+    let destructors = parsed
+        .destructors
+        .iter()
+        .map(|(name, method)| {
+            let mut method = method.clone();
+            method.entry_memory = needs_old_memory(&method);
+            (name.clone(), method)
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut all_functions = parsed.functions;
     all_functions.extend(parsed.destructors.into_iter().map(|(_, f)| f));
     let mut obligations = 0;
@@ -3550,6 +3590,7 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             &functions,
             &structs,
             &drops,
+            &destructors,
             &helpers,
             &cleanup_helpers,
             session,
@@ -5121,6 +5162,105 @@ mod tests {
         }
         let broken = format!("{library} type Resource struct {{value: usize}} where(value == 1); impl Drop for Resource {{fn drop(self){{let zero = counter_decrement(&self.value);}}}}");
         assert!(verify(&broken).is_err());
+    }
+
+    #[test]
+    fn destructor_effects_cover_explicit_scope_temporary_and_replacement_cleanup() {
+        let example = include_str!("../examples/drop_effects.evg");
+        let (program, bundle) = prove(example).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        let replayed = verify_with_certificate(example, &bundle).unwrap();
+        assert_eq!(replayed.proof_search_count(), 0);
+        let declarations = example.split("fn main").next().unwrap();
+        for body in [
+            "let count: usize = 0; let guard = StoreOnDrop {target: &count, value: 42}; drop(guard); count",
+            "let count: usize = 0; StoreOnDrop {target: &count, value: 42}; count",
+            "let count: usize = 0; let saved = StoreOnDrop {target: &count, value: 42}.value; proof saved_value: saved == 42; count",
+            "let count: usize = 0; let guard = StoreOnDrop {target: &count, value: 7}; guard = StoreOnDrop {target: &count, value: 42}; proof old_dropped: count == 7; drop(guard); count",
+            "let count: usize = 0; let guards: [StoreOnDrop; 2] = [StoreOnDrop {target: &count, value: 7}, StoreOnDrop {target: &count, value: 42}]; drop(guards); count",
+        ] {
+            let source = format!("{declarations} fn main() -> usize ensures(result == 42) {{{body}}}");
+            assert_eq!(verify(&source).unwrap().run().unwrap().to_string(), "42", "{body}");
+        }
+        let reverse = format!("{declarations} fn main() -> usize ensures(result == 7) {{let count: usize = 0; let sum = StoreOnDrop {{target: &count, value: 7}}.value + StoreOnDrop {{target: &count, value: 42}}.value; proof snapshot: sum == 49; count}}");
+        assert_eq!(verify(&reverse).unwrap().run().unwrap().to_string(), "7");
+    }
+
+    #[test]
+    fn parent_cleanup_uses_final_child_fields_and_declared_effects() {
+        let source = include_str!("../examples/drop_children.evg");
+        let (program, bundle) = prove(source).unwrap();
+        let (value, events) = program.run_with_events().unwrap();
+        assert_eq!(value.to_string(), "42");
+        assert_eq!(events, ["drop Parent", "drop Child"]);
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        assert!(verify(&source.replace("modifies(self.child.target)", "")).is_err());
+        let declarations = include_str!("../examples/drop_effects.evg")
+            .split("fn main")
+            .next()
+            .unwrap();
+        let invalidated_sibling = format!("{declarations} type Positive struct {{target: &usize}} where(*target > 0); impl Drop for Positive {{fn drop(self){{let previous = *self.target - 1;}}}} type Siblings struct {{first: StoreOnDrop, last: Positive}} fn main() -> usize {{let count: usize = 1; let siblings = Siblings {{first: StoreOnDrop {{target: &count, value: 0}}, last: Positive {{target: &count}}}}; drop(siblings); 42}}");
+        assert!(verify(&invalidated_sibling).is_err());
+
+        assert!(verify(&source.replace(
+            "ensures (*self.child.target == 42)",
+            "ensures (*self.child.target == self.child.tag)"
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn parent_is_consumed_before_count_releasing_field_cleanup() {
+        let source = format!(
+            "{} {}",
+            include_str!("../stdlib/counter.evg"),
+            include_str!("../examples/drop_count.evg")
+        );
+        let (program, bundle) = prove(&source).unwrap();
+        let (value, events) = program.run_with_events().unwrap();
+        assert_eq!(value.to_string(), "0");
+        assert_eq!(events, ["drop Counted", "drop ReleaseCount"]);
+        assert_eq!(
+            verify_with_certificate(&source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let direct = format!("{} type Counted struct {{count: &usize}} where(*count > 0); impl Drop for Counted {{fn drop(self) modifies(self.count) {{let zero = counter_decrement(self.count);}}}}", include_str!("../stdlib/counter.evg"));
+        assert!(verify(&direct).is_err());
+    }
+
+    #[test]
+    fn implicit_cleanup_cannot_hide_writes_or_keep_stale_proofs() {
+        let declarations = include_str!("../examples/drop_effects.evg")
+            .split("fn main")
+            .next()
+            .unwrap();
+        for caller in [
+            "fn hidden(target: &usize) {let guard = StoreOnDrop {target: target, value: 42};}",
+            "fn hidden(guard: StoreOnDrop) {}",
+            "fn hidden(target: &usize) {StoreOnDrop {target: target, value: 42};}",
+            "fn hidden(target: &usize) {let value = StoreOnDrop {target: target, value: 42}.value;}",
+        ] {
+            let error = verify(&format!("{declarations} {caller}")).unwrap_err();
+            assert!(error.contains("matching modifies contract"), "{error}");
+        }
+        let stale = format!("{declarations} fn main() -> usize {{let count: usize = 0; proof before: count == 0; StoreOnDrop {{target: &count, value: 42}}; proof after: count == 0 by {{exact before}}; count}}");
+        assert!(verify(&stale).is_err());
+        let wrong = format!("{declarations} fn main() -> usize ensures(result == 0) {{let count: usize = 0; StoreOnDrop {{target: &count, value: 42}}; count}}");
+        assert!(verify(&wrong).is_err());
+        let alias = "type Pair struct {write: &usize, read: &usize} impl Drop for Pair {fn drop(self) modifies(self.write) {*self.write = 42;}} fn main() {let count: usize = 0; let pair = Pair {write: &count, read: &count}; drop(pair);}";
+        assert!(verify(alias).unwrap_err().contains("overlaps"));
+        let opaque = format!("{declarations} fn consume_array(guards: [StoreOnDrop; 2]) {{}}");
+        let error = verify(&opaque).unwrap_err();
+        assert!(error.contains("opaque arrays"), "{error}");
+        let empty = format!("{declarations} fn empty(guards: [StoreOnDrop; 0]) {{}} fn main() -> usize {{let guards: [StoreOnDrop; 0] = []; empty(guards); 42}}");
+        assert_eq!(verify(&empty).unwrap().run().unwrap().to_string(), "42");
     }
 
     #[test]

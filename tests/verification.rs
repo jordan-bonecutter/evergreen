@@ -84,6 +84,8 @@ fn internal_backend_needs_no_external_tools() {
         "examples/computed_places.evg",
         "examples/old_places.evg",
         "examples/reference_fields.evg",
+        "examples/drop_effects.evg",
+        "examples/drop_children.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")

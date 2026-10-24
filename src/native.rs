@@ -1201,6 +1201,8 @@ mod tests {
             include_str!("../examples/computed_places.evg"),
             include_str!("../examples/old_places.evg"),
             include_str!("../examples/reference_fields.evg"),
+            include_str!("../examples/drop_effects.evg"),
+            include_str!("../examples/drop_children.evg"),
             "fn main() -> usize where(old(1 + 1) == 2) {42}",
             "type Fixed struct {value: usize} where(value == 42); fn refresh(r: &Fixed) -> &Fixed modifies(&(*r).value) borrows(r) ensures((*r).value == 42 && (*result).value == 42) {(*r).value = 42; r} fn main() -> usize {let fixed = Fixed {value: 42}; let refreshed = refresh(&fixed); (*refreshed).value}",
             include_str!("../examples/recursion.evg"),
@@ -1284,6 +1286,13 @@ mod tests {
         );
         cases.push(
             [
+                include_str!("../stdlib/counter.evg"),
+                include_str!("../examples/drop_count.evg"),
+            ]
+            .join("\n"),
+        );
+        cases.push(
+            [
                 include_str!("../proofs/rc_protocol.evg"),
                 include_str!("../stdlib/counter.evg"),
                 include_str!("../proofs/rc_count_refinement.evg"),
@@ -1291,6 +1300,23 @@ mod tests {
             ]
             .join("\n"),
         );
+        let deferred = include_str!("../examples/drop_effects.evg")
+            .split("fn main")
+            .next()
+            .unwrap();
+        for body in [
+            "let count: usize = 0; StoreOnDrop {target: &count, value: 42}; count",
+            "let count: usize = 0; let saved = StoreOnDrop {target: &count, value: 42}.value; count",
+            "let count: usize = 0; let guard = StoreOnDrop {target: &count, value: 7}; guard = StoreOnDrop {target: &count, value: 42}; drop(guard); count",
+            "let count: usize = 0; let guards: [StoreOnDrop; 2] = [StoreOnDrop {target: &count, value: 7}, StoreOnDrop {target: &count, value: 42}]; drop(guards); count",
+            "let count: usize = 0; let sum = StoreOnDrop {target: &count, value: 7}.value + StoreOnDrop {target: &count, value: 42}.value; count",
+        ] {
+            cases.push(format!("{deferred} fn main() -> usize {{{body}}}"));
+        }
+        cases.push(format!("{deferred} fn array_scope(target: &usize) modifies(target) ensures(*target == 42) {{let guards: [StoreOnDrop; 2] = [StoreOnDrop {{target: target, value: 7}}, StoreOnDrop {{target: target, value: 42}}];}} fn main() -> usize {{let count: usize = 0; array_scope(&count); count}}"));
+        for flag in [true, false] {
+            cases.push(format!("{deferred} fn choose(target: &usize, flag: bool) -> usize modifies(target) ensures(result == *target) {{if flag {{StoreOnDrop {{target: target, value: 7}}.value}} else {{StoreOnDrop {{target: target, value: 42}}.value}}}} fn main() -> usize {{let count: usize = 0; choose(&count, {flag})}}"));
+        }
         // A factory exists only in this test fixture; the shipped credit API
         // intentionally has no public minting operation.
         let credit_test = include_str!("../stdlib/credits.evg").replace(
