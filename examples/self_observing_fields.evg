@@ -1,0 +1,31 @@
+type Mirror struct {value: usize, pointer: &usize}
+where(*pointer == value);
+
+fn set_self(view: &Mirror, value: usize)
+where((*view).pointer == &(*view).value)
+modifies(&(*view).value)
+ensures((*view).value == value && *(*view).pointer == value) {
+    (*view).value = value;
+}
+
+fn array_case() -> usize ensures(result == 42) {
+    let initial: usize = 7;
+    let data: [Mirror; 1] = [Mirror {value: 7, pointer: &initial}];
+    data[0].pointer = &data[0].value;
+    data[0].value = 42;
+    *data[0].pointer
+}
+
+fn main() -> usize ensures(result == 42) {
+    let initial: usize = 7;
+    let view = Mirror {value: 7, pointer: &initial};
+    view.pointer = &view.value;
+    // The stored pointer observes each new value in the same plane.
+    view.value = 40;
+    let field = &view.value;
+    *field = 41;
+    set_self(&view, 42);
+    proof identity: view.pointer == field;
+    let array_result = array_case();
+    *view.pointer + array_result - 42
+}

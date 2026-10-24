@@ -1605,8 +1605,10 @@ impl<'a> Context<'a> {
             let mut root = self.memory.read(reference)?.clone();
             self.replace_projection(&mut root, &fields, new)?;
             let lifted = self.opened_planes.get(&id).cloned().unwrap_or_default();
-            self.record_valid_with(&root, place.line, &lifted)?;
+            // Validate against the resulting store: a field reference may point
+            // back into this very root. Failure rejects the whole verification.
             self.memory.write(id, root.clone(), replace_plane)?;
+            self.record_valid_with(&root, place.line, &lifted)?;
             for (n, plane) in &self.roots {
                 if *plane == id {
                     self.env.insert(n.clone(), root.clone());
@@ -1689,10 +1691,10 @@ impl<'a> Context<'a> {
         };
         replace(&mut root, &fields, new)?;
         let lifted = self.opened.get(&name).cloned().unwrap_or_default();
-        self.record_valid_with(&root, place.line, &lifted)?;
         if let Some(id) = self.roots.get(&name) {
             self.memory.write(*id, root.clone(), replace_plane)?;
         }
+        self.record_valid_with(&root, place.line, &lifted)?;
         self.env.insert(name, root);
         self.validate_opened_planes(place.line)
     }
@@ -4032,6 +4034,45 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn self_observing_invariants_use_the_resulting_store() {
+        let source = include_str!("../examples/self_observing_fields.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        assert!(program.trusted_assumptions().is_empty());
+        let wrong = source.replace("view.pointer = &view.value;", "");
+        assert!(verify(&wrong).unwrap_err().contains("invariant of Mirror"));
+        let nested = "type Mirror struct {value: usize, pointer: &usize} where(*pointer == value); type Holder struct {entry: Mirror} fn main() -> usize ensures(result == 42) {let initial: usize = 7; let holder = Holder {entry: Mirror {value: 7, pointer: &initial}}; holder.entry.pointer = &holder.entry.value; holder.entry.value = 42; *holder.entry.pointer}";
+        assert_eq!(verify(nested).unwrap().run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn self_observing_invalid_stores_fail_before_a_later_restore() {
+        let source = include_str!("../examples/reject_self_observing_write.evg");
+        let line = source
+            .lines()
+            .position(|line| line.trim() == "view.value = 0;")
+            .unwrap()
+            + 1;
+        for source in [
+            source.to_owned(),
+            source.replace("view.value = 0;", "*view.pointer = 0;"),
+        ] {
+            let error = verify(&source).unwrap_err();
+            assert!(error.starts_with(&format!("line {line}:")), "{error}");
+            assert!(error.contains("invariant of PositiveView"), "{error}");
+        }
+        // An external pointee remains positive when the unrelated field changes.
+        let separate = source.replace("view.pointer = &view.value;", "");
+        assert_eq!(verify(&separate).unwrap().run().unwrap().to_string(), "7");
+    }
+
     #[test]
     fn scalar_write_helpers_work_inside_selective_updates() {
         let source = include_str!("../examples/update_calls.evg");

@@ -226,6 +226,18 @@ symbolic indices, including aliasing as described below.
 Reference returns require the exact alias contracts described below. Scalar writes
 require the explicit contracts described below.
 
+Assignments check record invariants against the resulting symbolic store. A
+stored reference can point back into the record being assigned, so checking the
+proposed fields against the old memory would read the wrong value. Both ordinary
+field writes and writes through borrows install the new store before validating
+the enclosing record; an invalid result rejects the assignment immediately.
+The same rule applies to nested records and known record-array elements.
+`examples/self_observing_fields.evg` preserves an equality between a field and
+the value read through its stored pointer, including a helper checked against
+actual overlapping inputs. `examples/reject_self_observing_write.evg` rejects
+the first zero store through a self-observing positive view, before a later
+helper could restore it. The valid example runs, builds, and replays internally.
+
 Ideal recursion requires `decreases (measure)` after the postcondition. Runtime
 recursion may omit it, in which case safety and return contracts are checked
 without a termination claim. A supplied measure must be an integer proved
@@ -957,6 +969,8 @@ The optional Lean suite checks independent specifications:
   Guarded index joins preserve bounds and read the selected cell in one plane.
   Its structural record-array model proves the field-store rule and makes
   validity of the replacement record an explicit invariant-preservation premise.
+  Its observer rule evaluates a stored pointer after the write, distinguishing
+  aliases of the target from other addresses and specifying self-observation.
 - `proofs/PropositionalProofs.lean` defines contextual derivations for the
   structural propositional rules and proves their soundness under a valuation.
   Implication introduction extends only its subproof's context; application

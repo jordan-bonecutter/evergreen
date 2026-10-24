@@ -114,6 +114,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/record_array_values.evg",
         "examples/record_array_borrows.evg",
         "examples/update_calls.evg",
+        "examples/self_observing_fields.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")
@@ -135,6 +136,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/reject_incomplete_state.evg",
         "examples/reject_record_array_invariant.evg",
         "examples/reject_update_call_intermediate.evg",
+        "examples/reject_self_observing_write.evg",
         "examples/reject_overflow.evg",
         "examples/reject_false_proof.evg",
         "examples/reject_proof_scope.evg",

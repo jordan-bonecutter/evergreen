@@ -1,0 +1,14 @@
+type PositiveView struct {value: usize, pointer: &usize} where(*pointer > 0);
+
+fn restore(value: &usize) modifies(value) ensures(*value == 7) {*value = 7;}
+
+fn main() -> usize {
+    let initial: usize = 7;
+    let view = PositiveView {value: 7, pointer: &initial};
+    view.pointer = &view.value;
+    // The invariant observes zero after this store. A later restore cannot
+    // justify the earlier invalid assignment.
+    view.value = 0;
+    restore(&view.value);
+    view.value
+}

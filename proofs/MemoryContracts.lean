@@ -59,6 +59,27 @@ def write (store : Store) (target : Address) (value : Int) : Store :=
 theorem read_write (store : Store) (target : Address) (value : Int) :
     write store target value target = value := by simp [write]
 
+-- An invariant's stored pointer observes the new memory, including when that
+-- pointer designates the field being assigned in the same record plane.
+theorem observed_predicate_after_write (store : Store) (target observed : Address)
+    (value : Int) (predicate : Int → Prop) :
+    predicate (write store target value observed) ↔
+      if observed = target then predicate value else predicate (store observed) := by
+  by_cases aliases : observed = target <;> simp [write, aliases]
+
+theorem self_observing_record_write (store : Store) (target : Address) (value : Int)
+    (predicate : Int → Int → Prop) :
+    predicate value (write store target value target) ↔ predicate value value := by
+  simp [write]
+
+example (target : Address) :
+    (fun _ : Address => (7 : Int)) target > 0 ∧
+      ¬ write (fun _ => 7) target 0 target > 0 := by simp [write]
+
+example (target : Address) :
+    ¬ (42 : Int) = (fun _ : Address => (7 : Int)) target ∧
+      42 = write (fun _ => 7) target 42 target := by simp [write]
+
 -- No disjointness premise: a dynamic index may alias the written cell.
 theorem indexed_write (store : Store) (plane i j : Nat) (value : Int) :
     write store (indexed plane i) value (indexed plane j) =
