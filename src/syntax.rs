@@ -598,6 +598,18 @@ impl Parser {
         }
         Ok(steps)
     }
+    fn ideal_statement(&mut self) -> Result<Statement, String> {
+        let statement = if self.eat("let") {
+            self.binding(false)?
+        } else {
+            let target = self.expr(0)?;
+            self.expect("=")?;
+            let value = self.expr(0)?;
+            self.expect(";")?;
+            Statement::Assign { target, value }
+        };
+        Ok(Statement::Ideal(Box::new(statement)))
+    }
     fn binding(&mut self, fact: bool) -> Result<Statement, String> {
         let mut name = self.name()?;
         if !fact && self.eat("::") {
@@ -786,8 +798,7 @@ impl Parser {
                 };
             }
             if self.eat("ideal") {
-                self.expect("let")?;
-                body.push(Statement::Ideal(Box::new(self.binding(false)?)));
+                body.push(self.ideal_statement()?);
                 continue;
             }
             if self.eat("update") {
@@ -817,7 +828,9 @@ impl Parser {
                 self.expect("{")?;
                 let mut updates = Vec::new();
                 while !self.eat("}") {
-                    if self.eat("let") {
+                    if self.eat("ideal") {
+                        updates.push(self.ideal_statement()?);
+                    } else if self.eat("let") {
                         let name = self.name()?;
                         let ty = if self.eat(":") {
                             Some(self.ty()?)

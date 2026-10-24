@@ -1721,12 +1721,28 @@ impl<'a> Context<'a> {
     fn statement_inner(&mut self, s: &Statement) -> Result<()> {
         match s {
             Statement::Ideal(binding) => {
+                if let Statement::Assign { target, .. } = binding.as_ref() {
+                    fn root(expression: &Expr) -> Option<&str> {
+                        match &expression.kind {
+                            Kind::Name(name) => Some(name),
+                            Kind::Field(base, _) | Kind::Index(base, _) => root(base),
+                            _ => None,
+                        }
+                    }
+                    let name = root(target).ok_or("ideal assignments require an ideal binding or its structural fields, without dereferencing borrowed storage")?;
+                    if !self.ideal_execution && !self.ideal_bindings.contains(name) {
+                        return Err("ideal assignments cannot modify runtime storage".into());
+                    }
+                }
                 if !matches!(
                     binding.as_ref(),
-                    Statement::Let { .. } | Statement::Destructure { .. }
+                    Statement::Let { .. }
+                        | Statement::Destructure { .. }
+                        | Statement::Assign { .. }
                 ) {
                     return Err(
-                        "ideal statements require a binding or complete record pattern".into(),
+                        "ideal statements require a binding, complete pattern, or ideal assignment"
+                            .into(),
                     );
                 }
                 let phase = std::mem::replace(&mut self.phase, Phase::Ideal);
@@ -1840,13 +1856,16 @@ impl<'a> Context<'a> {
     fn update_expression(&self, e: &Expr) -> bool {
         match &e.kind {
             Kind::Call(name, args) => {
-                self.cleanup_helpers.contains(name)
-                    && self.functions.get(name).is_some_and(|f| {
-                        f.params.len() == args.len()
-                            && f.params.iter().zip(args).all(|((parameter, _), e)| {
-                                f.ideal_params.contains(parameter) || self.update_expression(e)
-                            })
-                    })
+                if matches!(name.as_str(), "int" | "nat") {
+                    return args.len() == 1 && self.update_expression(&args[0]);
+                }
+                self.functions.get(name).is_some_and(|f| {
+                    (f.ideal || self.cleanup_helpers.contains(name))
+                        && f.params.len() == args.len()
+                        && f.params.iter().zip(args).all(|((parameter, _), e)| {
+                            f.ideal_params.contains(parameter) || self.update_expression(e)
+                        })
+                })
             }
             Kind::Record(..) | Kind::Array(..) => false,
             Kind::Unary(op, x) if op == "*" => {
@@ -1958,6 +1977,10 @@ impl<'a> Context<'a> {
                 }
                 Statement::Proof {name, proposition, ..} if self.update_expression(proposition) => {self.statement(statement)?; local_proofs.push(name.clone());},
                 Statement::Effect(value) if self.update_expression(value) => {self.statement(statement)?;},
+                Statement::Ideal(binding) => {
+                    self.statement(statement)?;
+                    locals.extend(binding.bindings().into_iter().map(str::to_owned));
+                },
                 _ => return Err(format!("line {line}: this operation needs invariant-independent effects; moves, drops, exits, and unknown effects are forbidden while invariants are open")),
             }
         }
@@ -1972,10 +1995,22 @@ impl<'a> Context<'a> {
         self.opened.clear();
         self.opened_planes.clear();
         for name in locals.into_iter().rev() {
-            if let Some(id) = self.roots.remove(&name) {
-                self.memory.take(id)?;
+            let value = if let Some(id) = self.roots.remove(&name) {
+                if self.memory.get(id).is_ok() {
+                    Some(self.memory.take(id)?)
+                } else {
+                    None
+                }
+            } else {
+                self.env.remove(&name)
+            };
+            if let Some(value) = value {
+                if self.symbol_is_affine(&value) {
+                    self.validate_argument(&value, line)?;
+                }
             }
             self.env.remove(&name);
+            self.ideal_bindings.remove(&name);
         }
         for name in local_facts {
             self.facts.remove(&name);
@@ -1983,7 +2018,7 @@ impl<'a> Context<'a> {
         for name in local_proofs {
             self.proofs.remove(&name);
         }
-        Ok(())
+        self.validate_live(line)
     }
 
     // A contents replacement preserves storage identity, including previously
@@ -4026,6 +4061,87 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ideal_assignments_and_update_locals_preserve_erasure_and_scope() {
+        let source = include_str!("../examples/ideal_update_state.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        assert!(program.trusted_assumptions().is_empty());
+        let wrong_copy = source.replace(
+            "proof original: data[0] == 7;",
+            "proof original: data[0] == 42;",
+        );
+        assert!(verify(&wrong_copy).is_err());
+        let runtime_leak = source.replace(
+            "count + updated + copied - 42",
+            "count + expected + copied - 42",
+        );
+        assert!(verify(&runtime_leak).is_err());
+        let escaped = source.replace("let updated: usize = 0;", "");
+        assert!(verify(&escaped).is_err());
+    }
+
+    #[test]
+    fn ideal_assignments_cannot_write_runtime_storage_or_revive_owners() {
+        for bad in [
+            "fn main() -> usize {let value: usize = 7; ideal value = 42; value}",
+            "fn main() -> usize {let data: [usize; 1] = [7]; ideal data[0] = 42; data[0]}",
+            "type Cell struct {value: usize} fn main() {let cell = Cell {value: 7}; ideal cell.value = 42;}",
+            "fn main() {let value: usize = 7; ideal let view = &value; ideal *view = 42;}",
+            "ideal affine type Ticket struct {units: nat} ideal fn consume(ticket: Ticket) {} fn main() {ideal let ticket = Ticket {units: 1}; ideal let gone = consume(ticket); ideal ticket = old(ticket);}",
+            "fn main() {ideal let value: nat = 1; proof original: value == 1; ideal value = 2; proof wrong: value == 1 by {exact original};}",
+            "affine type Owner struct {value: usize} type Pair struct {a: usize, b: usize} where(fact same = a == b; same); fn main() {let owner = Owner {value: 7}; let pair = Pair {a: 1, b: 1}; update(pair) lifts same {ideal let Owner {value} = owner;}}",
+            "fn change(value: &usize) -> usize modifies(value) ensures(*value == 42) {*value = 42; 0} fn main() {let value: usize = 7; ideal let data: [usize; 1] = [0]; ideal data[change(&value)] = 42;}",
+            "type Pair struct {a: usize, b: usize} where(fact same = a == b; same); fn main() {let pair = Pair {a: 1, b: 1}; ideal let original: nat = 0; ideal let view = &original; update(pair) lifts same {ideal let local: nat = 1; ideal view = &local;} proof stale: *view == 1;}",
+        ] {assert!(verify(bad).is_err(), "accepted {bad}");}
+    }
+
+    #[test]
+    fn affine_credit_bookkeeping_can_be_replaced_inside_updates() {
+        let library = format!(
+            "{} {}",
+            include_str!("../stdlib/credits.evg"),
+            include_str!("../stdlib/borrow_credits.evg")
+        );
+        let client = include_str!("../proofs/borrow_credit_updates.evg");
+        let source = format!("{library} {client}");
+        let (program, bundle) = prove(&source).unwrap();
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(
+            verify_with_certificate(&source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let wrong_order = client.replace(
+            "ledger.owners = ledger.owners - 1;\n        *count = *count - 1;",
+            "*count = *count - 1;\n        ledger.owners = ledger.owners - 1;",
+        );
+        assert!(verify(&format!("{library} {wrong_order}"))
+            .unwrap_err()
+            .contains("invariant of CountLedger"));
+        let duplicate = client.replace(
+            "ideal token = remaining;",
+            "ideal token = remaining; ideal let duplicate = remaining;",
+        );
+        assert!(verify(&format!("{library} {duplicate}")).is_err());
+        let stale = client
+            .replace("let ledger =", "ideal let old_view = &token; let ledger =")
+            .replace(
+                "proof matches_count:",
+                "proof stale: borrow_credits::units(old_view) == original; proof matches_count:",
+            );
+        assert!(verify(&format!("{library} {stale}"))
+            .unwrap_err()
+            .contains("never"));
+    }
+
     #[test]
     fn erased_borrow_resources_keep_identity_generation_and_cleanup() {
         let source = include_str!("../examples/ideal_borrow_resources.evg");

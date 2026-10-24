@@ -117,6 +117,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/self_observing_fields.evg",
         "examples/update_borrow_writes.evg",
         "examples/ideal_borrow_resources.evg",
+        "examples/ideal_update_state.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")
@@ -166,6 +167,7 @@ fn ordered_proof_units_share_checked_contracts() {
             "stdlib/credits.evg",
             "stdlib/borrow_credits.evg",
             "proofs/borrow_credits.evg",
+            "proofs/borrow_credit_updates.evg",
         ])
         .output()
         .unwrap();

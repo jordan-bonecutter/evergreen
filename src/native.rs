@@ -1227,6 +1227,7 @@ mod tests {
             include_str!("../examples/self_observing_fields.evg"),
             include_str!("../examples/update_borrow_writes.evg"),
             include_str!("../examples/ideal_borrow_resources.evg"),
+            include_str!("../examples/ideal_update_state.evg"),
             "fn main() -> usize where(old(1 + 1) == 2) {42}",
             "type Fixed struct {value: usize} where(value == 42); fn refresh(r: &Fixed) -> &Fixed modifies(&(*r).value) borrows(r) ensures((*r).value == 42 && (*result).value == 42) {(*r).value = 42; r} fn main() -> usize {let fixed = Fixed {value: 42}; let refreshed = refresh(&fixed); (*refreshed).value}",
             include_str!("../examples/recursion.evg"),
@@ -1369,6 +1370,13 @@ mod tests {
         ));
         cases.push(format!("{credit_test} {} {} fn main() -> usize {{let data: usize = 42; use_borrow_budget(credits::issue(), &data)}}",
             include_str!("../stdlib/borrow_credits.evg"), include_str!("../proofs/borrow_credits.evg")));
+        let updates = format!(
+            "{credit_test} {} {}",
+            include_str!("../stdlib/borrow_credits.evg"),
+            include_str!("../proofs/borrow_credit_updates.evg")
+        );
+        cases.push(format!("{updates} fn main() -> usize {{let count: usize = 42; release_budget(credits::issue(), &count) + 1}}"));
+        cases.push(format!("{updates} fn main() -> usize {{ideal let parts = credits::split(credits::issue(), 1); ideal let credits::Split {{left, right}} = parts; let count: usize = 1; release_budget(left, &count) + 42}}"));
         let indexed = include_str!("../examples/indexed_borrows.evg")
             .split("fn main")
             .next()

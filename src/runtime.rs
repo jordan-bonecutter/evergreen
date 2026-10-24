@@ -251,7 +251,9 @@ impl Evaluator<'_> {
                                 env.insert(name.clone(), value);
                                 locals.push(name.clone());
                             }
-                            Statement::Fact { .. } | Statement::Proof { .. } => {}
+                            Statement::Ideal(_)
+                            | Statement::Fact { .. }
+                            | Statement::Proof { .. } => {}
                             Statement::Effect(expression) => {
                                 let value = self.expr(expression, &env, None)?;
                                 self.drop_value(value)?;

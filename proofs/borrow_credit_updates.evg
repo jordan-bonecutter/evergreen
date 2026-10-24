@@ -1,0 +1,34 @@
+// Check after credits.evg and borrow_credits.evg. This is a checked numeric
+// transition with borrowed proof quantities, not deallocation authority or Rc.
+type CountLedger struct {count: &usize, owners: usize} where (
+    fact accurate = *count == owners;
+    fact zero_is_safe = *count == 0 => owners == 0;
+    accurate && zero_is_safe
+);
+
+ideal fn discard_unit(token: borrow_credits::Token)
+where(borrow_credits::units(&token) == 1) {}
+
+fn read_remaining(ideal token: borrow_credits::Token, count: &usize) -> usize
+where(borrow_credits::target(&token) == count
+    && borrow_credits::units(&token) == nat(*count))
+ensures(result == *count) {*count}
+
+fn release_budget(ideal budget: credits::Credit, count: &usize) -> usize
+where(credits::units(&budget) == nat(*count) && *count > 0)
+modifies(count) ensures(result == *count && *count == old(*count) - 1) {
+    ideal let token = borrow_credits::bind(budget, count);
+    ideal let original = borrow_credits::units(&token);
+    let ledger = CountLedger {count: count, owners: *count};
+    update(ledger) lifts accurate {
+        ideal let parts = borrow_credits::split(token, 1);
+        ideal let borrow_credits::Split {left: released, right: remaining} = parts;
+        ledger.owners = ledger.owners - 1;
+        *count = *count - 1;
+        ideal token = remaining;
+        ideal let discarded = discard_unit(released);
+        proof conserved: borrow_credits::units(&token) + 1 == original;
+    }
+    proof matches_count: borrow_credits::units(&token) == nat(*count);
+    read_remaining(token, count)
+}

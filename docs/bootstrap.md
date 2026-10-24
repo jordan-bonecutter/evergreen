@@ -46,9 +46,10 @@ interfaces, no allocation or cleanup effects, and no access to a whole refined
 object. Summaries compose through previously checked helpers.
 `examples/update_helpers.evg` demonstrates
 this distinction: `&pair.left` and a read-only scalar helper work while `&pair`
-and a whole-object observer cannot rely on the open invariant. Unknown effects,
-allocation, moves, drops, early exits, and suspension remain rejected. Borrow
-locals are scoped to the update. Owned fields cannot be replaced. Opening
+and a whole-object observer cannot rely on the open invariant. Unknown runtime
+effects, runtime allocation and ownership transfers, early exits, and suspension
+remain rejected. Borrow locals are scoped to the update. Runtime owning fields
+cannot be replaced. Opening
 an invariant does not destroy the object or relinquish its initialized fields.
 The update erases to ordinary stores, not a hardware transaction; concurrency
 will require separate visibility permissions. Outside this construct, assigning
@@ -1188,6 +1189,30 @@ can be used in proofs and erased arguments, but cannot drive runtime returns,
 branches, assignments, or borrows. Opaque representations stay private in ideal
 code, and extracting owning fields still requires a complete record pattern.
 Erased expressions cannot construct, consume, or destroy runtime owners.
+
+Existing ideal bindings can be replaced with `ideal name = expression;`, including
+their structural fields and array cells. The target must belong to an ideal
+binding or to an ideal function's local storage. Dereferencing a borrowed target
+in an ideal assignment is rejected: an erased store must not change a runtime
+pointee. Updating an ideal copy of a runtime array changes only the proof copy.
+Runtime code still cannot read the resulting ideal value or address.
+
+Selective updates also accept `ideal let` bindings, complete ideal patterns,
+and ideal assignments. Affine proof resources move normally; replacing a consumed
+outer ideal binding restores its value with the ordinary generation rules.
+Update-local proof bindings and their phase markers are removed on exit, and
+remaining typed views are rechecked after local cleanup. `examples/ideal_update_state.evg`
+checks ideal assignment, independent array copies, and reuse of a local name in
+runtime code after the update scope closes. It runs, builds, and replays internally.
+
+`proofs/borrow_credit_updates.evg` combines these rules with the borrowed-credit
+library. It splits off and consumes one unit, reduces the numeric owner ledger
+before the counter, replaces the outer ideal token, and proves the remaining
+quantity equals the counter. Check it after `credits.evg` and `borrow_credits.evg`.
+The zero-is-safe requirement stays checked at each runtime store, including the
+transition from one to zero; reversing those stores is rejected. The Lean trace
+model proves the corresponding numeric ordering rule. This is a numeric protocol
+example, with no allocation, deallocation, or actual owner-set authority.
 
 `examples/ideal_bindings.evg` runs and builds to exit status 42. Check
 `stdlib/credits.evg proofs/ideal_credit_bindings.evg` for a runtime function that

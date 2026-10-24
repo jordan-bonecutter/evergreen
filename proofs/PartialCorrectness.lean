@@ -109,4 +109,16 @@ theorem update_exit {State : Type} (retained lifted : State → Prop)
 example : Maintains (fun n : Nat => n > 0) [1, 2, 1] := by simp [Maintains]
 example : (1 : Nat) > 0 ∧ ¬ Maintains (fun n : Nat => n > 0) [1, 0, 1] := by simp [Maintains]
 
+-- Numeric release ordering, not allocation or actual owner-set authority.
+def ZeroSafe (counts : Nat × Nat) : Prop := counts.1 = 0 → counts.2 = 0
+
+theorem owner_first_release_trace (count : Nat) (positive : 0 < count) :
+    Maintains ZeroSafe [(count, count), (count, count - 1), (count - 1, count - 1)] := by
+  simp [Maintains, ZeroSafe]
+  omega
+
+theorem count_first_release_breaks_last_unit :
+    ¬ Maintains ZeroSafe [(1, 1), (0, 1), (0, 0)] := by
+  simp [Maintains, ZeroSafe]
+
 end Evergreen.PartialCorrectness
