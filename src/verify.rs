@@ -340,6 +340,7 @@ fn destructor_expression(e: &Expr) -> bool {
 }
 fn destructor_body(body: &[Statement]) -> bool {
     body.iter().all(|s| match s {
+        Statement::Ideal(binding) => destructor_body(std::slice::from_ref(binding.as_ref())),
         Statement::Destructure { .. } => false,
         Statement::Assign { target, value } => {
             destructor_expression(target) && destructor_expression(value)
@@ -984,6 +985,23 @@ impl<'a> Context<'a> {
     }
     fn statement_inner(&mut self, s: &Statement) -> Result<()> {
         match s {
+            Statement::Ideal(binding) => {
+                if !matches!(
+                    binding.as_ref(),
+                    Statement::Let { .. } | Statement::Destructure { .. }
+                ) {
+                    return Err(
+                        "ideal statements require a binding or complete record pattern".into(),
+                    );
+                }
+                let phase = std::mem::replace(&mut self.phase, Phase::Ideal);
+                let result = self.statement(binding);
+                self.phase = phase;
+                result?;
+                self.ideal_bindings
+                    .extend(binding.bindings().into_iter().map(str::to_owned));
+                Ok(())
+            }
             Statement::Destructure {
                 record,
                 fields,
@@ -3256,6 +3274,48 @@ mod tests {
             "let x = if true {consume(t)} else {consume(t)}; t.tag",
         );
         assert!(verify(&format!("{declarations}\n{invalid}")).is_err());
+    }
+
+    #[test]
+    fn ideal_bindings_are_erased_and_keep_affine_ownership() {
+        let source = include_str!("../examples/ideal_bindings.evg");
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+        for body in [
+            "ideal let n: usize = 42; n",
+            "ideal let n: usize = 1; if n == 1 {42} else {0}",
+            "ideal let n: usize = 1; let r = &n; *r",
+            "ideal let n: usize = 1; n = 2; 42",
+            "ideal let n = false; proof unsound: n; 42",
+            "ideal let n: usize = usize::MAX + 1; 42",
+        ] {
+            assert!(
+                verify(&format!("fn main() -> usize {{{body}}}")).is_err(),
+                "{body}"
+            );
+        }
+        let library = include_str!("../stdlib/credits.evg");
+        let client = include_str!("../proofs/ideal_credit_bindings.evg");
+        assert!(verify(&format!("{library} {client}")).is_ok());
+        assert!(verify(&format!(
+            "{library} {}",
+            client.replace("spend_credit(right, value)", "spend_credit(left, value)")
+        ))
+        .is_err());
+        assert!(verify(&format!(
+            "{library} {}",
+            client.replace(
+                "ideal let credits::Split {left, right} = parts;",
+                "let credits::Split {left, right} = parts;"
+            )
+        ))
+        .is_err());
+        let bad = "fn steal(ideal c: credits::Credit) -> usize {ideal let credits::Credit {units} = c; 42}";
+        assert!(verify(&format!("{library} {bad}")).is_err());
+        let observer = "type Resource struct {tag: usize} where(tag == 42); impl Drop for Resource {fn drop(self){}} ideal fn observe(r: &Resource) -> nat ensures(result == nat((*r).tag)) {nat((*r).tag)} fn main() -> usize {let r = Resource {tag: 42}; ideal let saved = observe(&r); proof correct: saved == 42; r.tag}";
+        let (value, events) = verify(observer).unwrap().run_with_events().unwrap();
+        assert_eq!(value.to_string(), "42");
+        assert_eq!(events, ["drop Resource"]);
+        assert!(verify(&observer.replace("observe(&r)", "drop(r)")).is_err());
     }
 
     #[test]

@@ -724,7 +724,7 @@ impl Emitter<'_> {
     }
     fn statement_inner(&mut self, statement: &Statement) -> Result<()> {
         match statement {
-            Statement::Fact { .. } | Statement::Proof { .. } => Ok(()),
+            Statement::Ideal(_) | Statement::Fact { .. } | Statement::Proof { .. } => Ok(()),
             Statement::Let { name, ty, value } => {
                 let ty = self.expr(value, ty.as_ref())?;
                 self.slot(name, ty)
@@ -978,7 +978,7 @@ fn emit_mode(program: &VerifiedProgram, trace: TraceMode) -> Result<Vec<u8>> {
         let names = params
             .iter()
             .map(|(n, _)| n.as_str())
-            .chain(function.body.iter().flat_map(Statement::bindings))
+            .chain(function.body.iter().flat_map(Statement::runtime_bindings))
             .collect::<Vec<_>>();
         for name in names.into_iter().rev() {
             if emitter.alive.remove(name) {
@@ -1172,6 +1172,8 @@ mod tests {
             std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
         fs::create_dir(&directory).unwrap();
         let mut cases = [
+            include_str!("../examples/ideal_bindings.evg"),
+            "type Resource struct {tag: usize} where(tag == 42); impl Drop for Resource {fn drop(self){}} ideal fn observe(r: &Resource) -> nat ensures(result == nat((*r).tag)) {nat((*r).tag)} fn main() -> usize {let r = Resource {tag: 42}; ideal let saved = observe(&r); proof correct: saved == 42; r.tag}",
             include_str!("../examples/erased_resources.evg"),
             "fn answer(ideal expected: nat) -> usize where(expected == 42) ensures(result == 42) {42} fn caller(n: usize) -> usize where(n == 42) ensures(result == 42) {n = 0; answer(nat(old(n)))} fn main() -> usize {caller(42)}",
             "fn answer(ideal data: [usize; 1]) -> usize where(data[0] == 42) ensures(result == 42) {42} fn main() -> usize {answer([42])}",
@@ -1251,6 +1253,16 @@ mod tests {
             ]
             .join("\n"),
         );
+        // A factory exists only in this test fixture; the shipped credit API
+        // intentionally has no public minting operation.
+        let credit_test = include_str!("../stdlib/credits.evg").replace(
+            "module credits {",
+            "module credits {ideal fn issue() -> Credit ensures(result.units == 42) {Credit {units: 42}}",
+        );
+        cases.push(format!(
+            "{credit_test} {} fn main() -> usize {{use_budget(credits::issue(), 42)}}",
+            include_str!("../proofs/ideal_credit_bindings.evg")
+        ));
         let indexed = include_str!("../examples/indexed_borrows.evg")
             .split("fn main")
             .next()

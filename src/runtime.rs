@@ -242,7 +242,7 @@ impl Evaluator<'_> {
                     let value = self.expr(e, &env, None)?;
                     self.drop_value(value)?;
                 }
-                Statement::Fact { .. } | Statement::Proof { .. } => {}
+                Statement::Ideal(_) | Statement::Fact { .. } | Statement::Proof { .. } => {}
                 Statement::Let { name, ty, value } => {
                     let v = self.expr(value, &env, ty.as_ref())?;
                     env.insert(name.clone(), v);
@@ -260,7 +260,7 @@ impl Evaluator<'_> {
         names.extend(
             f.body
                 .iter()
-                .flat_map(|s| s.bindings().into_iter().map(str::to_owned)),
+                .flat_map(|s| s.runtime_bindings().into_iter().map(str::to_owned)),
         );
         for name in names.into_iter().rev() {
             let live = if let Some(id) = self.roots.get(&name) {

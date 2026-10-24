@@ -682,3 +682,26 @@ Proof artifacts bind the regenerated verification conditions as well as the
 source. Strengthening the checker can invalidate a cache even when source text
 is unchanged; re-prove it with the new checker. The checked-in RC protocol
 artifact now has a regression test that replays it without proof search.
+
+Function-local proof data uses `ideal let`, including complete patterns:
+
+```evergreen
+ideal let original = credits::units(&credit);
+ideal let parts = credits::split(credit, nat(amount));
+ideal let credits::Split {left, right} = parts;
+proof conserved: credits::units(&left) + credits::units(&right) == original;
+```
+
+The bindings are checked with ideal execution and ordinary affine ownership
+rules, then erased from runtime storage, evaluation, and cleanup. Their values
+can be used in proofs and erased arguments, but cannot drive runtime returns,
+branches, assignments, or borrows. Opaque representations stay private in ideal
+code, and extracting owning fields still requires a complete record pattern.
+Erased expressions cannot construct, consume, or destroy runtime owners.
+
+`examples/ideal_bindings.evg` runs and builds to exit status 42. Check
+`stdlib/credits.evg proofs/ideal_credit_bindings.evg` for a runtime function that
+splits an existing ideal budget and consumes each part once through erased
+parameters. The shipped library still has no mint operation. The optional Lean
+backend evaluates these local bindings as mathematical data in its ideal
+reference model, while Evergreen's runtime backends erase them.

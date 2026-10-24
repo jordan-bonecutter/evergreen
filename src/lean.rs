@@ -204,6 +204,13 @@ impl Emitter {
         self.env.remove("result");
         let mut body = String::new();
         for s in &f.body {
+            // This backend evaluates the ideal reference model, where erased
+            // proof-data bindings remain mathematical let expressions.
+            let s = if let Statement::Ideal(binding) = s {
+                binding.as_ref()
+            } else {
+                s
+            };
             match s {
                 Statement::Let { name, ty, value } => {
                     self.fresh(name)?;

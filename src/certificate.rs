@@ -426,6 +426,7 @@ mod tests {
         let source = [
             include_str!("../stdlib/credits.evg"),
             include_str!("../proofs/opaque_credits.evg"),
+            include_str!("../proofs/ideal_credit_bindings.evg"),
         ]
         .join("\n");
         let (_, bundle) = prove(&source).unwrap();
@@ -466,6 +467,7 @@ mod tests {
     #[test]
     fn replay_checks_certificates_without_search() {
         for source in [
+            include_str!("../examples/ideal_bindings.evg"),
             include_str!("../examples/erased_resources.evg"),
             include_str!("../examples/opaque_values.evg"),
             include_str!("../examples/indexed_borrows.evg"),

@@ -95,6 +95,7 @@ pub enum Kind {
 }
 #[derive(Clone, Debug)]
 pub enum Statement {
+    Ideal(Box<Statement>),
     Destructure {
         record: String,
         fields: Vec<(String, String)>,
@@ -129,11 +130,19 @@ pub enum Statement {
 impl Statement {
     pub fn bindings(&self) -> Vec<&str> {
         match self {
+            Self::Ideal(binding) => binding.bindings(),
             Self::Let { name, .. } => vec![name],
             Self::Destructure { fields, .. } => {
                 fields.iter().map(|(_, name)| name.as_str()).collect()
             }
             _ => Vec::new(),
+        }
+    }
+    pub fn runtime_bindings(&self) -> Vec<&str> {
+        if matches!(self, Self::Ideal(_)) {
+            Vec::new()
+        } else {
+            self.bindings()
         }
     }
 }
@@ -224,6 +233,7 @@ impl Parser {
                     | "borrows"
                     | "module"
                     | "opaque"
+                    | "ideal"
                     | "if"
                     | "else"
                     | "true"
@@ -533,6 +543,58 @@ impl Parser {
         }
         Ok(steps)
     }
+    fn binding(&mut self, fact: bool) -> Result<Statement, String> {
+        let mut name = self.name()?;
+        if !fact && self.eat("::") {
+            name.push_str("::");
+            name.push_str(&self.name()?);
+            if self.peek() != "{" {
+                return Err(self.err("qualified let names require a record pattern"));
+            }
+        }
+        if !fact && self.eat("{") {
+            let mut fields = Vec::new();
+            if !self.eat("}") {
+                loop {
+                    let field = self.name()?;
+                    let binding = if self.eat(":") {
+                        self.name()?
+                    } else {
+                        field.clone()
+                    };
+                    fields.push((field, binding));
+                    if self.eat("}") {
+                        break;
+                    }
+                    self.expect(",")?;
+                    if self.eat("}") {
+                        break;
+                    }
+                }
+            }
+            self.expect("=")?;
+            let value = self.expr(0)?;
+            self.expect(";")?;
+            return Ok(Statement::Destructure {
+                record: name,
+                fields,
+                value,
+            });
+        }
+        let ty = if !fact && self.eat(":") {
+            Some(self.ty()?)
+        } else {
+            None
+        };
+        self.expect("=")?;
+        let value = self.expr(0)?;
+        self.expect(";")?;
+        Ok(if fact {
+            Statement::Fact { name, value }
+        } else {
+            Statement::Let { name, ty, value }
+        })
+    }
     fn function(&mut self, receiver: Option<&str>, ideal: bool) -> Result<Function, String> {
         let line = self.line();
         self.expect("fn")?;
@@ -617,6 +679,11 @@ impl Parser {
                     kind: Kind::Unit,
                     line: self.line(),
                 };
+            }
+            if self.eat("ideal") {
+                self.expect("let")?;
+                body.push(Statement::Ideal(Box::new(self.binding(false)?)));
+                continue;
             }
             if self.eat("update") {
                 let line = self.line();
@@ -710,57 +777,7 @@ impl Parser {
             if !fact {
                 self.expect("let")?;
             }
-            let mut name = self.name()?;
-            if !fact && self.eat("::") {
-                name.push_str("::");
-                name.push_str(&self.name()?);
-                if self.peek() != "{" {
-                    return Err(self.err("qualified let names require a record pattern"));
-                }
-            }
-            if !fact && self.eat("{") {
-                let mut fields = Vec::new();
-                if !self.eat("}") {
-                    loop {
-                        let field = self.name()?;
-                        let binding = if self.eat(":") {
-                            self.name()?
-                        } else {
-                            field.clone()
-                        };
-                        fields.push((field, binding));
-                        if self.eat("}") {
-                            break;
-                        }
-                        self.expect(",")?;
-                        if self.eat("}") {
-                            break;
-                        }
-                    }
-                }
-                self.expect("=")?;
-                let value = self.expr(0)?;
-                self.expect(";")?;
-                body.push(Statement::Destructure {
-                    record: name,
-                    fields,
-                    value,
-                });
-                continue;
-            }
-            let ty = if !fact && self.eat(":") {
-                Some(self.ty()?)
-            } else {
-                None
-            };
-            self.expect("=")?;
-            let value = self.expr(0)?;
-            self.expect(";")?;
-            body.push(if fact {
-                Statement::Fact { name, value }
-            } else {
-                Statement::Let { name, ty, value }
-            });
+            body.push(self.binding(fact)?);
         };
         self.expect("}")?;
         let proof = if self.eat("proof") {

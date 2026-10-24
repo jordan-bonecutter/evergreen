@@ -67,6 +67,7 @@ impl Scope<'_> {
     }
     fn statement(&self, statement: &mut Statement) {
         match statement {
+            Statement::Ideal(binding) => self.statement(binding),
             Statement::Let { ty, value, .. } => {
                 if let Some(ty) = ty {
                     self.ty(ty);
