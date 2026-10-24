@@ -1,0 +1,7 @@
+fn main() -> usize {
+    let values = vec::new(4);
+    vec::push(&values, 7);
+    vec::push(&values, 42);
+    values = vec::reallocate(&values, 8);
+    vec::pop(&values)
+}

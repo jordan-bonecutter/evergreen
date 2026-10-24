@@ -3189,3 +3189,30 @@ fn cleanup_can_write_live_owned_heap_and_pending_return_allocations() {
     let stale = "type Guard struct {slot: &plane(usize)} impl Drop for Guard {fn drop(self) {fact readable = **self.slot == 7;}} fn finish() -> plane(usize) {let owner: plane(usize) = alloc(7); let guard = Guard {slot: &owner}; owner} fn main() -> usize {let owner = finish(); *owner}";
     assert!(verify(stale).is_err());
 }
+
+#[test]
+fn owned_word_vectors_check_capacity_and_reference_lifetimes() {
+    let source = include_str!("../../../examples/vec.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    for source in [
+        "fn main() -> usize {let v = vec::new(0); vec::push(&v, 1); 0}",
+        "fn main() -> usize {let v = vec::new(2); vec::pop(&v)}",
+        "fn main() -> usize {let v = vec::new(2); *vec::get(&v, 0)}",
+        "fn main() -> usize {let v = vec::new(1); vec::push(&v, 42); let p = vec::get(&v, 0); v = vec::reallocate(&v, 2); *p}",
+        "fn main() -> usize {let v = vec::new(2); vec::push(&v, 42); v = vec::reallocate(&v, 0); 0}",
+        "fn main() -> usize {let v = vec::new(8193); 0}",
+    ] {
+        assert!(verify(source).is_err(), "accepted invalid vector operation: {source}");
+    }
+    let source = "type Buffer struct {cap: usize, data: plane(usize, cap)} fn main() -> usize {let cap: usize = 7; let data: plane(usize, 2) = alloc(2, 42); let buffer = Buffer {cap: 2, data: data}; (*buffer.data)[1]}";
+    assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+    assert!(verify(&source.replace("Buffer {cap: 2", "Buffer {cap: 3")).is_err());
+}

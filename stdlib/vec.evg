@@ -1,0 +1,81 @@
+// An owned vector of initialized machine words. Capacity changes are explicit.
+module vec {
+    opaque type Vec struct {
+        cap: usize,
+        len: usize,
+        data: plane(usize, cap)
+    } where (
+        fact length_fits = len <= cap;
+        length_fits
+    );
+
+    fn new(capacity: usize) -> Vec
+    where(capacity <= 8192)
+    ensures(result.len == 0 && result.cap == capacity) {
+        let data: plane(usize, capacity) = alloc(capacity, 0);
+        Vec {cap: capacity, len: 0, data: data}
+    }
+
+    fn length(value: &Vec) -> usize
+    ensures(result == (*value).len) { (*value).len }
+
+    fn capacity(value: &Vec) -> usize
+    ensures(result == (*value).cap) { (*value).cap }
+
+    fn get(value: &Vec, index: usize) -> &usize
+    where(index < (*value).len)
+    borrows(&(*(*value).data)[index]) {
+        &(*(*value).data)[index]
+    }
+
+    fn push(value: &Vec, item: usize)
+    where((*value).len < (*value).cap)
+    modifies(&(*value).len, &(*(*value).data)[(*value).len])
+    ensures((*value).len == old((*value).len) + 1) {
+        (*(*value).data)[(*value).len] = item;
+        (*value).len = (*value).len + 1;
+    }
+
+    fn pop(value: &Vec) -> usize
+    where((*value).len > 0)
+    modifies(&(*value).len)
+    ensures((*value).len + 1 == old((*value).len)) {
+        let item = (*(*value).data)[(*value).len - 1];
+        (*value).len = (*value).len - 1;
+        item
+    }
+
+    fn copy_one(source_capacity: usize,
+        source: linear_plane(usize, source_capacity),
+        target_capacity: usize,
+        target: linear_plane(usize, target_capacity), index: usize) -> usize
+    where(index < source_capacity && index < target_capacity)
+    modifies(&(*target)[index])
+    ensures(result == index + 1) {
+        (*target)[index] = (*source)[index];
+        index + 1
+    }
+
+    fn copy_prefix(source_capacity: usize,
+        source: linear_plane(usize, source_capacity),
+        target_capacity: usize,
+        target: linear_plane(usize, target_capacity), count: usize, index: usize)
+    where(index <= count && count <= source_capacity && count <= target_capacity)
+    modifies(target) {
+        if index == count { () } else {
+            copy_prefix(source_capacity, source, target_capacity, target, count,
+                copy_one(source_capacity, source, target_capacity, target, index))
+        }
+    }
+
+    // Return a fresh allocation. Assigning this result over the old Vec releases
+    // its old allocation and invalidates outstanding references into that buffer.
+    fn reallocate(value: &Vec, new_capacity: usize) -> Vec
+    where((*value).len <= new_capacity && new_capacity <= 8192)
+    ensures(result.len == (*value).len && result.cap == new_capacity) {
+        let data: plane(usize, new_capacity) = alloc(new_capacity, 0);
+        copy_prefix((*value).cap, &*(*value).data, new_capacity, &*data,
+            (*value).len, 0);
+        Vec {cap: new_capacity, len: (*value).len, data: data}
+    }
+}

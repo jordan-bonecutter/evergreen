@@ -1724,3 +1724,36 @@ mutation, borrowed views, and returned ownership in both backends without trust.
 The full relationship between mutable dependent fields and logical Vec length is
 being worked through with the vector implementation; this does not claim support
 for uninitialized generic element storage or arbitrary resizing in place.
+
+### Owned machine-word vector
+
+`stdlib/vec.evg` supplies an initial `vec::Vec` with an opaque three-word
+representation: capacity, length, and an owning pointer whose extent depends on
+capacity. `examples/vec.evg` checks and runs without explicitly supplying library
+files:
+
+```sh
+cargo run -- run examples/vec.evg
+cargo run -- build examples/vec.evg -o /tmp/vec
+```
+
+`new(capacity)` allocates initialized `usize` storage; `push(&value, item)` requires
+spare capacity, `pop(&value)` requires a nonempty vector, and `get(&value, index)`
+returns a checked reference to an element below length. `length` and `capacity`
+expose those quantities without exposing the representation. Allocation is still
+bounded by the bootstrap's 64 KiB payload limit.
+
+`value = vec::reallocate(&value, new_capacity)` copies the live prefix to a fresh
+allocation and releases the previous buffer on assignment. Existing references
+into the released buffer become invalid. Pushes within capacity retain the same
+allocation, preserving references to existing cells. Reallocation must accommodate
+all live elements; shrinking below length is rejected.
+
+This is a machine-word specialization with explicit reallocation, not yet the
+README's generic vector. All capacity slots are initialized copyable values;
+uninitialized slots and arbitrary element destructors need further work. The
+checker proves access bounds, ownership, and the length/capacity invariant. Prefix
+copying is implemented in Evergreen with bounded recursive execution and exercised
+in interpreter/native comparisons; its contract does not yet prove preservation
+of every copied element. No vector-specific compiler primitive or trusted proof
+was added.

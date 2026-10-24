@@ -127,6 +127,8 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        include_str!("../../../examples/vec.evg"),
+        "fn main() -> usize {let v = vec::new(0); v = vec::reallocate(&v, 2); vec::push(&v, 42); let p = vec::get(&v, 0); vec::push(&v, 7); *p}",
         include_str!("../../../examples/runtime_planes.evg"),
         "fn main() -> usize {let a: plane(usize, 0) = alloc(0, 7); let b: plane(usize, 0) = alloc(0, 9); if &*a != &*b {42} else {1}}",
         "fn first(n: usize, data: linear_plane(u8, n), fixed: array(u16, 2)) -> u8 where(n > 0) {(*data)[0]} fn main() -> u8 {let data: array(u8, 1) = [42]; first(1, &data, [7, 9])}",

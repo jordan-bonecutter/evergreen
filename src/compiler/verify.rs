@@ -2812,8 +2812,15 @@ impl<'a> Context<'a> {
                             Some(&Ty::Array(Box::new(element), Linear::number(0))),
                         )?
                     } else if matches!(ty, Type::Plane(_)) {
-                        let ty = self.resolve(ty)?;
-                        self.eval(value, Some(&ty))?
+                        // Dependent field types refer to preceding record fields,
+                        // while initializer expressions still use the caller's scope.
+                        let caller = self.clone_env()?;
+                        let caller_roots = std::mem::take(&mut self.roots);
+                        self.env = fields.clone();
+                        let resolved = self.resolve(ty);
+                        self.env = caller;
+                        self.roots = caller_roots;
+                        self.eval(value, Some(&resolved?))?
                     } else {
                         self.eval(value, hint.as_ref())?
                     };
