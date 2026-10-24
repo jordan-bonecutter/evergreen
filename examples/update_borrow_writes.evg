@@ -1,0 +1,61 @@
+// Numeric accounting only; no allocation ownership is supplied by this ledger.
+type Ledger struct {count: &usize, owners: usize} where (
+    fact accurate = *count == owners;
+    fact zero_is_safe = *count == 0 => owners == 0;
+    accurate && zero_is_safe
+);
+
+fn borrowed(count: &usize) -> usize
+where(*count == 41) modifies(count) ensures(*count == 42 && result == 42) {
+    let ledger = Ledger {count: count, owners: 41};
+    update(ledger) lifts accurate {
+        let view = ledger.count;
+        *view = 42;
+        proof weak: ledger::zero_is_safe;
+        ledger.owners = *view;
+    }
+    *ledger.count
+}
+
+fn indexed(flag: bool) -> usize ensures(result == 42) {
+    let data: [usize; 2] = [41, 41];
+    let index: usize = if flag {0} else {1};
+    let ledger = Ledger {count: &data[index], owners: 41};
+    update(ledger) lifts accurate {
+        data[index] = 42;
+        index = if flag {1} else {0};
+        proof framed: data[index] == 41;
+        // Reassigning index does not retarget the ledger's existing borrow.
+        ledger.owners = *ledger.count;
+    }
+    *ledger.count
+}
+
+fn select(count: &usize, visits: &usize) -> &usize
+where(*visits < usize::MAX) modifies(visits) borrows(count)
+ensures(*visits == old(*visits) + 1) {
+    *visits = *visits + 1;
+    count
+}
+
+fn once() -> usize ensures(result == 42) {
+    let count: usize = 41;
+    let visits: usize = 0;
+    let ledger = Ledger {count: &count, owners: 41};
+    update(ledger) lifts accurate {
+        // Selecting this lvalue must execute exactly once.
+        *select(ledger.count, &visits) = 42;
+        proof selected_once: visits == 1;
+        ledger.owners = *ledger.count;
+    }
+    *ledger.count + visits - 1
+}
+
+fn main() -> usize ensures(result == 42) {
+    let count: usize = 41;
+    let a = borrowed(&count);
+    let b = indexed(true);
+    let c = indexed(false);
+    let d = once();
+    a + b + c + d - 126
+}

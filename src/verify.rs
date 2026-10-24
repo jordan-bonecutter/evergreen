@@ -1869,13 +1869,6 @@ impl<'a> Context<'a> {
         body: &[Statement],
         line: usize,
     ) -> Result<()> {
-        fn root(e: &Expr) -> Option<&str> {
-            match &e.kind {
-                Kind::Name(n) => Some(n),
-                Kind::Field(b, _) => root(b),
-                _ => None,
-            }
-        }
         if !self.opened_planes.is_empty() {
             return Err("nested invariant updates are not supported yet".into());
         }
@@ -1947,11 +1940,10 @@ impl<'a> Context<'a> {
         let mut local_proofs = Vec::new();
         for statement in body {
             match statement {
-                Statement::Assign {target, value} if matches!(target.kind, Kind::Field(..)) && self.update_expression(value) => {
-                    let name = root(target).ok_or("update writes must target local struct fields")?;
-                    if !self.opened.contains_key(name) { return Err(format!("line {}: {name} was not opened by this update", target.line)); }
-                    let old = self.storage(target)?;
-                    if !matches!(old, Symbol::Number(..) | Symbol::Bool(_)) { return Err(format!("line {}: updates currently allow only scalar fields; replacing owned fields requires destructor/effect proofs", target.line)); }
+                Statement::Assign {target, value} if self.update_expression(target) && self.update_expression(value) => {
+                    // Inspect the type without evaluating the target twice:
+                    // computing an address may itself call a checked helper.
+                    if !matches!(self.hint(target), Some(Ty::Machine(_) | Ty::Int | Ty::Nat | Ty::Bool)) { return Err(format!("line {}: updates currently allow only scalar writes; replacing owned fields requires destructor/effect proofs", target.line)); }
                     self.assign(target, value)?;
                 }
                 Statement::Let {name, value, ..} if self.update_expression(value) => {
@@ -4034,6 +4026,57 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn updates_accept_scalar_borrow_and_index_writes_without_repeating_lvalues() {
+        let source = include_str!("../examples/update_borrow_writes.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        assert!(program.trusted_assumptions().is_empty());
+        let no_grant = source.replace("modifies(count)", "");
+        assert!(verify(&no_grant).unwrap_err().contains("effect contract"));
+        let wrong = source.replace(
+            "proof selected_once: visits == 1;",
+            "proof selected_once: visits == 2;",
+        );
+        assert!(verify(&wrong).is_err());
+        let overflow = source.replace("let visits: usize = 0;", "let visits: usize = usize::MAX;");
+        assert!(verify(&overflow)
+            .unwrap_err()
+            .contains("precondition of select"));
+    }
+
+    #[test]
+    fn update_borrow_writes_keep_retained_and_unopened_invariants() {
+        let source = include_str!("../examples/reject_update_borrow_write.evg");
+        let line = source
+            .lines()
+            .position(|line| line.trim() == "*ledger.count = 0;")
+            .unwrap()
+            + 1;
+        let error = verify(source).unwrap_err();
+        assert!(error.starts_with(&format!("line {line}:")), "{error}");
+        assert!(error.contains("invariant of Ledger"), "{error}");
+        let indexed = source
+            .replace("let count: usize = 41;", "let data: [usize; 1] = [41];")
+            .replace("count: &count", "count: &data[0]")
+            .replace("*ledger.count = 0;", "data[0] = 0;");
+        assert!(verify(&indexed)
+            .unwrap_err()
+            .contains("invariant of Ledger"));
+        let unopened = "type Pair struct {left: usize, right: usize} where(fact balanced = left == right; balanced); type Positive struct {value: usize} where(value > 0); fn main() {let pair = Pair {left: 7, right: 7}; let positive = Positive {value: 1}; let view = &positive.value; update(pair) lifts balanced {*view = 0;}}";
+        assert!(verify(unopened)
+            .unwrap_err()
+            .contains("invariant of Positive"));
+        let owning = "type Owner struct {value: usize} impl Drop for Owner {fn drop(self){}} type Pair struct {left: usize, right: usize} where(fact balanced = left == right; balanced); fn main() {let pair = Pair {left: 7, right: 7}; let owner = Owner {value: 1}; update(pair) lifts balanced {owner = owner;}}";
+        assert!(verify(owning).unwrap_err().contains("only scalar writes"));
+    }
+
     #[test]
     fn self_observing_invariants_use_the_resulting_store() {
         let source = include_str!("../examples/self_observing_fields.evg");

@@ -39,7 +39,7 @@ can be referenced as `place::name` in proof code. Merely declaring a type fact
 does not require it to hold: only the final `where` proposition imposes a
 constraint. Lifted names must be declared facts used as independent conjuncts
 of that constraint. `Type::name` can qualify a lifted selector. Its body allows
-checked scalar-field writes, local scalar values/borrows, and pure facts; each
+checked scalar writes, local scalar values/borrows, and pure facts; each
 invariant must hold again on exit. Runtime calls require an inferred scalar
 ownership-free effect summary: total execution, scalar values or scalar-reference
 interfaces, no allocation or cleanup effects, and no access to a whole refined
@@ -597,6 +597,21 @@ its final postcondition restores the old valid state. The independent trace
 model in `proofs/PartialCorrectness.lean` separates validity at every state from
 an endpoint postcondition and proves composition of checked traces. This remains
 a specification rather than a proof of the Rust implementation.
+
+Direct scalar writes use the same permissions and retained-invariant checks.
+An update may assign through a scalar borrow, to a scalar array element, or to
+a scalar binding; the typed target and all index bounds must still check.
+Closed objects retain their full invariant checks. Only the explicitly named
+requirements on opened planes are lifted. Assigning records, arrays, or reference
+slots remains outside this scalar rule. The checker inspects the target's type
+without evaluating its address twice, so a checked helper that selects the
+lvalue executes once, before the right-hand side.
+
+`examples/update_borrow_writes.evg` checks a declared write through an incoming
+borrow, a symbolic array cell, a reassigned index with an earlier fixed borrow,
+and an effectful lvalue selector. It runs, builds, and replays internally.
+`examples/reject_update_borrow_write.evg` rejects a direct borrowed store that
+violates the retained zero-count requirement, before a later restoration.
 
 Scalar modifying calls also work inside conditional expressions. Verification
 forks the symbolic store, checks each branch, and joins changed values with

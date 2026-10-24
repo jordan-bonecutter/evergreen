@@ -1,0 +1,15 @@
+type Ledger struct {count: &usize, owners: usize} where (
+    fact accurate = *count == owners;
+    fact zero_is_safe = *count == 0 => owners == 0;
+    accurate && zero_is_safe
+);
+
+fn main() {
+    let count: usize = 41;
+    let ledger = Ledger {count: &count, owners: 41};
+    update(ledger) lifts accurate {
+        // Retained requirements also apply to direct borrowed stores.
+        *ledger.count = 0;
+        *ledger.count = 41;
+    }
+}
