@@ -1618,3 +1618,31 @@ one ledger transition and a failed/saturated attempt leaves the ledger unchanged
 assuming the corresponding owner/retiring token is held and the comparison
 happens at the modeled atomic point. Connecting that assumption to the compiler's
 future shared-invariant rule and to the instruction memory model remains work.
+
+### Checked machine integer conversions
+
+Calling a machine integer type converts an integer while preserving its
+mathematical value: `u8(value)`, `i16(value)`, `usize(value)`, and so on. The
+checker proves both destination bounds. This is not a truncating or wrapping
+cast, a pointer conversion, or a way to materialize erased data at runtime.
+
+```evg
+fn narrow(value: usize) -> u8
+where(value <= 255)
+ensures(nat(result) == nat(value)) {u8(value)}
+```
+
+A branch checking a signed result is nonnegative can use `usize(result)` inside
+that branch. Narrowing a value whose range has not been proved fails even if a
+particular caller currently passes a small constant. Conversions do not widen
+arithmetic inside their argument: `i16(i8::MAX + 1)` still rejects the overflowing
+`i8` addition; widen the operand before performing that addition instead.
+Untyped literals receive the destination's contextual type.
+
+Conversions are pure and permitted in checked entry snapshots and scalar cleanup
+helpers. In ideal/specification code they can relate mathematical integers to
+bounded machine values, but ordinary runtime code cannot read ideal inputs or
+mathematical views through a conversion. Machine type names are reserved at
+function declarations. The native backend needs no conversion instruction after
+a correctly extended load when the checker has proved representability.
+`examples/integer_conversions.evg` runs and builds without trusted assumptions.

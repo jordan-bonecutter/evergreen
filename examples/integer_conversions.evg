@@ -1,0 +1,22 @@
+fn narrow(value: usize) -> u8
+where(value <= 255)
+ensures(nat(result) == nat(value)) {
+    u8(value)
+}
+
+fn widen(value: i8) -> i16
+ensures(int(result) == int(value)) {i16(value)}
+
+fn byte_or_zero(value: isize) -> u8 {
+    if value >= 0 && value <= 255 {u8(value)} else {0}
+}
+
+fn main() -> usize {
+    let small = narrow(255);
+    let signed = widen(i8::MIN);
+    let count = usize(isize(42));
+    let bytes: [u8; 2] = [u8(count), small];
+    let sum: u16 = u16(bytes[0]) + u16(bytes[1]);
+    proof values: small == 255 && signed == -128 && count == 42 && sum == 297;
+    if byte_or_zero(-1) == 0 && byte_or_zero(256) == 0 && sum == 297 {42} else {1}
+}

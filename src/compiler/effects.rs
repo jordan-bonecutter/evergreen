@@ -2,7 +2,7 @@
 //! are read-only; ownership-free helpers may use checked write contracts.
 //! Unknown effects remain unknown; callers must not assume they are harmless.
 
-use crate::syntax::{Expr, Function, Kind, Statement, Type};
+use crate::syntax::{Expr, Function, Kind, MachineInt, Statement, Type};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn scalar(t: &Type) -> bool {
@@ -30,6 +30,9 @@ fn hint(
         }
         Kind::Unary(_, x) => hint(x, env, functions),
         Kind::Binary(_, a, b) => hint(a, env, functions).or_else(|| hint(b, env, functions)),
+        Kind::Call(n, _) if MachineInt::parse(n).is_some() => {
+            MachineInt::parse(n).map(Type::Machine)
+        }
         Kind::Call(n, _) => functions.get(n).map(|f| f.ret.clone()),
         _ => None,
     }
@@ -120,6 +123,18 @@ fn expression(
             let t = expression(a, expected, env, functions, safe)?;
             expression(b, Some(&t), env, functions, safe)?;
             t
+        }
+        Kind::Call(n, args) if MachineInt::parse(n).is_some() => {
+            let [argument] = args.as_slice() else {
+                return None;
+            };
+            let target = Type::Machine(MachineInt::parse(n)?);
+            let source = hint(argument, env, functions).unwrap_or_else(|| target.clone());
+            if !matches!(source, Type::Machine(_)) {
+                return None;
+            }
+            expression(argument, Some(&source), env, functions, safe)?;
+            target
         }
         Kind::Call(n, args) => {
             if !safe.contains(n) {

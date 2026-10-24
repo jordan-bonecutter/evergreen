@@ -114,6 +114,9 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        include_str!("../../../examples/integer_conversions.evg"),
+        "fn main() -> usize {let small: i32 = i32::MIN; let wide = i64(small); let positive = u64(u32::MAX); if wide == -2147483648 && positive == 4294967295 {42} else {1}}",
+        "fn widen(n: u8) -> usize ensures(nat(result) == nat(n)) {usize(n)} type Resource struct {tag: u8} where(tag == 7); impl Drop for Resource {fn drop(self) {let tag = widen(self.tag); proof valid: tag == 7;}} fn change(n: &u8) where(*n < u8::MAX) modifies(n) ensures(usize(*n) == old(usize(*n)) + 1) {*n = *n + 1;} fn main() -> usize {let resource = Resource {tag: 7}; let n: u8 = 41; change(&n); widen(n)}",
         "fn first(bytes: &[u8; length], length: usize) -> u8 where(length > 0) {(*bytes)[0]} fn change(length: &usize) -> usize modifies(length) ensures(result == 2 && *length == 2) {*length = 2; 2} fn main() -> u8 {let length: usize = 1; let bytes: [u8; 2] = [42, 7]; let byte = first(&bytes, change(&length)); if byte == 42 && length == 2 {42} else {1}}",
         include_str!("../../../examples/native_layouts.evg"),
         "type Tiny struct {data: [u8; 3]} impl Drop for Tiny {fn drop(self) {}} fn forward(value: Tiny) -> Tiny {value} fn main() -> u8 {let item = forward(Tiny {data: [1, 2, 42]}); item.data[2]}",

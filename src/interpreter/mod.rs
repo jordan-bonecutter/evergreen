@@ -159,6 +159,9 @@ impl Evaluator<'_> {
                 }
             }
             Kind::Unary(_, x) => self.hint(x, env),
+            Kind::Call(name, _) if MachineInt::parse(name).is_some() => {
+                MachineInt::parse(name).map(Type::Machine)
+            }
             Kind::Call(name, args) if name == "alloc" && args.len() == 1 => {
                 self.hint(&args[0], env).map(|t| Type::Plane(Box::new(t)))
             }
@@ -726,6 +729,18 @@ impl Evaluator<'_> {
                 })
             }
             Kind::Call(name, args) => {
+                if let Some(target) = MachineInt::parse(name) {
+                    let [argument] = args.as_slice() else {
+                        return Err("integer conversion requires one argument".into());
+                    };
+                    let source = self.hint(argument, env).unwrap_or(Type::Machine(target));
+                    let value = self.expr(argument, env, Some(&source))?.number()?;
+                    let (low, high) = target.bounds();
+                    if !(low..=high).contains(&value) {
+                        return Err("integer conversion outside its proved range".into());
+                    }
+                    return Ok(Value::Machine(target, value));
+                }
                 if name == "alloc" {
                     let hint = match expected {
                         Some(Type::Plane(inner)) => Some(inner.as_ref()),

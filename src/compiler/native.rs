@@ -467,6 +467,9 @@ impl Emitter<'_> {
                 Some(Type::Bool)
             }
             Kind::Binary(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
+            Kind::Call(n, _) if MachineInt::parse(n).is_some() => {
+                MachineInt::parse(n).map(Type::Machine)
+            }
             Kind::Call(n, args) if n == "alloc" && args.len() == 1 => {
                 self.hint(&args[0]).map(|t| Type::Plane(Box::new(t)))
             }
@@ -707,6 +710,17 @@ impl Emitter<'_> {
                 let target = self.code.len();
                 patch(self.code, end, target)?;
                 ty
+            }
+            Kind::Call(name, args) if MachineInt::parse(name).is_some() => {
+                let target = Type::Machine(MachineInt::parse(name).unwrap());
+                let [argument] = args.as_slice() else {
+                    return Err("integer conversion requires one argument".into());
+                };
+                let source = self.hint(argument).unwrap_or_else(|| target.clone());
+                self.expr(argument, Some(&source))?;
+                // Verification proved representability. Registers already hold
+                // the same mathematical value; conversion needs no instruction.
+                target
             }
             Kind::Call(name, args) if matches!(name.as_str(), "move" | "drop") => {
                 if args.len() != 1 {
@@ -968,7 +982,7 @@ fn compilation_order(program: &VerifiedProgram) -> Result<Vec<&Function>> {
 }
 
 /// Emit a standalone Linux x86-64 executable. Its scalar main result is the
-/// process exit status (low eight bits). It performs no runtime I/O.
+/// process exit status (low eight bits). External declarations provide runtime I/O.
 pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
     emit_mode(program, TraceMode::Value)
 }

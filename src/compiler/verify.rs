@@ -17,6 +17,7 @@ mod array_history;
 pub(crate) mod array_model;
 mod bodies;
 mod cleanup;
+mod conversions;
 mod external;
 mod heap;
 mod parameters;
@@ -1347,7 +1348,8 @@ impl<'a> Context<'a> {
         }
         match &expression.kind {
             Kind::Call(name, args) => {
-                let scalar_call = matches!(name.as_str(), "int" | "nat")
+                let scalar_call = MachineInt::parse(name).is_some()
+                    || matches!(name.as_str(), "int" | "nat")
                     || self.functions.get(name).is_some_and(|function| {
                         !function.partial
                             && function.modifies.is_empty()
@@ -2214,6 +2216,9 @@ impl<'a> Context<'a> {
             Kind::Call(name, args) if name == "old" && args.len() == 1 => Self::old_key(&args[0])
                 .and_then(|key| self.old_values.get(&key).map(Symbol::ty))
                 .or_else(|| self.hint(&args[0])),
+            Kind::Call(name, _) if MachineInt::parse(name).is_some() => {
+                MachineInt::parse(name).map(Ty::Machine)
+            }
             Kind::Call(name, _) if name == "nat" => Some(Ty::Nat),
             Kind::Call(name, _) if name == "int" => Some(Ty::Int),
             Kind::Call(name, args) if name == "alloc" && args.len() == 1 => {
@@ -2967,6 +2972,9 @@ impl<'a> Context<'a> {
                 self.read_array(&element, &identity, &index, items.as_deref(), &cells)
             }
             Kind::Call(name, args) => {
+                if let Some(target) = MachineInt::parse(name) {
+                    return self.convert_integer(target, args, e.line);
+                }
                 if name == "alloc" {
                     return self.allocate_owned(args, expected, e.line);
                 }
@@ -3912,10 +3920,12 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
         {
             return Err(format!("line {}: runtime signatures require fixed-layout types; int/nat and ideal records are proof-only", f.line));
         }
-        if matches!(
-            f.name.rsplit("::").next().unwrap_or(&f.name),
-            "move" | "drop" | "alloc" | "int" | "nat" | "old"
-        ) {
+        if MachineInt::parse(f.name.rsplit("::").next().unwrap_or(&f.name)).is_some()
+            || matches!(
+                f.name.rsplit("::").next().unwrap_or(&f.name),
+                "move" | "drop" | "alloc" | "int" | "nat" | "old"
+            )
+        {
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));
         }
         returns::check_return_borrows(f, &structs)?;
