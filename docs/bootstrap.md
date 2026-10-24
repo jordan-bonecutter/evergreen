@@ -266,7 +266,13 @@ inequalities that establish a contradiction. Proof search uses bounded
 Fourier–Motzkin elimination. Search failure, overflow, and resource limits all
 fail verification. Integer strict inequalities are normalized with a unit gap.
 The solver is incomplete for general integer arithmetic and rejects nonlinear
-products of symbolic values. Boolean conditions split into at most 64 paths;
+products of symbolic values. Boolean conditions retain at most 64 paths. When an expansion exceeds that
+limit, the verifier deduplicates conjunctions with exactly the same rows,
+ignoring order and repetitions only in the comparison key. It retains the first
+path's original rows for certificate indexing. If necessary it then probes the
+remaining paths and discards only contradictions accepted by the independent
+kernel. Solver misses remain live, and more than 64 surviving paths still fail.
+This overflow work uses the common symbolic-work and query budgets;
 search is limited to 2,048 constraints and 64 elimination steps.
 
 The parser, type elaborator, condition generator, certificate checker, evaluator,
@@ -555,6 +561,23 @@ on both exits. Consuming the same affine input in both branches works; consuming
 it on only one branch is rejected until conditional shapes are implemented.
 `examples/conditional_writes.evg` checks nested effects, aliases, and framed
 sibling fields. These proof snapshots do not introduce runtime transactions.
+
+Scalar-array versions now record immutable store and conditional-join histories.
+A cell first observed after a write still obeys the store rule: it has the stored
+value at the written index and the predecessor's value elsewhere. Reads after a
+join inspect each predecessor under its own guard, preserving branch-local
+facts. Cache hits replay these definitions and type facts rather than reusing a
+proof valid only in the first read's context. Reading through a reference or
+capturing `old(*reference)` uses the same semantics. These histories are proof
+metadata; they neither allocate runtime storage nor grant write permissions.
+History reads have depth at most 64 and charge expansion work to the ordinary
+verifier budget. Opaque aggregate-element histories remain unsupported.
+
+`examples/array_frame_history.evg` proves a conditional write changes the selected
+cell and preserves its previously unobserved sibling. It also exercises overflow
+path pruning and strict replay. `examples/array_branch_history.evg` proves a
+third cell is preserved across two different branch-local writes. Both examples
+run and build with the internal backend.
 
 Symbolic array reads are cached by contents version. Updating an element creates
 a fresh contents version without changing the plane's storage generation, so
@@ -858,7 +881,9 @@ The optional Lean suite checks independent specifications:
 - `proofs/LinearCertificates.lean` defines weighted combination of original
   integer rows and proves that accepted certificates imply unsatisfiability.
   Negative weights, missing row indices, and nonzero remaining coefficients
-  fail in the executable model.
+  fail in the executable model. The specification also proves that equivalent
+  row-membership lists have the same models and that a checked contradiction
+  licenses removal of a disjunctive path.
 - `proofs/MemoryContracts.lean` models fixed-layout scalar addresses and proves
   that disjoint writes commute, writes preserve other addresses, and the swap
   postcondition and involution hold. Distinct fields of one plane are disjoint.

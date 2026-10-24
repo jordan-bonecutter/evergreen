@@ -114,6 +114,30 @@ theorem check_sound {n : Nat} (rows : List (Row n)) (weights : List (Nat × Int)
     rw [evaluation] at nonnegative
     omega
 
+-- Canonical conjunction keys may disregard row order and repetitions. The
+-- retained path itself keeps its original rows for certificate indexing.
+theorem same_rows_same_models {n : Nat} (left right : List (Row n))
+    (same : ∀ row, row ∈ left ↔ row ∈ right) (valuation : Fin n → Int) :
+    (∀ row ∈ left, 0 ≤ evaluate row valuation) ↔
+      (∀ row ∈ right, 0 ≤ evaluate row valuation) := by
+  constructor
+  · intro valid row present
+    exact valid row ((same row).mpr present)
+  · intro valid row present
+    exact valid row ((same row).mp present)
+
+-- An overflow path may be removed only after its contradiction is checked.
+theorem certified_path_removal {n : Nat} (rows : List (Row n))
+    (weights : List (Nat × Int)) (accepted : check rows weights = true)
+    (valuation : Fin n → Int) (remaining : Prop) :
+    ((∀ row ∈ rows, 0 ≤ evaluate row valuation) ∨ remaining) ↔ remaining := by
+  constructor
+  · rintro (invalid | kept)
+    · exact False.elim (check_sound rows weights accepted ⟨valuation, invalid⟩)
+    · exact kept
+  · intro kept
+    exact Or.inr kept
+
 -- Concrete certificates also exercise the executable model's rejection paths.
 def atLeastOne : Row 1 := ⟨-1, fun _ => 1⟩
 def atMostZero : Row 1 := ⟨0, fun _ => -1⟩

@@ -107,6 +107,8 @@ fn internal_backend_needs_no_external_tools() {
         "examples/conditional_drop.evg",
         "examples/conditional_contracts.evg",
         "examples/old_selection.evg",
+        "examples/array_frame_history.evg",
+        "examples/array_branch_history.evg",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")

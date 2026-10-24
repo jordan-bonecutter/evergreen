@@ -1,0 +1,19 @@
+fn left(data: &[usize; 3]) modifies(&(*data)[0]) {
+    (*data)[0] = 42;
+}
+fn right(data: &[usize; 3]) modifies(&(*data)[1]) {
+    (*data)[1] = 42;
+}
+
+fn change(data: &[usize; 3], flag: bool)
+modifies(data)
+ensures((*data)[2] == old((*data)[2])) {
+    if flag {left(data)} else {right(data)}
+}
+
+fn main() -> usize ensures(result == 42) {
+    let data: [usize; 3] = [7, 9, 42];
+    change(&data, true);
+    change(&data, false);
+    data[2]
+}

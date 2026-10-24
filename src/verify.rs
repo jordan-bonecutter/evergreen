@@ -8,8 +8,10 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
+mod array_history;
 mod bodies;
 mod cleanup;
+mod paths;
 mod proofs;
 mod references;
 mod returns;
@@ -290,14 +292,22 @@ fn type_has_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
 }
 
 /// Each path is a conjunction of inequalities. The path list is a disjunction.
-fn extend(paths: &[Vec<Linear>], formula: &Formula, negated: bool) -> Result<Vec<Vec<Linear>>> {
-    extend_normalized(paths, &formula.normalized(), negated)
+fn extend(
+    paths: &[Vec<Linear>],
+    formula: &Formula,
+    negated: bool,
+    session: &mut Session,
+    work: &mut usize,
+) -> Result<Vec<Vec<Linear>>> {
+    extend_normalized(paths, &formula.normalized(), negated, session, work)
 }
 
 fn extend_normalized(
     paths: &[Vec<Linear>],
     formula: &Formula,
     negated: bool,
+    session: &mut Session,
+    work: &mut usize,
 ) -> Result<Vec<Vec<Linear>>> {
     let result = match formula {
         Formula::True => {
@@ -329,31 +339,40 @@ fn extend_normalized(
                 })
                 .collect()
         }
-        Formula::Not(p) => return extend_normalized(paths, p, !negated),
+        Formula::Not(p) => return extend_normalized(paths, p, !negated, session, work),
         Formula::Implies(a, b) => {
             if negated {
-                extend_normalized(&extend_normalized(paths, a, false)?, b, true)?
+                extend_normalized(
+                    &extend_normalized(paths, a, false, session, work)?,
+                    b,
+                    true,
+                    session,
+                    work,
+                )?
             } else {
-                let mut left = extend_normalized(paths, a, true)?;
-                left.extend(extend_normalized(paths, b, false)?);
+                let mut left = extend_normalized(paths, a, true, session, work)?;
+                left.extend(extend_normalized(paths, b, false, session, work)?);
                 left
             }
         }
         Formula::And(a, b) | Formula::Or(a, b) => {
             let conjunction = matches!(formula, Formula::And(..)) != negated;
             if conjunction {
-                extend_normalized(&extend_normalized(paths, a, negated)?, b, negated)?
+                extend_normalized(
+                    &extend_normalized(paths, a, negated, session, work)?,
+                    b,
+                    negated,
+                    session,
+                    work,
+                )?
             } else {
-                let mut left = extend_normalized(paths, a, negated)?;
-                left.extend(extend_normalized(paths, b, negated)?);
+                let mut left = extend_normalized(paths, a, negated, session, work)?;
+                left.extend(extend_normalized(paths, b, negated, session, work)?);
                 left
             }
         }
     };
-    if result.len() > 64 {
-        return Err("verification path limit reached (64)".into());
-    }
-    Ok(result)
+    paths::bounded(result, session, work)
 }
 
 fn equal(a: &Linear, b: &Linear) -> Result<Formula> {
@@ -612,6 +631,20 @@ struct EntryMemory {
     module: Option<String>,
 }
 
+#[derive(Clone)]
+enum ArrayHistory {
+    Store {
+        base: String,
+        index: Linear,
+        value: Symbol,
+    },
+    Choice {
+        condition: Formula,
+        left: String,
+        right: String,
+    },
+}
+
 struct Context<'a> {
     functions: &'a BTreeMap<String, Function>,
     module: Option<String>,
@@ -647,6 +680,8 @@ struct Context<'a> {
     old_memory: Option<Box<EntryMemory>>,
     ideal_bindings: BTreeSet<String>,
     array_reads: BTreeMap<(String, Linear), Symbol>,
+    array_history: BTreeMap<String, ArrayHistory>,
+    array_read_depth: usize,
     temporaries: Vec<(Symbol, usize)>,
 }
 
@@ -927,7 +962,13 @@ impl<'a> Context<'a> {
     }
 
     fn follows(&mut self, proposition: &Formula) -> Result<bool> {
-        for path in extend(&self.paths, proposition, true)? {
+        for path in extend(
+            &self.paths,
+            proposition,
+            true,
+            self.session,
+            &mut self.value_work,
+        )? {
             if !self.session.probe(&path)? {
                 return Ok(false);
             }
@@ -1033,6 +1074,20 @@ impl<'a> Context<'a> {
                             .or_insert_with(|| value.clone());
                     }
                 }
+                for (index, previous) in &observed {
+                    self.array_reads
+                        .entry((identity.clone(), index.clone()))
+                        .or_insert_with(|| previous.clone());
+                }
+                let next = self.fresh_name();
+                self.array_history.insert(
+                    next.clone(),
+                    ArrayHistory::Store {
+                        base: identity.clone(),
+                        index: target.clone(),
+                        value: new.clone(),
+                    },
+                );
                 let mut updated = BTreeMap::new();
                 for (index, previous) in observed {
                     updated.insert(
@@ -1042,7 +1097,7 @@ impl<'a> Context<'a> {
                 }
                 updated.insert(target.clone(), new);
                 *cells = updated;
-                *identity = self.fresh_name();
+                *identity = next;
                 return Ok(());
             }
             *identity = self.fresh_name();
@@ -1111,6 +1166,8 @@ impl<'a> Context<'a> {
             old_memory: None,
             ideal_bindings: BTreeSet::new(),
             array_reads: BTreeMap::new(),
+            array_history: BTreeMap::new(),
+            array_read_depth: 0,
             temporaries: Vec::new(),
         }
     }
@@ -1141,12 +1198,16 @@ impl<'a> Context<'a> {
             })?;
         self.charge_value_work(target_cost)?;
         self.old_values.clear();
+        let mut targets = Vec::new();
         for (name, value) in &self.env {
             self.old_values.insert(name.clone(), value.clone());
             if let Symbol::Ref(_, reference, fields) = value {
-                let target = project(self.memory.read(*reference)?, fields)?.clone();
-                self.old_values.insert(format!("*{name}"), target);
+                targets.push((name.clone(), *reference, fields.clone()));
             }
+        }
+        for (name, reference, fields) in targets {
+            let target = self.read_projection_value(reference, &fields)?;
+            self.old_values.insert(format!("*{name}"), target);
         }
         self.old_memory = if function.entry_memory {
             Some(Box::new(EntryMemory {
@@ -1220,7 +1281,7 @@ impl<'a> Context<'a> {
         }
     }
     fn assume(&mut self, p: &Formula) -> Result<()> {
-        let paths = extend(&self.paths, p, false)?;
+        let paths = extend(&self.paths, p, false, self.session, &mut self.value_work)?;
         self.paths = self.feasible_paths(paths)?;
         Ok(())
     }
@@ -1254,7 +1315,7 @@ impl<'a> Context<'a> {
     }
     fn prove(&mut self, p: &Formula, label: &str, line: usize) -> Result<()> {
         self.obligations += 1;
-        for path in extend(&self.paths, p, true)? {
+        for path in extend(&self.paths, p, true, self.session, &mut self.value_work)? {
             self.session
                 .prove(&path)
                 .map_err(|e| format!("line {line}: cannot prove {label}: {e}"))?;
@@ -1951,7 +2012,13 @@ impl<'a> Context<'a> {
                 },
             ) => {
                 self.obligations += 1;
-                for path in extend(&self.paths, &equal(a, b)?, true)? {
+                for path in extend(
+                    &self.paths,
+                    &equal(a, b)?,
+                    true,
+                    self.session,
+                    &mut self.value_work,
+                )? {
                     if !self.session.probe(&path)? {
                         return Ok(false);
                     }
@@ -2370,6 +2437,20 @@ impl<'a> Context<'a> {
         self.array_read(element, identity, index)
     }
     fn array_read(&mut self, element: &Ty, identity: &str, index: &Linear) -> Result<Symbol> {
+        self.charge_value_work(1)?;
+        if self.array_read_depth >= 64 {
+            return Err("array history read depth limit reached (64)".into());
+        }
+        self.array_read_depth += 1;
+        let result = (|| {
+            let value = self.array_read_value(element, identity, index)?;
+            self.replay_array_history(element, identity, index, &value)?;
+            Ok(value)
+        })();
+        self.array_read_depth -= 1;
+        result
+    }
+    fn array_read_value(&mut self, element: &Ty, identity: &str, index: &Linear) -> Result<Symbol> {
         // Stable contents identities give extensional reads across scopes. A
         // reference-bearing selection needs an alias rule, not a fresh plane.
         if self.ty_has_reference(element) {
@@ -2434,7 +2515,7 @@ impl<'a> Context<'a> {
             }
             Kind::Unary(op, _) if op == "*" => {
                 let (r, path) = self.location(e)?;
-                project(self.memory.read(r)?, &path).cloned()
+                self.read_projection_value(r, &path)
             }
             Kind::Index(base, index) => {
                 let array = self.storage(base)?;
@@ -2454,6 +2535,12 @@ impl<'a> Context<'a> {
                     "storage index < length",
                     e.line,
                 )?;
+                if matches!(
+                    *element,
+                    Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
+                ) {
+                    return self.read_array(&element, &identity, &index, items.as_deref(), &cells);
+                }
                 if index.terms.is_empty() {
                     if let Some(v) = items
                         .as_ref()
@@ -2699,7 +2786,7 @@ impl<'a> Context<'a> {
             }
             Kind::Unary(op, _) if op == "*" => {
                 let (r, path) = self.location(e)?;
-                project(self.memory.read(r)?, &path).cloned()
+                self.read_projection_value(r, &path)
             }
             Kind::Unary(op, x) if op == "!" => Ok(Symbol::Bool(
                 self.eval(x, Some(&Ty::Bool))?.proposition()?.not(),
@@ -2829,6 +2916,12 @@ impl<'a> Context<'a> {
                     "array index < length",
                     e.line,
                 )?;
+                if matches!(
+                    *element,
+                    Ty::Machine(_) | Ty::Bool | Ty::Unit | Ty::Int | Ty::Nat
+                ) {
+                    return self.read_array(&element, &identity, &index, items.as_deref(), &cells);
+                }
                 if index.terms.is_empty() {
                     if let Some(value) = items
                         .as_ref()
@@ -3144,11 +3237,11 @@ impl<'a> Context<'a> {
                 let env = self.clone_env()?;
                 let roots = self.roots.clone();
                 let store = self.snapshot_memory()?;
-                self.paths = extend(&base, &p, false)?;
+                self.paths = extend(&base, &p, false, self.session, &mut self.value_work)?;
                 let a = self.scoped_eval(yes, expected)?;
                 let a_paths = self.paths.clone();
                 let a_store = self.snapshot_memory()?;
-                self.paths = extend(&base, &p, true)?;
+                self.paths = extend(&base, &p, true, self.session, &mut self.value_work)?;
                 self.charge_value_work(values_weight(env.values())?)?;
                 self.env = env.clone();
                 self.roots = roots.clone();
@@ -3194,15 +3287,24 @@ impl<'a> Context<'a> {
                 let (result, left, right) = self.join_value(&a, &b, &mut views)?;
                 let relation_a = state_a.and(left);
                 let relation_b = state_b.and(right);
-                let mut paths = extend(&a_paths, &relation_a, false)?;
-                paths.extend(extend(&b_paths, &relation_b, false)?);
+                let mut paths = extend(
+                    &a_paths,
+                    &relation_a,
+                    false,
+                    self.session,
+                    &mut self.value_work,
+                )?;
+                paths.extend(extend(
+                    &b_paths,
+                    &relation_b,
+                    false,
+                    self.session,
+                    &mut self.value_work,
+                )?);
                 // Drop infeasible branch combinations only with a checked
                 // contradiction certificate; a failed probe keeps the path.
                 paths = self.feasible_paths(paths)?;
-                if paths.len() > 64 {
-                    return Err("verification path limit reached (64)".into());
-                }
-                self.paths = paths;
+                self.paths = paths::bounded(paths, self.session, &mut self.value_work)?;
                 for view in views {
                     self.materialize_joined_reference(&view, e.line)?;
                 }
@@ -3381,9 +3483,19 @@ impl<'a> Context<'a> {
                             .map(|i| Linear::number(i as i128)),
                     )
                     .collect::<BTreeSet<_>>();
+                let condition = self.arbitrary(&Ty::Bool)?.proposition()?;
+                let identity = self.fresh_name();
+                self.array_history.insert(
+                    identity.clone(),
+                    ArrayHistory::Choice {
+                        condition: condition.clone(),
+                        left: a_id.clone(),
+                        right: b_id.clone(),
+                    },
+                );
                 let mut cells = BTreeMap::new();
-                let mut left = Formula::True;
-                let mut right = Formula::True;
+                let mut left = condition.clone();
+                let mut right = condition.not();
                 for index in indices {
                     let a = a_items
                         .as_ref()
@@ -3393,16 +3505,23 @@ impl<'a> Context<'a> {
                         .as_ref()
                         .and_then(|items| constant_index(&index).and_then(|i| items.get(i)))
                         .or_else(|| b_cells.get(&index));
-                    let offset = index.clone();
-                    let a = match a {
-                        Some(value) => value.clone(),
-                        None => self.array_read(element, a_id, &offset)?,
+                    // Missing predecessor cells are read lazily under their
+                    // history guard, never assumed outside their birth branch.
+                    let (value, l, r) = match (a, b) {
+                        (Some(a), Some(b)) => self.join_value(a, b, views)?,
+                        (a, b) => {
+                            let value = self.arbitrary(element)?;
+                            let l = match a {
+                                Some(a) => self.symbol_equal(&value, a)?,
+                                None => Formula::True,
+                            };
+                            let r = match b {
+                                Some(b) => self.symbol_equal(&value, b)?,
+                                None => Formula::True,
+                            };
+                            (value, l, r)
+                        }
                     };
-                    let b = match b {
-                        Some(value) => value.clone(),
-                        None => self.array_read(element, b_id, &offset)?,
-                    };
-                    let (value, l, r) = self.join_value(&a, &b, views)?;
                     cells.insert(index, value);
                     left = left.and(l);
                     right = right.and(r);
@@ -3413,7 +3532,7 @@ impl<'a> Context<'a> {
                         len: len.clone(),
                         items: None,
                         cells,
-                        identity: self.fresh_name(),
+                        identity,
                     },
                     left,
                     right,
@@ -3797,6 +3916,67 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn array_histories_frame_cells_first_read_after_writes_and_branches() {
+        for source in [
+            include_str!("../examples/array_frame_history.evg"),
+            include_str!("../examples/array_branch_history.evg"),
+        ] {
+            let (program, bundle) = prove(source).unwrap();
+            assert_eq!(program.run().unwrap().to_string(), "42");
+            assert_eq!(
+                verify_with_certificate(source, &bundle)
+                    .unwrap()
+                    .proof_search_count(),
+                0
+            );
+        }
+        let symbolic = "fn write_at(data: &[usize; 2], i: usize, j: usize) -> usize where(i < 2 && j < 2) modifies(&(*data)[i]) ensures((i == j => result == 42) && (i != j => result == old((*data)[j]))) {(*data)[i] = 42; let first_read = if i == j {(*data)[j]} else {0}; (*data)[j]} fn main() -> usize {let data: [usize; 2] = [7, 9]; write_at(&data, 0, 1)}";
+        let (program, bundle) = prove(symbolic).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "9");
+        assert_eq!(
+            verify_with_certificate(symbolic, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        assert!(verify(&symbolic.replace(
+            "ensures((i == j => result == 42) && (i != j => result == old((*data)[j])))",
+            "ensures(result == 42)"
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn array_history_cache_replays_conditions_in_each_branch() {
+        let source = "fn write(data: &[usize; 2], i: usize) where(i < 2) modifies(&(*data)[i]) ensures((*data)[i] == 42) {(*data)[i] = 42;} fn check(data: [usize; 2], i: usize, j: usize) -> usize where(i < 2 && j < 2) ensures((i == j => result == 42) && (i != j => result == data[j])) {let effect = if i == j {write(&data, i)} else {()}; data[j]} fn main() -> usize {check([7, 9], 0, 1)}";
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "9");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let false_frame = source.replace(
+            "ensures((i == j => result == 42) && (i != j => result == data[j]))",
+            "ensures(result == 42)",
+        );
+        assert!(verify(&false_frame).is_err());
+    }
+
+    #[test]
+    fn array_history_expansion_stops_before_unbounded_recursion() {
+        let source = format!(
+            "fn read(data: &[usize; 2]) -> usize modifies(&(*data)[0]) {{{} (*data)[1]}}",
+            "(*data)[0] = 42;".repeat(65)
+        );
+        let error = verify(&source).unwrap_err();
+        assert!(error.contains("array history read depth limit"), "{error}");
+        let boolean = "fn set(data: &[bool; 2]) modifies(&(*data)[0]) ensures((*data)[1] == old((*data)[1])) {(*data)[0] = false;} fn main() -> bool {let data: [bool; 2] = [true, true]; set(&data); data[1]}";
+        assert_eq!(verify(boolean).unwrap().run().unwrap().to_string(), "true");
+    }
+
     #[test]
     fn conditional_contract_indices_and_entry_snapshots_replay() {
         for source in [
