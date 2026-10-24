@@ -17,6 +17,7 @@ mod array_history;
 pub(crate) mod array_model;
 mod bodies;
 mod cleanup;
+mod external;
 mod heap;
 mod paths;
 mod proofs;
@@ -3167,6 +3168,9 @@ impl<'a> Context<'a> {
                 // Even read-only contracts may observe reference identity.
                 // An independent-port summary cannot describe aliased inputs.
                 let overlaps = self.reference_ports_overlap(&inputs)?;
+                if overlaps && f.syscall.is_some() {
+                    return Err("external calls with overlapping reference ports require an alias-aware contract; unsupported".into());
+                }
                 if self.current.as_ref() == Some(name) && !f.partial {
                     let entry = self
                         .measure
@@ -3874,7 +3878,8 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
     let mut obligations = 0;
     for f in &mut all_functions {
         f.entry_memory = needs_old_memory(f);
-        f.partial = !f.ideal && f.decreases.is_none() && crate::compiler::effects::recursive(f);
+        f.partial = f.syscall.is_some()
+            || !f.ideal && f.decreases.is_none() && crate::compiler::effects::recursive(f);
         for (name, ty) in &f.params {
             if f.ideal_params.contains(name) && !erased_type(ty, &structs) {
                 return Err(format!("line {}: ideal parameters may own only proof data; runtime owners must be borrowed", f.line));
@@ -3983,7 +3988,11 @@ fn verify_inner(source: &str, session: &mut Session) -> Result<VerifiedProgram> 
             ctx.measure = Some(ctx.nonnegative(measure, "nonnegative recursion measure")?);
             ctx.phase = execution;
         }
-        ctx.check_function_body(f, &ret, &inputs, true)?;
+        if f.syscall.is_some() {
+            ctx.check_external(f, &ret)?;
+        } else {
+            ctx.check_function_body(f, &ret, &inputs, true)?;
+        }
         obligations += ctx.obligations;
         f.partial = ctx.partial_execution;
         if crate::compiler::effects::invariant_independent(f, &functions, &helpers) {

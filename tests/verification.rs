@@ -451,3 +451,26 @@ fn runtime_divergence_is_reported_and_cannot_escape_into_logic() {
     assert!(rejected.stdout.is_empty());
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("potentially divergent"));
 }
+
+#[test]
+fn syscall_declarations_cannot_bypass_deny_trust() {
+    let cli = env!("CARGO_BIN_EXE_evg");
+    let output = Command::new(cli)
+        .args([
+            "--deny-trust",
+            "check",
+            "stdlib/linux_io.evg",
+            "examples/hello.evg",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("trust"));
+    let output = Command::new(cli)
+        .args(["run", "stdlib/linux_io.evg", "examples/hello.evg"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("native executable"));
+    assert!(output.stdout.is_empty());
+}

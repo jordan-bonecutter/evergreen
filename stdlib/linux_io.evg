@@ -1,0 +1,27 @@
+// Linux x86-64 external boundary. The OS implementation and frame contract are
+// trusted. This writes raw bytes; it makes no claim about text encoding.
+module linux_io {
+    extern syscall(1) fn write_byte(fd: usize, byte: &u8, count: usize) -> isize
+    where(count <= 1)
+    ensures(result <= 1);
+    proof {trustme}
+
+    fn stdout_byte(byte: &u8) -> bool {
+        write_byte(1, byte, 1) == 1
+    }
+
+    // No allocation or encoding machinery. Stop on a short or failed write.
+    // Recursion currently shares the native execution depth limit.
+    fn print_from(length: usize, bytes: &[u8; length], index: usize) -> bool
+    where(index <= length) {
+        if index == length {true} else {
+            if stdout_byte(&(*bytes)[index]) {
+                print_from(length, bytes, index + 1)
+            } else {false}
+        }
+    }
+
+    fn print_bytes(length: usize, bytes: &[u8; length]) -> bool {
+        print_from(length, bytes, 0)
+    }
+}

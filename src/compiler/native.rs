@@ -13,6 +13,7 @@ type Result<T> = std::result::Result<T, String>;
 mod elf;
 mod program;
 mod storage;
+mod syscall;
 
 const STACK: usize = 65536;
 const MAX_CODE: usize = 8 * 1024 * 1024;

@@ -220,6 +220,9 @@ impl Evaluator<'_> {
         if f.ideal {
             return Err("ideal functions have no runtime body".into());
         }
+        if f.syscall.is_some() {
+            return Err("external syscalls require a native executable; use build".into());
+        }
         if f.params
             .iter()
             .filter(|(n, _)| !f.ideal_params.contains(n))

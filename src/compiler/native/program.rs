@@ -110,10 +110,14 @@ impl<'a> ProgramEmitter<'a> {
             drop_ids: &self.drop_ids,
         };
         parameters.bind(&mut emitter)?;
-        for statement in &function.body {
-            emitter.statement(statement)?;
+        if let Some(number) = function.syscall {
+            emitter.syscall(function, number)?;
+        } else {
+            for statement in &function.body {
+                emitter.statement(statement)?;
+            }
+            emitter.scoped_expr(&function.result, Some(&function.ret))?;
         }
-        emitter.scoped_expr(&function.result, Some(&function.ret))?;
         let preserve_result = !self.program.drops.is_empty() || self.heap_ownership;
         emitter.return_from_function(function, &parameters, preserve_result)?;
         let stack = emitter.finish_function(frame_fixup, recursive)?;

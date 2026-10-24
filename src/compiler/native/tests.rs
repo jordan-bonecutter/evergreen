@@ -61,6 +61,15 @@ fn execute_test_binary(
     binary: &[u8],
     source: &str,
 ) -> std::process::ExitStatus {
+    execute_test_binary_to(path, binary, source, std::process::Stdio::null())
+}
+
+fn execute_test_binary_to(
+    path: &std::path::Path,
+    binary: &[u8],
+    source: &str,
+    stdout: std::process::Stdio,
+) -> std::process::ExitStatus {
     use std::{
         fs,
         os::unix::fs::PermissionsExt,
@@ -71,7 +80,7 @@ fn execute_test_binary(
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     let mut child = Command::new(path)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(stdout)
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
@@ -449,5 +458,47 @@ fn native_execution_agrees_with_the_interpreter() {
         execute_test_binary(&directory.join("repeated-recursion"), &binary, &source).code(),
         Some(254)
     );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn native_syscalls_write_exact_bytes_and_preserve_results() {
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory =
+        std::env::temp_dir().join(format!("evergreen-io-{}-{stamp}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let hello = [
+        include_str!("../../../stdlib/linux_io.evg"),
+        include_str!("../../../examples/hello.evg"),
+    ]
+    .join("\n");
+    let packed = "extern syscall(1) fn write(fd: usize, bytes: &[u8; 3], count: usize) -> isize where(count <= 3); proof {trustme} fn main() -> usize {let bytes: [u8; 3] = [195, 169, 10]; if write(1, &bytes, 3) == 3 {0} else {1}}";
+    let error = "extern syscall(1) fn write(fd: usize, byte: &u8, count: usize) -> isize where(count <= 1); proof {trustme} fn main() -> usize {let byte: u8 = 42; if write(usize::MAX, &byte, 1) == -9 {0} else {1}}";
+    let eof = "extern syscall(0) fn read(fd: usize, byte: &u8, count: usize) -> isize where(count <= 1) modifies(byte) ensures(result == 0 => *byte == old(*byte)); proof {trustme} fn main() -> usize {let byte: u8 = 42; let received = read(0, &byte, 1); if received == 0 && byte == 42 {0} else {1}}";
+    let pid = "extern syscall(39) fn getpid() -> isize; proof {trustme} fn main() -> usize {if getpid() > 0 {0} else {1}}";
+    for (source, expected) in [
+        (hello.as_str(), b"Hello, Evergreen\n".as_slice()),
+        (packed, "é\n".as_bytes()),
+        (error, b"".as_slice()),
+        (pid, b"".as_slice()),
+        (eof, b"".as_slice()),
+    ] {
+        let program = verify(source).unwrap();
+        let binary = emit(&program).unwrap();
+        let output = directory.join("stdout");
+        let stdout = fs::File::create(&output).unwrap();
+        let status =
+            execute_test_binary_to(&directory.join("program"), &binary, source, stdout.into());
+        assert_eq!(status.code(), Some(0), "{source}");
+        assert_eq!(fs::read(&output).unwrap(), expected, "{source}");
+    }
     fs::remove_dir_all(directory).unwrap();
 }

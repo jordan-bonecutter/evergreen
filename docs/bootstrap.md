@@ -247,7 +247,7 @@ is strictly smaller than the entry measure. The callee contract is available
 only under this well-founded induction rule. Recursive calls in specifications
 are rejected. Mutual recursion is not implemented yet.
 
-Not yet supported: non-record patterns, shared heap ownership, FFI, foreign aggregate
+Not yet supported: non-record patterns, shared heap ownership, general C FFI, foreign aggregate
 layouts. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
 
@@ -402,9 +402,11 @@ the model to linear capabilities and physical heap ownership remains planned.
 
 `proof assumed: proposition by { trustme };` accepts any proposition without
 proving it, including false ones. This is the explicit boundary for assumptions
-such as a future foreign function's contract. A false trusted assumption can
+such as an external function's contract. A false trusted assumption can
 invalidate every subsequent safety conclusion. It does not construct runtime
-values or implement FFI. Named facts alone still introduce no assumptions.
+values or implement general foreign linking. Explicit trusted syscall declarations
+provide the native OS boundary described below. Named facts alone still introduce
+no assumptions.
 
 The checker reports each `trustme` location and labels the result as checked
 with trusted assumptions instead of verified. `--deny-trust` rejects the whole
@@ -1456,3 +1458,54 @@ clones, so a small recursive body cannot repeatedly copy a large argument for
 the cost of one AST node. Exhaustion returns an execution-limit error, not a
 normal result. These interpreter limits are separate from native stack guards
 and do not constitute a formal whole-process time or memory bound.
+
+
+### Native syscalls and byte output
+
+Build and run the first output example on Linux x86-64:
+
+```sh
+cargo run -- build stdlib/linux_io.evg examples/hello.evg -o /tmp/hello-evergreen
+/tmp/hello-evergreen
+```
+
+It prints `Hello, Evergreen` followed by a newline and exits with status zero.
+`run` uses the interpreter, which deliberately rejects external syscalls; use
+`build` for this example. The compiler has no built-in print or text-encoding
+operation. `stdlib/linux_io.evg` implements byte output in Evergreen.
+
+The primitive external declaration is an explicit Linux x86-64 syscall number:
+
+```evg
+extern syscall(1) fn write_byte(fd: usize, byte: &u8, count: usize) -> isize
+where(count <= 1)
+ensures(result <= 1);
+proof {trustme}
+```
+
+Arguments follow the [Linux x86-64 syscall register order](https://man7.org/linux/man-pages/man2/syscall.2.html):
+rdi, rsi, rdx, r10, r8, r9. The raw
+result is a signed 64-bit integer, including negative error codes. Declarations
+accept up to six 64-bit integers or references to fixed-layout data without
+embedded references or owners. No ownership or borrowed references can be
+returned. Referenced array elements use their physical packed representation;
+a declaration borrowing `[u8; 3]` can pass all three bytes to `write` in one call.
+
+The explicit `trustme` covers OS behavior, declared access bounds and write
+footprints, preservation of types/invariants, and absence of retained access to
+borrowed data after return. The checker proves caller preconditions, liveness,
+and write permissions, and uses the trusted postcondition on return. A false
+external contract can invalidate safety. Every declaration is recorded in the
+trust manifest even when unused, replay checks it, and `--deny-trust` rejects it.
+A syscall may block or fail to return, so calls are forbidden in specifications,
+proofs, ideal execution, and currently in Drop or lifted-invariant updates.
+Overlapping reference ports are rejected because there is no body to recheck.
+General foreign linking, foreign aggregate ABIs, and interpreter OS emulation
+remain unsupported.
+
+`linux_io::print_bytes(length, bytes)` accepts a borrow of `[u8; length]` and
+returns whether every byte was written. Its initial implementation performs one
+syscall per byte, stops on failure, and uses recursion subject to native stack
+and recursion limits. It is suitable for short experiments, not bulk output.
+It neither validates nor assumes UTF-8; encoding validity belongs in an Evergreen
+library refinement over the bytes, not in the compiler.

@@ -224,6 +224,8 @@ pub struct ReturnBorrow {
 #[derive(Clone, Debug)]
 pub struct Function {
     pub name: String,
+    /// Explicit trusted Linux x86-64 syscall declaration; no Evergreen body.
+    pub syscall: Option<u32>,
     pub params: Vec<(String, Type)>,
     pub ret: Type,
     pub pre: Option<Expr>,

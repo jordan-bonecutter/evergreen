@@ -36,6 +36,19 @@ impl Parser {
         ideal: bool,
     ) -> Result<Function, String> {
         let line = self.line();
+        let syscall = if self.eat("extern") {
+            self.expect("syscall")?;
+            self.expect("(")?;
+            let number = self
+                .peek()
+                .parse::<u32>()
+                .map_err(|_| self.err("syscall number must be a u32 integer literal"))?;
+            self.pos += 1;
+            self.expect(")")?;
+            Some(number)
+        } else {
+            None
+        };
         self.expect("fn")?;
         let name = self.name()?;
         let parameters = self.function_parameters(receiver)?;
@@ -53,7 +66,18 @@ impl Parser {
         let borrows = self.return_borrows()?;
         let post = self.optional_clause("ensures")?;
         let decreases = self.optional_clause("decreases")?;
-        let (body, result) = self.function_body()?;
+        let (body, result) = if syscall.is_some() {
+            self.expect(";")?;
+            (
+                Vec::new(),
+                Expr {
+                    kind: Kind::Unit,
+                    line,
+                },
+            )
+        } else {
+            self.function_body()?
+        };
         let proof = if self.eat("proof") {
             Some(self.proof()?)
         } else {
@@ -61,6 +85,7 @@ impl Parser {
         };
         Ok(Function {
             name,
+            syscall,
             params: parameters.values,
             ret,
             pre,
