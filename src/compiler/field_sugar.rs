@@ -1,7 +1,7 @@
 //! Elaborate field autodereferencing into ordinary checked dereferences.
 //! Shape inference here grants no authority: the verifier checks the result.
 
-use crate::syntax::{Expr, Function, Kind, MachineInt, Program, Statement, Type};
+use crate::syntax::{Expr, Function, Kind, MachineInt, MethodReceiver, Program, Statement, Type};
 use std::collections::BTreeMap;
 
 type Scope = BTreeMap<String, Type>;
@@ -12,6 +12,19 @@ pub(super) fn expand(program: &mut Program) {
             .structs
             .iter()
             .map(|s| (s.name.clone(), s.fields.clone()))
+            .collect(),
+        methods: program
+            .functions
+            .iter()
+            .filter_map(|f| {
+                Some((
+                    (
+                        f.impl_target.clone()?,
+                        f.name.rsplit("::").next()?.to_owned(),
+                    ),
+                    (f.name.clone(), f.ret.clone(), f.receiver?),
+                ))
+            })
             .collect(),
         returns: program
             .functions
@@ -43,6 +56,7 @@ pub(super) fn expand(program: &mut Program) {
 struct Shapes {
     records: BTreeMap<String, Vec<(String, Type)>>,
     returns: Scope,
+    methods: BTreeMap<(String, String), (String, Type, MethodReceiver)>,
 }
 
 impl Shapes {
@@ -188,6 +202,32 @@ impl Shapes {
                     if i == 0 {
                         first = ty;
                     }
+                }
+                if let Some(method) = name.strip_prefix("evg_method_") {
+                    let mut ty = first?;
+                    let mut receiver = args.first()?.clone();
+                    while let Type::Ref(inner) | Type::Plane(inner) = ty {
+                        let line = receiver.line;
+                        receiver = Expr {
+                            line,
+                            kind: Kind::Unary("*".into(), Box::new(receiver)),
+                        };
+                        ty = *inner;
+                    }
+                    let Type::Named(target) = ty else {
+                        return None;
+                    };
+                    let (function, result, kind) =
+                        self.methods.get(&(target, method.to_owned()))?;
+                    if *kind == MethodReceiver::Reference {
+                        receiver = Expr {
+                            line: receiver.line,
+                            kind: Kind::Unary("&".into(), Box::new(receiver)),
+                        };
+                    }
+                    args[0] = receiver;
+                    *name = function.clone();
+                    return Some(result.clone());
                 }
                 if let Some(machine) = MachineInt::parse(name) {
                     return Some(Type::Machine(machine));

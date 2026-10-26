@@ -81,3 +81,50 @@ ensures(result.len == value.len && result.cap == new_capacity) {
         value.len, 0);
     Vec {cap: new_capacity, len: value.len, data: data}
 }
+
+// Inherent methods use the same checked operations as the function interface.
+impl Vec {
+    fn new(capacity: usize) -> Self
+    where(int(capacity) * 8 <= int(isize::MAX))
+    ensures(result.len == 0 && result.cap == capacity) {
+        new(capacity)
+    }
+
+    method& length() -> usize ensures(result == self.len) { length(self) }
+
+    method& capacity() -> usize ensures(result == self.cap) { capacity(self) }
+
+    method& get(index: usize) -> &usize
+    where(index < self.len)
+    borrows(&(*self.data)[index]) {
+        get(self, index)
+    }
+
+    method& push(item: usize)
+    where(self.len < self.cap)
+    modifies(&self.len, &(*self.data)[self.len])
+    ensures(self.len == old(self.len) + 1
+        && (*self.data)[old(self.len)] == item) {
+        push(self, item);
+    }
+
+    method& pop() -> usize
+    where(self.len > 0)
+    modifies(&self.len)
+    ensures(self.len + 1 == old(self.len)
+        && result == old((*self.data)[self.len - 1])) {
+        pop(self)
+    }
+
+    method& reallocate(new_capacity: usize) -> Self
+    where(self.len <= new_capacity && int(new_capacity) * 8 <= int(isize::MAX))
+    ensures(result.len == self.len && result.cap == new_capacity) {
+        reallocate(self, new_capacity)
+    }
+
+    // Consume the header while transferring the same allocation to the caller.
+    method into_data() -> plane(usize, self.cap) {
+        let Vec {cap, len, data} = self;
+        data
+    }
+}

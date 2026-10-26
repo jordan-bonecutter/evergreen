@@ -1,0 +1,8 @@
+fn main() -> usize {
+    let values = vec::Vec::new(2);
+    values.push(42);
+    let borrowed = values.get(0);
+    let data = values.into_data();
+    proof same_allocation: borrowed == &(*data)[0];
+    *borrowed
+}

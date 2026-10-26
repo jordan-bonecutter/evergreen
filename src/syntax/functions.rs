@@ -53,9 +53,26 @@ impl Parser {
         } else {
             None
         };
-        self.expect("fn")?;
+        let method = self.eat("method");
+        let by_reference = method && self.eat("&");
+        if !method {
+            self.expect("fn")?;
+        }
+        if method && (receiver.is_none() || external.is_some()) {
+            return Err(self.err("methods require an impl scope and a checked body"));
+        }
         let name = self.name()?;
-        let parameters = self.function_parameters(receiver)?;
+        let mut parameters = self.function_parameters(receiver)?;
+        if method {
+            if parameters.values.iter().any(|(name, _)| name == "self") {
+                return Err(self.err("method self is implicit; omit it from the parameter list"));
+            }
+            let mut ty = Type::Named(receiver.expect("method receiver scope").to_owned());
+            if by_reference {
+                ty = Type::Ref(Box::new(ty));
+            }
+            parameters.values.insert(0, ("self".into(), ty));
+        }
         let ret = if self.eat("->") {
             self.ty()?
         } else {
@@ -88,6 +105,16 @@ impl Parser {
             None
         };
         Ok(Function {
+            impl_target: None,
+            receiver: if method {
+                Some(if by_reference {
+                    MethodReceiver::Reference
+                } else {
+                    MethodReceiver::Value
+                })
+            } else {
+                None
+            },
             name,
             external,
             params: parameters.values,

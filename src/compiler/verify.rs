@@ -3100,6 +3100,12 @@ impl<'a> Context<'a> {
                     return Ok(value);
                 }
                 let f = self.functions.get(name).ok_or_else(|| {
+                    if let Some(method) = name.strip_prefix("evg_method_") {
+                        return format!(
+                            "line {}: unknown method {method} or unresolved receiver type",
+                            e.line
+                        );
+                    }
                     if self.current.as_ref() == Some(name) {
                         format!(
                             "line {}: recursive ideal function {name} requires a decreases clause",
@@ -3831,11 +3837,13 @@ fn verify_using(parsed: syntax::Program, session: &mut Session) -> Result<Verifi
 }
 
 fn verify_inner(mut parsed: syntax::Program, session: &mut Session) -> Result<VerifiedProgram> {
+    super::methods::validate(&parsed)?;
     super::copy::configure(&mut parsed)?;
     super::scalar_types::lower(&mut parsed)?;
-    super::declarations::schedule(&mut parsed)?;
+    super::declarations::schedule_types(&mut parsed)?;
     check_type_expansion(&parsed.structs)?;
     super::field_sugar::expand(&mut parsed);
+    super::declarations::schedule_functions(&mut parsed)?;
     let mut structs = BTreeMap::new();
     let copy_forbidden = parsed
         .destructors

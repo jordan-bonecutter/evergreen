@@ -24,6 +24,7 @@ fn resolve(module: Option<&str>, name: &str, names: &BTreeSet<String>) -> String
 }
 
 struct Scope<'a> {
+    self_type: Option<&'a str>,
     module: Option<&'a str>,
     types: &'a BTreeSet<String>,
     functions: &'a BTreeSet<String>,
@@ -32,7 +33,15 @@ struct Scope<'a> {
 impl Scope<'_> {
     fn ty(&self, ty: &mut Type) {
         match ty {
-            Type::Named(name) => *name = resolve(self.module, name, self.types),
+            Type::Named(name) => {
+                if name == "Self" {
+                    if let Some(target) = self.self_type {
+                        *name = target.to_owned();
+                        return;
+                    }
+                }
+                *name = resolve(self.module, name, self.types);
+            }
             Type::Ref(ty) | Type::Plane(ty) => self.ty(ty),
             Type::Array(ty, len) => {
                 self.ty(ty);
@@ -45,12 +54,28 @@ impl Scope<'_> {
     fn expr(&self, expression: &mut Expr) {
         match &mut expression.kind {
             Kind::Record(name, fields) => {
+                if name == "Self" {
+                    if let Some(target) = self.self_type {
+                        *name = target.to_owned();
+                    }
+                }
                 *name = resolve(self.module, name, self.types);
                 for (_, value) in fields {
                     self.expr(value);
                 }
             }
             Kind::Call(name, args) => {
+                if let Some((base, member)) = name.rsplit_once("::") {
+                    let target = if base == "Self" {
+                        self.self_type.map(str::to_owned)
+                    } else {
+                        let target = resolve(self.module, base, self.types);
+                        self.types.contains(&target).then_some(target)
+                    };
+                    if let Some(target) = target {
+                        *name = format!("{target}::{member}");
+                    }
+                }
                 *name = resolve(self.module, name, self.functions);
                 for arg in args {
                     self.expr(arg);
@@ -158,7 +183,18 @@ pub(crate) fn qualify(program: &mut Program) {
     let functions = program
         .functions
         .iter()
-        .map(|f| defined(f.module.as_deref(), &f.name))
+        .map(|f| {
+            f.impl_target.as_ref().map_or_else(
+                || defined(f.module.as_deref(), &f.name),
+                |target| {
+                    format!(
+                        "{}::{}",
+                        resolve(f.module.as_deref(), target, &types),
+                        f.name
+                    )
+                },
+            )
+        })
         .chain(
             program
                 .scalar_types
@@ -175,6 +211,7 @@ pub(crate) fn qualify(program: &mut Program) {
     }
     for structure in &mut program.structs {
         let scope = Scope {
+            self_type: None,
             module: structure.module.as_deref(),
             types: &types,
             functions: &functions,
@@ -192,22 +229,32 @@ pub(crate) fn qualify(program: &mut Program) {
     }
     for function in &mut program.functions {
         let module = function.module.clone();
+        let target = function
+            .impl_target
+            .as_ref()
+            .map(|target| resolve(module.as_deref(), target, &types));
         let scope = Scope {
+            self_type: target.as_deref(),
             module: module.as_deref(),
             types: &types,
             functions: &functions,
         };
-        function.name = defined(scope.module, &function.name);
+        function.name = target.as_ref().map_or_else(
+            || defined(scope.module, &function.name),
+            |target| format!("{target}::{}", function.name),
+        );
+        function.impl_target = target.clone();
         scope.function(function);
     }
     for (target, function) in &mut program.destructors {
         let module = function.module.clone();
+        *target = resolve(module.as_deref(), target, &types);
         let scope = Scope {
+            self_type: Some(target.as_str()),
             module: module.as_deref(),
             types: &types,
             functions: &functions,
         };
-        *target = resolve(scope.module, target, &types);
         function.name = format!("evg_drop_{target}");
         function.drop_target = Some(target.clone());
         scope.function(function);

@@ -241,8 +241,16 @@ pub enum External {
     CompareExchange64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MethodReceiver {
+    Value,
+    Reference,
+}
+
 #[derive(Clone, Debug)]
 pub struct Function {
+    pub impl_target: Option<String>,
+    pub receiver: Option<MethodReceiver>,
     pub name: String,
     /// Explicit trusted target operation; no Evergreen body.
     pub external: Option<External>,
@@ -322,6 +330,7 @@ impl Parser {
                     | "borrows"
                     | "module"
                     | "import"
+                    | "method"
                     | "opaque"
                     | "ideal"
                     | "if"
@@ -343,7 +352,7 @@ impl Parser {
 
     fn path_name(&mut self) -> Result<String, String> {
         let mut name = self.name()?;
-        if self.eat("::") {
+        while self.eat("::") {
             name.push_str("::");
             name.push_str(&self.name()?);
         }
@@ -483,6 +492,49 @@ impl Parser {
         result
     }
 
+    fn named_expression(&mut self, line: usize) -> Result<Kind, String> {
+        let mut parts = vec![self.name()?];
+        while self.eat("::") {
+            if parts.len() >= 128 {
+                return Err(self.err("expression tree depth limit reached (128 path segments)"));
+            }
+            parts.push(self.name()?);
+        }
+        let name = parts.join("::");
+        if self.eat("(") {
+            return Ok(Kind::Call(name, self.arguments()?));
+        }
+        if parts.len() == 2 {
+            if let Some(integer) = MachineInt::parse(&parts[0]) {
+                let (low, high) = integer.bounds();
+                let value = match parts[1].as_str() {
+                    "MAX" | "max" => high,
+                    "MIN" | "min" => low,
+                    _ => return Err(self.err("expected MAX or MIN")),
+                };
+                return Ok(Kind::Constant(integer, value));
+            }
+        }
+        if parts
+            .last()
+            .is_some_and(|part| part.starts_with(|c: char| c.is_ascii_uppercase()))
+            && self.eat("{")
+        {
+            return Ok(Kind::Record(name, self.record_fields()?));
+        }
+        if parts.len() > 1 {
+            let field = parts.pop().expect("qualified name");
+            return Ok(Kind::FactAt(
+                Box::new(Expr {
+                    line,
+                    kind: Kind::Name(parts.join("::")),
+                }),
+                field,
+            ));
+        }
+        Ok(Kind::Name(name))
+    }
+
     fn expr(&mut self, min: u8) -> Result<Expr, String> {
         if self.depth >= 128 {
             return Err(self.err("syntax nesting limit reached"));
@@ -550,66 +602,7 @@ impl Parser {
             } else if self.eat("result") {
                 Kind::Name("result".into())
             } else {
-                let n = self.name()?;
-                if self.eat("::") {
-                    let member = self.name()?;
-                    if let Some(ty) = MachineInt::parse(&n) {
-                        let (lo, hi) = ty.bounds();
-                        Kind::Constant(
-                            ty,
-                            match member.as_str() {
-                                "MAX" | "max" => hi,
-                                "MIN" | "min" => lo,
-                                _ => return Err(self.err("expected MAX or MIN")),
-                            },
-                        )
-                    } else if self.eat("(") {
-                        Kind::Call(format!("{n}::{member}"), self.arguments()?)
-                    } else if member.starts_with(|c: char| c.is_ascii_uppercase()) && self.eat("{")
-                    {
-                        Kind::Record(format!("{n}::{member}"), self.record_fields()?)
-                    } else {
-                        Kind::FactAt(
-                            Box::new(Expr {
-                                kind: Kind::Name(n),
-                                line,
-                            }),
-                            member,
-                        )
-                    }
-                } else if n.starts_with(|c: char| c.is_ascii_uppercase()) && self.eat("{") {
-                    let mut fields = Vec::new();
-                    if !self.eat("}") {
-                        loop {
-                            let field = self.name()?;
-                            self.expect(":")?;
-                            let value = self.expr(0)?;
-                            fields.push((field, value));
-                            if self.eat("}") {
-                                break;
-                            }
-                            self.expect(",")?;
-                            if self.eat("}") {
-                                break;
-                            }
-                        }
-                    }
-                    Kind::Record(n, fields)
-                } else if self.eat("(") {
-                    let mut args = Vec::new();
-                    if !self.eat(")") {
-                        loop {
-                            args.push(self.expr(0)?);
-                            if self.eat(")") {
-                                break;
-                            }
-                            self.expect(",")?;
-                        }
-                    }
-                    Kind::Call(n, args)
-                } else {
-                    Kind::Name(n)
-                }
+                self.named_expression(line)?
             };
             Expr { kind, line }
         };
@@ -627,10 +620,14 @@ impl Parser {
             }
             if min <= 8 && self.eat(".") {
                 let field = self.name()?;
-                lhs = Expr {
-                    kind: Kind::Field(Box::new(lhs), field),
-                    line,
+                let kind = if self.eat("(") {
+                    let mut args = vec![lhs];
+                    args.extend(self.arguments()?);
+                    Kind::Call(format!("evg_method_{field}"), args)
+                } else {
+                    Kind::Field(Box::new(lhs), field)
                 };
+                lhs = Expr { kind, line };
                 continue;
             }
             if self.peek() == "[" && min <= 8 {
@@ -937,6 +934,28 @@ fn parse_unit(source: &str) -> Result<Program, String> {
                     module: module.clone(),
                     line,
                 });
+                continue;
+            }
+            if p.tokens
+                .get(p.pos + 1)
+                .is_none_or(|token| token.text != "Drop")
+            {
+                p.expect("impl")?;
+                let target = p.path_name()?;
+                p.expect("{")?;
+                while !p.eat("}") {
+                    let ideal = p.eat("ideal");
+                    let mut function = p.function(Some(&target), ideal)?;
+                    if function.receiver.is_none()
+                        && function.params.iter().any(|(name, _)| name == "self")
+                    {
+                        return Err(p.err("use method or method& for an implicit self receiver"));
+                    }
+                    function.drop_target = None;
+                    function.impl_target = Some(target.clone());
+                    function.module = module.clone();
+                    functions.push(function);
+                }
                 continue;
             }
             let (target, mut function) = p.destructor()?;

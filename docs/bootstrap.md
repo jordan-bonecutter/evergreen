@@ -1279,7 +1279,8 @@ Within a module, local type and function names resolve to that module. Clients
 use qualified names such as `permits::Permit` and `permits::issue()`. Modules
 are checked in the same ordered proof unit, introduce no trusted declarations,
 and cannot be reopened or nested. Functions and type names are currently all
-exported. Calls still require an earlier checked function declaration.
+exported. Explicit call dependencies are checked before their callers regardless
+of source order.
 
 `opaque` hides construction, field reads/writes, field borrows, and destructuring
 from other modules. It requires a defining module. `affine` separately prevents
@@ -1846,9 +1847,8 @@ Files in the same module can refer to declarations in other files without
 qualification. The compiler schedules types and functions within each package
 by dependency, so declaration checking does not depend on filename order.
 Self-recursive functions retain the existing termination/safety rules; mutually
-recursive declarations and recursive types remain rejected. Root source snippets
-retain their earlier-declaration rule. Pass dependency directories before their
-clients when passing them explicitly, or use local imports as described below. Legacy
+recursive declarations and recursive types remain rejected. Root source snippets use the same dependency scheduling. Pass dependency
+directories explicitly, or use local imports as described below. Legacy
 `module name { ... }` blocks remain accepted for existing source snippets.
 
 The Rust API's `syntax::join_source_units` preserves file boundaries when
@@ -1925,3 +1925,56 @@ methods remain subsequent work. Partial field moves, moving out of borrowed
 places, and branches with different remaining live owners are still rejected
 where the bootstrap lacks partial/conditional shape support. Complete record
 patterns remain the supported way to extract non-Copy owned fields.
+
+### Methods and implicit self
+
+```evg
+type Person struct {age: usize}
+
+impl Person {
+    fn new(age: usize) -> Self { Self {age: age} }
+
+    method into_age() -> usize { self.age }
+
+    method& birthday()
+    where(self.age < usize::MAX)
+    modifies(&self.age)
+    ensures(self.age == old(self.age) + 1) {
+        self.age = self.age + 1;
+    }
+}
+```
+
+`method` supplies an implicit by-value `self`; the receiver copies if its type
+implements Copy and otherwise moves. `method&` supplies `self: &Self`, with the
+ordinary reference/effect rules. Receiver arguments are omitted from the source
+parameter list. Methods may use `self` in bodies, contracts, return-borrow paths,
+and decreasing measures. `Self` names the implementing record, including in
+constructors and return types. Ordinary `fn` inside an impl defines an associated
+function without a receiver.
+
+Calls such as `person.birthday()` automatically borrow/dereference the receiver
+as required. Explicit paths such as `Person::new(...)` and
+`people::Person::new(...)` are supported. Inherent impls must be in the record's
+defining module. Methods lower to ordinary checked functions before dependency
+scheduling; names do not grant field visibility, mutation, or ownership rights.
+Arguments, including the receiver, retain normal evaluation order. A consuming
+method runs ordinary cleanup for any receiver value it does not return or move.
+`impl Drop` also accepts `method drop()`; legacy `fn drop(self)` stays supported.
+
+`examples/methods.evg` demonstrates a constructor, borrowed mutation, proof-time
+accessor use, and a consuming method. `examples/vec.evg` uses the Vec method
+interface; the existing free functions remain available. Vec's `method&`
+reallocation returns a fresh Vec to assign over the old value. Its consuming
+`into_data` method transfers the existing allocation using complete receiver
+destructuring. `examples/owned_method_transfer.evg` proves that an element
+borrow survives this header move and becomes invalid when the new owner frees
+that allocation. References to the moved header itself do not survive.
+
+This milestone supports inherent record methods and associated functions.
+General traits, associated types/constants, generic impls, primitive-type impls,
+and representation-polymorphic patterns are still pending. Borrowed receivers
+currently need a stored place (including one reached through a reference or
+owning plane); automatic reference-method calls on temporary value results need
+additional temporary-storage lifetime support. Non-Copy moves through borrowed
+receivers and unsupported partial/conditional shape operations are rejected.

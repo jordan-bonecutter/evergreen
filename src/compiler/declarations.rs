@@ -1,5 +1,5 @@
 //! Check package declarations in dependency order, independent of filenames.
-//! Root snippets retain their existing earlier-declaration rule. Recursive
+//! Source order does not grant access to unverified summaries. Recursive
 //! functions still need the verifier's recursion rules; recursive types and
 //! mutually recursive declarations remain unsupported.
 
@@ -141,7 +141,7 @@ fn order(
                 2 => continue,
                 1 => {
                     return Err(format!(
-                        "mutually recursive package declarations are unsupported: {}",
+                        "mutually recursive declarations are unsupported: {}",
                         keys[current].0
                     ))
                 }
@@ -149,9 +149,6 @@ fn order(
             }
             states[current] = 1;
             pending.push((current, true));
-            if keys[current].1.is_none() {
-                continue;
-            }
             for name in dependencies[current].iter().rev() {
                 let Some(&dependency) = indices.get(name.as_str()) else {
                     continue;
@@ -159,9 +156,7 @@ fn order(
                 if self_recursion && dependency == current {
                     continue;
                 }
-                if keys[dependency].1 == keys[current].1 {
-                    pending.push((dependency, false));
-                }
+                pending.push((dependency, false));
             }
         }
     }
@@ -180,7 +175,7 @@ fn rearrange<T>(values: &mut Vec<T>, order: Vec<usize>) {
     }));
 }
 
-pub(super) fn schedule(program: &mut Program) -> Result<()> {
+pub(super) fn schedule_types(program: &mut Program) -> Result<()> {
     let keys = program
         .structs
         .iter()
@@ -204,6 +199,10 @@ pub(super) fn schedule(program: &mut Program) -> Result<()> {
         })
         .collect::<Vec<_>>();
     rearrange(&mut program.structs, order(&keys, &dependencies, false)?);
+    Ok(())
+}
+
+pub(super) fn schedule_functions(program: &mut Program) -> Result<()> {
     let keys = program
         .functions
         .iter()

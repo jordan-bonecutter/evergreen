@@ -170,7 +170,7 @@ fn internal_backend_needs_no_external_tools() {
 }
 
 #[test]
-fn ordered_proof_units_share_checked_contracts() {
+fn proof_units_share_checked_contracts_independent_of_input_order() {
     let credits = Command::new(env!("CARGO_BIN_EXE_evg"))
         .env("PATH", "")
         .args([
@@ -275,8 +275,12 @@ fn ordered_proof_units_share_checked_contracts() {
         .args(["run", "examples/counter.evg", "stdlib/counter.evg"])
         .output()
         .unwrap();
-    assert!(!reversed.status.success());
-    assert!(reversed.stdout.is_empty());
+    assert!(
+        reversed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reversed.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&reversed.stdout).trim(), "42");
 }
 
 #[test]

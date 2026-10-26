@@ -9,6 +9,7 @@ mod field_sugar;
 pub mod kernel;
 pub mod layout;
 pub mod lean;
+mod methods;
 pub mod native;
 mod scalar_types;
 mod sources;

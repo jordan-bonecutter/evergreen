@@ -336,6 +336,13 @@ impl Emitter {
 
 pub fn emit(source: &str, run: bool) -> Result<String> {
     let program = syntax::parse(source)?;
+    if program
+        .functions
+        .iter()
+        .any(|f| f.impl_target.is_some() || f.receiver.is_some())
+    {
+        return Err("methods require the internal compiler".into());
+    }
     if !program.copy_impls.is_empty() {
         return Err("Copy implementations require the internal compiler".into());
     }

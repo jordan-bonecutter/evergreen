@@ -3365,7 +3365,7 @@ fn package_declarations_are_scheduled_by_dependencies_not_file_order() {
     ] {
         assert!(verify(bad).unwrap_err().contains("mutually recursive"));
     }
-    assert!(verify("fn earlier() -> usize {later()} fn later() -> usize {42}").is_err());
+    assert!(verify("fn earlier() -> usize {later()} fn later() -> usize {42}").is_ok());
     let recursive = "module counting; fn countdown(n: usize) -> usize ensures(result == n) decreases(n) {if n == 0 {0} else {countdown(n - 1) + 1}}";
     let source = syntax::join_source_units(&[
         recursive.into(),
@@ -3471,4 +3471,75 @@ fn records_move_by_default_and_copy_requires_a_checked_explicit_impl() {
         "type Item struct {value: usize} fn consume(item: Item) {} fn main() {let item = Item {value: 42}; consume(item); consume(item);}",
         "type Item struct {value: usize} fn main() {let items: [Item; 0] = []; let moved = items; let again = items;}",
     ] { assert!(verify(bad).is_err(), "accepted invalid Copy or move: {bad}"); }
+}
+
+#[test]
+fn methods_apply_implicit_self_and_the_normal_move_effect_and_borrow_rules() {
+    let source = include_str!("../../../examples/methods.evg");
+    let reordered = "type Person struct {age: usize} fn main() -> usize {let p = Person::new(42); p.read()} impl Person {method read() -> usize {self.age} fn new(age: usize) -> Self {Self {age: age}}}";
+    assert_eq!(verify(reordered).unwrap().run().unwrap().to_string(), "42");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    assert!(
+        verify(&source.replace("person.into_age()", "person.into_age(); person.age()")).is_err()
+    );
+    assert!(verify(&source.replace("modifies(&self.age)", "")).is_err());
+    assert!(verify(&source.replace(
+        "person.into_age()",
+        "let reference = &person; reference.into_age()"
+    ))
+    .is_err());
+    assert!(
+        verify(&source.replace("person.birthday();", "person.missing();"))
+            .unwrap_err()
+            .contains("unknown method missing")
+    );
+    assert!(verify("method foo() {}").is_err());
+    assert!(verify("type Item struct {} impl Item {method foo(self) {}}").is_err());
+    assert!(verify("module items {type Item struct {value: usize}} impl items::Item {method& read() -> usize {self.value}} fn main() {}").is_err());
+    let copy = "type Point struct {value: usize} impl Copy for Point {} impl Point {method read() -> usize ensures(result == self.value) {self.value}} fn main() -> usize ensures(result == 42) {let p = Point {value: 21}; p.read() + p.read()}";
+    assert_eq!(verify(copy).unwrap().run().unwrap().to_string(), "42");
+    let borrow = "type Item struct {value: usize} impl Item {method& view() -> &usize borrows(&self.value) {&self.value}} fn main() -> usize {let item = Item {value: 42}; let pointer = &item; *pointer.view()}";
+    assert_eq!(verify(borrow).unwrap().run().unwrap().to_string(), "42");
+    let stale = borrow.replace(
+        "*pointer.view()",
+        "let view = pointer.view(); drop(item); *view",
+    );
+    assert!(verify(&stale).is_err());
+    let namespace = syntax::join_source_units(&[
+        format!("module people; {source}"),
+        "fn main() -> usize {let p = people::Person::new(42); p.into_age()}".into(),
+    ])
+    .unwrap();
+    assert_eq!(verify(&namespace).unwrap().run().unwrap().to_string(), "42");
+    let destructor = "type Resource struct {done: &bool} impl Drop for Resource {method drop() modifies(self.done) ensures(*self.done) {*self.done = true;}} fn main() -> usize {let done = false; let resource = Resource {done: &done}; drop(resource); if done {42} else {0}}";
+    assert_eq!(verify(destructor).unwrap().run().unwrap().to_string(), "42");
+}
+
+#[test]
+fn consuming_an_owning_method_preserves_payload_borrows_until_the_new_owner_drops() {
+    let source = include_str!("../../../examples/owned_method_transfer.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    assert!(verify(&source.replace("    *borrowed", "    drop(data); *borrowed")).is_err());
+    assert!(verify(&source.replace("    *borrowed", "    values.length()")).is_err());
+    let header = source
+        .replace(
+            "    let data = values.into_data();",
+            "    let header = &values; let data = values.into_data();",
+        )
+        .replace("    *borrowed", "    header.length()");
+    assert!(verify(&header).is_err());
 }

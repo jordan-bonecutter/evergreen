@@ -1,0 +1,25 @@
+type Person struct {age: usize}
+
+impl Person {
+    fn new(age: usize) -> Self ensures(result.age == age) {
+        Self {age: age}
+    }
+
+    method& birthday()
+    where(self.age < usize::MAX)
+    modifies(&self.age)
+    ensures(self.age == old(self.age) + 1) {
+        self.age = self.age + 1;
+    }
+
+    method& age() -> usize ensures(result == self.age) { self.age }
+
+    method into_age() -> usize ensures(result == self.age) { self.age }
+}
+
+fn main() -> usize ensures(result == 42) {
+    let person = Person::new(41);
+    person.birthday();
+    proof borrowed_method: person.age() == 42;
+    person.into_age()
+}

@@ -1,7 +1,7 @@
 fn main() -> usize {
-    let values = vec::new(4);
-    vec::push(&values, 7);
-    vec::push(&values, 42);
-    values = vec::reallocate(&values, 8);
-    if *vec::get(&values, 0) == 7 { vec::pop(&values) } else { 0 }
+    let values = vec::Vec::new(4);
+    values.push(7);
+    values.push(42);
+    values = values.reallocate(8);
+    if *values.get(0) == 7 { values.pop() } else { 0 }
 }
