@@ -1974,9 +1974,11 @@ that allocation. References to the moved header itself do not survive.
 This milestone supports inherent record methods and associated functions.
 General traits, associated types/constants, generic impls, primitive-type impls,
 and representation-polymorphic patterns are still pending. Runtime reference
-methods also accept record constructors and record-returning calls as temporary
-receivers. The receiver is evaluated once and remains alive through the enclosing
-statement; cleanup runs afterward in reverse temporary order. A returned loan
+methods also accept record constructors, record-returning calls, and conditional
+record values as temporary receivers. The receiver is evaluated once and remains alive through the enclosing
+statement; cleanup runs afterward in reverse temporary order. Conditional
+conditions and branches establish their own temporary scopes, which end before
+the conditional result is used outside that scope. A returned loan
 can be used within that statement, but using it afterward fails. This includes
 temporary Copy records without destructors: their storage still expires.
 `examples/temporary_methods.evg` demonstrates this lifetime and destructor

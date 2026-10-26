@@ -3594,6 +3594,11 @@ fn borrowed_temporary_methods_keep_statement_lifetimes_and_cleanup() {
         let error = verify(&format!("{declarations} fn main() -> usize {{{body}}}")).unwrap_err();
         assert!(error.contains("never"), "{error}");
     }
+    let conditional = format!("{declarations} fn choose(flag: bool) -> usize {{let dropped = false; let value = (if flag {{Item::new(&dropped)}} else {{Item {{value: 41, dropped: &dropped}}}}).read(); if dropped {{value + 1}} else {{0}}}} fn main() -> usize {{choose(false)}}");
+    assert_eq!(
+        verify(&conditional).unwrap().run().unwrap().to_string(),
+        "42"
+    );
     // Even a Copy value without Drop owns its temporary storage lifetime.
     let copy = "type Point struct {value: usize} impl Copy for Point {} impl Point {fn new() -> Self {Self {value: 42}} method& view() -> &usize borrows(&self.value) {&self.value}} fn main() -> usize {let view = Point::new().view(); *view}";
     assert!(verify(copy).is_err());

@@ -2177,7 +2177,7 @@ impl<'a> Context<'a> {
                 self.memory.read(r)?;
                 Ok((r, path))
             }
-            Kind::Record(..) | Kind::Call(..) if self.phase == Phase::Runtime => {
+            Kind::Record(..) | Kind::Call(..) | Kind::If(..) if self.phase == Phase::Runtime => {
                 let value = self.eval(e, None)?;
                 if !matches!(value, Symbol::Record(..)) {
                     return Err("temporary borrows require a record value".into());

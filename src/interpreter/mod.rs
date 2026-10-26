@@ -880,7 +880,7 @@ impl Evaluator<'_> {
                 self.memory.read(r)?;
                 Ok((r, p))
             }
-            Kind::Record(..) | Kind::Call(..) => {
+            Kind::Record(..) | Kind::Call(..) | Kind::If(..) => {
                 let value = self.expr(e, env, None)?;
                 let Value::Record(name, _) = &value else {
                     return Err("temporary borrows require a record value".into());

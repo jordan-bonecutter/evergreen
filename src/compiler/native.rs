@@ -504,7 +504,7 @@ impl Emitter<'_> {
                 Type::Ref(inner) | Type::Plane(inner) => Ok(*inner),
                 _ => Err("native place dereference requires a reference".into()),
             },
-            Kind::Record(..) | Kind::Call(..) => {
+            Kind::Record(..) | Kind::Call(..) | Kind::If(..) => {
                 let ty = self.expr(e, None)?;
                 if !matches!(ty, Type::Named(_)) {
                     return Err("temporary borrows require a record value".into());

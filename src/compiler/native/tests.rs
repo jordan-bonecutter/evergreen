@@ -131,6 +131,7 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/methods.evg"),
         include_str!("../../../examples/update_methods.evg"),
         include_str!("../../../examples/temporary_methods.evg"),
+        "type Point struct {value: usize} impl Point {method& read() -> usize {self.value}} fn choose(flag: bool) -> usize {(if flag {Point {value: 7}} else {Point {value: 42}}).read()} fn main() -> usize {choose(false)}",
         "type Point struct {value: usize} impl Point {method& read() -> usize {self.value}} fn make(count: &usize) -> Point where(*count < usize::MAX) modifies(count) ensures(*count == old(*count) + 1 && result.value == 42) {*count = *count + 1; Point {value: 42}} fn main() -> usize {let count: usize = 0; let value = make(&count).read(); if count == 1 {value} else {0}}",
         "type Point struct {value: usize} impl Copy for Point {} impl Point {method read() -> usize ensures(result == self.value) {self.value}} fn main() -> usize {let p = Point {value: 21}; let reference = &p; reference.read() + p.read()}",
         "type Item struct {value: usize} impl Item {method& view() -> &usize borrows(&self.value) {&self.value}} fn main() -> usize {let item = alloc(Item {value: 42}); *item.view()}",
