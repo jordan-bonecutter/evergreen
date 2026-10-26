@@ -67,6 +67,20 @@ impl Scope {
 }
 
 impl Context<'_> {
+    // The destructor is already running. Consuming its complete receiver moves
+    // all fields into locals; scope cleanup must not run the parent Drop again.
+    pub(super) fn take_drop_receiver(&mut self, record: &str, expression: &Expr) -> Result<Symbol> {
+        let value = self.storage(expression)?;
+        self.compatible(&value.ty(), &Ty::Record(record.to_owned()), expression.line)?;
+        self.validate_argument(&value, expression.line)?;
+        let (reference, path) = self.location(expression)?;
+        if !path.is_empty() {
+            return Err("destructor receiver decomposition requires all of self".into());
+        }
+        let plane = self.memory.plane(reference)?;
+        self.memory.take(plane)
+    }
+
     fn cleanup_effects_type(&self, ty: &Type) -> bool {
         match ty {
             Type::Plane(_) => true,

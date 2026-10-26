@@ -3379,3 +3379,59 @@ fn unresolved_source_imports_cannot_silently_be_ignored() {
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.trusted_assumptions().is_empty());
 }
+
+#[test]
+fn destructors_can_decompose_only_their_complete_receiver() {
+    let source = include_str!("../../../examples/drop_receiver_pattern.evg");
+    let (program, bundle) = prove(source).unwrap();
+    let (value, events) = program.run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert_eq!(events, ["drop Resource", "drop Child"]);
+    let explicit = source.replace(
+        "proof local_owner_is_valid: *data == 42;",
+        "proof local_owner_is_valid: *data == 42; let moved = data; drop(child); drop(moved);",
+    );
+    let (value, events) = verify(&explicit).unwrap().run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert_eq!(events, ["drop Resource", "drop Child"]);
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    for bad in [
+        source.replace("modifies(self.child.finished)", ""),
+        source.replace(
+            "let Resource {data, child} = self;",
+            "let Resource {data} = self;",
+        ),
+        source.replace(
+            "let Resource {data, child} = self;",
+            "let Resource {data, child} = self; proof invalid: *self.data == 42;",
+        ),
+        source.replace(
+            "let Resource {data, child} = self;",
+            "let Resource {data, child} = self; let Resource {data: again, child: another} = self;",
+        ),
+        source.replace("drop(resource);", "let Resource {data, child} = resource;"),
+        source
+            .replace(
+                "let payload = &*self.data;",
+                "let payload = &*self.data; let old_slot = &self.data;",
+            )
+            .replace(
+                "proof local_owner_is_valid: *data == 42;",
+                "proof local_owner_is_valid: **old_slot == 42;",
+            ),
+        source.replace(
+            "drop(resource);",
+            "let old_payload = &*resource.data; drop(resource); proof invalid: *old_payload == 42;",
+        ),
+    ] {
+        assert!(
+            verify(&bad).is_err(),
+            "accepted invalid destructor decomposition: {bad}"
+        );
+    }
+}

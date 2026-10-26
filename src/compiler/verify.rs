@@ -506,7 +506,9 @@ fn destructor_expression(e: &Expr) -> bool {
 fn destructor_body(body: &[Statement]) -> bool {
     body.iter().all(|s| match s {
         Statement::Ideal(binding) => destructor_body(std::slice::from_ref(binding.as_ref())),
-        Statement::Destructure { .. } => false,
+        Statement::Destructure { value, .. } => {
+            matches!(&value.kind, Kind::Name(name) if name == "self")
+        }
         Statement::Assign { target, value } => {
             destructor_expression(target) && destructor_expression(value)
         }
@@ -1870,7 +1872,14 @@ impl<'a> Context<'a> {
                     .structs
                     .get(record)
                     .ok_or_else(|| format!("line {}: unknown record {record}", value.line))?;
-                if self.drops.contains(record) {
+                let drop_receiver = self.dropping
+                    && self.phase == Phase::Runtime
+                    && matches!(&value.kind, Kind::Name(name) if name == "self")
+                    && self
+                        .destructors
+                        .get(record)
+                        .is_some_and(|method| self.current.as_ref() == Some(&method.name));
+                if self.drops.contains(record) && !drop_receiver {
                     return Err(format!(
                         "line {}: destructuring {record} would bypass its Drop implementation",
                         value.line
@@ -1898,9 +1907,12 @@ impl<'a> Context<'a> {
                 for (_, name) in fields {
                     self.fresh_binding(name, value.line)?;
                 }
-                let Symbol::Record(_, mut values) =
+                let evaluated = if drop_receiver {
+                    self.take_drop_receiver(record, value)?
+                } else {
                     self.eval(value, Some(&Ty::Record(record.clone())))?
-                else {
+                };
+                let Symbol::Record(_, mut values) = evaluated else {
                     return Err("record pattern requires a record".into());
                 };
                 for (field, name) in fields {
@@ -2746,8 +2758,10 @@ impl<'a> Context<'a> {
                                 .into(),
                         );
                     }
-                    if self.dropping {
-                        return Err("destructor receivers and owned fields cannot be moved in this initial destructor subset".into());
+                    if self.dropping && n == "self" {
+                        return Err(
+                            "a destructor must use a complete pattern to consume self".into()
+                        );
                     }
                     let (r, _) = self.location(e)?;
                     let id = self.memory.plane(r)?;
@@ -3043,10 +3057,10 @@ impl<'a> Context<'a> {
                             "moves and drops are forbidden while invariants are open".into()
                         );
                     }
-                    if self.dropping {
-                        return Err(
-                            "destructors cannot transfer ownership or invoke nested cleanup".into(),
-                        );
+                    if self.dropping
+                        && !matches!(args.as_slice(), [argument] if matches!(&argument.kind, Kind::Name(name) if name != "self"))
+                    {
+                        return Err("destructor moves and drops require a complete local binding; decompose self first".into());
                     }
                     if self.phase == Phase::Specification {
                         return Err("specifications and facts cannot move or drop values".into());
@@ -3900,7 +3914,7 @@ fn verify_inner(mut parsed: syntax::Program, session: &mut Session) -> Result<Ve
             ));
         }
         if !destructor_body(&f.body) || !destructor_expression(&f.result) {
-            return Err(format!("line {}: destructor effects require proofs; Drop bodies allow scalar work, checked scalar helpers, borrows, and facts without constructing or destructuring ownership", f.line));
+            return Err(format!("line {}: destructor effects require proofs; Drop bodies allow scalar work, checked scalar helpers, borrows, facts, and a complete pattern of self; other ownership construction/destructuring is unsupported", f.line));
         }
     }
     let destructors = parsed

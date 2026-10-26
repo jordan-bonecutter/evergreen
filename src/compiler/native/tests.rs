@@ -127,6 +127,7 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        include_str!("../../../examples/drop_receiver_pattern.evg"),
         include_str!("../../../examples/scalar_types.evg"),
         include_str!("../../../examples/field_access.evg"),
         "type Item struct {value: usize} fn choose(count: &usize, item: &Item) -> &Item where(*count < usize::MAX) modifies(count) borrows(item) ensures(*count == old(*count) + 1) {*count = *count + 1; item} fn main() -> usize {let n: usize = 0; let item = Item {value: 42}; let chosen = choose(&n, &item).value; if n == 1 {chosen} else {0}}",
@@ -271,6 +272,12 @@ fn native_execution_agrees_with_the_interpreter() {
         "fn add(a: usize, b: usize) -> usize where (a <= 10 && b <= 10) ensures (result == a + b) {a + b} fn main() -> usize {add(1, add(2, 3))}",
         "fn sum(a: usize,b: usize,c: usize,d: usize,e: usize,f: usize,g: usize,h: usize) -> usize where (a <= 10 && b <= 10 && c <= 10 && d <= 10 && e <= 10 && f <= 10 && g <= 10 && h <= 10) {a+b+c+d+e+f+g+h} fn main() -> usize {sum(1,2,3,4,5,6,7,8)}",
     ].map(str::to_owned).to_vec();
+    cases.push(
+        include_str!("../../../examples/drop_receiver_pattern.evg").replace(
+            "proof local_owner_is_valid: *data == 42;",
+            "proof local_owner_is_valid: *data == 42; let moved = data; drop(child); drop(moved);",
+        ),
+    );
     cases.push(
         [
             concat!(include_str!("../../../stdlib/arrays/array.evg"), "\u{1e}"),

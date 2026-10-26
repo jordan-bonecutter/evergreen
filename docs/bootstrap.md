@@ -199,9 +199,15 @@ bodies at cleanup sites; it does not yet have reusable summaries of final receiv
 state. Their helper callees must be verified before the consuming function. Opaque arrays with effectful element cleanup require element summaries and
 are rejected; known array values are supported.
 
-Receiver invariants must remain valid while their body runs. Record construction,
-destructuring, ownership transfer, and explicit nested cleanup remain unsupported
-in Drop bodies. The invariant-update rules are unchanged. `Drop` postconditions
+Receiver invariants must remain valid while the receiver exists. A destructor
+can now consume its entire `self` with a complete record pattern, moving every
+field into a local. The consumed receiver becomes inaccessible; those locals
+receive normal reverse-binding-order cleanup instead of a second parent Drop.
+After decomposition, complete local bindings can be moved or explicitly dropped;
+ordinary ownership, liveness, and effect checks still apply. `drop(self)` and
+moving the receiver directly remain rejected. Record construction, other
+destructuring, and ownership-carrying helper calls remain unsupported in Drop
+bodies. The invariant-update rules are unchanged. `Drop` postconditions
 use entry parameter bindings like other functions: `*self.target` follows that
 entry pointer into current memory, while `old(*self.target)` reads entry memory.
 `examples/drop_effects.evg` checks caller effects and saved return values;
@@ -469,9 +475,14 @@ cleanup. Missing fields, repeated fields, repeated binding names, and using the
 consumed parent are rejected. Pattern bindings clean up in reverse binding order.
 This supports transferring owned fields without partially initialized records.
 
-Destructuring a type with its own `Drop` implementation is rejected because it
-would bypass that destructor. Fields with their own destructors are supported
-when the parent has none; tests check each runs exactly once. Patterns inside
+Destructuring a type with its own `Drop` implementation is rejected outside its
+own destructor because it would bypass that destructor. Inside that destructor,
+`let Resource {data, child} = self;` is allowed when it binds every field once.
+The parent method is already running; consuming `self` prevents a second parent
+cleanup, and its fields become ordinary locals with their own cleanup. References
+into an owned allocation survive the pointer move; references to receiver slots
+become invalid. Tests check child cleanup once and retained effect obligations.
+Fields with their own destructors are also supported when the parent has none. Patterns inside
 open invariant updates, nested patterns, and wildcard patterns remain unsupported.
 See `examples/destructure.evg`.
 
@@ -1867,3 +1878,11 @@ nested path. Package manifests, external dependency fetching, and nested import
 paths are not implemented. Loading is bounded by 1 MB of combined local source,
 1024 source files, import depth 64, and 4096 directory entries per package. These
 are bootstrap compiler resource limits, separate from compiled heap allocation.
+
+
+`examples/drop_receiver_pattern.evg` demonstrates complete receiver consumption,
+stable payload borrows, and a child destructor with a checked effect contract.
+It checks and runs without trusted assumptions. Partial/repeated decomposition,
+subsequent receiver access, external bypass of Drop, and omitted cleanup effects
+are rejected. This enables another generic library operation but does not yet
+implement shared owning references or Rc/Arc.
