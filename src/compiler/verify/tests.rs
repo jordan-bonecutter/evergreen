@@ -3569,3 +3569,36 @@ fn borrowed_record_methods_have_checked_effects_inside_updates_and_drop() {
     let error = verify(hidden).unwrap_err();
     assert!(error.contains("ownership-free"), "{error}");
 }
+
+#[test]
+fn borrowed_temporary_methods_keep_statement_lifetimes_and_cleanup() {
+    let source = include_str!("../../../examples/temporary_methods.evg");
+    let (program, certificate) = prove(source).unwrap();
+    let (value, events) = program.run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert_eq!(events, ["drop Item"]);
+    assert_eq!(
+        verify_with_certificate(source, &certificate)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let declarations = source.split("fn main()").next().unwrap();
+    let within = format!("{declarations} fn main() -> usize {{let dropped = false; *Item::new(&dropped).view() + 1}}");
+    assert_eq!(verify(&within).unwrap().run().unwrap().to_string(), "42");
+    for body in [
+        "let dropped = false; let view = Item::new(&dropped).view(); *view",
+        "let dropped = false; let view = &Item::new(&dropped).value; *view",
+        "let dropped = false; let view = Item::new(&dropped).view(); proof stale: view == view; 42",
+    ] {
+        let error = verify(&format!("{declarations} fn main() -> usize {{{body}}}")).unwrap_err();
+        assert!(error.contains("never"), "{error}");
+    }
+    // Even a Copy value without Drop owns its temporary storage lifetime.
+    let copy = "type Point struct {value: usize} impl Copy for Point {} impl Point {fn new() -> Self {Self {value: 42}} method& view() -> &usize borrows(&self.value) {&self.value}} fn main() -> usize {let view = Point::new().view(); *view}";
+    assert!(verify(copy).is_err());
+    let once = format!("{declarations} fn make(count: &usize, dropped: &bool) -> Item where(*count < usize::MAX) modifies(count) borrows(dropped: dropped) ensures(*count == old(*count) + 1 && result.value == 41 && result.dropped == dropped) {{*count = *count + 1; Item::new(dropped)}} fn main() -> usize {{let count: usize = 0; let dropped = false; let value = make(&count, &dropped).read(); if count == 1 && dropped {{value + 1}} else {{0}}}}");
+    let (value, events) = verify(&once).unwrap().run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert_eq!(events, ["drop Item"]);
+}

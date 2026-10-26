@@ -2177,6 +2177,20 @@ impl<'a> Context<'a> {
                 self.memory.read(r)?;
                 Ok((r, path))
             }
+            Kind::Record(..) | Kind::Call(..) if self.phase == Phase::Runtime => {
+                let value = self.eval(e, None)?;
+                if !matches!(value, Symbol::Record(..)) {
+                    return Err("temporary borrows require a record value".into());
+                }
+                let ty = value.ty();
+                let plane = self.memory.allocate(value)?;
+                let reference = self.memory.borrow(plane)?;
+                // Own the temporary slot until this statement finishes. Taking
+                // it during cleanup invalidates every loan into that slot.
+                self.temporaries
+                    .push((Symbol::Plane(Box::new(ty), reference), e.line));
+                Ok((reference, Vec::new()))
+            }
             _ => Err(format!("line {}: expected a referenceable place", e.line)),
         }
     }

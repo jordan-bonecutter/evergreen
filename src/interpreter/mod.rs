@@ -880,6 +880,17 @@ impl Evaluator<'_> {
                 self.memory.read(r)?;
                 Ok((r, p))
             }
+            Kind::Record(..) | Kind::Call(..) => {
+                let value = self.expr(e, env, None)?;
+                let Value::Record(name, _) = &value else {
+                    return Err("temporary borrows require a record value".into());
+                };
+                let ty = Type::Named(name.clone());
+                let plane = self.memory.allocate(value)?;
+                let reference = self.memory.borrow(plane)?;
+                self.temporaries.push(Value::Plane(Box::new(ty), reference));
+                Ok((reference, Vec::new()))
+            }
             _ => Err("expected referenceable place".into()),
         }
     }

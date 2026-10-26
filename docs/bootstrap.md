@@ -1973,11 +1973,17 @@ that allocation. References to the moved header itself do not survive.
 
 This milestone supports inherent record methods and associated functions.
 General traits, associated types/constants, generic impls, primitive-type impls,
-and representation-polymorphic patterns are still pending. Borrowed receivers
-currently need a stored place (including one reached through a reference or
-owning plane); automatic reference-method calls on temporary value results need
-additional temporary-storage lifetime support. Non-Copy moves through borrowed
-receivers and unsupported partial/conditional shape operations are rejected.
+and representation-polymorphic patterns are still pending. Runtime reference
+methods also accept record constructors and record-returning calls as temporary
+receivers. The receiver is evaluated once and remains alive through the enclosing
+statement; cleanup runs afterward in reverse temporary order. A returned loan
+can be used within that statement, but using it afterward fails. This includes
+temporary Copy records without destructors: their storage still expires.
+`examples/temporary_methods.evg` demonstrates this lifetime and destructor
+ordering. Temporaries do not receive the extended lifetime of a named binding;
+store a value in a local when its borrows must survive later statements.
+Specification/ideal temporary borrows, Non-Copy moves through borrowed receivers,
+and unsupported partial/conditional shape operations are rejected.
 
 Borrowed record receivers can be used by ownership-free helpers inside updates
 and destructors. The effect check distinguishes inspecting a place from moving

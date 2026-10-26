@@ -504,6 +504,17 @@ impl Emitter<'_> {
                 Type::Ref(inner) | Type::Plane(inner) => Ok(*inner),
                 _ => Err("native place dereference requires a reference".into()),
             },
+            Kind::Record(..) | Kind::Call(..) => {
+                let ty = self.expr(e, None)?;
+                if !matches!(ty, Type::Named(_)) {
+                    return Err("temporary borrows require a record value".into());
+                }
+                let home = self.allocate(&ty)?;
+                self.copy_frame(home, &ty)?;
+                self.temporaries.push((home, ty.clone()));
+                self.frame_address(home);
+                Ok(ty)
+            }
             _ => Err("native references require stored places".into()),
         }
     }
