@@ -102,3 +102,19 @@ fn source_units_share_module_names_without_leaking_file_scope() {
     );
     assert!(join_source_units(&["fn main() {}\u{1e}".into()]).is_err());
 }
+
+#[test]
+fn imports_are_explicit_package_dependencies_before_declarations() {
+    let program = parse("module demo; import vec; fn answer() -> usize {42}").unwrap();
+    assert!(program.imports.contains("vec"));
+    for bad in [
+        "module demo; import vec; import vec; fn answer() {}",
+        "module demo; fn answer() {} import vec;",
+        "import vec; module demo; fn answer() {}",
+    ] {
+        assert!(
+            parse(bad).is_err(),
+            "accepted invalid import placement: {bad}"
+        );
+    }
+}

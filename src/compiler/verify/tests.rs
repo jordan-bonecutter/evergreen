@@ -3369,3 +3369,13 @@ fn package_declarations_are_scheduled_by_dependencies_not_file_order() {
     .unwrap();
     assert_eq!(verify(&source).unwrap().run().unwrap().to_string(), "42");
 }
+
+#[test]
+fn unresolved_source_imports_cannot_silently_be_ignored() {
+    assert!(verify("import absent; fn main() -> usize {42}")
+        .unwrap_err()
+        .contains("unresolved import absent"));
+    let program = verify("import vec; fn main() -> usize {let value = vec::new(1); vec::push(&value, 42); vec::pop(&value)}").unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+}

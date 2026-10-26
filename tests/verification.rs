@@ -547,3 +547,108 @@ fn directory_packages_share_file_scope_and_replay_certificates() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("requires one module"));
 }
+
+#[test]
+fn local_imports_load_before_clients_and_bind_dependency_proofs() {
+    let cli = env!("CARGO_BIN_EXE_evg");
+    let output = Command::new(cli)
+        .args([
+            "--package-root",
+            "examples/packages",
+            "run",
+            "examples/packages/demo",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+    let root = std::env::temp_dir().join(format!("evergreen-imports-{}", std::process::id()));
+    fs::create_dir_all(root.join("a")).unwrap();
+    fs::create_dir_all(root.join("b")).unwrap();
+    fs::create_dir_all(root.join("app")).unwrap();
+    fs::write(
+        root.join("a/a.evg"),
+        "module a; import b; fn answer() -> usize {b::answer()}",
+    )
+    .unwrap();
+    fs::write(root.join("b/b.evg"), "module b; fn answer() -> usize {42}").unwrap();
+    fs::write(
+        root.join("app/main.evg"),
+        "module main; import a; fn main() -> usize {a::answer()}",
+    )
+    .unwrap();
+    let proof = root.join("app.evgproof");
+    let output = Command::new(cli)
+        .arg("--package-root")
+        .arg(&root)
+        .arg("prove")
+        .arg(root.join("app"))
+        .arg("-o")
+        .arg(&proof)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = Command::new(cli)
+        .arg("--package-root")
+        .arg(&root)
+        .arg("check")
+        .arg(root.join("app"))
+        .arg("--proof")
+        .arg(&proof)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::write(root.join("b/b.evg"), "module b; fn answer() -> usize {43}").unwrap();
+    let output = Command::new(cli)
+        .arg("--package-root")
+        .arg(&root)
+        .arg("check")
+        .arg(root.join("app"))
+        .arg("--proof")
+        .arg(&proof)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("source"));
+    fs::write(
+        root.join("b/b.evg"),
+        "module b; import a; fn answer() -> usize {a::answer()}",
+    )
+    .unwrap();
+    let output = Command::new(cli)
+        .arg("--package-root")
+        .arg(&root)
+        .arg("check")
+        .arg(root.join("app"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cyclic package imports"));
+    fs::write(
+        root.join("b/b.evg"),
+        "module b; import missing; fn answer() -> usize {42}",
+    )
+    .unwrap();
+    let output = Command::new(cli)
+        .arg("--package-root")
+        .arg(&root)
+        .arg("check")
+        .arg(root.join("app"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unresolved import missing"));
+    fs::remove_dir_all(root).unwrap();
+}

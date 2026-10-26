@@ -9,15 +9,15 @@ use args::{Action, Cli};
 use clap::Parser;
 use evergreen::compiler::{certificate::ProofBundle, verify::VerifiedProgram};
 use std::{
-    fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 pub fn run() -> Result<(), String> {
     let cli = Cli::parse();
-    let files = sources::expand(cli.command.files())?;
-    let source = read_sources(&files)?;
+    let loaded = sources::load(cli.command.files(), cli.package_root.as_deref())?;
+    let files = loaded.files;
+    let source = loaded.source;
     match &cli.command {
         Action::Build { output, proof, .. } => {
             build(&source, &files, output, proof.as_deref(), cli.deny_trust)
@@ -29,17 +29,6 @@ pub fn run() -> Result<(), String> {
         Action::LeanCheck { file } => lean::check(&source, file),
         Action::LeanRun { .. } => lean::run(&source),
     }
-}
-
-fn read_sources(files: &[PathBuf]) -> Result<String, String> {
-    if files.is_empty() {
-        return Err("at least one input file is required".into());
-    }
-    files
-        .iter()
-        .map(|file| fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display())))
-        .collect::<Result<Vec<_>, _>>()
-        .and_then(|sources| evergreen::syntax::join_source_units(&sources))
 }
 
 fn checked_program(

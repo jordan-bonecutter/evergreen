@@ -13,6 +13,9 @@ pub(super) struct Cli {
     /// Reject any use of trustme, including in unused definitions.
     #[arg(long, global = true)]
     pub(super) deny_trust: bool,
+    /// Root directory for local package imports (defaults to the working directory).
+    #[arg(long, global = true)]
+    pub(super) package_root: Option<PathBuf>,
     #[command(subcommand)]
     pub(super) command: Action,
 }

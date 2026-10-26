@@ -330,6 +330,11 @@ impl Loader {
 pub(super) fn load(source: &str) -> Result<Loaded> {
     crate::shared::worker::run("evergreen-source-loader", || {
         let user = syntax::parse(source)?;
+        for import in &user.imports {
+            if !user.modules.contains(import) && !is_bundled_module(import) {
+                return Err(format!("unresolved import {import}; load its package directory or provide its source units"));
+            }
+        }
         let supplied_modules = user.modules.clone();
         let supplied_functions = user.functions.iter().map(|f| f.name.clone()).collect();
         let mut type_dependencies = BTreeMap::<String, Names>::new();
@@ -354,6 +359,7 @@ pub(super) fn load(source: &str) -> Result<Loaded> {
             functions: BTreeSet::new(),
             output: Loaded {
                 program: Program {
+                    imports: user.imports,
                     scalar_types: user.scalar_types,
                     structs: Vec::new(),
                     functions: Vec::new(),
@@ -389,6 +395,10 @@ pub(super) fn load(source: &str) -> Result<Loaded> {
         }
         Ok(loader.output)
     })
+}
+
+pub(super) fn is_bundled_module(name: &str) -> bool {
+    LIBRARIES.iter().any(|library| library.module == Some(name))
 }
 
 #[cfg(test)]

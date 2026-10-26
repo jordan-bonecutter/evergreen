@@ -1830,10 +1830,40 @@ by dependency, so declaration checking does not depend on filename order.
 Self-recursive functions retain the existing termination/safety rules; mutually
 recursive declarations and recursive types remain rejected. Root source snippets
 retain their earlier-declaration rule. Pass dependency directories before their
-clients; automatic imports and package-root resolution remain subsequent work. Legacy
+clients when passing them explicitly, or use local imports as described below. Legacy
 `module name { ... }` blocks remain accepted for existing source snippets.
 
 The Rust API's `syntax::join_source_units` preserves file boundaries when
 combining source strings. Plain string concatenation intentionally does not end
 a file module. Proof fingerprints include those boundaries and all bundled
 source bytes, so certificate replay checks the same assembled program.
+
+
+### Local package imports
+
+`import arithmetic;` loads the `arithmetic` directory under the package root.
+Imports precede declarations. The root defaults to the working directory and
+can be selected explicitly:
+
+```sh
+cargo run -- --package-root examples/packages run examples/packages/demo
+```
+
+The demo imports its arithmetic dependency automatically; its files can be in
+any declaration order. The loader recursively places dependencies before their
+clients, deduplicates source files, and rejects import cycles, missing packages,
+self-imports, and imports of executable `main` packages. Imported paths must
+remain inside the selected root. Dependency bytes and source-unit boundaries
+are included in proof fingerprints; editing a dependency invalidates replay.
+Output protection also covers imported source files.
+
+Bundled standard-library names are available without filesystem lookup when no
+local package supplies that name. Their used declarations retain demand loading
+and trust auditing. An unresolved explicit import is an error in the Rust API;
+API callers provide local packages with `syntax::join_source_units`.
+
+This first import syntax accepts a single package name, not a remote URL or a
+nested path. Package manifests, external dependency fetching, and nested import
+paths are not implemented. Loading is bounded by 1 MB of combined local source,
+1024 source files, import depth 64, and 4096 directory entries per package. These
+are bootstrap compiler resource limits, separate from compiled heap allocation.

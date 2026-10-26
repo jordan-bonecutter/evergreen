@@ -205,6 +205,7 @@ impl Struct {
 
 #[derive(Clone, Debug)]
 pub struct Program {
+    pub imports: std::collections::BTreeSet<String>,
     pub scalar_types: Vec<ScalarDefinition>,
     pub modules: std::collections::BTreeSet<String>,
     pub structs: Vec<Struct>,
@@ -311,6 +312,7 @@ impl Parser {
                     | "ensures"
                     | "borrows"
                     | "module"
+                    | "import"
                     | "opaque"
                     | "ideal"
                     | "if"
@@ -811,6 +813,7 @@ fn parse_unit(source: &str) -> Result<Program, String> {
         pos: 0,
         depth: 0,
     };
+    let mut imports = std::collections::BTreeSet::new();
     let mut scalar_types = Vec::new();
     let mut functions = Vec::new();
     let mut structs = Vec::new();
@@ -838,6 +841,7 @@ fn parse_unit(source: &str) -> Result<Program, String> {
                     || !structs.is_empty()
                     || !destructors.is_empty()
                     || !scalar_types.is_empty()
+                    || !imports.is_empty()
                     || modules.len() != 1
                 {
                     return Err(p.err("a file module declaration must precede all declarations"));
@@ -855,6 +859,21 @@ fn parse_unit(source: &str) -> Result<Program, String> {
             }
             if module.take().is_none() {
                 return Err(p.err("unexpected module closing brace"));
+            }
+            continue;
+        }
+        if p.eat("import") {
+            if !functions.is_empty()
+                || !structs.is_empty()
+                || !destructors.is_empty()
+                || !scalar_types.is_empty()
+            {
+                return Err(p.err("imports must precede declarations"));
+            }
+            let name = p.name()?;
+            p.expect(";")?;
+            if !imports.insert(name) {
+                return Err(p.err("duplicate import"));
             }
             continue;
         }
@@ -912,6 +931,7 @@ fn parse_unit(source: &str) -> Result<Program, String> {
         return Err("expected at least one declaration".into());
     }
     Ok(Program {
+        imports,
         scalar_types,
         modules,
         structs,
@@ -945,6 +965,7 @@ pub fn parse(source: &str) -> Result<Program, String> {
     let mut program = parse_unit(units.next().unwrap_or_default())?;
     for unit in units {
         let unit = parse_unit(unit)?;
+        program.imports.extend(unit.imports);
         program.scalar_types.extend(unit.scalar_types);
         program.modules.extend(unit.modules);
         program.structs.extend(unit.structs);

@@ -6,7 +6,7 @@ must not recognize an Rc type, count field, clone function, or destructor.
 
 This document records the next implementation boundary, not a claim that Rc or
 Arc is implemented. Unique `plane(T)` ownership works today; a plane owner cannot
-yet be split into independently live shared allocation capabilities.
+yet be split into independently live shared owning references.
 
 ## Counted resources, including intermediate operations
 
@@ -49,12 +49,43 @@ loads and stores. A lifted representation fact must be restored before an
 operation exposes the record to code that relies on it. Ownership of tokens
 must remain affine during that update.
 
-The missing generic mechanism is allocation authority behind a library-owned
-invariant: the invariant owns the allocation, while each public handle owns an
-affine fragment sufficient to keep it live. A final-release proof must recover
-the unique authority needed to destroy the payload and deallocate the plane.
-The existing numeric credits cannot do this: they do not authorize access or
-freeing, and must not silently acquire that power.
+The intended generic mechanism is a reference model with an ownership role.
+`&T` borrows access without taking responsibility for the allocation's lifetime;
+an owning pointer carries that responsibility and is affine. Both can have the
+same address representation. An allocator may own the backing memory while a
+library owns responsibility for one allocated plane inside it.
+
+A proposed compiler ideal primitive, `owners(p)`, reports the number of live
+owning references to the relevant plane. Ordinary borrows do not count. This
+must be compiler-maintained semantic state, not a user-supplied number or a scan
+of the bindings visible in the current function. Hidden caller references,
+fields, arrays, moves, function results, and cleanup all have to participate.
+Observing the count must neither create an owner nor generate a runtime load.
+
+Rc then proves that its runtime counter agrees with that owner census when its
+representation invariant is closed. When it proves that the releasing handle
+is the sole owner, the generic reference rules can establish uniqueness and
+permit destruction. The compiler must know neither Rc nor its counter field.
+Numeric credits alone do not establish uniqueness or authorize access/freeing.
+
+Borrowed references are excluded from `owners`, but they still obey plane
+liveness: release makes subsequent accesses invalid. This does not introduce a
+Rust-style requirement that mutable references themselves be unique. A count
+observation is a state-indexed fact; creating another owner invalidates an
+unprotected earlier uniqueness observation. Arc additionally needs interference
+rules rather than treating an earlier count observation as stable.
+
+The owner census must use logical plane identity and generation, not raw address
+equality. Interior views and the distinction between dropping a subplane and
+releasing its backing allocation need explicit rules. Counted clone reservations
+in the abstract ledger represent outstanding lifetime responsibility, even
+before a handle is published. They cannot be forged by arbitrary ideal code.
+
+This is the agreed direction, not an implemented `owners` builtin. The current
+checker still implements unique owning planes and borrowed references; actual
+shared owning references, census transitions, and proof-driven uniqueness
+recovery remain to be connected. Adding a constant-valued or scope-local count
+query would not implement this design.
 
 Connecting this mechanism to the checker must preserve plane identity and
 generation checks, opaque library representations, and returned-reference
