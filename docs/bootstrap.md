@@ -1978,3 +1978,12 @@ currently need a stored place (including one reached through a reference or
 owning plane); automatic reference-method calls on temporary value results need
 additional temporary-storage lifetime support. Non-Copy moves through borrowed
 receivers and unsupported partial/conditional shape operations are rejected.
+
+Borrowed record receivers can be used by ownership-free helpers inside updates
+and destructors. The effect check distinguishes inspecting a place from moving
+its value: field/index projections and borrows do not transfer their enclosing
+record or allocation. Evaluated pointer and index expressions must themselves
+have checked effects. Calls retain ordinary invariant validation and write
+permissions; a whole-record method cannot observe a receiver whose required
+invariant is lifted. `examples/update_methods.evg` calls methods on a separate,
+valid receiver while the pair's invariant is temporarily lifted.

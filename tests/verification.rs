@@ -87,6 +87,7 @@ fn internal_backend_needs_no_external_tools() {
         "examples/references.evg",
         "examples/intermediate_states.evg",
         "examples/update_helpers.evg",
+        "examples/update_methods.evg",
         "examples/drop.evg",
         "examples/named_facts.evg",
         "examples/selective_update.evg",

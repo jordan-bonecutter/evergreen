@@ -4056,10 +4056,10 @@ fn verify_inner(mut parsed: syntax::Program, session: &mut Session) -> Result<Ve
         }
         obligations += ctx.obligations;
         f.partial = ctx.partial_execution;
-        if crate::compiler::effects::invariant_independent(f, &functions, &helpers) {
+        if crate::compiler::effects::invariant_independent(f, &functions, &helpers, &structs) {
             helpers.insert(f.name.clone());
         }
-        if crate::compiler::effects::ownership_free(f, &functions, &cleanup_helpers) {
+        if crate::compiler::effects::ownership_free(f, &functions, &cleanup_helpers, &structs) {
             cleanup_helpers.insert(f.name.clone());
         }
         functions.insert(f.name.clone(), f.clone());

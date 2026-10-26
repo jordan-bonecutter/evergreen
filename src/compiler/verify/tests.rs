@@ -2940,7 +2940,6 @@ fn destructor_helper_summaries_reject_hidden_cleanup_divergence_and_external_wri
         "type Resource struct {} fn hidden() -> usize {let another = Resource {}; 0} impl Drop for Resource {fn drop(self){let n = hidden();}}",
         "type Resource struct {} fn hidden() -> usize {let another = Resource {}; 0} fn wrapper() -> usize {hidden()} impl Drop for Resource {fn drop(self){let n = wrapper();}}",
         "fn forever() -> usize {forever()} type Resource struct {} impl Drop for Resource {fn drop(self){let n = forever();}}",
-        "fn observe(r: &Resource) -> usize {0} type Resource struct {} impl Drop for Resource {fn drop(self){let n = observe(&self);}}",
     ] {
         let error = verify(source).unwrap_err();
         assert!(error.contains("ownership-free"), "{error}: {source}");
@@ -3542,4 +3541,31 @@ fn consuming_an_owning_method_preserves_payload_borrows_until_the_new_owner_drop
         )
         .replace("    *borrowed", "    header.length()");
     assert!(verify(&header).is_err());
+}
+
+#[test]
+fn borrowed_record_methods_have_checked_effects_inside_updates_and_drop() {
+    let source = include_str!("../../../examples/update_methods.evg");
+    let (program, certificate) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &certificate)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    // Lifting an invariant does not permit a call that assumes that invariant.
+    let invalid = "type Pair struct {left: usize, right: usize} where(fact balanced = left == right; balanced); impl Pair {method& read() -> usize {self.left}} fn main() {let pair = Pair {left: 7, right: 7}; update(pair) lifts balanced {pair.left = 42; let observed = pair.read(); pair.right = 42;}}";
+    assert!(verify(invalid).is_err());
+    // A reference receiver still needs a declared write footprint.
+    assert!(verify(&source.replace("modifies(&self.value)", "")).is_err());
+    // Reading a valid, borrowed receiver does not recursively run its Drop.
+    let destructor = "type Resource struct {value: usize} impl Resource {method& read() -> usize ensures(result == self.value) {self.value}} impl Drop for Resource {method drop() {let observed = self.read(); proof checked: observed == self.value;}} fn main() -> usize {let resource = Resource {value: 42}; drop(resource); 42}";
+    let (value, events) = verify(destructor).unwrap().run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert_eq!(events, ["drop Resource"]);
+    // Place projections must inspect effects hidden in an index expression.
+    let hidden = "type Resource struct {} impl Drop for Resource {method drop() {}} fn hidden() -> usize ensures(result == 0) {let resource = Resource {}; 0} type Data struct {items: array(usize, 1)} fn read(data: &Data) -> usize {data.items[hidden()]} impl Drop for Data {method drop() {let observed = read(&self);}}";
+    let error = verify(hidden).unwrap_err();
+    assert!(error.contains("ownership-free"), "{error}");
 }

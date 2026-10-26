@@ -2,7 +2,7 @@
 //! are read-only; ownership-free helpers may use checked write contracts.
 //! Unknown effects remain unknown; callers must not assume they are harmless.
 
-use crate::syntax::{Expr, Function, Kind, MachineInt, Statement, Type};
+use crate::syntax::{Expr, Function, Kind, MachineInt, Statement, Struct, Type};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn scalar(t: &Type) -> bool {
@@ -10,26 +10,45 @@ fn scalar(t: &Type) -> bool {
 }
 
 fn leaf(t: &Type) -> bool {
-    scalar(t) || matches!(t, Type::Ref(inner) if matches!(**inner, Type::Machine(_) | Type::Bool))
+    scalar(t) || matches!(t, Type::Ref(_))
 }
 
 fn hint(
     e: &Expr,
     env: &BTreeMap<String, Type>,
     functions: &BTreeMap<String, Function>,
+    structs: &BTreeMap<String, Struct>,
 ) -> Option<Type> {
     match &e.kind {
         Kind::Name(n) => env.get(n).cloned(),
         Kind::Constant(t, _) => Some(Type::Machine(*t)),
         Kind::Unary(op, x) if op == "*" => {
-            if let Some(Type::Ref(t)) = hint(x, env, functions) {
+            if let Some(Type::Ref(t)) = hint(x, env, functions, structs) {
                 Some(*t)
             } else {
                 None
             }
         }
-        Kind::Unary(_, x) => hint(x, env, functions),
-        Kind::Binary(_, a, b) => hint(a, env, functions).or_else(|| hint(b, env, functions)),
+        Kind::Unary(_, x) => hint(x, env, functions, structs),
+        Kind::Field(base, field) => {
+            let Type::Named(name) = hint(base, env, functions, structs)? else {
+                return None;
+            };
+            structs
+                .get(&name)?
+                .runtime_fields()
+                .find(|(n, _)| n == field)
+                .map(|(_, t)| t.clone())
+        }
+        Kind::Index(base, _) => {
+            let Type::Array(element, _) = hint(base, env, functions, structs)? else {
+                return None;
+            };
+            Some(*element)
+        }
+        Kind::Binary(_, a, b) => {
+            hint(a, env, functions, structs).or_else(|| hint(b, env, functions, structs))
+        }
         Kind::Call(n, _) if MachineInt::parse(n).is_some() => {
             MachineInt::parse(n).map(Type::Machine)
         }
@@ -41,11 +60,62 @@ fn hint(
 struct Safe<'a> {
     known: &'a BTreeSet<String>,
     current: &'a str,
+    structs: &'a BTreeMap<String, Struct>,
 }
 
 impl Safe<'_> {
     fn contains(&self, name: &str) -> bool {
         name == self.current || self.known.contains(name)
+    }
+}
+
+// Inspect storage without treating an intermediate record or owning pointer as
+// an rvalue. Every evaluated pointer/index still passes through effect checking.
+// The ordinary verifier checks liveness, bounds, invariants, and write authority.
+fn place(
+    e: &Expr,
+    env: &BTreeMap<String, Type>,
+    functions: &BTreeMap<String, Function>,
+    safe: &Safe<'_>,
+) -> Option<Type> {
+    match &e.kind {
+        Kind::Name(name) => env.get(name).cloned(),
+        Kind::Unary(op, pointer) if op == "*" => {
+            let ty = match &pointer.kind {
+                Kind::Name(_) | Kind::Field(..) | Kind::Index(..) | Kind::Unary(_, _) => {
+                    place(pointer, env, functions, safe)?
+                }
+                _ => expression(pointer, None, env, functions, safe)?,
+            };
+            match ty {
+                Type::Ref(target) | Type::Plane(target) => Some(*target),
+                _ => None,
+            }
+        }
+        Kind::Field(base, field) => {
+            let Type::Named(name) = place(base, env, functions, safe)? else {
+                return None;
+            };
+            safe.structs
+                .get(&name)?
+                .runtime_fields()
+                .find(|(n, _)| n == field)
+                .map(|(_, t)| t.clone())
+        }
+        Kind::Index(base, index) => {
+            let Type::Array(element, _) = place(base, env, functions, safe)? else {
+                return None;
+            };
+            expression(
+                index,
+                Some(&Type::Machine(MachineInt::parse("usize")?)),
+                env,
+                functions,
+                safe,
+            )?;
+            Some(*element)
+        }
+        _ => None,
     }
 }
 
@@ -62,31 +132,17 @@ fn expression(
         Kind::Bool(_) => Type::Bool,
         Kind::Unit => Type::Unit,
         Kind::Name(n) => env.get(n)?.clone(),
-        Kind::Unary(op, x) if op == "&" => {
-            if !matches!(&x.kind, Kind::Name(_)) {
-                return None;
-            }
-            let t = expression(x, None, env, functions, safe)?;
-            if !matches!(t, Type::Machine(_) | Type::Bool) {
-                return None;
-            }
-            Type::Ref(Box::new(t))
-        }
-        Kind::Unary(op, x) if op == "*" => {
-            let Type::Ref(t) = expression(x, None, env, functions, safe)? else {
-                return None;
-            };
-            if !scalar(&t) {
-                return None;
-            }
-            *t
-        }
+        Kind::Unary(op, x) if op == "&" => Type::Ref(Box::new(place(x, env, functions, safe)?)),
+        Kind::Unary(op, _) if op == "*" => place(e, env, functions, safe)?,
+        Kind::Field(..) | Kind::Index(..) => place(e, env, functions, safe)?,
         Kind::Unary(op, x) if op == "!" => {
             expression(x, Some(&Type::Bool), env, functions, safe)?;
             Type::Bool
         }
         Kind::Unary(_, x) => {
-            let t = expected.cloned().or_else(|| hint(x, env, functions))?;
+            let t = expected
+                .cloned()
+                .or_else(|| hint(x, env, functions, safe.structs))?;
             if !matches!(t, Type::Machine(_)) {
                 return None;
             }
@@ -101,8 +157,8 @@ fn expression(
             } else {
                 let arithmetic = matches!(op.as_str(), "+" | "-" | "*");
                 let t = if arithmetic { expected.cloned() } else { None }
-                    .or_else(|| hint(a, env, functions))
-                    .or_else(|| hint(b, env, functions))?;
+                    .or_else(|| hint(a, env, functions, safe.structs))
+                    .or_else(|| hint(b, env, functions, safe.structs))?;
                 let equality = matches!(op.as_str(), "==" | "!=");
                 if !matches!(t, Type::Machine(_))
                     && !(equality && matches!(t, Type::Bool | Type::Ref(_)))
@@ -129,7 +185,8 @@ fn expression(
                 return None;
             };
             let target = Type::Machine(MachineInt::parse(n)?);
-            let source = hint(argument, env, functions).unwrap_or_else(|| target.clone());
+            let source =
+                hint(argument, env, functions, safe.structs).unwrap_or_else(|| target.clone());
             if !matches!(source, Type::Machine(_)) {
                 return None;
             }
@@ -163,8 +220,9 @@ pub(crate) fn invariant_independent(
     f: &Function,
     functions: &BTreeMap<String, Function>,
     safe: &BTreeSet<String>,
+    structs: &BTreeMap<String, Struct>,
 ) -> bool {
-    scalar_effects(f, functions, safe, false)
+    scalar_effects(f, functions, safe, structs, false)
 }
 
 /// Calls with scalar/reference interfaces and no creation, transfer, or cleanup
@@ -173,14 +231,16 @@ pub(crate) fn ownership_free(
     f: &Function,
     functions: &BTreeMap<String, Function>,
     safe: &BTreeSet<String>,
+    structs: &BTreeMap<String, Struct>,
 ) -> bool {
-    scalar_effects(f, functions, safe, true)
+    scalar_effects(f, functions, safe, structs, true)
 }
 
 fn scalar_effects(
     f: &Function,
     functions: &BTreeMap<String, Function>,
     safe: &BTreeSet<String>,
+    structs: &BTreeMap<String, Struct>,
     writes: bool,
 ) -> bool {
     if f.ideal
@@ -199,6 +259,7 @@ fn scalar_effects(
     let recursive_safe = Safe {
         known: safe,
         current: &f.name,
+        structs,
     };
     let safe = &recursive_safe;
     let mut env: BTreeMap<String, Type> = f
@@ -219,9 +280,7 @@ fn scalar_effects(
             Statement::Assign { target, value } => {
                 let ty = match &target.kind {
                     Kind::Name(n) => env.get(n).cloned(),
-                    Kind::Unary(op, _) if writes && op == "*" => {
-                        expression(target, None, &env, functions, safe)
-                    }
+                    _ if writes => place(target, &env, functions, safe),
                     _ => None,
                 };
                 let Some(t) = ty else {
