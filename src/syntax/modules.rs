@@ -166,6 +166,13 @@ pub(crate) fn qualify(program: &mut Program) {
                 .map(|s| defined(s.module.as_deref(), &s.name)),
         )
         .collect::<BTreeSet<_>>();
+    for implementation in &mut program.copy_impls {
+        implementation.target = resolve(
+            implementation.module.as_deref(),
+            &implementation.target,
+            &types,
+        );
+    }
     for structure in &mut program.structs {
         let scope = Scope {
             module: structure.module.as_deref(),

@@ -107,8 +107,27 @@ impl Context<'_> {
         }
     }
 
+    pub(super) fn has_runtime_cleanup(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Array(inner, _) => self.has_runtime_cleanup(inner),
+            Ty::Plane(_) => true,
+            Ty::Record(name) => crate::shared::ownership::needs_drop(
+                &Type::Named(name.clone()),
+                self.structs,
+                self.drops,
+            ),
+            _ => false,
+        }
+    }
+
     pub(super) fn cleanup_value(&mut self, value: Symbol, line: usize) -> Result<()> {
         if self.phase != Phase::Runtime {
+            return Ok(());
+        }
+        let requires_drop = self.has_runtime_cleanup(&value.ty());
+        // Callers validate before consuming storage. A value with no runtime
+        // destructor must not be observed again after its own slot is invalid.
+        if !requires_drop {
             return Ok(());
         }
         if self.symbol_is_affine(&value) {

@@ -1,5 +1,7 @@
 // These are borrowed counter views, not reference-count ownership or allocation.
 type CounterView struct {count: &usize}
+impl Copy for CounterView {}
+
 type NestedView struct {counter: CounterView}
 
 fn increment_view(view: CounterView) -> &usize

@@ -183,6 +183,7 @@ impl Statement {
 
 #[derive(Clone, Debug)]
 pub struct Struct {
+    pub copy: bool,
     pub name: String,
     pub fields: Vec<(String, Type)>,
     pub ideal_fields: std::collections::BTreeSet<String>,
@@ -204,7 +205,15 @@ impl Struct {
 }
 
 #[derive(Clone, Debug)]
+pub struct CopyImplementation {
+    pub target: String,
+    pub module: Option<String>,
+    pub line: usize,
+}
+
+#[derive(Clone, Debug)]
 pub struct Program {
+    pub copy_impls: Vec<CopyImplementation>,
     pub imports: std::collections::BTreeSet<String>,
     pub scalar_types: Vec<ScalarDefinition>,
     pub modules: std::collections::BTreeSet<String>,
@@ -779,6 +788,7 @@ impl Parser {
         };
         self.eat(";");
         Ok(Struct {
+            copy: false,
             name,
             fields,
             ideal_fields,
@@ -813,6 +823,7 @@ fn parse_unit(source: &str) -> Result<Program, String> {
         pos: 0,
         depth: 0,
     };
+    let mut copy_impls = Vec::new();
     let mut imports = std::collections::BTreeSet::new();
     let mut scalar_types = Vec::new();
     let mut functions = Vec::new();
@@ -842,6 +853,7 @@ fn parse_unit(source: &str) -> Result<Program, String> {
                     || !destructors.is_empty()
                     || !scalar_types.is_empty()
                     || !imports.is_empty()
+                    || !copy_impls.is_empty()
                     || modules.len() != 1
                 {
                     return Err(p.err("a file module declaration must precede all declarations"));
@@ -867,6 +879,7 @@ fn parse_unit(source: &str) -> Result<Program, String> {
                 || !structs.is_empty()
                 || !destructors.is_empty()
                 || !scalar_types.is_empty()
+                || !copy_impls.is_empty()
             {
                 return Err(p.err("imports must precede declarations"));
             }
@@ -908,6 +921,24 @@ fn parse_unit(source: &str) -> Result<Program, String> {
             if ideal {
                 return Err(p.err("ideal data has no runtime destructor"));
             }
+            if p.tokens
+                .get(p.pos + 1)
+                .is_some_and(|token| token.text == "Copy")
+            {
+                let line = p.line();
+                p.expect("impl")?;
+                p.expect("Copy")?;
+                p.expect("for")?;
+                let target = p.path_name()?;
+                p.expect("{")?;
+                p.expect("}")?;
+                copy_impls.push(CopyImplementation {
+                    target,
+                    module: module.clone(),
+                    line,
+                });
+                continue;
+            }
             let (target, mut function) = p.destructor()?;
             function.module = module.clone();
             destructors.push((target, function));
@@ -931,6 +962,7 @@ fn parse_unit(source: &str) -> Result<Program, String> {
         return Err("expected at least one declaration".into());
     }
     Ok(Program {
+        copy_impls,
         imports,
         scalar_types,
         modules,
@@ -965,6 +997,7 @@ pub fn parse(source: &str) -> Result<Program, String> {
     let mut program = parse_unit(units.next().unwrap_or_default())?;
     for unit in units {
         let unit = parse_unit(unit)?;
+        program.copy_impls.extend(unit.copy_impls);
         program.imports.extend(unit.imports);
         program.scalar_types.extend(unit.scalar_types);
         program.modules.extend(unit.modules);

@@ -252,7 +252,10 @@ fn opaque_ideal_effect_regions_forward_and_recheck_aliases() {
     assert!(verify(&hidden_reference)
         .unwrap_err()
         .contains("modifies targets require"));
-    let runtime_owner = "affine type Owner struct {n: usize} fn bad(r: &Owner) modifies(r) {}";
+    assert!(
+        verify("affine type Value struct {n: usize} fn observe(r: &Value) modifies(r) {}").is_ok()
+    );
+    let runtime_owner = "type Owner struct {n: plane(usize)} fn bad(r: &Owner) modifies(r) {}";
     assert!(verify(runtime_owner)
         .unwrap_err()
         .contains("modifies targets require"));
@@ -819,7 +822,9 @@ fn conditional_record_array_borrows_preserve_fields_and_storage_identity() {
     let different_planes = "type Cell struct {value: usize} fn bad(flag: bool) {let a = Cell {value: 7}; let b = Cell {value: 9}; let selected = if flag {&a} else {&b};}";
     assert!(verify(different_planes).is_err());
     let owners = "affine type Cell struct {value: usize} fn bad(flag: bool) {let data: [Cell; 2] = [Cell {value: 7}, Cell {value: 9}]; let selected = if flag {&data[0]} else {&data[1]};}";
-    assert!(verify(owners).is_err());
+    assert!(verify(owners).is_ok()); // Borrowing never copies the affine element.
+    let dropping = owners.replace("fn bad", "impl Drop for Cell {fn drop(self) {}} fn bad");
+    assert!(verify(&dropping).is_err());
     let refined = "type Positive struct {value: usize} where(value > 0); fn choose(data: &[Positive; 2], flag: bool) -> &Positive borrows(&(*data)[if flag {0} else {1}]) {if flag {&(*data)[0]} else {&(*data)[1]}} fn read(flag: bool) -> usize ensures(result == 42) {let data: [Positive; 2] = [Positive {value: 7}, Positive {value: 9}]; let selected = choose(&data, flag); data[0].value = 42; data[1].value = 42; proof typed: (*selected).value > 0; (*selected).value} fn main() -> usize {read(false)}";
     assert_eq!(verify(refined).unwrap().run().unwrap().to_string(), "42");
     let nested = "type Inner struct {value: usize} type Cell struct {inner: Inner} fn read(flag: bool) -> usize ensures(result == 42) {let data: [Cell; 2] = [Cell {inner: Inner {value: 7}}, Cell {inner: Inner {value: 9}}]; let selected = if flag {&data[0].inner.value} else {&data[1].inner.value}; *selected = 42; if flag {data[0].inner.value} else {data[1].inner.value}} fn main() -> usize {read(true)}";
@@ -1682,7 +1687,7 @@ fn array_read_facts_survive_contracts_and_branch_scope_changes() {
     assert!(verify(&source.replace("{data}", "{[data[1], data[0]]}")).is_err());
     let branch = "fn select(data: [usize; 2], index: usize, flag: bool) -> usize where (index < 2) ensures (result == data[index]) {if flag {data[index]} else {data[index]}}";
     assert!(verify(branch).is_ok());
-    let record = "type Positive struct {value: usize} where (value > 0); fn select(data: [Positive; 1], flag: bool) -> Positive ensures (result.value == data[0].value) {if flag {data[0]} else {data[0]}} fn main() -> usize ensures (result == 42) {let input: [Positive; 1] = [Positive {value: 42}]; let answer = select(input, false); answer.value}";
+    let record = "type Positive struct {value: usize} where (value > 0); impl Copy for Positive {} fn select(data: [Positive; 1], flag: bool) -> Positive ensures (result.value == data[0].value) {if flag {data[0]} else {data[0]}} fn main() -> usize ensures (result == 42) {let input: [Positive; 1] = [Positive {value: 42}]; let answer = select(input, false); answer.value}";
     assert_eq!(verify(record).unwrap().run().unwrap().to_string(), "42");
     let nested = "fn read(data: [[usize; 2]; 1]) -> usize ensures (result == data[0][1]) {data[0][1]} fn main() -> usize ensures (result == 42) {let data: [[usize; 2]; 1] = [[7, 42]]; read(data)}";
     assert_eq!(verify(nested).unwrap().run().unwrap().to_string(), "42");
@@ -3434,4 +3439,36 @@ fn destructors_can_decompose_only_their_complete_receiver() {
             "accepted invalid destructor decomposition: {bad}"
         );
     }
+}
+
+#[test]
+fn records_move_by_default_and_copy_requires_a_checked_explicit_impl() {
+    let source = include_str!("../../../examples/copy_and_move.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let moved = source.replace(
+        "    let moved = person;",
+        "    let moved = person; proof stale: person.age == 28;",
+    );
+    assert!(verify(&moved).is_err());
+    assert!(verify(&source.replace("impl Copy for Point {}", "")).is_err());
+    let borrowed = "type Item struct {value: usize} fn value(item: &Item) -> usize ensures(result == item.value) {item.value} fn main() -> usize ensures(result == 42) {let item = Item {value: 21}; let a = value(&item); let b = item.value; a + b}";
+    assert_eq!(verify(borrowed).unwrap().run().unwrap().to_string(), "42");
+    for bad in [
+        "type Owner struct {data: plane(usize)} impl Copy for Owner {} fn main() {}",
+        "affine type Resource struct {value: usize} impl Copy for Resource {} fn main() {}",
+        "type Resource struct {value: usize} impl Copy for Resource {} impl Drop for Resource {fn drop(self) {}} fn main() {}",
+        "type Inner struct {value: usize} type Outer struct {inner: Inner} impl Copy for Outer {} fn main() {}",
+        "type Item struct {value: usize} impl Copy for Item {} impl Copy for Item {} fn main() {}",
+        "module items {type Item struct {value: usize}} impl Copy for items::Item {} fn main() {}",
+        "fn main() -> usize {let source: plane(usize) = alloc(42); let moved = source; *source}",
+        "type Item struct {value: usize} fn consume(item: Item) {} fn main() {let item = Item {value: 42}; consume(item); consume(item);}",
+        "type Item struct {value: usize} fn main() {let items: [Item; 0] = []; let moved = items; let again = items;}",
+    ] { assert!(verify(bad).is_err(), "accepted invalid Copy or move: {bad}"); }
 }

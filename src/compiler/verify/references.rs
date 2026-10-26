@@ -80,7 +80,7 @@ impl Context<'_> {
         };
         if !self.history_element(element) {
             return Err(
-                "joined references require scalars or copyable scalar-field record elements".into(),
+                "joined references require scalars or reference-free record elements without runtime cleanup".into(),
             );
         }
         self.prove(

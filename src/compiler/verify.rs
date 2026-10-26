@@ -1680,6 +1680,7 @@ impl<'a> Context<'a> {
             }
             let old = project(self.memory.read(reference)?, &fields)?.clone();
             if self.symbol_is_affine(&old)
+                && self.has_runtime_cleanup(&old.ty())
                 && !(self.phase == Phase::Ideal && self.erased_value(&old))
             {
                 return Err("overwriting owned fields through references requires ownership effect proofs; unsupported".into());
@@ -2152,7 +2153,7 @@ impl<'a> Context<'a> {
                     && (literal.is_none() || self.history_element(element.as_ref()))
                 {
                     if !self.history_element(element.as_ref()) {
-                        return Err("borrowing opaque array elements requires scalars or copyable scalar-field records".into());
+                        return Err("borrowing opaque array elements requires scalars or reference-free records without runtime cleanup".into());
                     }
                     let value =
                         self.read_array(&element, &identity, &index, items.as_deref(), &cells)?;
@@ -2366,9 +2367,6 @@ impl<'a> Context<'a> {
         match value {
             Symbol::Plane(..) => true,
             Symbol::Record(n, _) => is_affine(&Type::Named(n.clone()), self.structs, self.drops),
-            Symbol::Array {
-                items: Some(xs), ..
-            } => xs.iter().any(|v| self.symbol_is_affine(v)),
             Symbol::Array { element, .. } => self.ty_is_affine(element),
             _ => false,
         }
@@ -2387,7 +2385,8 @@ impl<'a> Context<'a> {
     // Reference identity, nested arrays, and owning values need their own rules.
     // Reference-free scalar trees can be havoced without changing storage
     // identity, layouts, or hidden reference provenance. Affinity is a separate
-    // condition: array histories need copyable values, proof effects do not.
+    // condition: history views do not copy source values or grant moves. Only
+    // reference-free trees without runtime cleanup can use structural histories.
     fn scalar_field_value(&self, t: &Ty) -> bool {
         fn fields(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
             match t {
@@ -2406,7 +2405,7 @@ impl<'a> Context<'a> {
     }
 
     fn history_element(&self, t: &Ty) -> bool {
-        !self.ty_is_affine(t) && self.scalar_field_value(t)
+        !self.has_runtime_cleanup(t) && self.scalar_field_value(t)
     }
 
     fn ty_has_reference(&self, t: &Ty) -> bool {
@@ -2473,17 +2472,22 @@ impl<'a> Context<'a> {
                 .flat_map(|s| s.bindings().into_iter().map(str::to_owned)),
         );
         for name in names.into_iter().rev() {
-            let value = if let Some(id) = self.roots.get(&name) {
-                if self.memory.get(*id).is_err() {
+            let value = if let Some(id) = self.roots.get(&name).copied() {
+                if self.memory.get(id).is_err() {
                     continue;
                 }
-                self.memory.take(*id)?
+                let before = self.memory.get(id)?.clone();
+                if self.symbol_is_affine(&before) {
+                    self.validate_argument(&before, f.result.line)?;
+                }
+                self.memory.take(id)?
             } else {
-                self.env.remove(&name).ok_or("unknown cleanup binding")?
+                let value = self.env.remove(&name).ok_or("unknown cleanup binding")?;
+                if self.symbol_is_affine(&value) {
+                    self.validate_argument(&value, f.result.line)?;
+                }
+                value
             };
-            if self.symbol_is_affine(&value) {
-                self.validate_argument(&value, f.result.line)?;
-            }
             if self.phase == Phase::Runtime && !self.ideal_bindings.contains(&name) {
                 if name == "self" && f.drop_target.is_some() {
                     self.cleanup_fields(value, f.result.line)?;
@@ -3827,15 +3831,22 @@ fn verify_using(parsed: syntax::Program, session: &mut Session) -> Result<Verifi
 }
 
 fn verify_inner(mut parsed: syntax::Program, session: &mut Session) -> Result<VerifiedProgram> {
+    super::copy::configure(&mut parsed)?;
     super::scalar_types::lower(&mut parsed)?;
     super::declarations::schedule(&mut parsed)?;
     check_type_expansion(&parsed.structs)?;
     super::field_sugar::expand(&mut parsed);
     let mut structs = BTreeMap::new();
+    let copy_forbidden = parsed
+        .destructors
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect::<BTreeSet<_>>();
     let empty_functions = BTreeMap::new();
     let empty_drops = BTreeSet::new();
     let empty_destructors = BTreeMap::new();
     for s in &parsed.structs {
+        super::copy::validate(s, &structs, &copy_forbidden)?;
         if structs.contains_key(&s.name) {
             return Err(format!("line {}: duplicate struct {}", s.line, s.name));
         }

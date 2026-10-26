@@ -1,6 +1,9 @@
 type Point struct {x: usize, y: usize}
 type Sample struct {point: Point, tag: usize} where(tag == 7);
 
+impl Copy for Point {}
+impl Copy for Sample {}
+
 fn replace(data: &[Sample; 2], index: usize)
 where(index < 2) modifies(&(*data)[index])
 ensures((*data)[index].point.x == 42

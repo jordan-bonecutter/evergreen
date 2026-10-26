@@ -156,13 +156,16 @@ preserves references when its storage layout stays the same. A layout-changing
 replacement, `move(place)`, or `drop(place)` invalidates references to the plane.
 Reassignment restores a moved
 slot without restoring old references. References into structs and known array
-elements are supported. Moves are currently explicit; ordinary values copy.
-Types with `impl Drop for T` (and aggregates containing them) move implicitly
-when used by value. Their source slot becomes `shape(T)` and cannot be read.
+elements are supported. Records move by default when used as values, including
+assignment, arguments, and return values. `impl Copy for T {}` explicitly enables
+implicit copying when every field is Copy and the type has no Drop implementation.
+Machine/mathematical scalars, Booleans, unit, ordinary borrowed references, and
+arrays of Copy elements are Copy. Owning planes are not. A moved source slot
+becomes `shape(T)` and cannot be read.
 Assignments restore that slot. Overwriting a live owner runs its destructor;
 scope cleanup runs in reverse binding order, with owned fields cleaned after
 the parent destructor. Partial moves and overwriting owners through borrowed
-references remain rejected until their cleanup/effect rules are implemented.
+references remain rejected when runtime cleanup/ownership effects are required.
 
 ```evg
 impl Drop for Resource {
@@ -450,14 +453,18 @@ libraries will require checked module interfaces and their dependency manifests.
 
 ## Affine values without destructors
 
-`affine type Permit struct {tag: usize}` declares a move-only value without
-requiring `impl Drop`. `ideal affine type Ticket struct {tag: nat}` applies the
-same ownership rule to erased proof data. Passing or assigning such a value
+All records, including ideal records, are move-only unless they explicitly
+implement Copy. `affine type Permit struct {tag: usize}` additionally declares
+that Copy must not be implemented, without requiring `impl Drop`.
+`ideal affine type Ticket struct {tag: nat}` applies that restriction to proof data. Passing or assigning such a value
 moves it and leaves the old binding as `shape(T)`. Enclosing records and arrays
 are affine too. Scalar field inspection borrows the existing storage; moving
 individual owned fields still requires partial-initialization support.
 Values may be discarded, so this is affine rather than linear ownership.
-Existing types with destructors continue to be affine automatically.
+Types with destructors are non-Copy automatically. Move-only classification
+is independent of runtime destruction: a non-Copy record of scalars or borrowed
+references can have no destructor work at all. Its fields may still be borrowed
+and inspected without copying or moving the containing record.
 
 See `examples/affine_values.evg`. This supplies a general prerequisite for
 reservation witnesses without RC-specific compiler rules. It does not make
@@ -1886,3 +1893,35 @@ It checks and runs without trusted assumptions. Partial/repeated decomposition,
 subsequent receiver access, external bypass of Drop, and omitted cleanup effects
 are rejected. This enables another generic library operation but does not yet
 implement shared owning references or Rc/Arc.
+
+
+### Explicit Copy and move-by-default values
+
+```evg
+type Point struct {x: usize}
+impl Copy for Point {}
+
+type Person struct {age: usize}
+```
+
+`let duplicate = point;` preserves `point`, while `let moved = person;`
+consumes `person`. The same distinction applies to arguments, assignments, and
+returns. `examples/copy_and_move.evg` demonstrates both behaviors. Copy must be
+implemented in the type's defining module and may not conceal a non-Copy field,
+a runtime owner, an affine proof resource, or a destructor. Duplicate and foreign
+Copy implementations are rejected. Copy does not execute arbitrary user code;
+cloning a resource needs an explicit operation instead.
+
+Borrowed field access does not require Copy. The symbolic array histories may
+observe reference-free record fields without duplicating a source-level value;
+rvalue access still obeys the record's Copy/move rules. Filled allocation, which
+actually duplicates its initializer into multiple slots, requires Copy elements.
+Dropping a no-destructor value validates it before invalidating its storage,
+without attempting to read its self-referential fields afterward.
+
+This is the checked Copy marker and ownership behavior, not a complete general
+trait implementation. Generic traits/bounds, associated items, and default trait
+methods remain subsequent work. Partial field moves, moving out of borrowed
+places, and branches with different remaining live owners are still rejected
+where the bootstrap lacks partial/conditional shape support. Complete record
+patterns remain the supported way to extract non-Copy owned fields.

@@ -1,4 +1,6 @@
 type Checked struct {value: usize} where (value > 0);
+impl Copy for Checked {}
+
 type Pair struct {chosen: Checked, other: usize}
 
 fn choose(flag: bool, a: Checked, b: Checked) -> Checked

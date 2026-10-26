@@ -1,0 +1,16 @@
+type Point struct {x: usize}
+impl Copy for Point {}
+
+type Person struct {age: usize}
+
+fn coordinate(point: Point) -> usize ensures(result == point.x) { point.x }
+fn age(person: Person) -> usize ensures(result == person.age) { person.age }
+
+fn main() -> usize ensures(result == 42) {
+    let point = Point {x: 7};
+    let copy = point;
+    proof original_is_live: point.x == 7;
+    let person = Person {age: 28};
+    let moved = person;
+    coordinate(point) + coordinate(copy) + age(moved)
+}
