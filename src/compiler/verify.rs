@@ -3814,6 +3814,7 @@ fn verify_using(parsed: syntax::Program, session: &mut Session) -> Result<Verifi
 
 fn verify_inner(mut parsed: syntax::Program, session: &mut Session) -> Result<VerifiedProgram> {
     super::scalar_types::lower(&mut parsed)?;
+    super::declarations::schedule(&mut parsed)?;
     check_type_expansion(&parsed.structs)?;
     super::field_sugar::expand(&mut parsed);
     let mut structs = BTreeMap::new();

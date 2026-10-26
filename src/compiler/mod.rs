@@ -2,6 +2,7 @@
 //! Execution of checked programs belongs to the separate interpreter module.
 
 pub mod certificate;
+mod declarations;
 mod effects;
 mod field_sugar;
 pub mod kernel;

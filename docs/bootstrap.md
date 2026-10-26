@@ -1825,10 +1825,12 @@ cargo run -- run examples/packages/arithmetic examples/packages/demo
 ```
 
 Files in the same module can refer to declarations in other files without
-qualification. Existing verification still requires called functions to have
-an earlier verified declaration; filename ordering is not yet replaced by a
-package dependency scheduler. Pass dependency directories before their clients.
-Automatic imports and package-root resolution remain subsequent work. Legacy
+qualification. The compiler schedules types and functions within each package
+by dependency, so declaration checking does not depend on filename order.
+Self-recursive functions retain the existing termination/safety rules; mutually
+recursive declarations and recursive types remain rejected. Root source snippets
+retain their earlier-declaration rule. Pass dependency directories before their
+clients; automatic imports and package-root resolution remain subsequent work. Legacy
 `module name { ... }` blocks remain accepted for existing source snippets.
 
 The Rust API's `syntax::join_source_units` preserves file boundaries when

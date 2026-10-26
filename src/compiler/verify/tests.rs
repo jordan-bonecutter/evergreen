@@ -3338,3 +3338,34 @@ fn scalar_construction_checks_representation_and_preserves_proofs() {
     let units = syntax::join_source_units(&[module, main.into()]).unwrap();
     assert_eq!(verify(&units).unwrap().run().unwrap().to_string(), "42");
 }
+
+#[test]
+fn package_declarations_are_scheduled_by_dependencies_not_file_order() {
+    let source = syntax::join_source_units(&[
+        "module library; type Outer struct {inner: Inner} fn answer() -> usize ensures(result == 42) {helper(Outer {inner: Inner {value: 42}})}".into(),
+        "module library; type Inner struct {value: usize} fn helper(value: Outer) -> usize ensures(result == value.inner.value) {value.inner.value}".into(),
+        "module main; fn main() -> usize ensures(result == 42) {library::answer()}".into(),
+    ]).unwrap();
+    let (program, bundle) = prove(&source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(&source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    for bad in [
+        "module bad; fn a() -> usize {b()} fn b() -> usize {a()}",
+        "module bad; type A struct {other: B} type B struct {other: A} fn main() {}",
+    ] {
+        assert!(verify(bad).unwrap_err().contains("mutually recursive"));
+    }
+    assert!(verify("fn earlier() -> usize {later()} fn later() -> usize {42}").is_err());
+    let recursive = "module counting; fn countdown(n: usize) -> usize ensures(result == n) decreases(n) {if n == 0 {0} else {countdown(n - 1) + 1}}";
+    let source = syntax::join_source_units(&[
+        recursive.into(),
+        "fn main() -> usize {counting::countdown(42)}".into(),
+    ])
+    .unwrap();
+    assert_eq!(verify(&source).unwrap().run().unwrap().to_string(), "42");
+}
