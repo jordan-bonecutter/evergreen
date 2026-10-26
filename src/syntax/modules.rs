@@ -5,6 +5,9 @@ use crate::syntax::{Expr, Function, Kind, Program, Statement, Type};
 use std::collections::BTreeSet;
 
 fn defined(module: Option<&str>, name: &str) -> String {
+    if module == Some("main") && name == "main" {
+        return "main".into();
+    }
     module.map_or_else(|| name.to_owned(), |m| format!("{m}::{name}"))
 }
 

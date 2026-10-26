@@ -272,14 +272,14 @@ fn native_execution_agrees_with_the_interpreter() {
     ].map(str::to_owned).to_vec();
     cases.push(
         [
-            include_str!("../../../stdlib/array.evg"),
+            concat!(include_str!("../../../stdlib/arrays/array.evg"), "\u{1e}"),
             include_str!("../../../examples/array_updates.evg"),
         ]
         .join("\n"),
     );
     cases.push(
         [
-            include_str!("../../../stdlib/array.evg"),
+            concat!(include_str!("../../../stdlib/arrays/array.evg"), "\u{1e}"),
             include_str!("../../../examples/write_borrows.evg"),
         ]
         .join("\n"),
@@ -356,9 +356,9 @@ fn native_execution_agrees_with_the_interpreter() {
     }
     // A factory exists only in this test fixture; the shipped credit API
     // intentionally has no public minting operation.
-    let credit_test = include_str!("../../../stdlib/credits.evg").replace(
-        "module credits {",
-        "module credits {ideal fn issue() -> Credit ensures(result.units == 42) {Credit {units: 42}}",
+    let credit_test = concat!(include_str!("../../../stdlib/credits/credits.evg"), "\u{1e}").replace(
+        "module credits;",
+        "module credits;ideal fn issue() -> Credit ensures(result.units == 42) {Credit {units: 42}}",
     );
     cases.push(format!("{credit_test} {} fn main() -> usize {{ideal let restored = transfer_existing(credits::issue()); proof conserved: credits::units(&restored) == 42; 42}}", include_str!("../../../proofs/borrowed_credit_transfer.evg")));
     cases.push(format!(
@@ -366,18 +366,21 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../proofs/ideal_credit_bindings.evg")
     ));
     cases.push(format!("{credit_test} {} {} fn main() -> usize {{let data: usize = 42; use_borrow_budget(credits::issue(), &data)}}",
-        include_str!("../../../stdlib/borrow_credits.evg"), include_str!("../../../proofs/borrow_credits.evg")));
+        concat!(include_str!("../../../stdlib/borrow_credits/borrow_credits.evg"), "\u{1e}"), include_str!("../../../proofs/borrow_credits.evg")));
     cases.push(format!("{credit_test} {} {} fn main() -> usize {{let data: usize = 42; use_borrow_transfer(credits::issue(), &data)}}",
-        include_str!("../../../stdlib/borrow_credits.evg"), include_str!("../../../proofs/borrowed_token_transfer.evg")));
+        concat!(include_str!("../../../stdlib/borrow_credits/borrow_credits.evg"), "\u{1e}"), include_str!("../../../proofs/borrowed_token_transfer.evg")));
     let updates = format!(
         "{credit_test} {} {}",
-        include_str!("../../../stdlib/borrow_credits.evg"),
+        concat!(
+            include_str!("../../../stdlib/borrow_credits/borrow_credits.evg"),
+            "\u{1e}"
+        ),
         include_str!("../../../proofs/borrow_credit_updates.evg")
     );
     cases.push(format!("{updates} fn main() -> usize {{let count: usize = 42; release_budget(credits::issue(), &count) + 1}}"));
     cases.push(format!("{updates} fn main() -> usize {{ideal let parts = credits::split(credits::issue(), 1); ideal let credits::Split {{left, right}} = parts; let count: usize = 1; release_budget(left, &count) + 42}}"));
     cases.push(format!("{credit_test} {} {} fn main() -> usize {{let data: usize = 42; let carrier = carry(credits::issue(), &data); let observed = read_carrier(&carrier); consume_carrier(carrier) + observed - 42}}",
-        include_str!("../../../stdlib/borrow_credits.evg"), include_str!("../../../proofs/carried_borrow_credits.evg")));
+        concat!(include_str!("../../../stdlib/borrow_credits/borrow_credits.evg"), "\u{1e}"), include_str!("../../../proofs/carried_borrow_credits.evg")));
     for (ty, first, last) in [
         ("u8", "255", "42"),
         ("i8", "-128", "-42"),
@@ -390,10 +393,16 @@ fn native_execution_agrees_with_the_interpreter() {
     ] {
         cases.push(format!("fn forward(a: [{ty}; 3], b: {ty}) -> [{ty}; 3] {{a}} fn main() -> u8 {{let original: [{ty}; 3] = [{first}, 0, {last}]; let a = forward(original, {first}); let middle = &a[1]; *middle = {first}; if a[0] == {first} && a[1] == {first} && a[2] == {last} {{42}} else {{1}}}}"));
     }
-    let atomic = include_str!("../../../stdlib/x86_64_atomics.evg");
+    let atomic = concat!(
+        include_str!("../../../stdlib/x86_64_atomics/x86_64_atomics.evg"),
+        "\u{1e}"
+    );
     cases.push(format!(
         "{atomic} {} {}",
-        include_str!("../../../stdlib/atomic_counter.evg"),
+        concat!(
+            include_str!("../../../stdlib/atomic_counter/atomic_counter.evg"),
+            "\u{1e}"
+        ),
         include_str!("../../../examples/atomic_counter.evg")
     ));
     cases.push(format!(
@@ -531,10 +540,10 @@ fn native_syscalls_write_exact_bytes_and_preserve_results() {
     let eof = "extern syscall(0) fn read(fd: usize, byte: &u8, count: usize) -> isize where(count <= 1) modifies(byte) ensures(result == 0 => *byte == old(*byte)); proof {trustme} fn main() -> usize {let byte: u8 = 42; let received = read(0, &byte, 1); if received == 0 && byte == 42 {0} else {1}}";
     let pid = "extern syscall(39) fn getpid() -> isize; proof {trustme} fn main() -> usize {if getpid() > 0 {0} else {1}}";
     let large_bytes = std::iter::repeat_n("65", 257).collect::<Vec<_>>().join(",");
-    let large = format!("{} fn main() -> usize {{let bytes: [u8; 257] = [{large_bytes}]; if linux_io::print_bytes(257, &bytes) == 257 {{0}} else {{1}}}}", include_str!("../../../stdlib/linux_io.evg"));
+    let large = format!("{} fn main() -> usize {{let bytes: [u8; 257] = [{large_bytes}]; if linux_io::print_bytes(257, &bytes) == 257 {{0}} else {{1}}}}", concat!(include_str!("../../../stdlib/linux_io/linux_io.evg"), "\u{1e}"));
     let large_expected = vec![65; 257];
-    let empty = format!("{} fn main() -> usize {{let bytes: [u8; 0] = []; if linux_io::print_bytes(0, &bytes) == 0 {{0}} else {{1}}}}", include_str!("../../../stdlib/linux_io.evg"));
-    let prefix = format!("{} fn main() -> usize {{let bytes: [u8; 3] = [65, 66, 67]; if linux_io::write(1, &bytes, 2) == 2 {{0}} else {{1}}}}", include_str!("../../../stdlib/linux_io.evg"));
+    let empty = format!("{} fn main() -> usize {{let bytes: [u8; 0] = []; if linux_io::print_bytes(0, &bytes) == 0 {{0}} else {{1}}}}", concat!(include_str!("../../../stdlib/linux_io/linux_io.evg"), "\u{1e}"));
+    let prefix = format!("{} fn main() -> usize {{let bytes: [u8; 3] = [65, 66, 67]; if linux_io::write(1, &bytes, 2) == 2 {{0}} else {{1}}}}", concat!(include_str!("../../../stdlib/linux_io/linux_io.evg"), "\u{1e}"));
     for (source, expected) in [
         (hello.as_str(), b"Hello, Evergreen\n".as_slice()),
         (large.as_str(), large_expected.as_slice()),

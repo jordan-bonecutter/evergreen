@@ -219,11 +219,14 @@ fn heap_ownership_rejects_dangling_duplicates_and_erased_effects() {
 
 #[test]
 fn opaque_ideal_effect_regions_forward_and_recheck_aliases() {
-    let credits = include_str!("../../../stdlib/credits.evg").replace("module credits {", "module credits {ideal fn issue(n: nat) -> Credit ensures(result.units == n) {Credit {units: n}}");
+    let credits = concat!(include_str!("../../../stdlib/credits/credits.evg"), "\u{1e}").replace("module credits;", "module credits;ideal fn issue(n: nat) -> Credit ensures(result.units == n) {Credit {units: n}}");
     let transfer = include_str!("../../../proofs/borrowed_credit_transfer.evg");
     let library = format!(
         "{credits} {} {transfer} {}",
-        include_str!("../../../stdlib/borrow_credits.evg"),
+        concat!(
+            include_str!("../../../stdlib/borrow_credits/borrow_credits.evg"),
+            "\u{1e}"
+        ),
         include_str!("../../../proofs/borrowed_token_transfer.evg")
     );
     let source = format!("{library} fn main() -> usize {{let data: usize = 42; use_borrow_transfer(credits::issue(42), &data)}}");
@@ -287,7 +290,10 @@ fn old_scalar_accessors_use_entry_storage_and_require_pure_total_calls() {
 
 #[test]
 fn borrowed_credit_transfer_conserves_quantity_and_rejects_overdrafts() {
-    let credits = include_str!("../../../stdlib/credits.evg");
+    let credits = concat!(
+        include_str!("../../../stdlib/credits/credits.evg"),
+        "\u{1e}"
+    );
     let source = format!(
         "{credits}\n{}",
         include_str!("../../../proofs/borrowed_credit_transfer.evg")
@@ -417,10 +423,13 @@ fn ideal_record_fields_cannot_leak_or_erase_runtime_effects() {
 
 #[test]
 fn carried_ideal_credit_references_remain_in_the_alias_model() {
-    let credits = include_str!("../../../stdlib/credits.evg").replace("module credits {", "module credits {ideal fn issue() -> Credit ensures(result.units == 42) {Credit {units: 42}}");
+    let credits = concat!(include_str!("../../../stdlib/credits/credits.evg"), "\u{1e}").replace("module credits;", "module credits;ideal fn issue() -> Credit ensures(result.units == 42) {Credit {units: 42}}");
     let library = format!(
         "{credits} {} {}",
-        include_str!("../../../stdlib/borrow_credits.evg"),
+        concat!(
+            include_str!("../../../stdlib/borrow_credits/borrow_credits.evg"),
+            "\u{1e}"
+        ),
         include_str!("../../../proofs/carried_borrow_credits.evg")
     );
     let source = format!("{library} fn main() -> usize {{let data: usize = 42; let carrier = carry(credits::issue(), &data); consume_carrier(carrier)}}");
@@ -481,8 +490,14 @@ fn ideal_assignments_cannot_write_runtime_storage_or_revive_owners() {
 fn affine_credit_bookkeeping_can_be_replaced_inside_updates() {
     let library = format!(
         "{} {}",
-        include_str!("../../../stdlib/credits.evg"),
-        include_str!("../../../stdlib/borrow_credits.evg")
+        concat!(
+            include_str!("../../../stdlib/credits/credits.evg"),
+            "\u{1e}"
+        ),
+        concat!(
+            include_str!("../../../stdlib/borrow_credits/borrow_credits.evg"),
+            "\u{1e}"
+        )
     );
     let client = include_str!("../../../proofs/borrow_credit_updates.evg");
     let source = format!("{library} {client}");
@@ -578,8 +593,14 @@ fn erased_borrows_cannot_supply_runtime_values_or_mutations() {
 fn borrowed_credit_library_conserves_units_and_reference_targets() {
     let library = format!(
         "{} {}",
-        include_str!("../../../stdlib/credits.evg"),
-        include_str!("../../../stdlib/borrow_credits.evg")
+        concat!(
+            include_str!("../../../stdlib/credits/credits.evg"),
+            "\u{1e}"
+        ),
+        concat!(
+            include_str!("../../../stdlib/borrow_credits/borrow_credits.evg"),
+            "\u{1e}"
+        )
     );
     let client = include_str!("../../../proofs/borrow_credits.evg");
     let source = format!("{library} {client}");
@@ -1312,7 +1333,7 @@ fn reference_returns_preserve_incoming_planes_and_reject_local_escapes() {
 
 #[test]
 fn modifying_reference_returns_keep_the_entry_alias_and_replay() {
-    let library = include_str!("../../../stdlib/array.evg");
+    let library = concat!(include_str!("../../../stdlib/arrays/array.evg"), "\u{1e}");
     let source = format!(
         "{library} {}",
         include_str!("../../../examples/write_borrows.evg")
@@ -1883,7 +1904,10 @@ fn ideal_bindings_are_erased_and_keep_affine_ownership() {
             "{body}"
         );
     }
-    let library = include_str!("../../../stdlib/credits.evg");
+    let library = concat!(
+        include_str!("../../../stdlib/credits/credits.evg"),
+        "\u{1e}"
+    );
     let client = include_str!("../../../proofs/ideal_credit_bindings.evg");
     assert!(verify(&format!("{library} {client}")).is_ok());
     assert!(verify(&format!(
@@ -1927,7 +1951,10 @@ fn erased_affine_resources_move_without_runtime_values_or_effects() {
     assert!(verify(&format!("{declarations} {proof_view}")).is_ok());
     let old_scalar = "fn answer(ideal expected: nat) -> usize where(expected == 42) ensures(result == 42) {42} fn caller(n: usize) -> usize where(n == 42) ensures(result == 42) {n = 0; answer(nat(old(n)))} fn main() -> usize {caller(42)}";
     assert_eq!(verify(old_scalar).unwrap().run().unwrap().to_string(), "42");
-    let library = include_str!("../../../stdlib/credits.evg");
+    let library = concat!(
+        include_str!("../../../stdlib/credits/credits.evg"),
+        "\u{1e}"
+    );
     let bridge = "fn spend(ideal credit: credits::Credit, value: usize) -> usize ensures(result == value) {value} fn forward(ideal credit: credits::Credit, value: usize) -> usize ensures(result == value) {spend(credit, value)}";
     assert!(verify(&format!("{library} {bridge}")).is_ok());
     let borrow = "ideal affine type WithRef struct {r: &usize} fn ignore(ideal resource: WithRef) -> usize {0}";
@@ -1989,7 +2016,10 @@ fn opaque_module_representations_are_checked_without_client_privileges() {
 
 #[test]
 fn opaque_affine_credits_can_be_rearranged_but_not_forged_or_duplicated() {
-    let library = include_str!("../../../stdlib/credits.evg");
+    let library = concat!(
+        include_str!("../../../stdlib/credits/credits.evg"),
+        "\u{1e}"
+    );
     assert!(verify(&format!(
         "{library} {}",
         include_str!("../../../proofs/opaque_credits.evg")
@@ -2151,7 +2181,7 @@ fn projected_effects_frame_siblings_and_preserve_array_views() {
 
 #[test]
 fn scalar_array_regions_preserve_aliases_and_replay_without_search() {
-    let library = include_str!("../../../stdlib/array.evg");
+    let library = concat!(include_str!("../../../stdlib/arrays/array.evg"), "\u{1e}");
     let source = format!(
         "{library} {}",
         include_str!("../../../examples/array_updates.evg")
@@ -2190,7 +2220,7 @@ fn scalar_array_regions_preserve_aliases_and_replay_without_search() {
 
 #[test]
 fn array_effects_do_not_gain_permissions_or_keep_old_contents() {
-    let library = include_str!("../../../stdlib/array.evg");
+    let library = concat!(include_str!("../../../stdlib/arrays/array.evg"), "\u{1e}");
     for caller in [
         // A projected grant cannot authorize an entire-array write.
         "fn bad(a: &[usize; 2]) modifies(&(*a)[0]) {arrays::replace_pair(a, 1, 2);}",

@@ -1,4 +1,4 @@
-// Check after stdlib/credits.evg and stdlib/borrow_credits.evg.
+// Check after stdlib/credits/credits.evg and stdlib/borrow_credits/borrow_credits.evg.
 fn read_with(ideal token: borrow_credits::Token, data: &usize) -> usize
 where(borrow_credits::target(&token) == data)
 ensures(result == *data) {*data}

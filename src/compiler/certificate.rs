@@ -451,7 +451,7 @@ mod tests {
     #[test]
     fn opaque_credit_interfaces_replay_without_search() {
         let source = [
-            include_str!("../../stdlib/credits.evg"),
+            include_str!("../../stdlib/credits/credits.evg"),
             include_str!("../../proofs/opaque_credits.evg"),
             include_str!("../../proofs/ideal_credit_bindings.evg"),
         ]

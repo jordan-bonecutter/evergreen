@@ -1,4 +1,4 @@
-// Check after stdlib/credits.evg. No credit is minted by this example.
+// Check after stdlib/credits/credits.evg. No credit is minted by this example.
 // The footprint names the opaque resource, not its private representation.
 ideal fn take_existing(credit: &credits::Credit, amount: nat) -> credits::Credit
 where(amount <= credits::units(credit))

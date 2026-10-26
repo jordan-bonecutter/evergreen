@@ -176,8 +176,8 @@ fn ordered_proof_units_share_checked_contracts() {
         .args([
             "--deny-trust",
             "check",
-            "stdlib/credits.evg",
-            "stdlib/borrow_credits.evg",
+            "stdlib/credits/credits.evg",
+            "stdlib/borrow_credits/borrow_credits.evg",
             "proofs/borrow_credits.evg",
             "proofs/borrow_credit_updates.evg",
             "proofs/carried_borrow_credits.evg",
@@ -235,7 +235,7 @@ fn ordered_proof_units_share_checked_contracts() {
     for example in ["examples/array_updates.evg", "examples/write_borrows.evg"] {
         let arrays = Command::new(env!("CARGO_BIN_EXE_evg"))
             .env("PATH", "")
-            .args(["--deny-trust", "run", "stdlib/array.evg", example])
+            .args(["--deny-trust", "run", "stdlib/arrays/array.evg", example])
             .output()
             .unwrap();
         assert!(
@@ -250,7 +250,7 @@ fn ordered_proof_units_share_checked_contracts() {
         .args([
             "--deny-trust",
             "check",
-            "stdlib/credits.evg",
+            "stdlib/credits/credits.evg",
             "proofs/opaque_credits.evg",
         ])
         .output()
@@ -263,7 +263,7 @@ fn ordered_proof_units_share_checked_contracts() {
     let forged = Command::new(env!("CARGO_BIN_EXE_evg"))
         .args([
             "check",
-            "stdlib/credits.evg",
+            "stdlib/credits/credits.evg",
             "examples/reject_forged_credit.evg",
         ])
         .output()
@@ -460,7 +460,7 @@ fn syscall_declarations_cannot_bypass_deny_trust() {
         .args([
             "--deny-trust",
             "check",
-            "stdlib/x86_64_atomics.evg",
+            "stdlib/x86_64_atomics/x86_64_atomics.evg",
             "examples/compare_exchange.evg",
         ])
         .output()
@@ -469,7 +469,7 @@ fn syscall_declarations_cannot_bypass_deny_trust() {
     let atomic = Command::new(cli)
         .args([
             "run",
-            "stdlib/x86_64_atomics.evg",
+            "stdlib/x86_64_atomics/x86_64_atomics.evg",
             "examples/compare_exchange.evg",
         ])
         .output()
@@ -487,10 +487,63 @@ fn syscall_declarations_cannot_bypass_deny_trust() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("trust"));
     let output = Command::new(cli)
-        .args(["run", "stdlib/linux_io.evg", "examples/hello.evg"])
+        .args(["run", "stdlib/linux_io/linux_io.evg", "examples/hello.evg"])
         .output()
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("native executable"));
     assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn directory_packages_share_file_scope_and_replay_certificates() {
+    let cli = env!("CARGO_BIN_EXE_evg");
+    let packages = ["examples/packages/arithmetic", "examples/packages/demo"];
+    let output = Command::new(cli)
+        .arg("run")
+        .args(packages)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+    let proof = std::env::temp_dir().join(format!(
+        "evergreen-packages-{}.evgproof",
+        std::process::id()
+    ));
+    let output = Command::new(cli)
+        .arg("prove")
+        .args(packages)
+        .arg("-o")
+        .arg(&proof)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = Command::new(cli)
+        .arg("check")
+        .args(packages)
+        .arg("--proof")
+        .arg(&proof)
+        .output()
+        .unwrap();
+    fs::remove_file(proof).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("certificate replay"));
+    let output = Command::new(cli)
+        .args(["check", "stdlib"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("requires one module"));
 }

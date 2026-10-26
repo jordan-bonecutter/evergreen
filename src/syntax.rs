@@ -799,7 +799,7 @@ fn constant_extent(expression: &Expr) -> bool {
     }
 }
 
-pub fn parse(source: &str) -> Result<Program, String> {
+fn parse_unit(source: &str) -> Result<Program, String> {
     if source.len() > 1_000_000 {
         return Err("source exceeds 1 MB bootstrap limit".into());
     }
@@ -812,6 +812,7 @@ pub fn parse(source: &str) -> Result<Program, String> {
     let mut structs = Vec::new();
     let mut destructors = Vec::new();
     let mut module = None;
+    let mut file_module = false;
     let mut modules = std::collections::BTreeSet::new();
     while p.peek() != "<eof>" {
         if p.eat("module") {
@@ -828,11 +829,25 @@ pub fn parse(source: &str) -> Result<Program, String> {
                     p.err("a module must have one closed definition; reopening is forbidden")
                 );
             }
-            p.expect("{")?;
+            if p.eat(";") {
+                if !functions.is_empty()
+                    || !structs.is_empty()
+                    || !destructors.is_empty()
+                    || modules.len() != 1
+                {
+                    return Err(p.err("a file module declaration must precede all declarations"));
+                }
+                file_module = true;
+            } else {
+                p.expect("{")?;
+            }
             module = Some(name);
             continue;
         }
         if p.eat("}") {
+            if file_module {
+                return Err(p.err("file modules have no closing brace"));
+            }
             if module.take().is_none() {
                 return Err(p.err("unexpected module closing brace"));
             }
@@ -868,18 +883,50 @@ pub fn parse(source: &str) -> Result<Program, String> {
             functions.push(function);
         }
     }
-    if module.is_some() {
+    if module.is_some() && !file_module {
         return Err(p.err("unterminated module"));
     }
-    if functions.is_empty() && destructors.is_empty() {
-        return Err("expected at least one function".into());
+    if functions.is_empty() && destructors.is_empty() && structs.is_empty() {
+        return Err("expected at least one declaration".into());
     }
-    let mut program = Program {
+    Ok(Program {
         modules,
         structs,
         functions,
         destructors,
-    };
+    })
+}
+
+// An internal framing character, forbidden inside individual source files.
+// Keeping unit boundaries preserves file-module scope without rewriting code.
+const UNIT_SEPARATOR: char = '\u{1e}';
+
+pub fn join_source_units(sources: &[String]) -> Result<String, String> {
+    if sources.iter().any(|source| source.contains(UNIT_SEPARATOR)) {
+        return Err("source contains a reserved source-unit separator".into());
+    }
+    let source = sources.join(&UNIT_SEPARATOR.to_string());
+    if source.len() > 1_000_000 {
+        return Err("source exceeds 1 MB bootstrap limit".into());
+    }
+    Ok(source)
+}
+
+pub fn parse(source: &str) -> Result<Program, String> {
+    if source.len() > 1_000_000 {
+        return Err("source exceeds 1 MB bootstrap limit".into());
+    }
+    let mut units = source
+        .split(UNIT_SEPARATOR)
+        .filter(|unit| !unit.trim().is_empty());
+    let mut program = parse_unit(units.next().unwrap_or_default())?;
+    for unit in units {
+        let unit = parse_unit(unit)?;
+        program.modules.extend(unit.modules);
+        program.structs.extend(unit.structs);
+        program.functions.extend(unit.functions);
+        program.destructors.extend(unit.destructors);
+    }
     modules::qualify(&mut program);
     Ok(program)
 }

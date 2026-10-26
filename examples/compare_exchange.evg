@@ -1,4 +1,4 @@
-// Check/run/build together with stdlib/x86_64_atomics.evg.
+// Check/run/build together with stdlib/x86_64_atomics/x86_64_atomics.evg.
 fn main() -> usize {
     let value: usize = 7;
     let observed = x86_64_atomics::compare_exchange(&value, 7, 42);

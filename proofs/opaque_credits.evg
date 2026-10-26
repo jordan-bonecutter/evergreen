@@ -1,4 +1,4 @@
-// Check after stdlib/credits.evg. This client can rearrange existing credits,
+// Check after stdlib/credits/credits.evg. This client can rearrange existing credits,
 // but cannot mint one or inspect/alter its representation.
 ideal fn conserve(credit: credits::Credit, amount: nat) -> credits::Credit
 where (amount <= credits::units(&credit))

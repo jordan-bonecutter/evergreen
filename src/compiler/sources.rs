@@ -17,44 +17,44 @@ const LIBRARIES: &[Library] = &[
     Library {
         module: Some("vec"),
         exports: &[],
-        path: "stdlib/vec.evg",
-        source: include_str!("../../stdlib/vec.evg"),
+        path: "stdlib/vec/vec.evg",
+        source: include_str!("../../stdlib/vec/vec.evg"),
     },
     Library {
         module: Some("linux_io"),
         exports: &[],
-        path: "stdlib/linux_io.evg",
-        source: include_str!("../../stdlib/linux_io.evg"),
+        path: "stdlib/linux_io/linux_io.evg",
+        source: include_str!("../../stdlib/linux_io/linux_io.evg"),
     },
     Library {
         module: Some("x86_64_atomics"),
         exports: &[],
-        path: "stdlib/x86_64_atomics.evg",
-        source: include_str!("../../stdlib/x86_64_atomics.evg"),
+        path: "stdlib/x86_64_atomics/x86_64_atomics.evg",
+        source: include_str!("../../stdlib/x86_64_atomics/x86_64_atomics.evg"),
     },
     Library {
         module: Some("atomic_counter"),
         exports: &[],
-        path: "stdlib/atomic_counter.evg",
-        source: include_str!("../../stdlib/atomic_counter.evg"),
+        path: "stdlib/atomic_counter/atomic_counter.evg",
+        source: include_str!("../../stdlib/atomic_counter/atomic_counter.evg"),
     },
     Library {
         module: Some("credits"),
         exports: &[],
-        path: "stdlib/credits.evg",
-        source: include_str!("../../stdlib/credits.evg"),
+        path: "stdlib/credits/credits.evg",
+        source: include_str!("../../stdlib/credits/credits.evg"),
     },
     Library {
         module: Some("borrow_credits"),
         exports: &[],
-        path: "stdlib/borrow_credits.evg",
-        source: include_str!("../../stdlib/borrow_credits.evg"),
+        path: "stdlib/borrow_credits/borrow_credits.evg",
+        source: include_str!("../../stdlib/borrow_credits/borrow_credits.evg"),
     },
     Library {
         module: Some("arrays"),
         exports: &[],
-        path: "stdlib/array.evg",
-        source: include_str!("../../stdlib/array.evg"),
+        path: "stdlib/arrays/array.evg",
+        source: include_str!("../../stdlib/arrays/array.evg"),
     },
     Library {
         module: None,
@@ -406,7 +406,7 @@ mod tests {
         assert!(loaded.program.modules.contains("linux_io"));
         assert!(loaded
             .fingerprint
-            .contains("// bundled stdlib/linux_io.evg"));
+            .contains("// bundled stdlib/linux_io/linux_io.evg"));
         assert!(bundle.check_source(source).is_err());
         assert!(bundle.check_source(&loaded.fingerprint).is_ok());
         let counter = verify(include_str!("../../examples/atomic_counter.evg")).unwrap();
@@ -427,7 +427,7 @@ mod tests {
     #[test]
     fn explicit_modules_are_not_loaded_twice_and_user_lines_are_preserved() {
         let explicit = [
-            include_str!("../../stdlib/linux_io.evg"),
+            include_str!("../../stdlib/linux_io/linux_io.evg"),
             include_str!("../../examples/hello.evg"),
         ]
         .join("\n");

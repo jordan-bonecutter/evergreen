@@ -179,7 +179,10 @@ mod tests {
         ] {
             assert!(verify(&format!("{declaration} fn main() -> usize {{42}}")).is_err(), "accepted {declaration}");
         }
-        let io = include_str!("../../../stdlib/linux_io.evg");
+        let io = concat!(
+            include_str!("../../../stdlib/linux_io/linux_io.evg"),
+            "\u{1e}"
+        );
         assert!(verify(&format!(
             "{io} fn main() -> isize {{let byte: u8 = 42; linux_io::write_byte(1, &byte, 2)}}"
         ))
@@ -220,7 +223,10 @@ mod tests {
 mod atomic_tests {
     use super::*;
 
-    const ATOMIC: &str = include_str!("../../../stdlib/x86_64_atomics.evg");
+    const ATOMIC: &str = concat!(
+        include_str!("../../../stdlib/x86_64_atomics/x86_64_atomics.evg"),
+        "\u{1e}"
+    );
 
     #[test]
     fn compare_exchange_contracts_execute_and_replay() {
@@ -243,7 +249,10 @@ mod atomic_tests {
     fn library_cas_loops_prove_overflow_underflow_and_final_decrement() {
         let source = format!(
             "{ATOMIC} {} {}",
-            include_str!("../../../stdlib/atomic_counter.evg"),
+            concat!(
+                include_str!("../../../stdlib/atomic_counter/atomic_counter.evg"),
+                "\u{1e}"
+            ),
             include_str!("../../../examples/atomic_counter.evg")
         );
         let (program, bundle) = prove(&source).unwrap();

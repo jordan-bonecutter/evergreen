@@ -84,7 +84,7 @@ synchronization edge; a relaxed count increment alone does not publish data.
 These ordering contracts are not implemented or proved under a weak-memory model.
 The first generic `extern compare_exchange64` target operation now emits a
 locked x86-64 compare-exchange and has a sequential interpreter specification.
-Its contract lives in `stdlib/x86_64_atomics.evg` and remains explicitly trusted;
+Its contract lives in `stdlib/x86_64_atomics/x86_64_atomics.evg` and remains explicitly trusted;
 this is not yet an implementation of the concurrent resource transition.
 
 The Lean ledger abstracts each counter operation as indivisible. It does not
@@ -92,7 +92,7 @@ model caches, reads-from edges, release sequences, hardware instructions,
 thread scheduling, or payload accesses. Those must be connected by a refinement
 proof before this becomes an Arc safety argument.
 
-The generic retry loops now live in `stdlib/atomic_counter.evg`; increment checks
+The generic retry loops now live in `stdlib/atomic_counter/atomic_counter.evg`; increment checks
 saturation before choosing its desired word, and decrement returns the observed
 old count. They are actual Evergreen code executed by both backends, with only
 the target compare-exchange contract trusted. Their present checked contracts

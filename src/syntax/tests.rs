@@ -75,3 +75,30 @@ fn inline_array_and_runtime_plane_spellings_are_distinct() {
     );
     assert!(parse("fn main() {let owner: plane(u8, 3) = alloc(3, 0);}").is_ok());
 }
+
+#[test]
+fn file_modules_do_not_require_wrapper_indentation() {
+    let program = parse("module sample; opaque type Item struct {value: usize} fn value(item: &Item) -> usize {item.value}").unwrap();
+    assert_eq!(program.functions[0].name, "sample::value");
+    assert_eq!(program.structs[0].name, "sample::Item");
+    assert!(parse("module sample; fn f() {} }").is_err());
+    assert!(parse("fn f() {} module sample; fn g() {}").is_err());
+    assert!(parse("module sample; module other; fn f() {}").is_err());
+}
+
+#[test]
+fn source_units_share_module_names_without_leaking_file_scope() {
+    let source = join_source_units(&[
+        "module sample; type Item struct {value: usize} fn first() -> usize {42}".into(),
+        "module sample; fn second() -> usize {first()}".into(),
+        "fn main() -> usize {sample::second()}".into(),
+    ])
+    .unwrap();
+    let program = parse(&source).unwrap();
+    assert_eq!(program.functions[1].name, "sample::second");
+    assert_eq!(program.functions[2].name, "main");
+    assert!(
+        matches!(&program.functions[1].result.kind, Kind::Call(name, _) if name == "sample::first")
+    );
+    assert!(join_source_units(&["fn main() {}\u{1e}".into()]).is_err());
+}

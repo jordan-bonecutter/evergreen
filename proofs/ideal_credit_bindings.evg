@@ -1,4 +1,4 @@
-// Check after stdlib/credits.evg. Existing credits are split in ideal local
+// Check after stdlib/credits/credits.evg. Existing credits are split in ideal local
 // bindings and consumed by runtime signatures. No runtime credit value exists.
 fn spend_credit(ideal credit: credits::Credit, value: usize) -> usize
 ensures (result == value) {

@@ -3,6 +3,7 @@
 mod args;
 mod lean;
 mod output;
+mod sources;
 
 use args::{Action, Cli};
 use clap::Parser;
@@ -15,16 +16,16 @@ use std::{
 
 pub fn run() -> Result<(), String> {
     let cli = Cli::parse();
-    let files = cli.command.files();
-    let source = read_sources(files)?;
+    let files = sources::expand(cli.command.files())?;
+    let source = read_sources(&files)?;
     match &cli.command {
         Action::Build { output, proof, .. } => {
-            build(&source, files, output, proof.as_deref(), cli.deny_trust)
+            build(&source, &files, output, proof.as_deref(), cli.deny_trust)
         }
-        Action::Check { proof, .. } => check(&source, files, proof.as_deref(), cli.deny_trust),
-        Action::Prove { output, .. } => prove(&source, files, output, cli.deny_trust),
+        Action::Check { proof, .. } => check(&source, &files, proof.as_deref(), cli.deny_trust),
+        Action::Prove { output, .. } => prove(&source, &files, output, cli.deny_trust),
         Action::Run { .. } => run_program(&source, cli.deny_trust),
-        Action::Emit { output, .. } => emit(&source, files, output.as_deref()),
+        Action::Emit { output, .. } => emit(&source, &files, output.as_deref()),
         Action::LeanCheck { file } => lean::check(&source, file),
         Action::LeanRun { .. } => lean::run(&source),
     }
@@ -38,7 +39,7 @@ fn read_sources(files: &[PathBuf]) -> Result<String, String> {
         .iter()
         .map(|file| fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display())))
         .collect::<Result<Vec<_>, _>>()
-        .map(|sources| sources.join("\n"))
+        .and_then(|sources| evergreen::syntax::join_source_units(&sources))
 }
 
 fn checked_program(

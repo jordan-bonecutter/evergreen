@@ -559,10 +559,10 @@ distinct indices while framing all other cells. Separate reference parameters
 use independent body models for modular summaries; overlapping calls instead
 recheck the body against actual shared storage, as described below.
 
-`stdlib/array.evg` provides `arrays::set`, `arrays::swap`, and
+`stdlib/arrays/array.evg` provides `arrays::set`, `arrays::swap`, and
 `arrays::replace_pair` in Evergreen. `swap` accepts equal indices because both
 places share one incoming array's alias model. Run the example with
-`evg run stdlib/array.evg examples/array_updates.evg`; the same ordered unit
+`evg run stdlib/arrays/array.evg examples/array_updates.evg`; the same ordered unit
 supports certificate replay and native compilation.
 
 Write contracts support references stored in record parameters and behind other
@@ -1035,8 +1035,8 @@ reference exposes current contents; it does not grant a caller additional write
 permission. Returning a parent record after changing one field still requires
 preserving that record's invariants.
 
-`arrays::set_get` in `stdlib/array.evg` updates one cell and returns its reference.
-`evg run stdlib/array.evg examples/write_borrows.evg` exercises forwarding that
+`arrays::set_get` in `stdlib/arrays/array.evg` updates one cell and returns its reference.
+`evg run stdlib/arrays/array.evg examples/write_borrows.evg` exercises forwarding that
 contract, existing aliases, and later same-layout replacement. An index rebound
 inside the function cannot retarget its entry alias contract.
 
@@ -1249,7 +1249,7 @@ callee's representation access never grants that access to caller expressions.
 Drop implementations must belong to the type's defining module. Identifiers
 have a 256-byte bootstrap limit.
 
-`stdlib/credits.evg` is an opaque affine quantity library with no public mint
+`stdlib/credits/credits.evg` is an opaque affine quantity library with no public mint
 operation. Its checked API observes units by reference and splits/joins existing
 credits while conserving their total quantity. The client proof in
 `proofs/opaque_credits.evg` uses only that API and the public split-result record.
@@ -1263,8 +1263,8 @@ use the internal verifier; the optional Lean expression emitter remains limited
 to its existing non-modular reference subset.
 
 The abstraction tests also run through the CLI: checking
-`stdlib/credits.evg proofs/opaque_credits.evg` succeeds, while checking
-`stdlib/credits.evg examples/reject_forged_credit.evg` rejects client construction.
+`stdlib/credits/credits.evg proofs/opaque_credits.evg` succeeds, while checking
+`stdlib/credits/credits.evg examples/reject_forged_credit.evg` rejects client construction.
 Verification and entry-precondition checking use a bounded 16 MiB worker stack,
 independent of the caller's stack; existing depth and work limits still apply.
 
@@ -1300,12 +1300,12 @@ runs its ordinary Drop exactly once. The example runs, builds, and replays
 internally; `examples/reject_ideal_borrow_escape.evg` rejects runtime use of an
 erased pointer.
 
-`stdlib/borrow_credits.evg` binds existing credits to a live reference. Its opaque
+`stdlib/borrow_credits/borrow_credits.evg` binds existing credits to a live reference. Its opaque
 affine tokens split and join while conserving quantity and preserving the exact
 target. Joining requires equal target identities. Check the client with:
 
 ```sh
-evg --deny-trust check stdlib/credits.evg stdlib/borrow_credits.evg proofs/borrow_credits.evg
+evg --deny-trust check stdlib/credits/credits.evg stdlib/borrow_credits/borrow_credits.evg proofs/borrow_credits.evg
 ```
 
 The API has no mint operation. These are conserved proof quantities attached to
@@ -1364,7 +1364,7 @@ model proves the corresponding numeric ordering rule. This is a numeric protocol
 example, with no allocation, deallocation, or actual owner-set authority.
 
 `examples/ideal_bindings.evg` runs and builds to exit status 42. Check
-`stdlib/credits.evg proofs/ideal_credit_bindings.evg` for a runtime function that
+`stdlib/credits/credits.evg proofs/ideal_credit_bindings.evg` for a runtime function that
 splits an existing ideal budget and consumes each part once through erased
 parameters. The shipped library still has no mint operation. The optional Lean
 backend evaluates these local bindings as mathematical data in its ideal
@@ -1429,7 +1429,7 @@ defining module. `take_existing` forwards through a whole opaque credit footprin
 and expresses conservation through the public accessor in `old`. The borrowed
 token library forwards through its `budget` field in `borrow_credits::take`,
 leaving the target reference outside that footprint. Check
-`stdlib/credits.evg stdlib/borrow_credits.evg proofs/borrowed_token_transfer.evg`
+`stdlib/credits/credits.evg stdlib/borrow_credits/borrow_credits.evg proofs/borrowed_token_transfer.evg`
 for taking and rejoining an existing token while preserving its target identity.
 Overlapping input regions recheck the body on actual shared storage; two aliases
 cannot independently withdraw the same last credit.
@@ -1439,7 +1439,7 @@ records, complete patterns, selective proof-field updates, and parent/child Drop
 order. It also checks distinct identities for records containing only ideal
 fields; native storage reserves one byte for each empty value's identity.
 The example runs, builds, and replays internally. Check
-`stdlib/credits.evg stdlib/borrow_credits.evg proofs/carried_borrow_credits.evg`
+`stdlib/credits/credits.evg stdlib/borrow_credits/borrow_credits.evg proofs/carried_borrow_credits.evg`
 for a runtime carrier that owns a borrowed-credit token without storing that
 token in its runtime representation. The Lean record-projection model checks
 that ideal-field replacement frames runtime-only properties, while joint
@@ -1489,14 +1489,14 @@ and do not constitute a formal whole-process time or memory bound.
 Build and run the first output example on Linux x86-64:
 
 ```sh
-cargo run -- build stdlib/linux_io.evg examples/hello.evg -o /tmp/hello-evergreen
+cargo run -- build stdlib/linux_io/linux_io.evg examples/hello.evg -o /tmp/hello-evergreen
 /tmp/hello-evergreen
 ```
 
 It prints `Hello, Evergreen` followed by a newline and exits with status zero.
 `run` uses the interpreter, which deliberately rejects external syscalls; use
 `build` for this example. The compiler has no built-in print or text-encoding
-operation. `stdlib/linux_io.evg` implements byte output in Evergreen.
+operation. `stdlib/linux_io/linux_io.evg` implements byte output in Evergreen.
 
 The primitive external declaration is an explicit Linux x86-64 syscall number:
 
@@ -1554,7 +1554,7 @@ Evergreen library refinement over the bytes, not in the compiler.
 
 ### First target atomic operation
 
-`stdlib/x86_64_atomics.evg` declares an explicitly trusted 64-bit
+`stdlib/x86_64_atomics/x86_64_atomics.evg` declares an explicitly trusted 64-bit
 compare-exchange operation. The declaration is generic over three operands,
 not tied to reference counts:
 
@@ -1578,8 +1578,8 @@ eight-byte alignment and emits `lock cmpxchg`. The interpreter implements the
 same sequential state transition. No OS call is involved.
 
 ```sh
-cargo run -- run stdlib/x86_64_atomics.evg examples/compare_exchange.evg
-cargo run -- build stdlib/x86_64_atomics.evg examples/compare_exchange.evg -o /tmp/compare-exchange
+cargo run -- run stdlib/x86_64_atomics/x86_64_atomics.evg examples/compare_exchange.evg
+cargo run -- build stdlib/x86_64_atomics/x86_64_atomics.evg examples/compare_exchange.evg -o /tmp/compare-exchange
 /tmp/compare-exchange; echo $?
 ```
 
@@ -1598,15 +1598,15 @@ as facts about shared memory. No thread API, memory-order parameters, release
 sequence proof, or concurrent payload-access guarantee is implemented yet. See
 [the shared ownership obligations](shared-ownership.md).
 
-`stdlib/atomic_counter.evg` implements increment/decrement retry loops entirely
+`stdlib/atomic_counter/atomic_counter.evg` implements increment/decrement retry loops entirely
 in Evergreen using compare-exchange. Increment refuses saturation instead of
 wrapping; decrement refuses underflow and returns the observed old count. The
 old value of one identifies a final decrement without a separate zero load.
 The library adds no trusted assumptions beyond the target operation:
 
 ```sh
-cargo run -- run stdlib/x86_64_atomics.evg stdlib/atomic_counter.evg examples/atomic_counter.evg
-cargo run -- build stdlib/x86_64_atomics.evg stdlib/atomic_counter.evg examples/atomic_counter.evg -o /tmp/atomic-counter
+cargo run -- run stdlib/x86_64_atomics/x86_64_atomics.evg stdlib/atomic_counter/atomic_counter.evg examples/atomic_counter.evg
+cargo run -- build stdlib/x86_64_atomics/x86_64_atomics.evg stdlib/atomic_counter/atomic_counter.evg examples/atomic_counter.evg -o /tmp/atomic-counter
 /tmp/atomic-counter; echo $?
 ```
 
@@ -1729,7 +1729,7 @@ for uninitialized generic element storage or arbitrary resizing in place.
 
 ### Owned machine-word vector
 
-`stdlib/vec.evg` supplies an initial `vec::Vec` with an opaque three-word
+`stdlib/vec/vec.evg` supplies an initial `vec::Vec` with an opaque three-word
 representation: capacity, length, and an owning pointer whose extent depends on
 capacity. `examples/vec.evg` checks and runs without explicitly supplying library
 files:
@@ -1779,3 +1779,36 @@ visibility, liveness, ownership, invariant, and effect checks remain mandatory.
 The elaboration does not copy or consume an owning pointer merely to access a
 field. `examples/field_access.evg` exercises a borrowed update and a field read
 through an owner reference.
+
+### File modules and package directories
+
+A file can declare its module once, without wrapping or indenting its contents:
+
+```evg
+module arithmetic;
+
+fn answer() -> usize ensures(result == 42) { 42 }
+```
+
+All `.evg` files in a package directory share its module. Directory inputs load
+those files in deterministic filename order; each file keeps its own module
+scope and line numbering. A directory's module must match its directory name,
+except that executable packages may declare `module main;`. The entry function
+in that package remains `main`, while its other declarations are namespaced.
+Namespaced bundled libraries now follow this directory layout as well.
+
+```sh
+cargo run -- run examples/packages/arithmetic examples/packages/demo
+```
+
+Files in the same module can refer to declarations in other files without
+qualification. Existing verification still requires called functions to have
+an earlier verified declaration; filename ordering is not yet replaced by a
+package dependency scheduler. Pass dependency directories before their clients.
+Automatic imports and package-root resolution remain subsequent work. Legacy
+`module name { ... }` blocks remain accepted for existing source snippets.
+
+The Rust API's `syntax::join_source_units` preserves file boundaries when
+combining source strings. Plain string concatenation intentionally does not end
+a file module. Proof fingerprints include those boundaries and all bundled
+source bytes, so certificate replay checks the same assembled program.
