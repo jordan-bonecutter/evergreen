@@ -5,6 +5,9 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod owners;
+pub use owners::OwnedReference;
+
 static NEXT_ARENA: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,6 +31,7 @@ pub enum Projection<I = usize> {
 
 #[derive(Clone, Debug)]
 struct Plane<T> {
+    ownership: owners::Ownership,
     generation: u64,
     value: Option<T>,
 }
@@ -99,6 +103,7 @@ impl<T> Memory<T> {
             slot: self.planes.len(),
         };
         self.planes.push(Plane {
+            ownership: owners::Ownership::Unique,
             generation: 0,
             value: Some(value),
         });
@@ -159,6 +164,9 @@ impl<T> Memory<T> {
             return Err("plane belongs to a different arena".into());
         }
         let p = self.planes.get_mut(id.slot).ok_or("unknown plane")?;
+        if (replace || p.value.is_none()) && !p.ownership.is_unique() {
+            return Err("replacing a shared plane requires recovering its unique owner".into());
+        }
         if replace || p.value.is_none() {
             p.generation = p
                 .generation
@@ -176,6 +184,11 @@ impl<T> Memory<T> {
         let p = self.planes.get_mut(id.slot).ok_or("unknown plane")?;
         if p.value.is_none() {
             return Err("cannot move shape(T)".into());
+        }
+        if !p.ownership.is_unique() {
+            return Err(
+                "moving or dropping a shared plane requires recovering its unique owner".into(),
+            );
         }
         p.generation = p
             .generation

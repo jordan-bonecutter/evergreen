@@ -101,6 +101,27 @@ the previous owning binding and change its type without copying its token.
 Compiler affinity, caller framing, storage/projection identity, nominal
 invariants, and native refinement are not established by these model theorems.
 
+The shared Rust plane store now has a concrete host-side counterpart in
+`src/shared/planes/owners.rs`: unique owners can be transferred to tracked owner
+tokens, duplicated into fresh identities, released, or recovered as unique only
+when one token remains. Borrows do not affect the census. Direct plane removal
+and replacing writes reject tracked shared planes until uniqueness is recovered;
+recovery consumes the old token while preserving payload identity and borrows.
+Dropping the recovered unique plane invalidates those borrows normally.
+
+These opaque host handles describe semantic token identity. Copying the Rust
+handle does not mint an owner; reusing a consumed token is rejected. New token
+IDs are fresh even across checker snapshots, and state changes in one snapshot
+do not affect another. Tests cover stale/forged identities, cross-plane/arena
+use, duplicate release, re-sharing, and attempted bypass of uniqueness.
+
+A low-level release of the last token leaves an allocated but unowned plane;
+it leaks rather than freeing behind borrows or manufacturing recovery authority.
+A correct library must recover and destroy its final owner instead. This is not
+a source-language API yet, nor a native runtime owner registry. Wiring source
+affinity, abstract caller counts, invariant framing, and proof-checked erasure
+remains necessary before exposing the generic owning-pointer operations.
+
 This is the agreed direction, not an implemented `owners` builtin. The current
 checker still implements unique owning planes and borrowed references; actual
 shared owning references, census transitions, and proof-driven uniqueness
