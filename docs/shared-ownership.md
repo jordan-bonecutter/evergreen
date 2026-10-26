@@ -81,6 +81,26 @@ releasing its backing allocation need explicit rules. Counted clone reservations
 in the abstract ledger represent outstanding lifetime responsibility, even
 before a handle is published. They cannot be forged by arbitrary ideal code.
 
+`proofs/Planes.lean`, in `OwnerReferences`, now specifies a generic per-plane
+census independently of Rc counters. Its store includes all owning token IDs
+and a separate collection of borrowed references. Well-formedness forbids
+repeated owner IDs. Admitted transitions require a live owner before duplication,
+a fresh token ID, and a current state-indexed uniqueness witness before freeing.
+Raw state-construction functions are not themselves admitted ownership rules.
+
+Lean checks that borrowing does not alter or grant ownership; rearranging owner
+bindings preserves the census; duplication/release change it by one; count one
+plus an actual owning reference identifies the sole owner; and duplication
+invalidates a previous uniqueness observation. Freeing clears the owner census
+and invalidates borrowed references. Arbitrary finite admitted runs preserve
+well-formedness and cannot recreate ownership from a zero-owner state.
+
+The model's uniqueness witness is a proof about one current store, not a second
+runtime owning pointer. A source-level recovery operation still has to consume
+the previous owning binding and change its type without copying its token.
+Compiler affinity, caller framing, storage/projection identity, nominal
+invariants, and native refinement are not established by these model theorems.
+
 This is the agreed direction, not an implemented `owners` builtin. The current
 checker still implements unique owning planes and borrowed references; actual
 shared owning references, census transitions, and proof-driven uniqueness
