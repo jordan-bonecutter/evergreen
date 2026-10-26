@@ -336,6 +336,9 @@ impl Emitter {
 
 pub fn emit(source: &str, run: bool) -> Result<String> {
     let program = syntax::parse(source)?;
+    if !program.scalar_types.is_empty() {
+        return Err("make_type declarations require the internal compiler".into());
+    }
     if !program.structs.is_empty() || !program.destructors.is_empty() {
         return Err("structs and ownership use the internal backend".into());
     }

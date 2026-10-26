@@ -1,7 +1,7 @@
 //! Literal target data written in Evergreen. Decoding does not execute code.
 //! The instruction backend still validates the widths it can implement.
 
-use crate::syntax::{self, Kind, MachineInt, Type};
+use crate::syntax::{self, Endianness, MachineInt, Representation, Type};
 use std::{collections::BTreeMap, sync::OnceLock};
 
 type Result<T> = std::result::Result<T, String>;
@@ -30,71 +30,67 @@ impl Target {
     fn decode(source: &str) -> Result<Self> {
         let program = syntax::parse(source)?;
         let mut layouts = BTreeMap::new();
-        for function in program.functions {
-            let name = function
-                .name
-                .strip_prefix("x86_64::layout_")
-                .ok_or("unexpected function in x86-64 target data")?;
-            if !function.ideal
-                || !function.params.is_empty()
-                || !function.body.is_empty()
-                || function.external.is_some()
-                || function.proof.is_some()
-                || function.pre.is_some()
-                || function.decreases.is_some()
-                || !function.modifies.is_empty()
-                || !function.borrows.is_empty()
-                || function.ret != Type::Named("x86_64::ScalarLayout".into())
-            {
-                return Err(
-                    "target layouts require ideal, parameterless literal data producers".into(),
-                );
+        if !program.functions.is_empty()
+            || !program.structs.is_empty()
+            || !program.destructors.is_empty()
+        {
+            return Err("target profiles contain only make_type declarations".into());
+        }
+        for definition in program.scalar_types {
+            if definition.module.as_deref() != Some("x86_64") {
+                return Err("x86-64 target declarations require module x86_64".into());
             }
-            let Kind::Record(record, fields) = function.result.kind else {
-                return Err("target layout must be a literal ScalarLayout record".into());
+            let name = definition.name.as_str();
+            let ty = representation_type(&definition.represents)?;
+            let expected = match name {
+                "bool" => Some(Type::Bool),
+                "unit" => Some(Type::Unit),
+                "pointer" => None,
+                _ => Some(Type::Machine(
+                    MachineInt::parse(name).ok_or("unknown target scalar")?,
+                )),
             };
-            if record != "x86_64::ScalarLayout" || fields.len() != 2 {
-                return Err("target layout requires size and alignment".into());
-            }
-            let mut values = BTreeMap::new();
-            for (field, value) in fields {
-                let Kind::Number(value) = value.kind else {
-                    return Err("target layout fields must be nonnegative integer literals".into());
-                };
-                let value = usize::try_from(value)
-                    .map_err(|_| "target layout value exceeds host limits")?;
-                if values.insert(field, value).is_some() {
-                    return Err("duplicate target layout field".into());
+            if name == "pointer" {
+                if !matches!(
+                    definition.represents,
+                    Representation::Pointer {
+                        bits: 64,
+                        endian: Endianness::Little
+                    }
+                ) {
+                    return Err(
+                        "x86-64 pointers require a 64-bit little-endian representation".into(),
+                    );
                 }
-            }
-            let size = *values.get("size").ok_or("missing target size")?;
-            let align = *values.get("alignment").ok_or("missing target alignment")?;
-            let expected_size = match name {
-                "bool" | "unit" => 1,
-                "pointer" => 8,
-                _ => usize::from(MachineInt::parse(name).ok_or("unknown target scalar")?.bits / 8),
-            };
-            if size != expected_size
-                || !align.is_power_of_two()
-                || align > 8
-                || !size.is_multiple_of(align)
-            {
+            } else if ty != expected {
                 return Err(format!(
-                    "target layout of {name} is incompatible with the x86-64 backend"
+                    "representation of {name} does not match its declared integer meaning"
                 ));
             }
             if layouts
-                .insert(name.to_owned(), ScalarLayout { size, align })
+                .insert(
+                    name.to_owned(),
+                    ScalarLayout {
+                        size: definition.size,
+                        align: definition.align,
+                    },
+                )
                 .is_some()
             {
-                return Err("duplicate target scalar layout".into());
+                return Err("duplicate target scalar definition".into());
             }
         }
         for name in [
-            "u8", "i8", "u16", "i16", "u32", "i32", "u64", "i64", "bool", "unit", "pointer",
+            "u8", "i8", "u16", "i16", "u32", "i32", "u64", "i64", "usize", "isize", "bool", "unit",
+            "pointer",
         ] {
             if !layouts.contains_key(name) {
                 return Err(format!("missing target layout for {name}"));
+            }
+        }
+        for (alias, base) in [("usize", "u64"), ("isize", "i64")] {
+            if layouts[alias] != layouts[base] {
+                return Err(format!("{alias} must share the {base} layout on x86-64"));
             }
         }
         Ok(Self { layouts })
@@ -114,6 +110,24 @@ impl Target {
             .get(&name)
             .copied()
             .ok_or_else(|| format!("target does not support scalar {name}"))
+    }
+}
+
+pub(super) fn representation_type(representation: &Representation) -> Result<Option<Type>> {
+    match *representation {
+        Representation::Integral {
+            signed,
+            bits,
+            endian: Endianness::Little,
+            ..
+        } => Ok(Some(Type::Machine(MachineInt { signed, bits }))),
+        Representation::Boolean => Ok(Some(Type::Bool)),
+        Representation::Unit => Ok(Some(Type::Unit)),
+        Representation::Pointer {
+            bits: 64,
+            endian: Endianness::Little,
+        } => Ok(None),
+        _ => Err("representation is unsupported by the Linux x86-64 backend".into()),
     }
 }
 
@@ -140,12 +154,7 @@ mod tests {
             ScalarLayout { size: 2, align: 2 }
         );
         // Alignment is data, not reconstructed from the integer width.
-        let source = X86_64
-            .replace("size: 8, alignment: 8", "size: 8, alignment: 4")
-            .replace(
-                "result.size == 8 && result.alignment == 8",
-                "result.size == 8 && result.alignment == 4",
-            );
+        let source = X86_64.replace("size: 8, align: 8", "size: 8, align: 4");
         assert!(prove(&source).unwrap().0.trusted_assumptions().is_empty());
         let target = Target::decode(&source).unwrap();
         assert_eq!(
@@ -159,16 +168,18 @@ mod tests {
     #[test]
     fn malformed_or_incompatible_target_data_fails_closed() {
         for source in [
-            X86_64.replace("size: 1, alignment: 1", "size: 2, alignment: 1"),
-            X86_64.replace("size: 8, alignment: 8", "size: 8, alignment: 3"),
-            X86_64.replace("size: 8, alignment: 8", "size: 8, alignment: 0"),
-            X86_64.replace("size: 8, alignment: 8", "size: 8, alignment: 16"),
-            X86_64.replace("size: 1, alignment: 1", "size: 1 + 0, alignment: 1"),
-            X86_64.replace("layout_u8", "layout_unknown"),
-            X86_64.replace("layout_i8", "layout_u8"),
-            X86_64.replace("alignment: 1", "size: 1"),
-            X86_64.replace("ideal fn layout_u8", "fn layout_u8"),
-            X86_64.replace("layout_u8()", "layout_u8(n: nat)"),
+            X86_64.replace("size: 1, align: 1", "size: 2, align: 1"),
+            X86_64.replace("size: 8, align: 8", "size: 8, align: 3"),
+            X86_64.replace("size: 8, align: 8", "size: 8, align: 0"),
+            X86_64.replace("size: 8, align: 8", "size: 8, align: 16"),
+            X86_64.replace("size: 1, align: 1", "size: 1 + 0, align: 1"),
+            X86_64.replace("type u8 =", "type unknown ="),
+            X86_64.replace("type i8 =", "type u8 ="),
+            X86_64.replace("align: 1", "size: 1"),
+            X86_64.replace("repr::Little", "repr::Big"),
+            X86_64.replace("signed: true", "signed: false"),
+            X86_64.replace("bits: 64", "bits: 32"),
+            X86_64.replace("repr::TwosComplement", "repr::Binary"),
         ] {
             assert!(
                 Target::decode(&source).is_err(),

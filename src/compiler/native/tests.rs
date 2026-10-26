@@ -127,6 +127,7 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        include_str!("../../../examples/scalar_types.evg"),
         include_str!("../../../examples/field_access.evg"),
         "type Item struct {value: usize} fn choose(count: &usize, item: &Item) -> &Item where(*count < usize::MAX) modifies(count) borrows(item) ensures(*count == old(*count) + 1) {*count = *count + 1; item} fn main() -> usize {let n: usize = 0; let item = Item {value: 42}; let chosen = choose(&n, &item).value; if n == 1 {chosen} else {0}}",
         "type Size struct {len: usize} fn first(size: &Size, data: linear_plane(usize, size.len)) -> usize where(size.len > 0) {(*data)[0]} fn main() -> usize {let size = Size {len: 1}; let data: array(usize, 1) = [42]; first(&size, &data)}",

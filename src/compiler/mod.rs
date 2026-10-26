@@ -8,6 +8,7 @@ pub mod kernel;
 pub mod layout;
 pub mod lean;
 pub mod native;
+mod scalar_types;
 mod sources;
 mod target;
 pub mod verify;

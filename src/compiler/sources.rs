@@ -297,6 +297,10 @@ impl Loader {
                 self.structures(dependency)?;
             }
         }
+        self.output
+            .program
+            .scalar_types
+            .extend(program.scalar_types);
         self.output.program.structs.extend(program.structs);
         Ok(())
     }
@@ -350,6 +354,7 @@ pub(super) fn load(source: &str) -> Result<Loaded> {
             functions: BTreeSet::new(),
             output: Loaded {
                 program: Program {
+                    scalar_types: user.scalar_types,
                     structs: Vec::new(),
                     functions: Vec::new(),
                     destructors: Vec::new(),

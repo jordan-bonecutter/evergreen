@@ -148,11 +148,23 @@ pub(crate) fn qualify(program: &mut Program) {
         .structs
         .iter()
         .map(|s| defined(s.module.as_deref(), &s.name))
+        .chain(
+            program
+                .scalar_types
+                .iter()
+                .map(|s| defined(s.module.as_deref(), &s.name)),
+        )
         .collect::<BTreeSet<_>>();
     let functions = program
         .functions
         .iter()
         .map(|f| defined(f.module.as_deref(), &f.name))
+        .chain(
+            program
+                .scalar_types
+                .iter()
+                .map(|s| defined(s.module.as_deref(), &s.name)),
+        )
         .collect::<BTreeSet<_>>();
     for structure in &mut program.structs {
         let scope = Scope {

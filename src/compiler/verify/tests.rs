@@ -3300,3 +3300,41 @@ fn field_autoderef_uses_the_existing_ownership_and_effect_checks() {
         "42"
     );
 }
+
+#[test]
+fn scalar_construction_checks_representation_and_preserves_proofs() {
+    let source = include_str!("../../../examples/scalar_types.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    for bad in [
+        source.replace("size: 1, align: 1", "size: 2, align: 1"),
+        source.replace("align: 1", "align: 0"),
+        source.replace("repr::Little", "repr::Big"),
+        source.replace("bits: 8", "bits: 7"),
+        source.replace("repr::TwosComplement", "repr::Binary"),
+        source.replace("size: 1", "size: 1 + 0"),
+        source.replace("add(Octet(40), Octet(2))", "add(Octet(255), Octet(2))"),
+    ] {
+        assert!(
+            verify(&bad).is_err(),
+            "accepted invalid scalar declaration or arithmetic: {bad}"
+        );
+    }
+    let scalar = source.split("type SignedOctet").next().unwrap();
+    assert!(verify(&format!(
+        "{scalar} fn Octet() -> usize {{42}} fn main() -> usize {{Octet()}}"
+    ))
+    .is_err());
+    assert!(verify("type FakePointer = make_type(size: 8, align: 8, represents: repr::Pointer {bits: 64, endian: repr::Little}); fn main() -> usize {42}").is_err());
+    let module = format!("module words; {source}");
+    let main = "fn main() -> u8 {words::add(words::Octet(40), words::Octet(2))}";
+    let units = syntax::join_source_units(&[module, main.into()]).unwrap();
+    assert_eq!(verify(&units).unwrap().run().unwrap().to_string(), "42");
+}

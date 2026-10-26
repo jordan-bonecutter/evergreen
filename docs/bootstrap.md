@@ -852,22 +852,45 @@ performs the checked sequential reserve/release stores and exits with status 0.
 Native differential tests include these programs, scalar alias writes, nested
 references, and Boolean updates.
 
-The scalar size/alignment table lives in `targets/x86_64.evg`, an ordinary
-Evergreen module of ideal literal data producers. The Rust bootstrap embeds and
-decodes that file once, so editing it requires rebuilding the compiler. Layout
-computation reads this table rather than deriving alignment from integer width.
-The profile checks as an Evergreen program with no trusted assumptions; tests
-also replay its proofs and reject malformed or incompatible target data.
+Scalar representations live in `targets/x86_64.evg`, using literal type
+construction rather than layout-producing functions:
 
-This first bootstrap format accepts literal layout records, not arbitrary
-compile-time programs. The decoder validates widths against the instructions the
-x86-64 backend implements, requires positive power-of-two alignment, and fails
-closed on missing entries. Integer arithmetic meaning remains primitive: `u8`
-means eight unsigned bits regardless of target policy. `usize`/`isize` still
-mean 64-bit integers on the only supported target. This table is not a C ABI
-contract and does not by itself add another architecture or prove hardware
-correctness. Endianness, machine instructions, and syscall register conventions
-remain properties of the x86-64 backend.
+```evg
+module x86_64;
+
+type i8 = make_type(
+    size: 1, align: 1,
+    represents: repr::Integral {signed: true, bits: 8,
+        encoding: repr::TwosComplement, endian: repr::Little}
+);
+```
+
+The target defines signed and unsigned 8/16/32/64-bit scalars, `usize`, `isize`,
+Boolean, unit, and pointer storage. The bootstrap embeds and decodes those
+representations once; edits require rebuilding it. The decoder requires a
+complete profile compatible with the current x86-64 instruction backend.
+`usize`/`isize` are respectively aliases of the 64-bit unsigned/signed layouts.
+
+`make_type` is a primitive literal constructor. It checks storage width,
+positive power-of-two alignment, signedness/encoding consistency, and known
+representation fields. Native x86-64 currently requires little-endian data;
+unsupported endianness or representations are rejected. A pointer descriptor
+specifies target address storage, not a way to manufacture a valid reference.
+These checks do not prove hardware correctness or establish C ABI compatibility.
+
+Programs can define scalar aliases such as `Octet` with the same constructor;
+`examples/scalar_types.evg` uses a one-byte unsigned alias and implements checked
+addition as an ordinary Evergreen function. Aliases are transparent: they have
+the underlying scalar's bounds, layout, conversions, and arithmetic checks.
+They are not distinct nominal types with independent operators. Their layout
+must match the active target. Constructors and `MIN`/`MAX` resolve through the
+alias, and portable proofs bind the declaration source.
+
+Arithmetic instructions and their proof rules remain generic compiler
+primitives. User-defined operator implementations/dispatch and arbitrary
+compile-time type generators are not implemented by this constructor. The
+optional Lean reference translator rejects these declarations explicitly;
+the internal verifier, interpreter, and native backend support them.
 
 Native machine integers occupy their declared width (one, two, four, or eight
 bytes), aligned to that width. Booleans occupy one byte; references and plane

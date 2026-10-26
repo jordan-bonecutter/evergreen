@@ -4,6 +4,8 @@ use lexer::{lex, Token};
 
 mod lexer;
 mod modules;
+mod representation;
+pub use representation::{Endianness, IntegralEncoding, Representation, ScalarDefinition};
 
 mod functions;
 mod statements;
@@ -203,6 +205,7 @@ impl Struct {
 
 #[derive(Clone, Debug)]
 pub struct Program {
+    pub scalar_types: Vec<ScalarDefinition>,
     pub modules: std::collections::BTreeSet<String>,
     pub structs: Vec<Struct>,
     pub functions: Vec<Function>,
@@ -808,6 +811,7 @@ fn parse_unit(source: &str) -> Result<Program, String> {
         pos: 0,
         depth: 0,
     };
+    let mut scalar_types = Vec::new();
     let mut functions = Vec::new();
     let mut structs = Vec::new();
     let mut destructors = Vec::new();
@@ -833,6 +837,7 @@ fn parse_unit(source: &str) -> Result<Program, String> {
                 if !functions.is_empty()
                     || !structs.is_empty()
                     || !destructors.is_empty()
+                    || !scalar_types.is_empty()
                     || modules.len() != 1
                 {
                     return Err(p.err("a file module declaration must precede all declarations"));
@@ -856,7 +861,20 @@ fn parse_unit(source: &str) -> Result<Program, String> {
         let ideal = p.eat("ideal");
         let opaque = p.eat("opaque");
         let affine = p.eat("affine");
-        if p.peek() == "type" {
+        if p.peek() == "type"
+            && p.tokens
+                .get(p.pos + 2)
+                .is_some_and(|token| token.text == "=")
+        {
+            if ideal || opaque || affine {
+                return Err(p.err(
+                    "make_type declarations do not accept ideal, opaque, or affine modifiers",
+                ));
+            }
+            let mut definition = p.scalar_definition()?;
+            definition.module = module.clone();
+            scalar_types.push(definition);
+        } else if p.peek() == "type" {
             let mut structure = p.structure(ideal, affine)?;
             if opaque && module.is_none() {
                 return Err(p.err("opaque representations require a defining module"));
@@ -886,10 +904,15 @@ fn parse_unit(source: &str) -> Result<Program, String> {
     if module.is_some() && !file_module {
         return Err(p.err("unterminated module"));
     }
-    if functions.is_empty() && destructors.is_empty() && structs.is_empty() {
+    if functions.is_empty()
+        && destructors.is_empty()
+        && structs.is_empty()
+        && scalar_types.is_empty()
+    {
         return Err("expected at least one declaration".into());
     }
     Ok(Program {
+        scalar_types,
         modules,
         structs,
         functions,
@@ -922,6 +945,7 @@ pub fn parse(source: &str) -> Result<Program, String> {
     let mut program = parse_unit(units.next().unwrap_or_default())?;
     for unit in units {
         let unit = parse_unit(unit)?;
+        program.scalar_types.extend(unit.scalar_types);
         program.modules.extend(unit.modules);
         program.structs.extend(unit.structs);
         program.functions.extend(unit.functions);
