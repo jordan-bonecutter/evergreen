@@ -288,17 +288,24 @@ impl Session {
     }
 
     pub(crate) fn prove(&mut self, rows: &[Linear]) -> Result<()> {
-        if !self.query(rows, false)? {
-            return Err("required certificate is missing".into());
-        }
-        Ok(())
+        self.prove_with_support(rows).map(|_| ())
+    }
+
+    /// Original row indices with nonzero weights in a kernel-checked
+    /// certificate. These identify actual premises, not every available fact.
+    /// Replay obtains them from the checked certificate, never artifact claims.
+    /// These indices include any negated-goal rows supplied by the VC generator;
+    /// the caller must distinguish those from assumptions when building edges.
+    pub(crate) fn prove_with_support(&mut self, rows: &[Linear]) -> Result<Vec<usize>> {
+        self.query(rows, false)?
+            .ok_or_else(|| "required certificate is missing".into())
     }
 
     pub(crate) fn probe(&mut self, rows: &[Linear]) -> Result<bool> {
-        self.query(rows, true)
+        Ok(self.query(rows, true)?.is_some())
     }
 
-    fn query(&mut self, rows: &[Linear], optional: bool) -> Result<bool> {
+    fn query(&mut self, rows: &[Linear], optional: bool) -> Result<Option<Vec<usize>>> {
         if self.cursor >= MAX_RECORDS {
             return Err("verification query limit reached".into());
         }
@@ -345,7 +352,9 @@ impl Session {
         } else if !optional {
             return Err("required goal has no certificate".into());
         }
-        let proved = certificate.is_some();
+        let support = certificate
+            .as_ref()
+            .map(|certificate| certificate.weights().map(|(index, _)| index).collect());
         if self.recording {
             self.records.push(Record {
                 statement,
@@ -354,7 +363,7 @@ impl Session {
             });
         }
         self.cursor += 1;
-        Ok(proved)
+        Ok(support)
     }
 
     pub(crate) fn finish(&self) -> Result<()> {
@@ -613,5 +622,49 @@ mod tests {
             );
         }
         assert!(ProofBundle::parse(&"x".repeat(MAX_ARTIFACT_BYTES + 1)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod support_tests {
+    use super::*;
+
+    #[test]
+    fn checked_support_excludes_an_unrelated_constraint() {
+        let x = Linear::variable("x");
+        let y = Linear::variable("y");
+        let rows = vec![
+            x.clone(),
+            x.scale(-1).unwrap().add(&Linear::number(-1)).unwrap(),
+            y,
+        ];
+        let mut session = Session::search();
+        let support = session.prove_with_support(&rows).unwrap();
+        assert!(support.contains(&0) && support.contains(&1));
+        // No other row contains y, so a checked contradiction cannot use it
+        // with a positive weight and still cancel every variable.
+        assert!(!support.contains(&2));
+        assert_eq!(session.search_count(), 1);
+    }
+
+    #[test]
+    fn replay_reconstructs_checked_support_without_search() {
+        let rows = vec![Linear::number(-1), Linear::variable("unused")];
+        let mut recording = Session::recording();
+        let expected = recording.prove_with_support(&rows).unwrap();
+        recording.finish().unwrap();
+        let bundle = recording.bundle("support test").unwrap();
+        let mut replay = Session::replay(&bundle);
+        assert_eq!(replay.prove_with_support(&rows).unwrap(), expected);
+        replay.finish().unwrap();
+        assert_eq!(replay.search_count(), 0);
+    }
+
+    #[test]
+    fn unsuccessful_probe_does_not_invent_evidence() {
+        let rows = vec![Linear::variable("x")];
+        let mut session = Session::search();
+        assert!(!session.probe(&rows).unwrap());
+        assert!(Session::search().prove_with_support(&rows).is_err());
     }
 }
