@@ -41,10 +41,11 @@ The earlier `credits::Credit` conserves an abstract arithmetic quantity and gran
 no allocation authority. This library instead carries actual lifetime claims;
 it does not implement fractional splitting of those arithmetic budgets.
 
-This is a lifetime-capability layer for the planned source Rc, not an implemented
-Rc. Runtime count accounting, reservations, automatic final/nonfinal release,
-conditional resource-state joins, and general payload types still need work.
-Arc additionally requires atomic transitions and interference rules.
+This library is a lifetime-capability layer without a runtime counter.
+The separate [source Rc](rc.md) now combines allocation-backed credits with
+checked runtime count updates and explicit final/nonfinal release. Automatic
+release, conditional resource-state joins, and general payload types still need
+work. Arc additionally requires atomic transitions and interference rules.
 
 Run the complete example with:
 

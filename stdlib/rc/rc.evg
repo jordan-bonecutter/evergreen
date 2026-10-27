@@ -1,0 +1,75 @@
+// Sequential counted ownership for a usize payload. Counter operations and
+// the clone/release protocol are source code, not compiler-recognized behavior.
+// Final/nonfinal release are explicit until conditional resource joins exist.
+module rc;
+
+opaque type Data struct {count: usize, value: usize}
+
+// An unpublished handle already owns its allocation-backed lifetime credit.
+opaque type Credit struct {data: owner(Data)} where (
+    nat(self.data.count) == owners(self.data)
+);
+
+opaque type Rc struct {data: owner(Data)} where (
+    fact reference_count_is_accurate = nat(self.data.count) == owners(self.data);
+    fact zero_count_has_no_owners = self.data.count == 0 => owners(self.data) == 0;
+    reference_count_is_accurate && zero_count_has_no_owners
+);
+
+fn new(value: usize) -> Rc
+ensures result.data.count == 1 && result.data.value == value {
+    Rc {data: share_owner(alloc(Data {count: 1, value: value}))}
+}
+
+// The projected loans expose no Rc view whose accuracy fact could be used
+// between these steps. The caller's complete invariant is restored at return.
+fn reserve(allocation: &owner(Data)) -> Credit
+where allocation.count < usize::MAX
+    && nat(allocation.count) == owners(allocation)
+modifies(&allocation.count)
+ensures owners(result.data) == old(owners(allocation)) + 1
+    && result.data.count == old(allocation.count) + 1
+    && &*result.data == &**allocation {
+    allocation.count = allocation.count + 1;
+    Credit {data: duplicate_owner(allocation)}
+}
+
+fn publish(credit: Credit) -> Rc {
+    let Credit {data} = credit;
+    Rc {data: data}
+}
+
+impl Rc {
+    method& strong_count() -> usize
+    ensures result == self.data.count {self.data.count}
+
+    method& value() -> &usize
+    borrows(&self.data.value) {&self.data.value}
+
+    method& clone() -> Self
+    where self.data.count < usize::MAX
+    modifies(&self.data.count)
+    ensures result.data.count == old(self.data.count) + 1
+        && owners(result.data) == old(owners(self.data)) + 1
+        && result.data.value == old(self.data.value) {
+        let credit = reserve(&self.data);
+        publish(credit)
+    }
+
+    method release_nonfinal()
+    where self.data.count > 1
+    ensures nat((*old(self.data)).count) + 1 == nat(old(self.data.count))
+        && owners(old(self.data)) + 1 == old(owners(self.data))
+        && (*old(self.data)).value == old(self.data.value) {
+        let Self {data} = self;
+        data.count = data.count - 1;
+        release_owner(data);
+    }
+
+    method release_last()
+    where self.data.count == 1 {
+        let Self {data} = self;
+        let allocation = recover_owner(data);
+        drop(allocation);
+    }
+}

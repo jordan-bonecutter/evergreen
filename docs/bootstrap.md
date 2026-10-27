@@ -1451,6 +1451,15 @@ counter or a conversion from arithmetic budgets into allocation authority.
 See [allocation-backed credits](allocation-credits.md) for the contracts,
 runtime erasure, and the remaining Rc work.
 
+`stdlib/rc/rc.evg` implements a sequential runtime-counter Rc for `usize`, using
+ordinary allocation-backed claims. `clone` increments the source counter and
+returns a checked unpublished credit before publishing another handle.
+`release_nonfinal` decrements the counter and releases one claim; `release_last`
+recovers and frees the unique plane. The compiler recognizes no Rc algorithm.
+`examples/rc.evg` runs and builds without admissions. Release is explicit when
+shared; automatic conditional final release, generic payloads, and Arc remain
+unfinished. See [source Rc](rc.md) for the proof boundary and limitations.
+
 `examples/opaque_values.evg` demonstrates runtime opaque values, public facts,
 and checked accessors; it runs and builds natively. Module-qualified programs
 use the internal verifier.

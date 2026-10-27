@@ -1,0 +1,22 @@
+// All counter arithmetic lives in stdlib/rc/rc.evg. Release is explicit here.
+fn main() -> usize {
+    let first = rc::new(42);
+    let view = first.value();
+    let second = first.clone();
+    proof shared: first.strong_count() == 2 && second.strong_count() == 2;
+    let two_handles = first.strong_count() == 2 && second.strong_count() == 2;
+    let third = second.clone();
+    proof three: first.strong_count() == 3 && third.strong_count() == 3;
+    let three_handles = first.strong_count() == 3 && third.strong_count() == 3;
+    first.release_nonfinal();
+    proof two: second.strong_count() == 2;
+    let two_remain = second.strong_count() == 2;
+    third.release_nonfinal();
+    proof unique: second.strong_count() == 1;
+    let one_remains = second.strong_count() == 1;
+    let answer = if two_handles && three_handles && two_remain && one_remains {
+        *view
+    } else {1};
+    second.release_last();
+    answer
+}

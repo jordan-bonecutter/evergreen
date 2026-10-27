@@ -58,9 +58,10 @@ and native backend without admissions. The selected Rc direction is
 allocation-backed, move-only credits. `allocation_credits::Credit` now wraps real
 generic lifetime claims in an opaque source API for duplication, merging, payload
 borrowing, and unique recovery. The earlier arithmetic credit libraries still
-grant no allocation authority. Connecting runtime count/reservation accounting
-to these claims, including conditional final release, is required before claiming
-an implemented source Rc. See [allocation-backed credits](allocation-credits.md).
+grant no allocation authority. The [source Rc](rc.md) now couples these claims
+to a checked runtime counter, with explicit final/nonfinal release and a `usize`
+payload. General automatic release still requires conditional resource-state
+joins. See [allocation-backed credits](allocation-credits.md).
 Invariant lifting remains a separate general language facility.
 
 ## Reference contracts: intended direction

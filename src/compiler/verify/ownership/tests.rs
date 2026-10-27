@@ -1,6 +1,75 @@
 use super::*;
 
 #[test]
+fn source_rc_updates_a_real_counter_alongside_allocation_claims() {
+    let source = include_str!("../../../../examples/rc.evg");
+    let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+}
+
+#[test]
+fn source_rc_rejects_counter_drift_overflow_and_missing_claims() {
+    let library = include_str!("../../../../stdlib/rc/rc.evg");
+    for (from, to, expected) in [
+        ("allocation.count = allocation.count + 1;", "", "invariant"),
+        (
+            "Credit {data: duplicate_owner(allocation)}",
+            "Credit {data: shape(owner(Data))}",
+            "type mismatch",
+        ),
+        ("data.count = data.count - 1;", "", "postcondition"),
+        (
+            "data.count = data.count - 1;",
+            "data.count = data.count - 2;",
+            "postcondition",
+        ),
+        (
+            "where allocation.count < usize::MAX\n    &&",
+            "where",
+            "upper bound",
+        ),
+    ] {
+        let wrong = library.replace(from, to);
+        assert_ne!(wrong, library);
+        let error = verify(&wrong).unwrap_err();
+        assert!(error.contains(expected), "{error}\n{wrong}");
+    }
+}
+
+#[test]
+fn source_rc_clones_through_nested_places_and_preserves_payload_loans() {
+    for source in [
+        "fn main() -> usize {let items = [rc::new(42)]; let view = items[0].value(); let second = items[0].clone(); second.release_nonfinal(); proof unique: items[0].strong_count() == 1; *view}",
+        "type Holder struct {shared: rc::Rc} fn main() -> usize {let holder = Holder {shared: rc::new(7)}; let view = holder.shared.value(); let second = holder.shared.clone(); *view = 42; second.release_nonfinal(); proof unique: holder.shared.strong_count() == 1; *holder.shared.value()}",
+    ] {
+        let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
+    }
+}
+
+#[test]
+fn source_rc_lifetimes_keep_payload_and_handle_planes_distinct() {
+    for source in [
+        "fn main() {let first = rc::new(42); let second = first.clone(); first.release_last();}",
+        "fn main() {let first = rc::new(42); first.release_nonfinal();}",
+        "fn main() {let first = rc::new(42); let second = first.clone();}",
+        "fn main() -> usize {let first = rc::new(42); let view = first.value(); first.release_last(); *view}",
+        "fn main() -> usize {let first = rc::new(42); let second = first.clone(); let handle = &first; first.release_nonfinal(); handle.strong_count()}",
+        "fn main() {let first = rc::new(42); let moved = first; first.strong_count();}",
+        "impl Copy for rc::Rc {} fn main() {}",
+    ] {assert!(verify(source).is_err(), "accepted {source}");}
+}
+
+#[test]
 fn source_allocation_credits_preserve_real_authority_and_plane_identity() {
     let source = include_str!("../../../../examples/allocation_credits.evg");
     let (program, bundle) = prove(source).unwrap();

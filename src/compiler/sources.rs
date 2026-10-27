@@ -15,6 +15,12 @@ struct Library {
 
 const LIBRARIES: &[Library] = &[
     Library {
+        module: Some("rc"),
+        exports: &[],
+        path: "stdlib/rc/rc.evg",
+        source: include_str!("../../stdlib/rc/rc.evg"),
+    },
+    Library {
         module: Some("allocation_credits"),
         exports: &[],
         path: "stdlib/allocation_credits/allocation_credits.evg",

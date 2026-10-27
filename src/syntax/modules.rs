@@ -146,7 +146,11 @@ impl Scope<'_> {
                 self.expr(value);
             }
             Statement::Destructure { record, value, .. } => {
-                *record = resolve(self.module, record, self.types);
+                let mut ty = Type::Named(record.clone());
+                self.ty(&mut ty);
+                if let Type::Named(name) = ty {
+                    *record = name;
+                }
                 self.expr(value);
             }
             Statement::Fact { value, .. } | Statement::Effect(value) => self.expr(value),
