@@ -1,0 +1,394 @@
+//! Calls: builtin operations, phase permissions, argument evaluation, and
+//! checked contract application. Callee environments never replace heap identity.
+
+use super::*;
+
+impl<'a> Context<'a> {
+    pub(super) fn eval_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        expected: Option<&Ty>,
+        line: usize,
+    ) -> Result<Symbol> {
+        if let Some(target) = MachineInt::parse(name) {
+            return self.convert_integer(target, args, line);
+        }
+        if name == "alloc" {
+            return self.allocate_owned(args, expected, line);
+        }
+        if name == "old" {
+            if self.execution.phase == Phase::Runtime || args.len() != 1 {
+                return Err(
+                    "old is proof-only and takes one entry-state parameter expression".into(),
+                );
+            }
+            let value = self.old_expression(&args[0], expected)?;
+            if self.execution.phase == Phase::Ideal && self.symbol_is_affine(&value) {
+                return Err(
+                    "old ownership snapshots are proof views, not new ideal resources".into(),
+                );
+            }
+            return Ok(value);
+        }
+        if name == "integer" || name == "nat" {
+            if self.execution.phase == Phase::Runtime {
+                return Err("mathematical views are proof-only".into());
+            }
+            if args.len() != 1 {
+                return Err(format!("{name} expects one integer"));
+            }
+            let n = self.eval(&args[0], None)?.number()?;
+            if name == "nat" {
+                self.prove(&Formula::Ge(n.clone()), "nonnegative natural view", line)?;
+            }
+            return Ok(Symbol::Number(
+                if name == "nat" { Ty::Nat } else { Ty::Int },
+                n,
+            ));
+        }
+        if self.execution.phase == Phase::Specification
+            && self.execution.current.as_deref() == Some(name)
+        {
+            return Err("recursive calls are forbidden in specifications".into());
+        }
+        if name == "move" || name == "drop" {
+            return self.eval_ownership_call(name, args, line);
+        }
+        let function = self.function_for_call(name, line)?;
+        let actuals = self.evaluate_arguments(function, args, line)?;
+        self.apply_call(name, function, actuals, line)
+    }
+
+    fn eval_ownership_call(&mut self, name: &str, args: &[Expr], line: usize) -> Result<Symbol> {
+        if self.execution.phase == Phase::Runtime && !self.storage.opened_planes.is_empty() {
+            return Err("moves and drops are forbidden while invariants are open".into());
+        }
+        if self.execution.dropping
+            && !matches!(args, [argument] if matches!(&argument.kind, Kind::Name(name) if name != "self"))
+        {
+            return Err(
+                "destructor moves and drops require a complete local binding; decompose self first"
+                    .into(),
+            );
+        }
+        if self.execution.phase == Phase::Specification {
+            return Err("specifications and facts cannot move or drop values".into());
+        }
+        if args.len() != 1 {
+            return Err(format!("{name} expects one place"));
+        }
+        if self.execution.phase == Phase::Ideal
+            && !self.execution.ideal_execution
+            && !matches!(&args[0].kind, Kind::Name(n) if self.locals.ideal_bindings.contains(n))
+        {
+            return Err("erased execution cannot move or drop a runtime place".into());
+        }
+        let (r, path) = self.location(&args[0])?;
+        if !path.is_empty() {
+            return Err(
+                "moving individual fields requires partial-shape tracking; unsupported".into(),
+            );
+        }
+        let id = self.storage.memory.plane(r)?;
+        if !self.locals.places.values().any(|p| *p == id) {
+            return Err("cannot move or drop a borrowed parameter plane".into());
+        }
+        let stored = self.storage.memory.read(r)?.clone();
+        self.record_valid(&stored, line)?;
+        let value = self.storage.memory.take(id)?;
+        self.validate_argument(&value, line)?;
+        if name == "drop" {
+            self.cleanup_value(value, line)?;
+            return Ok(Symbol::Unit);
+        }
+        Ok(value)
+    }
+
+    fn function_for_call(&mut self, name: &str, line: usize) -> Result<&'a Function> {
+        let f = self.declarations.functions.get(name).ok_or_else(|| {
+            if let Some(method) = name.strip_prefix("evg_method_") {
+                return format!(
+                    "line {}: unknown method {method} or unresolved receiver type",
+                    line
+                );
+            }
+            if self.execution.current.as_deref() == Some(name) {
+                format!(
+                    "line {}: recursive ideal function {name} requires a decreases clause",
+                    line
+                )
+            } else {
+                format!("line {}: unknown function {name}", line)
+            }
+        })?;
+        if self.execution.phase == Phase::Runtime
+            && !self.storage.opened_planes.is_empty()
+            && !self.declarations.cleanup_helpers.contains(name)
+        {
+            return Err(
+                "calls while invariants are open require checked scalar ownership-free effects"
+                    .into(),
+            );
+        }
+        if self.execution.dropping
+            && self.execution.phase == Phase::Runtime
+            && !self.declarations.cleanup_helpers.contains(name)
+        {
+            return Err(
+                "destructor calls require a checked scalar ownership-free effect summary".into(),
+            );
+        }
+        if f.partial {
+            if self.execution.phase != Phase::Runtime {
+                return Err(
+                    "potentially divergent functions cannot be used in proofs or ideal execution"
+                        .into(),
+                );
+            }
+            self.execution.partial_execution = true;
+        }
+        if self.execution.phase == Phase::Specification
+            && (heap::owns_planes_type(&f.ret, self.declarations.structs)
+                || f.params
+                    .iter()
+                    .any(|(_, ty)| heap::owns_planes_type(ty, self.declarations.structs)))
+        {
+            return Err("proof calls must borrow heap owners; ownership transfers and owning results cannot be erased".into());
+        }
+        if !f.modifies.is_empty() && self.execution.phase == Phase::Specification {
+            return Err("modifying calls are forbidden in proof expressions".into());
+        }
+        if self.execution.phase == Phase::Ideal
+            && !f.ideal
+            && !self.declarations.helpers.contains(name)
+        {
+            return Err("modifying calls and runtime effects cannot be erased; an ideal expression needs ideal code or a checked pure scalar helper".into());
+        }
+        if f.ideal && self.execution.phase == Phase::Runtime {
+            return Err(format!(
+                "{name} is ideal code and cannot be called at runtime"
+            ));
+        }
+        Ok(f)
+    }
+
+    fn evaluate_arguments(
+        &mut self,
+        f: &Function,
+        args: &[Expr],
+        line: usize,
+    ) -> Result<Vec<Symbol>> {
+        let supplied = f
+            .supplied_parameters(args.len())
+            .map_err(|error| format!("line {}: {error}", line))?;
+        // Evaluate actuals in the caller; dependent parameter types in an
+        // isolated callee environment. Restore the caller on completion.
+        let mut actuals = BTreeMap::new();
+        for ((parameter, t), arg) in supplied.into_iter().zip(args) {
+            let hint = match t {
+                Type::Nat => Some(Ty::Nat),
+                Type::Int => Some(Ty::Int),
+                Type::Bool => Some(Ty::Bool),
+                Type::Machine(t) => Some(Ty::Machine(*t)),
+                Type::Plane(_) => self.literal_element_hint(t)?,
+                _ => None,
+            };
+            let saved_specification = self.execution.phase;
+            if f.ideal_params.contains(parameter) && self.execution.phase != Phase::Specification {
+                self.execution.phase = Phase::Ideal;
+            }
+            let value = if let (Type::Array(element, _), Kind::Array(_)) = (t, &arg.kind) {
+                if let Some(element) = self.literal_element_hint(element)? {
+                    // Infer literal elements now; defer its length check
+                    // to the isolated, fully bound callee environment.
+                    self.eval_inner(arg, Some(&Ty::Array(Box::new(element), Linear::number(0))))?
+                } else {
+                    self.eval(arg, hint.as_ref())?
+                }
+            } else {
+                self.eval(arg, hint.as_ref())?
+            };
+            self.execution.phase = saved_specification;
+            self.validate_argument(&value, line)?;
+            actuals.insert(parameter.clone(), value);
+        }
+        // A later argument can consume storage borrowed by an earlier
+        // argument. Recheck the complete actual list at the call boundary.
+        for value in actuals.values() {
+            self.validate_argument(value, line)?;
+        }
+        self.complete_arguments(f, actuals, line)
+    }
+
+    fn apply_call(
+        &mut self,
+        name: &str,
+        f: &Function,
+        actuals: Vec<Symbol>,
+        line: usize,
+    ) -> Result<Symbol> {
+        let mut saved = std::mem::take(&mut self.locals.values);
+        let saved_roots = std::mem::take(&mut self.locals.places);
+        let saved_old = std::mem::take(&mut self.entry.values);
+        let saved_old_memory = self.entry.memory.take();
+        let saved_ideal = std::mem::take(&mut self.locals.ideal_bindings);
+        let saved_module = std::mem::replace(&mut self.locals.module, f.module.clone());
+        self.locals.ideal_bindings = f.ideal_params.iter().cloned().collect();
+        self.locals.values.clear();
+        self.locals.places.clear();
+        self.bind_arguments(f, actuals, line)?;
+        self.capture_old(f)?;
+        if let Some(pre) = &f.pre {
+            let p = self.proposition(pre)?;
+            self.prove(&p, &format!("precondition of {name}"), line)?;
+        }
+        let inputs = if f
+            .params
+            .iter()
+            .any(|(_, ty)| type_has_reference(ty, self.declarations.structs))
+        {
+            self.incoming_references(f, !f.modifies.is_empty())?
+        } else {
+            Vec::new()
+        };
+        let writes = self.write_places(f, &inputs)?;
+        // Even read-only contracts may observe reference identity.
+        // An independent-port summary cannot describe aliased inputs.
+        let overlaps = self.reference_ports_overlap(&inputs)?;
+        if overlaps && f.external.is_some() {
+            return Err("external calls with overlapping reference ports require an alias-aware contract; unsupported".into());
+        }
+        if self.execution.current.as_deref() == Some(name) && !f.partial {
+            let entry = self
+                .execution
+                .measure
+                .clone()
+                .ok_or("recursive calls require a decreases clause")?;
+            let expression = f
+                .decreases
+                .as_ref()
+                .ok_or("recursive calls require a decreases clause")?;
+            let saved_specification = self.execution.phase;
+            self.execution.phase = Phase::Specification;
+            let next = self.nonnegative(expression, "nonnegative recursion measure")?;
+            self.execution.phase = saved_specification;
+            self.prove(
+                &Formula::Ge(entry.sub(&next)?.add(&Linear::number(-1))?),
+                "strictly decreasing recursion measure",
+                line,
+            )?;
+        }
+        let ret = self.resolve(&f.ret)?;
+        let mut changed_roots = BTreeSet::new();
+        for write in &writes {
+            let id = self.storage.memory.plane(write.reference)?;
+            changed_roots.insert(id);
+            let owned = self.owns_plane_in(&saved, &saved_roots, id)? || self.owns_plane(id)?;
+            if !self.write_permitted(write.reference, &write.path, owned)? {
+                return Err(format!("line {}: call to {name} writes through a parameter without a matching modifies contract", line));
+            }
+        }
+        let heap_call = heap::function_uses_planes(f, self.declarations.structs);
+        let value = if overlaps
+            || heap_call
+            || !self.storage.opened_planes.is_empty() && !f.modifies.is_empty()
+        {
+            let reason = if overlaps {
+                "overlaps incoming references"
+            } else if heap_call {
+                "uses owned planes"
+            } else {
+                "writes while invariants are open"
+            };
+            self.check_actual_body(f, &ret, writes, inputs)
+                .map_err(|error| {
+                    format!(
+                        "line {}: call to {name} {reason}; body recheck failed: {error}",
+                        line
+                    )
+                })?
+        } else {
+            let value = if !f.borrows.is_empty() {
+                let aliases = self.return_aliases(f, None)?;
+                self.return_shape(&ret, &mut Vec::new(), &aliases)?
+            } else {
+                self.arbitrary(&ret)?
+            };
+            for write in writes {
+                let id = self.storage.memory.plane(write.reference)?;
+                let mut new = self.arbitrary(&write.ty)?;
+                self.charge_value_work(symbol_weight(self.storage.memory.read(write.reference)?)?)?;
+                let mut root = self.storage.memory.read(write.reference)?.clone();
+                self.preserve_views(project(&root, &write.path)?, &mut new)?;
+                self.replace_projection(&mut root, &write.path, new)?;
+                self.storage.memory.write(id, root, false)?;
+            }
+            for input in inputs.iter().filter(|_| !f.modifies.is_empty()) {
+                // Each input's declared type is an implicit return contract.
+                // The body is checked to preserve these views even if the
+                // local parameter is rebound. Caller-only enclosing types
+                // are obligations below, not assumptions here.
+                self.charge_value_work(symbol_weight(project(
+                    self.storage.memory.read(input.reference)?,
+                    &input.path,
+                )?)?)?;
+                let target =
+                    project(self.storage.memory.read(input.reference)?, &input.path)?.clone();
+                self.assume_element_type(&target)?;
+            }
+            if !f.borrows.is_empty() {
+                self.assume_return_type(&value, &ret)?;
+            }
+            self.locals.values.insert("result".into(), value.clone());
+            if let Some(post) = &f.post {
+                let p = self.proposition(post)?;
+                self.assume(&p)?;
+            }
+            // Alias contracts describe entry storage. After applying the
+            // checked postcondition, revalidate the saved reference and its
+            // current target. Havoced contents need not satisfy nominal
+            // invariants until that postcondition has constrained them.
+            if !f.borrows.is_empty() && !f.modifies.is_empty() {
+                self.validate_argument(&value, line)?;
+            }
+            value
+        };
+        if heap_call {
+            // An actual body may write and then release storage it
+            // received by ownership. Surviving plain aliases are never;
+            // validating a fictional post-store root would revive it.
+            changed_roots.retain(|root| self.storage.memory.get(*root).is_ok());
+        }
+        for root in &changed_roots {
+            self.charge_value_work(symbol_weight(self.storage.memory.get(*root)?)?)?;
+            let stored = self.storage.memory.get(*root)?.clone();
+            for (binding, plane) in &saved_roots {
+                if plane == root {
+                    saved.insert(binding.clone(), stored.clone());
+                }
+            }
+        }
+        self.locals.values = saved;
+        self.locals.places = saved_roots;
+        self.entry.values = saved_old;
+        self.entry.memory = saved_old_memory;
+        self.locals.ideal_bindings = saved_ideal;
+        self.locals.module = saved_module;
+        for root in changed_roots {
+            self.charge_value_work(symbol_weight(self.storage.memory.get(root)?)?)?;
+            let stored = self.storage.memory.get(root)?.clone();
+            let lifted = self
+                .storage
+                .opened_planes
+                .get(&root)
+                .cloned()
+                .unwrap_or_default();
+            self.retained_valid_with(&stored, line, &lifted)?;
+        }
+        if !f.modifies.is_empty() {
+            self.validate_live(line)?;
+        }
+        Ok(value)
+    }
+}
