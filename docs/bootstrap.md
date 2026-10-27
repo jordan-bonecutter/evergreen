@@ -562,18 +562,30 @@ match condition {
 
 It works as an expression, including a function's tail value, or as a statement.
 A statement before another statement needs no trailing semicolon. The scrutinee
-executes once. Arms are expressions, optionally enclosed in braces; `{}` is a
-unit arm. Braced arms currently take one value expression without a trailing
-semicolon. Missing cases, duplicate cases,
+executes once. Braced arms support statements, local bindings, proofs, loops,
+and an optional tail value; `{}` and a trailing semicolon produce unit.
+Arm locals are cleaned up in reverse binding order before the result escapes.
+A moved result transfers ownership; references into expired arm-local storage
+become unusable. Local fact and proof names are scoped to the arm.
+Missing cases, duplicate cases,
 unreachable arms after `_`, incompatible result types, and inconsistent ownership
 transfers are rejected. The parser lowers this form to the ordinary conditional,
 sharing its proof, cleanup, effect, and native rules.
 
 Source flags can select raw-union payloads when a refinement establishes their
 active types. The ideal type selector remains erased; matching adds no runtime
-tag. Named data patterns, payload bindings, guards, and statement sequences
-inside arms remain future work. `examples/match.evg` checks a side-effecting
+tag. Named data patterns, payload bindings, and guards remain future work.
+`examples/match.evg` checks a side-effecting
 scrutinee once, selects a raw-union member, and runs in both backends.
+`examples/match_blocks.evg` checks arm-local destructors and writes to caller
+storage with a `modifies` contract.
+
+The same expression scopes work in `if` arms and standalone `{ ... }` values.
+An `if` without `else` has an implicit unit alternative; both branches must
+still agree in result type and ownership state. Statement blocks are runtime
+expressions: specifications and ideal computations use pure expressions.
+Early `return` from nested blocks remains rejected until checked exit and
+cleanup paths are implemented.
 
 `proofs/move_only_credits.evg` combines the rules: split a weighted move-only credit,
 destructure the result, join it again, and prove conservation. Checking it with

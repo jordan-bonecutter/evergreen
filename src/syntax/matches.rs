@@ -32,20 +32,8 @@ impl Parser {
                 return Err(self.err("unreachable _ arm: true and false are already covered"));
             }
             self.expect("=>")?;
-            let arm = if self.eat("{") {
-                if self.eat("}") {
-                    Expr {
-                        kind: Kind::Unit,
-                        line: self.line(),
-                    }
-                } else {
-                    let value = self.expr(0)?;
-                    if self.peek() == ";" {
-                        return Err(self.err("match arm blocks currently take a single value expression; statement blocks need scope/cleanup support"));
-                    }
-                    self.expect("}")?;
-                    value
-                }
+            let arm = if self.peek() == "{" {
+                self.block_expression()?
             } else {
                 self.expr(0)?
             };

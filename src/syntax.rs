@@ -187,6 +187,9 @@ impl Expr {
             Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => child(e),
             Kind::Binary(_, a, b) | Kind::Index(a, b) => child(a) && child(b),
             Kind::If(c, a, b) => child(c) && child(a) && child(b),
+            Kind::Block(body, tail) => {
+                body.iter().all(|s| s.bounded_depth(remaining - 1)) && child(tail)
+            }
             Kind::Array(es) | Kind::Call(_, es) => es.iter().all(child),
             Kind::Record(_, fields) => fields.iter().all(|(_, e)| child(e)),
             _ => true,
@@ -208,12 +211,13 @@ pub enum Kind {
     Call(String, Vec<Expr>),
     Array(Vec<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
+    Block(Vec<Statement>, Box<Expr>),
     Record(String, Vec<(String, Expr)>),
     Field(Box<Expr>, String),
     FactAt(Box<Expr>, String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Statement {
     Ideal(Box<Statement>),
     Destructure {
@@ -257,6 +261,40 @@ pub enum Statement {
 }
 
 impl Statement {
+    fn bounded_depth(&self, remaining: usize) -> bool {
+        if remaining == 0 {
+            return false;
+        }
+        let expr = |e: &Expr| e.bounded_depth(remaining - 1);
+        let statement = |s: &Statement| s.bounded_depth(remaining - 1);
+        match self {
+            Self::Ideal(s) => statement(s),
+            Self::Let { value, .. }
+            | Self::Destructure { value, .. }
+            | Self::Fact { value, .. }
+            | Self::Effect(value) => expr(value),
+            Self::Proof { proposition, .. } => expr(proposition),
+            Self::Assign { target, value } => expr(target) && expr(value),
+            Self::Update { places, body, .. } => {
+                places.iter().all(expr) && body.iter().all(statement)
+            }
+            Self::While {
+                condition,
+                invariant,
+                modifies,
+                decreases,
+                body,
+                ..
+            } => {
+                expr(condition)
+                    && expr(invariant)
+                    && modifies.iter().all(expr)
+                    && decreases.iter().all(expr)
+                    && body.iter().all(statement)
+            }
+        }
+    }
+
     pub fn bindings(&self) -> Vec<&str> {
         match self {
             Self::Ideal(binding) => binding.bindings(),
@@ -713,15 +751,23 @@ impl Parser {
             }
         } else if self.eat("match") {
             self.boolean_match(line)?
+        } else if self.peek() == "{" {
+            self.block_expression()?
         } else if self.eat("if") {
             let cond = self.expr(0)?;
-            self.expect("{")?;
-            let yes = self.expr(0)?;
-            self.expect("}")?;
-            self.expect("else")?;
-            self.expect("{")?;
-            let no = self.expr(0)?;
-            self.expect("}")?;
+            let yes = self.block_expression()?;
+            let no = if self.eat("else") {
+                if self.peek() == "if" {
+                    self.expr(0)?
+                } else {
+                    self.block_expression()?
+                }
+            } else {
+                Expr {
+                    kind: Kind::Unit,
+                    line,
+                }
+            };
             Expr {
                 kind: Kind::If(Box::new(cond), Box::new(yes), Box::new(no)),
                 line,

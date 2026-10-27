@@ -17,6 +17,7 @@ mod array_ports;
 
 #[cfg(test)]
 pub(crate) mod array_model;
+mod blocks;
 mod bodies;
 mod calls;
 mod cleanup;
@@ -454,6 +455,7 @@ fn borrow_expression(e: &Expr) -> bool {
 
 fn destructor_expression(e: &Expr) -> bool {
     match &e.kind {
+        Kind::Block(body, tail) => destructor_body(body) && destructor_expression(tail),
         Kind::Record(..) => false,
         Kind::Call(_, args) => args.iter().all(destructor_expression),
         Kind::Unary(_, x) | Kind::Field(x, _) | Kind::FactAt(x, _) => destructor_expression(x),
@@ -574,6 +576,7 @@ fn needs_old_memory(function: &Function) -> bool {
             Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => expression(e),
             Kind::Binary(_, a, b) | Kind::Index(a, b) => expression(a) || expression(b),
             Kind::If(c, a, b) => expression(c) || expression(a) || expression(b),
+            Kind::Block(body, tail) => body.iter().any(statement) || expression(tail),
             Kind::Array(items) | Kind::Call(_, items) => items.iter().any(expression),
             Kind::Record(_, fields) => fields.iter().any(|(_, e)| expression(e)),
             _ => false,
@@ -2033,7 +2036,7 @@ impl<'a> Context<'a> {
                 self.storage.memory.read(r)?;
                 Ok((r, path))
             }
-            Kind::Bytes(_) | Kind::Record(..) | Kind::Call(..) | Kind::If(..)
+            Kind::Bytes(_) | Kind::Record(..) | Kind::Call(..) | Kind::If(..) | Kind::Block(..)
                 if self.execution.phase == Phase::Runtime =>
             {
                 let value = self.eval(e, None)?;
@@ -2210,6 +2213,7 @@ impl<'a> Context<'a> {
             }
             Kind::Binary(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
             Kind::If(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
+            Kind::Block(_, tail) => self.hint(tail),
             Kind::Call(n, _) => self
                 .declarations
                 .functions
@@ -3035,6 +3039,7 @@ impl<'a> Context<'a> {
             Kind::If(condition, yes, no) => {
                 self.eval_conditional(condition, yes, no, expected, e.line)
             }
+            Kind::Block(body, tail) => self.eval_block(body, tail, expected, e.line),
         }
     }
 }

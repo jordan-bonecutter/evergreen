@@ -135,6 +135,12 @@ impl Names {
                 self.expr(a);
                 self.expr(b);
             }
+            Kind::Block(body, tail) => {
+                for statement in body {
+                    self.statement(statement);
+                }
+                self.expr(tail);
+            }
             Kind::Array(values) => {
                 for value in values {
                     self.expr(value);

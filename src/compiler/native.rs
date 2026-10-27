@@ -12,6 +12,7 @@ type Result<T> = std::result::Result<T, String>;
 
 mod allocation;
 mod atomic;
+mod blocks;
 mod elf;
 mod order;
 mod ownership;
@@ -41,7 +42,7 @@ fn machine() -> Type {
 fn no_calls(e: &Expr) -> bool {
     match &e.kind {
         Kind::Call(name, args) if MachineInt::parse(name).is_some() => args.iter().all(no_calls),
-        Kind::Call(..) => false,
+        Kind::Call(..) | Kind::Block(..) => false,
         Kind::Unary(_, x) | Kind::Field(x, _) | Kind::FactAt(x, _) => no_calls(x),
         Kind::Binary(_, a, b) | Kind::Index(a, b) => no_calls(a) && no_calls(b),
         Kind::If(c, a, b) => no_calls(c) && no_calls(a) && no_calls(b),
@@ -511,6 +512,7 @@ impl Emitter<'_> {
                 }
             }),
             Kind::If(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
+            Kind::Block(_, tail) => self.hint(tail),
             _ => None,
         }
     }
@@ -534,7 +536,7 @@ impl Emitter<'_> {
                 Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) => Ok(*inner),
                 _ => Err("native place dereference requires a reference".into()),
             },
-            Kind::Bytes(_) | Kind::Record(..) | Kind::Call(..) | Kind::If(..) => {
+            Kind::Bytes(_) | Kind::Record(..) | Kind::Call(..) | Kind::If(..) | Kind::Block(..) => {
                 let ty = self.expr(e, None)?;
                 if !matches!(ty, Type::Named(_)) && !matches!(e.kind, Kind::Bytes(_)) {
                     return Err("temporary borrows require a record value".into());
@@ -767,6 +769,7 @@ impl Emitter<'_> {
                 patch(self.code, end, target)?;
                 ty
             }
+            Kind::Block(body, tail) => self.block_value(body, tail, expected)?,
             Kind::Call(name, args) if MachineInt::parse(name).is_some() => {
                 let target = Type::Machine(MachineInt::parse(name).unwrap());
                 let [argument] = args.as_slice() else {

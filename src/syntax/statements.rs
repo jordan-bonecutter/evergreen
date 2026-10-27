@@ -12,6 +12,19 @@ impl Parser {
         self.block(true)
     }
 
+    pub(super) fn block_expression(&mut self) -> Result<Expr, String> {
+        let line = self.line();
+        let (body, tail) = self.block(false)?;
+        Ok(if body.is_empty() {
+            tail
+        } else {
+            Expr {
+                kind: Kind::Block(body, Box::new(tail)),
+                line,
+            }
+        })
+    }
+
     fn block(&mut self, returns: bool) -> Result<(Vec<Statement>, Expr), String> {
         self.expect("{")?;
         let mut body = Vec::new();
@@ -28,15 +41,15 @@ impl Parser {
             }
             if self.eat("return") {
                 if !returns {
-                    return Err(
-                        self.err("return inside a loop needs an exit invariant; unsupported")
-                    );
+                    return Err(self.err(
+                        "return from a nested block needs checked exit/cleanup paths; unsupported",
+                    ));
                 }
                 let value = self.expr(0)?;
                 self.eat(";");
                 break value;
             }
-            let matching = self.peek() == "match";
+            let block_like = matches!(self.peek(), "match" | "if" | "{");
             let value = self.expr(0)?;
             if self.eat("=") {
                 body.push(self.assignment(value)?);
@@ -46,7 +59,7 @@ impl Parser {
                 body.push(Statement::Effect(value));
                 continue;
             }
-            if matching && self.peek() != "}" {
+            if block_like && self.peek() != "}" {
                 body.push(Statement::Effect(value));
                 continue;
             }

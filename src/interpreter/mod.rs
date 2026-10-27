@@ -11,6 +11,7 @@ use std::{
 };
 
 mod atomic;
+mod blocks;
 mod compat;
 mod ownership;
 mod type_match;
@@ -252,6 +253,7 @@ impl Evaluator<'_> {
             }
             Kind::Binary(_, a, b) => self.hint(a, env).or_else(|| self.hint(b, env)),
             Kind::If(_, a, b) => self.hint(a, env).or_else(|| self.hint(b, env)),
+            Kind::Block(_, tail) => self.hint(tail, env),
             Kind::Call(n, _) => self
                 .functions
                 .iter()
@@ -266,6 +268,7 @@ impl Evaluator<'_> {
         statement: &Statement,
         env: &mut BTreeMap<String, Value>,
     ) -> Result<()> {
+        let start = self.temporaries.len();
         match statement {
             Statement::While {
                 condition, body, ..
@@ -335,7 +338,7 @@ impl Evaluator<'_> {
                         }
                         _ => return Err("unverified operation in update".into()),
                     }
-                    self.finish_temporaries(0)?;
+                    self.finish_temporaries(start)?;
                 }
                 for name in locals.into_iter().rev() {
                     if let Some(id) = self.roots.remove(&name) {
@@ -354,7 +357,7 @@ impl Evaluator<'_> {
                 env.insert(name.clone(), v);
             }
         }
-        self.finish_temporaries(0)
+        self.finish_temporaries(start)
     }
 
     fn call(&mut self, name: &str, actuals: Vec<Value>) -> Result<Value> {
@@ -560,6 +563,17 @@ impl Evaluator<'_> {
                 &fields[1..],
                 value,
             )
+        }
+        // Lexical expression scopes share stored outer bindings. Materialize
+        // only an assigned root so its update is visible outside a local env.
+        let assigned_root = root_name(target)?;
+        if !self.roots.contains_key(&assigned_root) {
+            let value = copy_value(
+                env.get(&assigned_root).ok_or("unknown assignment target")?,
+                &mut self.fuel,
+            )?;
+            let plane = self.memory.allocate(value)?;
+            self.roots.insert(assigned_root, plane);
         }
         let old = if let Kind::Name(n) = &target.kind {
             let value = self
@@ -978,6 +992,7 @@ impl Evaluator<'_> {
                     self.scoped_expr(no, env, expected)
                 }
             }
+            Kind::Block(body, tail) => self.block_value(body, tail, env, expected),
         }
     }
 
@@ -1026,7 +1041,7 @@ impl Evaluator<'_> {
                 self.memory.read(r)?;
                 Ok((r, p))
             }
-            Kind::Bytes(_) | Kind::Record(..) | Kind::Call(..) | Kind::If(..) => {
+            Kind::Bytes(_) | Kind::Record(..) | Kind::Call(..) | Kind::If(..) | Kind::Block(..) => {
                 let value = self.expr(e, env, None)?;
                 if !matches!(value, Value::Record(..)) && !matches!(e.kind, Kind::Bytes(_)) {
                     return Err("temporary borrows require a record value".into());

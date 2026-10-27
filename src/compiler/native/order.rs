@@ -115,6 +115,10 @@ impl<'a> Dependencies<'a> {
                             Source::Expression(b),
                         ]);
                     }
+                    Kind::Block(body, tail) => {
+                        pending.extend(body.iter().map(Source::Statement));
+                        pending.push(Source::Expression(tail));
+                    }
                     Kind::Array(items) => pending.extend(items.iter().map(Source::Expression)),
                     _ => {}
                 },

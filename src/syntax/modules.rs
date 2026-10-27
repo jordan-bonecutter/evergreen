@@ -102,6 +102,12 @@ impl Scope<'_> {
                 self.expr(a);
                 self.expr(b);
             }
+            Kind::Block(body, tail) => {
+                for statement in body {
+                    self.statement(statement);
+                }
+                self.expr(tail);
+            }
             Kind::Array(items) => {
                 for item in items {
                     self.expr(item);

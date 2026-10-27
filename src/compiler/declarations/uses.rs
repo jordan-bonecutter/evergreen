@@ -107,6 +107,11 @@ impl Uses {
                 self.expression(a, bound, runtime, depth + 1)?;
                 self.expression(b, bound, runtime, depth + 1)?;
             }
+            Kind::Block(body, tail) => {
+                let mut local = bound.clone();
+                self.statements(body, &mut local, runtime, depth + 1)?;
+                self.expression(tail, &local, runtime, depth + 1)?;
+            }
             Kind::Array(items) => {
                 for item in items {
                     self.expression(item, bound, runtime, depth + 1)?;

@@ -176,6 +176,12 @@ impl Aliases {
                 self.expr(left, module);
                 self.expr(right, module);
             }
+            Kind::Block(body, tail) => {
+                for statement in body {
+                    self.statement(statement, module);
+                }
+                self.expr(tail, module);
+            }
             Kind::Array(values) => {
                 for value in values {
                     self.expr(value, module);

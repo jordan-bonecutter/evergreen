@@ -147,6 +147,7 @@ impl Context<'_> {
             Kind::Unit => Some(ClaimKey::Unit),
             Kind::Number(n) | Kind::Constant(_, n) => Some(ClaimKey::Number(*n)),
             Kind::Bool(b) => Some(ClaimKey::Bool(*b)),
+            Kind::Block(..) => None,
         };
         Ok(key)
     }

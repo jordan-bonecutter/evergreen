@@ -214,7 +214,7 @@ impl Context<'_> {
                         })
                 })
             }
-            Kind::Record(..) | Kind::Array(..) => false,
+            Kind::Record(..) | Kind::Array(..) | Kind::Block(..) => false,
             Kind::Unary(op, x) if op == "*" => {
                 matches!(self.hint(x), Some(Ty::Ref(_) | Ty::Plane(_) | Ty::Owner(_)))
                     && self.update_expression(x)

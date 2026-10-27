@@ -57,14 +57,21 @@ pub(super) fn function_uses_planes(
         }
     }
 
-    fn expression(value: &Expr) -> bool {
+    fn expression(value: &Expr, structs: &BTreeMap<String, Struct>) -> bool {
         match &value.kind {
             Kind::Call(name, _) if name == "alloc" => true,
-            Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => expression(e),
-            Kind::Binary(_, a, b) | Kind::Index(a, b) => expression(a) || expression(b),
-            Kind::If(c, a, b) => expression(c) || expression(a) || expression(b),
-            Kind::Call(_, args) | Kind::Array(args) => args.iter().any(expression),
-            Kind::Record(_, fields) => fields.iter().any(|(_, value)| expression(value)),
+            Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => expression(e, structs),
+            Kind::Binary(_, a, b) | Kind::Index(a, b) => {
+                expression(a, structs) || expression(b, structs)
+            }
+            Kind::If(c, a, b) => {
+                expression(c, structs) || expression(a, structs) || expression(b, structs)
+            }
+            Kind::Block(body, tail) => {
+                body.iter().any(|s| statement(s, structs)) || expression(tail, structs)
+            }
+            Kind::Call(_, args) | Kind::Array(args) => args.iter().any(|e| expression(e, structs)),
+            Kind::Record(_, fields) => fields.iter().any(|(_, value)| expression(value, structs)),
             _ => false,
         }
     }
@@ -76,22 +83,24 @@ pub(super) fn function_uses_planes(
                 ty: annotation,
                 value,
                 ..
-            } => annotation.as_ref().is_some_and(|t| ty(t, structs)) || expression(value),
+            } => annotation.as_ref().is_some_and(|t| ty(t, structs)) || expression(value, structs),
             Statement::Destructure { value, .. }
             | Statement::Effect(value)
-            | Statement::Fact { value, .. } => expression(value),
-            Statement::Proof { proposition, .. } => expression(proposition),
-            Statement::Assign { target, value } => expression(target) || expression(value),
+            | Statement::Fact { value, .. } => expression(value, structs),
+            Statement::Proof { proposition, .. } => expression(proposition, structs),
+            Statement::Assign { target, value } => {
+                expression(target, structs) || expression(value, structs)
+            }
             Statement::Update { body, .. } => body.iter().any(|s| statement(s, structs)),
             Statement::While {
                 condition, body, ..
-            } => expression(condition) || body.iter().any(|s| statement(s, structs)),
+            } => expression(condition, structs) || body.iter().any(|s| statement(s, structs)),
         }
     }
     function.params.iter().any(|(_, t)| ty(t, structs))
         || ty(&function.ret, structs)
         || function.body.iter().any(|s| statement(s, structs))
-        || expression(&function.result)
+        || expression(&function.result, structs)
 }
 
 pub(super) fn syntax_type(ty: &Ty, line: usize) -> Result<Type> {

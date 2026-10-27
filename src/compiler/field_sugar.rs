@@ -402,6 +402,13 @@ impl Shapes {
                 self.expr(right, scope, expected);
                 ty
             }
+            Kind::Block(body, tail) => {
+                let mut local = scope.clone();
+                for statement in body {
+                    self.statement(statement, &mut local);
+                }
+                self.expr(tail, &local, expected)
+            }
             Kind::Binary(op, left, right) => {
                 let ty = self.expr(left, scope, None);
                 self.expr(right, scope, None);

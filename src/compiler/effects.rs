@@ -330,6 +330,9 @@ pub(crate) fn recursive(function: &Function) -> bool {
             Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => expression(e, name),
             Kind::Binary(_, a, b) | Kind::Index(a, b) => expression(a, name) || expression(b, name),
             Kind::If(c, a, b) => expression(c, name) || expression(a, name) || expression(b, name),
+            Kind::Block(body, tail) => {
+                body.iter().any(|s| statement(s, name)) || expression(tail, name)
+            }
             Kind::Array(items) => items.iter().any(|e| expression(e, name)),
             Kind::Record(_, fields) => fields.iter().any(|(_, e)| expression(e, name)),
             _ => false,
@@ -356,15 +359,33 @@ pub(crate) fn recursive(function: &Function) -> bool {
 }
 
 pub(crate) fn unmeasured_loops(function: &Function) -> bool {
-    fn contains(statement: &Statement) -> bool {
-        match statement {
-            Statement::While {
-                decreases, body, ..
-            } => decreases.is_none() || body.iter().any(contains),
-            Statement::Ideal(inner) => contains(inner),
-            Statement::Update { body, .. } => body.iter().any(contains),
+    fn expression(e: &Expr) -> bool {
+        match &e.kind {
+            Kind::Block(body, tail) => body.iter().any(contains) || expression(tail),
+            Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => expression(e),
+            Kind::Binary(_, a, b) | Kind::Index(a, b) => expression(a) || expression(b),
+            Kind::If(c, a, b) => expression(c) || expression(a) || expression(b),
+            Kind::Array(items) | Kind::Call(_, items) => items.iter().any(expression),
+            Kind::Record(_, fields) => fields.iter().any(|(_, e)| expression(e)),
             _ => false,
         }
     }
-    function.body.iter().any(contains)
+    fn contains(statement: &Statement) -> bool {
+        match statement {
+            Statement::While {
+                condition,
+                decreases,
+                body,
+                ..
+            } => decreases.is_none() || expression(condition) || body.iter().any(contains),
+            Statement::Ideal(inner) => contains(inner),
+            Statement::Update { body, .. } => body.iter().any(contains),
+            Statement::Let { value, .. }
+            | Statement::Destructure { value, .. }
+            | Statement::Effect(value) => expression(value),
+            Statement::Assign { target, value } => expression(target) || expression(value),
+            Statement::Fact { .. } | Statement::Proof { .. } => false,
+        }
+    }
+    function.body.iter().any(contains) || expression(&function.result)
 }
