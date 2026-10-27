@@ -126,9 +126,22 @@ fact about one selection cannot automatically establish a property of the
 opposite selection. These are frontend state/provenance rules, not independently
 kernel-checked memory theorems.
 
-Guarded stores, general projected addresses through an unresolved plane choice,
-and symbolic reference-array selection remain incomplete. Fresh unrelated
-pointees cannot stand in for such a selection.
+Guarded stores and projected addresses use these same alternatives. Address
+components and the assigned value are evaluated once; branch-state joins describe
+the single runtime write. Modifying helpers and destructors carry guarded write
+grants, checked against the caller's authority without admitted premises.
+Actual-body rechecking preserves conditional ports through nested calls.
+
+Observing reference-array cells in only one branch adds sparse metadata to that
+array's unchanged contents identity. Joins merge only observed cells, recursively
+through nested arrays and records; they reject differences in actual stored
+values under one immutable identity. Bounds of immutable input observations
+are replayed after installing the joined paths, never as assumptions about live
+contents that may have changed. The declared extent is not enumerated.
+
+Symbolic reference-array selection, guarded external effects, guarded loop
+frames, and conditional storage-generation transitions remain incomplete.
+Fresh unrelated pointees cannot stand in for such a selection.
 
 The verification state has a logical snapshot at each successful statement.
 Snapshots share unchanged nodes rather than cloning every plane and fact set.

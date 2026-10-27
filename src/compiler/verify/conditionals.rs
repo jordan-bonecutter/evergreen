@@ -9,6 +9,12 @@ struct BranchView {
     censuses: BTreeMap<Reference, Linear>,
 }
 
+#[derive(Default)]
+struct JoinedViews {
+    references: Vec<Symbol>,
+    inputs: Vec<Symbol>,
+}
+
 fn array_join_path(a: &[Projection<Linear>], b: &[Projection<Linear>]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -137,7 +143,7 @@ impl Context<'_> {
             .merge(&store.facts, &a_store.facts, &b_store.facts, &p)?;
         let mut state_a = Formula::True;
         let mut state_b = Formula::True;
-        let mut views = Vec::new();
+        let mut views = JoinedViews::default();
         let a_states = a_store.memory.states();
         let b_states = b_store.memory.states();
         for (index, (id, generation, original)) in store.memory.states().into_iter().enumerate() {
@@ -228,7 +234,12 @@ impl Context<'_> {
         // contradiction certificate; a failed probe keeps the path.
         paths = self.feasible_paths(paths)?;
         self.proof.paths = paths::bounded(paths, self.session, &mut self.work.value_work)?;
-        for view in views {
+        // Replaying immutable entry observations belongs to the joined paths,
+        // not the temporary base used to construct the join constraints.
+        for input in views.inputs {
+            self.assume_input_bounds(&input)?;
+        }
+        for view in views.references {
             self.materialize_joined_reference(&view, line)?;
         }
         for (name, id) in &self.locals.places {
@@ -263,7 +274,7 @@ impl Context<'_> {
         &mut self,
         a: &Symbol,
         b: &Symbol,
-        views: &mut Vec<Symbol>,
+        views: &mut JoinedViews,
         line: usize,
     ) -> Result<(Symbol, Formula, Formula)> {
         self.charge_value_work(1)?;
@@ -271,6 +282,12 @@ impl Context<'_> {
             return Ok((a.clone(), Formula::True, Formula::True));
         }
         match (a, b) {
+            (Symbol::Array { identity: a_id, .. }, Symbol::Array { identity: b_id, .. })
+                if a_id == b_id =>
+            {
+                let joined = self.merge_observations(a, b, &mut views.inputs)?;
+                Ok((joined, Formula::True, Formula::True))
+            }
             (
                 Symbol::Union {
                     members: am,
@@ -371,7 +388,7 @@ impl Context<'_> {
                 let mut path = ap.clone();
                 path[offset] = Projection::Index(index.clone());
                 let value = Symbol::Ref(at.clone(), *ar, path);
-                views.push(value.clone());
+                views.references.push(value.clone());
                 Ok((value, equal(&index, a)?, equal(&index, b)?))
             }
             (Symbol::Record(an, a), Symbol::Record(bn, b)) if an == bn && a.len() == b.len() => {
@@ -449,29 +466,6 @@ impl Context<'_> {
                     identity: b_id,
                 },
             ) if element == b_element && len == b_len && self.history_element(element) => {
-                if a_id == b_id {
-                    let mut cells = a_cells.clone();
-                    for (index, value) in b_cells {
-                        if cells.get(index).is_some_and(|existing| existing != value) {
-                            return Err(
-                                "inconsistent materialization of one array contents identity"
-                                    .into(),
-                            );
-                        }
-                        cells.insert(index.clone(), value.clone());
-                    }
-                    return Ok((
-                        Symbol::Array {
-                            element: element.clone(),
-                            len: len.clone(),
-                            items: a_items.clone(),
-                            cells,
-                            identity: a_id.clone(),
-                        },
-                        Formula::True,
-                        Formula::True,
-                    ));
-                }
                 let indices = a_cells
                     .keys()
                     .chain(b_cells.keys())

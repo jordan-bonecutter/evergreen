@@ -41,6 +41,7 @@ mod match_tests;
 mod ownership;
 mod parameters;
 mod paths;
+mod places;
 use paths::{extend, extend_from};
 mod program;
 mod proofs;
@@ -58,6 +59,7 @@ mod unions;
 mod updates;
 mod validation;
 mod value_evidence;
+mod write_contracts;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Ty {
@@ -501,6 +503,7 @@ enum Phase {
 #[derive(Clone)]
 struct WritePlace {
     origin: String,
+    guard: Formula,
     reference: Reference,
     path: Vec<Projection<Linear>>,
     ty: Box<Ty>,
@@ -657,138 +660,6 @@ enum ArrayHistory {
 }
 
 impl<'a> Context<'a> {
-    fn write_permitted(
-        &mut self,
-        reference: Reference,
-        path: &[Projection<Linear>],
-        owned: bool,
-    ) -> Result<bool> {
-        let grants = std::mem::take(&mut self.storage.writable);
-        let result = self.write_permitted_by(&grants, reference, path, owned);
-        self.storage.writable = grants;
-        result
-    }
-
-    fn write_permitted_by(
-        &mut self,
-        grants: &[WritePlace],
-        reference: Reference,
-        path: &[Projection<Linear>],
-        owned: bool,
-    ) -> Result<bool> {
-        if owned {
-            return Ok(true);
-        }
-        let plane = self.storage.memory.plane(reference)?;
-        let grants = grants
-            .iter()
-            .filter(|grant| {
-                self.storage.memory.plane(grant.reference).ok() == Some(plane)
-                    && grant.path.len() <= path.len()
-            })
-            .map(|grant| grant.path.clone())
-            .collect::<Vec<_>>();
-        for grant in grants {
-            if self.paths_equal(&grant, &path[..grant.len()])? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    fn incoming_place(
-        &mut self,
-        expression: &Expr,
-        inputs: &[InputReference],
-        expected: Option<&Ty>,
-    ) -> Result<WritePlace> {
-        let origin = input_reference_origin(expression)
-            .ok_or("effect or borrow must project an incoming reference")?;
-        let input = inputs.iter().find(|input| input.origin == origin).ok_or(
-            "effect or borrow must refer to incoming caller storage, not a local parameter slot",
-        )?;
-        let Symbol::Ref(ty, reference, path) = self.eval(expression, expected)? else {
-            return Err("effect and borrow entries must denote references".into());
-        };
-        if self.storage.memory.plane(input.reference)? != self.storage.memory.plane(reference)?
-            || input.path.len() > path.len()
-            || !self.paths_equal(&input.path, &path[..input.path.len()])?
-        {
-            return Err(
-                "effect or borrow cannot acquire a different input reference's plane".into(),
-            );
-        }
-        Ok(WritePlace {
-            origin,
-            reference,
-            path,
-            ty,
-        })
-    }
-
-    fn write_places(
-        &mut self,
-        function: &Function,
-        inputs: &[InputReference],
-    ) -> Result<Vec<WritePlace>> {
-        let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
-        let mut places: Vec<WritePlace> = Vec::new();
-        for expression in &function.modifies {
-            let place = self.incoming_place(expression, inputs, None)?;
-            // Erasure belongs to the storage slot, not to the reference value.
-            // A pointer stored inside ideal data may still target runtime data.
-            let input = inputs
-                .iter()
-                .find(|input| input.origin == place.origin)
-                .ok_or("missing incoming reference for write footprint")?;
-            let mut erased = self.proof_storage(&input.pointee);
-            let mut target = project(self.storage.memory.read(input.reference)?, &input.path)?;
-            for step in &place.path[input.path.len()..] {
-                if let (Symbol::Record(name, _), Projection::Field(field)) = (target, step) {
-                    erased |= self.declarations.structs[name].ideal_fields.contains(field);
-                }
-                target = project(target, std::slice::from_ref(step))?;
-            }
-            if function.ideal && !erased {
-                return Err("ideal modifies must target proof storage; erased references do not grant writes to runtime pointees".into());
-            }
-            let supported_region = match &*place.ty {
-                Ty::Machine(_) | Ty::Bool => true,
-                Ty::Nat | Ty::Int => erased,
-                Ty::Record(_) => {
-                    self.history_element(&place.ty)
-                        || erased && self.erased_ty(&place.ty) && self.scalar_field_value(&place.ty)
-                }
-                Ty::Array(element, _) => {
-                    matches!(**element, Ty::Machine(_) | Ty::Bool)
-                        || matches!(**element, Ty::Record(_)) && self.history_element(element)
-                }
-                _ => false,
-            };
-            if !supported_region {
-                return Err("modifies targets require machine scalars, Booleans, proof-only integer/nat slots, copyable scalar-field records, or supported arrays".into());
-            }
-            // Permissions form a union for one structural input origin. Pointer
-            // equality cannot merge independently modeled reference fields.
-            let mut redundant = false;
-            for previous in &places {
-                self.charge_value_work(1)?;
-                if previous.origin == place.origin
-                    && previous.reference == place.reference
-                    && self.paths_equal(&previous.path, &place.path)?
-                {
-                    redundant = true;
-                    break;
-                }
-            }
-            if !redundant {
-                places.push(place);
-            }
-        }
-        self.execution.phase = phase;
-        Ok(places)
-    }
-
     fn charge_value_work(&mut self, cost: usize) -> Result<()> {
         self.work.value_work = self.work.value_work.saturating_add(cost);
         if self.work.value_work > MAX_VALUE_WORK {
@@ -1513,43 +1384,7 @@ impl<'a> Context<'a> {
 
     fn assign(&mut self, place: &Expr, value: &Expr) -> Result<()> {
         if place.indirect_place() {
-            let (reference, fields) = self.location(place)?;
-            let id = self.storage.memory.plane(reference)?;
-            let owned = self.owns_plane(id)?;
-            if !self.write_permitted(reference, &fields, owned)? {
-                return Err(format!("line {}: writes through reference parameters need an effect contract; unsupported", place.line));
-            }
-            let old = project(self.storage.memory.read(reference)?, &fields)?.clone();
-            if self.symbol_is_move_only(&old)
-                && self.has_runtime_cleanup(&old.ty())
-                && !(self.execution.phase == Phase::Ideal && self.erased_value(&old))
-            {
-                return Err("overwriting owned fields through references requires ownership effect proofs; unsupported".into());
-            }
-            let mut new = self.eval(value, Some(&old.ty()))?;
-            let replace_plane = !self.same_layout(&old, &new)?;
-            if !replace_plane {
-                self.preserve_views(&old, &mut new)?;
-            }
-            let mut root = self.storage.memory.read(reference)?.clone();
-            self.replace_projection(&mut root, &fields, new)?;
-            let lifted = self
-                .storage
-                .opened_planes
-                .get(&id)
-                .cloned()
-                .unwrap_or_default();
-            // Validate against the resulting store: a field reference may point
-            // back into this very root. Failure rejects the whole verification.
-            self.note_state_write(id, &fields)?;
-            self.storage.memory.write(id, root.clone(), replace_plane)?;
-            self.retained_valid_with(&root, place.line, &lifted)?;
-            for (n, plane) in &self.locals.places {
-                if *plane == id {
-                    self.locals.values.insert(n.clone(), root.clone());
-                }
-            }
-            return self.validate_opened_planes(place.line);
+            return self.assign_indirect(place, value);
         }
 
         fn path(e: &Expr, fields: &mut Vec<String>) -> Result<String> {
@@ -1968,73 +1803,13 @@ impl<'a> Context<'a> {
                 };
                 Ok((self.storage.memory.borrow(id)?, vec![]))
             }
-            Kind::Field(base, n) => {
-                let (r, mut path) = self.location(base)?;
-                let Symbol::Record(typename, _) = project(self.storage.memory.read(r)?, &path)?
-                else {
-                    return Err("field reference requires a record".into());
-                };
-                self.field_access(typename, n, e.line)?;
-                path.push(Projection::Field(n.clone()));
-                project(self.storage.memory.read(r)?, &path)?;
-                Ok((r, path))
+            Kind::Field(..) | Kind::Index(..) => {
+                let value = self.place_reference(e)?;
+                self.direct_reference(&value)
             }
-            Kind::Index(base, i) => {
-                let (r, mut path) = self.location(base)?;
-                let index = self.nonnegative(i, "nonnegative reference index")?;
-                self.charge_value_work(symbol_weight(self.storage.memory.read(r)?)?)?;
-                let mut root = self.storage.memory.read(r)?.clone();
-                let array = project(&root, &path)?.clone();
-                let Symbol::Array {
-                    element,
-                    len,
-                    items,
-                    cells,
-                    identity,
-                } = array
-                else {
-                    return Err("reference index requires array storage".into());
-                };
-                self.prove(
-                    &Formula::Ge(len.sub(&index)?.add(&Linear::number(-1))?),
-                    "reference index < length",
-                    e.line,
-                )?;
-                let literal = constant_index(&index)
-                    .and_then(|i| items.as_ref().and_then(|items| items.get(i)));
-                if !cells.contains_key(&index)
-                    && (literal.is_none() || self.history_element(element.as_ref()))
-                {
-                    if !self.history_element(element.as_ref())
-                        && !self.ty_has_reference(element.as_ref())
-                    {
-                        return Err("borrowing opaque array elements requires scalars or reference-free records without runtime cleanup".into());
-                    }
-                    let value =
-                        self.read_array(&element, &identity, &index, items.as_deref(), &cells)?;
-                    let Symbol::Array { cells, .. } = project_mut(&mut root, &path)? else {
-                        return Err("invalid array storage".into());
-                    };
-                    cells.insert(index.clone(), value);
-                    let plane = self.storage.memory.plane(r)?;
-                    self.storage.memory.write(plane, root, false)?;
-                }
-                path.push(Projection::Index(index));
-                project(self.storage.memory.read(r)?, &path)?;
-                Ok((r, path))
-            }
-            Kind::Unary(op, x) if op == "*" => {
-                let (r, path) = match self.pointer_operand(x)? {
-                    Symbol::Ref(_, r, path) => (r, path),
-                    value @ Symbol::RefCases(..) => self.direct_reference(&value)?,
-                    Symbol::Plane(_, r) => (r, Vec::new()),
-                    Symbol::Owner(_, owner) => {
-                        (self.storage.memory.borrow_owned(owner)?, Vec::new())
-                    }
-                    _ => return Err("dereference requires a reference or owned plane".into()),
-                };
-                self.storage.memory.read(r)?;
-                Ok((r, path))
+            Kind::Unary(op, _) if op == "*" => {
+                let value = self.place_reference(e)?;
+                self.direct_reference(&value)
             }
             Kind::Bytes(_) | Kind::Record(..) | Kind::Call(..) | Kind::If(..) | Kind::Block(..)
                 if self.execution.phase == Phase::Runtime =>
@@ -2576,6 +2351,10 @@ impl<'a> Context<'a> {
                 }
             }
             Kind::Field(base, name) => {
+                if places::through_pointer(e) {
+                    let reference = self.place_reference(e)?;
+                    return self.read_reference(&reference, e.line);
+                }
                 let Symbol::Record(typename, fields) = self.storage(base)? else {
                     return Err("field access requires struct storage".into());
                 };
@@ -2587,6 +2366,10 @@ impl<'a> Context<'a> {
             }
             Kind::Unary(op, pointer) if op == "*" => self.dereference(pointer, e.line),
             Kind::Index(base, index) => {
+                if places::through_pointer(e) {
+                    let reference = self.place_reference(e)?;
+                    return self.read_reference(&reference, e.line);
+                }
                 let array = self.storage(base)?;
                 let index = self.nonnegative(index, "nonnegative storage index")?;
                 let Symbol::Array {
@@ -2766,6 +2549,10 @@ impl<'a> Context<'a> {
                 Ok(selected)
             }
             Kind::Field(base, name) => {
+                if places::through_pointer(e) {
+                    let reference = self.place_reference(e)?;
+                    return self.read_reference(&reference, e.line);
+                }
                 let Symbol::Record(typename, fields) = self.storage(base)? else {
                     return Err("field access requires a struct".into());
                 };
@@ -2850,31 +2637,10 @@ impl<'a> Context<'a> {
                 self.record_valid(&record, e.line)?;
                 Ok(record)
             }
-            Kind::Unary(op, x) if op == "&" => {
-                if let Kind::Unary(op, pointer) = &x.kind {
-                    if op == "*" {
-                        let value = self.pointer_operand(pointer)?;
-                        let borrowed = match value {
-                            value @ (Symbol::Ref(..) | Symbol::RefCases(..)) => value,
-                            Symbol::Plane(ty, reference) => Symbol::Ref(ty, reference, vec![]),
-                            Symbol::Owner(ty, owner) => {
-                                Symbol::Ref(ty, self.storage.memory.borrow_owned(owner)?, vec![])
-                            }
-                            _ => return Err("reborrow requires a live pointer".into()),
-                        };
-                        self.validate_argument(&borrowed, e.line)?;
-                        return Ok(borrowed);
-                    }
-                }
-                let (r, path) = self.location(x)?;
-                self.charge_value_work(symbol_weight(project(
-                    self.storage.memory.read(r)?,
-                    &path,
-                )?)?)?;
-                let target = project(self.storage.memory.read(r)?, &path)?.clone();
-                self.record_valid(&target, e.line)?;
-                let ty = target.ty();
-                Ok(Symbol::Ref(Box::new(ty), r, path))
+            Kind::Unary(op, place) if op == "&" => {
+                let borrowed = self.place_reference(place)?;
+                self.validate_argument(&borrowed, e.line)?;
+                Ok(borrowed)
             }
             Kind::Unary(op, pointer) if op == "*" => self.dereference(pointer, e.line),
             Kind::Unary(op, x) if op == "!" => Ok(Symbol::Bool(
@@ -2998,6 +2764,10 @@ impl<'a> Context<'a> {
                 })
             }
             Kind::Index(array, index) => {
+                if places::through_pointer(e) {
+                    let reference = self.place_reference(e)?;
+                    return self.read_reference(&reference, e.line);
+                }
                 let array = self.eval(array, None)?;
                 let index = self.nonnegative(index, "nonnegative array index")?;
                 let Symbol::Array {

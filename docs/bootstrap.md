@@ -1147,11 +1147,18 @@ contract; admissions cannot replace that provenance check.
 `examples/conditional_planes.evg` demonstrates selection, forwarding, and a
 subsequent comparison-input write.
 
-Operations needing a single address can use such a choice when checked execution
-facts establish its selected case. Guarded stores and general projected addresses
-through unresolved plane choices remain pending, as do guarded external effects
-and conditional storage-generation transitions. Calls receiving guarded ports
-currently recheck actual storage instead of using independent-port summaries.
+Stores, field/index projections, and reborrows retain the same guarded plane
+choices. Address components and the assigned value run once, in source order;
+only the selected target changes. A modifying helper receives conditional write
+grants for those targets. Every reachable grant must fit its caller's authority,
+using checked execution facts rather than admissions. Calls receiving guarded
+ports currently recheck actual storage instead of using independent-port
+summaries. Guards preserve the entry choice even if its source values change.
+`examples/conditional_stores.evg` demonstrates projected writes through a returned
+reference, including a helper's deferred store in `Drop`.
+`examples/conditional_store_order.evg` checks evaluation order.
+Guarded external effects, guarded loop frames, and conditional storage-generation
+transitions remain unsupported.
 
 A reference return requires an exact alias contract, for example:
 

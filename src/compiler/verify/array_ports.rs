@@ -8,6 +8,84 @@ use super::*;
 mod tests;
 
 impl Context<'_> {
+    /// Observing a cell does not change the array's contents identity. Merge
+    /// only sparse metadata for that identity; differing actual values fail.
+    pub(super) fn merge_observations(
+        &mut self,
+        a: &Symbol,
+        b: &Symbol,
+        inputs: &mut Vec<Symbol>,
+    ) -> Result<Symbol> {
+        self.charge_value_work(symbol_weight(a)?.saturating_add(symbol_weight(b)?))?;
+        if a == b {
+            return Ok(a.clone());
+        }
+        match (a, b) {
+            (
+                Symbol::Array {
+                    element,
+                    len,
+                    items: a_items,
+                    cells: a_cells,
+                    identity,
+                },
+                Symbol::Array {
+                    element: b_element,
+                    len: b_len,
+                    items: b_items,
+                    cells: b_cells,
+                    identity: b_id,
+                },
+            ) if element == b_element && len == b_len && identity == b_id => {
+                let items = match (a_items, b_items) {
+                    (None, None) => None,
+                    (Some(a), Some(b)) if a.len() == b.len() => Some(
+                        a.iter()
+                            .zip(b)
+                            .map(|(a, b)| self.merge_observations(a, b, inputs))
+                            .collect::<Result<Vec<_>>>()?,
+                    ),
+                    _ => {
+                        return Err(
+                            "one array contents identity has inconsistent storage recipes".into(),
+                        )
+                    }
+                };
+                let mut cells = a_cells.clone();
+                for (index, b) in b_cells {
+                    let value = if let Some(a) = cells.get(index) {
+                        self.merge_observations(a, b, inputs)?
+                    } else {
+                        b.clone()
+                    };
+                    cells.insert(index.clone(), value);
+                }
+                if self.arrays.inputs.contains(identity) {
+                    inputs.extend(cells.values().cloned());
+                }
+                Ok(Symbol::Array {
+                    element: element.clone(),
+                    len: len.clone(),
+                    items,
+                    cells,
+                    identity: identity.clone(),
+                })
+            }
+            (Symbol::Record(name, a), Symbol::Record(b_name, b))
+                if name == b_name && a.keys().eq(b.keys()) =>
+            {
+                let fields = a
+                    .iter()
+                    .map(|(name, a)| {
+                        Ok((name.clone(), self.merge_observations(a, &b[name], inputs)?))
+                    })
+                    .collect::<Result<BTreeMap<_, _>>>()?;
+                Ok(Symbol::Record(name.clone(), fields))
+            }
+            _ => Err("inconsistent observations of one immutable array contents identity".into()),
+        }
+    }
+
     pub(super) fn observed_projection<'a>(
         &'a self,
         mut value: &'a Symbol,
@@ -111,7 +189,7 @@ impl Context<'_> {
     // Replay facts about immutable INPUT symbols, never assume an invariant
     // about live contents which may since have changed. Reference-bearing
     // nominal invariants need their own revision-dependent evidence.
-    fn assume_input_bounds(&mut self, value: &Symbol) -> Result<()> {
+    pub(super) fn assume_input_bounds(&mut self, value: &Symbol) -> Result<()> {
         self.charge_value_work(1)?;
         if !self.ty_has_reference(&value.ty()) {
             return self.assume_element_type(value);

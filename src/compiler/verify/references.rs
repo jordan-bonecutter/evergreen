@@ -3,31 +3,36 @@
 use super::*;
 
 impl Context<'_> {
+    pub(super) fn validate_reference_addresses(&mut self, value: &Symbol) -> Result<()> {
+        let base = self.proof.paths.clone();
+        for case in guarded_references::cases(value)? {
+            self.proof.paths = extend(
+                &base,
+                &case.guard,
+                false,
+                self.session,
+                &mut self.work.value_work,
+            )?;
+            let paths = self.proof.paths.clone();
+            let checked = if self.checked_impossible(&paths, &Formula::True)? {
+                Ok(())
+            } else {
+                self.storage
+                    .memory
+                    .read(case.reference)
+                    .and_then(|root| project(root, &case.path))
+                    .map(|_| ())
+            };
+            self.proof.paths = base.clone();
+            checked?;
+        }
+        Ok(())
+    }
+
     pub(super) fn reference_equality(&mut self, a: &Symbol, b: &Symbol) -> Result<Formula> {
         if matches!(a, Symbol::RefCases(..)) || matches!(b, Symbol::RefCases(..)) {
-            let base = self.proof.paths.clone();
             for value in [a, b] {
-                for case in guarded_references::cases(value)? {
-                    self.proof.paths = extend(
-                        &base,
-                        &case.guard,
-                        false,
-                        self.session,
-                        &mut self.work.value_work,
-                    )?;
-                    let paths = self.proof.paths.clone();
-                    let checked = if self.checked_impossible(&paths, &Formula::True)? {
-                        Ok(())
-                    } else {
-                        self.storage
-                            .memory
-                            .read(case.reference)
-                            .and_then(|root| project(root, &case.path))
-                            .map(|_| ())
-                    };
-                    self.proof.paths = base.clone();
-                    checked?;
-                }
+                self.validate_reference_addresses(value)?;
             }
             return guarded_references::identity_equal(a, b);
         }

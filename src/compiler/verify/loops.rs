@@ -358,6 +358,7 @@ impl Context<'_> {
             }
             targets.push(WritePlace {
                 origin: "loop frame".into(),
+                guard: Formula::True,
                 reference,
                 path,
                 ty,

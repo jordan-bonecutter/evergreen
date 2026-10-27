@@ -304,7 +304,7 @@ impl Context<'_> {
                 let id = self.storage.memory.plane(write.reference)?;
                 let owned =
                     self.owns_plane_in(&saved.env, &saved.roots, id)? || self.owns_plane(id)?;
-                if !self.write_permitted_by(&saved.writable, write.reference, &write.path, owned)? {
+                if !self.write_contract_permitted_by(&saved.writable, write, owned)? {
                     return Err(
                         "cleanup writes through a reference without a matching modifies contract"
                             .into(),

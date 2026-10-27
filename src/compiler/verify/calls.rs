@@ -419,7 +419,7 @@ impl<'a> Context<'a> {
             let id = self.storage.memory.plane(write.reference)?;
             changed_roots.insert(id);
             let owned = self.owns_plane_in(&saved, &saved_roots, id)? || self.owns_plane(id)?;
-            if !self.write_permitted(write.reference, &write.path, owned)? {
+            if !self.write_contract_permitted(write, owned)? {
                 return Err(format!("line {}: call to {name} writes through a parameter without a matching modifies contract", line));
             }
         }

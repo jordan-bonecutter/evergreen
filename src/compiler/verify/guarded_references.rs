@@ -60,7 +60,7 @@ pub(super) fn identity_equal(a: &Symbol, b: &Symbol) -> Result<Formula> {
     Ok(relation)
 }
 
-fn paths_equal(a: &[Projection<Linear>], b: &[Projection<Linear>]) -> Result<Formula> {
+pub(super) fn paths_equal(a: &[Projection<Linear>], b: &[Projection<Linear>]) -> Result<Formula> {
     if a.len() != b.len() {
         return Ok(Formula::False);
     };
@@ -95,6 +95,7 @@ impl Context<'_> {
             .ok_or("borrow must project an incoming reference")?;
         let value = self.eval(expression, None)?;
         for case in cases(&value)? {
+            self.charge_value_work(inputs.len() + case.path.len() + case.guard.storage_weight()?)?;
             let mut available = Formula::False;
             for input in inputs.iter().filter(|input| {
                 input.origin == origin

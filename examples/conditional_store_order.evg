@@ -1,0 +1,23 @@
+// Address, index, and value computations run once, in this order.
+fn choose(calls: &usize, a: &[usize; 2], b: &[usize; 2], first: bool) -> &[usize; 2]
+where *calls == 0 modifies(calls)
+borrows(a) when first else borrows(b)
+ensures *calls == 1 {
+    *calls = 1;
+    if first {a} else {b}
+}
+fn index(calls: &usize) -> usize where *calls == 1
+modifies(calls) ensures *calls == 2 && result == 1 {*calls = 2; 1}
+fn value(calls: &usize) -> usize where *calls == 2
+modifies(calls) ensures *calls == 3 && result == 42 {*calls = 3; 42}
+fn work(first: bool) -> usize {
+    let calls: usize = 0;
+    let a: [usize; 2] = [7, 8];
+    let b: [usize; 2] = [9, 10];
+    (*choose(&calls, &a, &b, first))[index(&calls)] = value(&calls);
+    proof ordered: calls == 3;
+    proof framed: a[0] == 7 && b[0] == 9;
+    if first {proof changed: a[1] == 42 && b[1] == 10; a[1]}
+    else {proof changed: b[1] == 42 && a[1] == 8; b[1]}
+}
+fn main() -> usize {work(false)}

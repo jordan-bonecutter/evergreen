@@ -20,6 +20,8 @@ fn billion_element_reference_inputs_only_materialize_observed_ports() {
         "fn old_port(refs: &[&usize; 1000000000]) {ideal let saved = old((*refs)[999999999]); proof unchanged: saved == (*refs)[999999999];}",
         "fn choose(refs: &[&usize; 1000000000], flag: bool) -> usize {if flag {*(*refs)[999999999]} else {*(*refs)[999999999]}}",
         "fn observe_one_arm(refs: &[&usize; 1000000000], flag: bool) -> usize {let ignored = if flag {*(*refs)[999999999]} else {0}; *(*refs)[999999999]}",
+        "fn observe_nested(refs: &[[&usize; 1000000000]; 1000000000], flag: bool) -> usize {let ignored = if flag {*(*refs)[999999999][999999999]} else {0}; *(*refs)[999999999][999999999]}",
+        "type Positive struct {value: usize} where value > 0; fn observe_refined(refs: &[&Positive; 1000000000], flag: bool) -> usize {let ignored = if flag {(*(*refs)[999999999]).value} else {0}; (*(*refs)[999999999]).value}",
         "fn bump(refs: &[&usize; 1000000000]) where *(*refs)[999999999] < usize::MAX modifies((*refs)[999999999]) ensures *(*refs)[999999999] == old(*(*refs)[999999999]) + 1 {*(*refs)[999999999] = *(*refs)[999999999] + 1;}",
         "fn set(refs: &[&usize; 1000000000]) modifies((*refs)[999999999]) ensures *(*refs)[0] == old(*(*refs)[0]) {*(*refs)[999999999] = 42;}",
         "fn nested(refs: &[[&usize; 1000000000]; 1000000000]) -> usize {*(*refs)[999999999][999999999]}",
