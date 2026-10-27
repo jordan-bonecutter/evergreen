@@ -148,7 +148,9 @@ impl Context<'_> {
             }
             Statement::Proof {name, proposition, ..} if self.update_expression(proposition) => {
                 self.statement(statement)?;
-                scope.proofs.push(name.clone());
+                if name != "_" {
+                    scope.proofs.push(name.clone());
+                }
             }
             Statement::Effect(value) if self.update_expression(value) => self.statement(statement)?,
             Statement::Ideal(binding) => {

@@ -129,6 +129,8 @@ fn native_execution_agrees_with_the_interpreter() {
     let mut cases = [
         include_str!("../../../examples/owned_method_transfer.evg"),
         include_str!("../../../examples/methods.evg"),
+        include_str!("../../../examples/anonymous_proofs.evg"),
+        include_str!("../../../examples/borrowed_fields.evg"),
         include_str!("../../../examples/nonzero.evg"),
         "fn first(length: usize, data: linear_plane(usize, length)) -> usize where length > 0 {(*data)[0]} fn forward(n: usize, data: linear_plane(usize, n)) -> usize where n > 0 {first(data)} fn main() -> usize {let data: array(usize, 2) = [42, 7]; forward(&data)}",
         include_str!("../../../examples/update_methods.evg"),

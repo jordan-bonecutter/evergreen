@@ -2015,3 +2015,27 @@ to checking and execution. A primitive implementation must name a declaration in
 its defining module; unknown, foreign, and duplicate implementations are rejected.
 Transparent scalar aliases inherit their underlying primitive's capabilities.
 Opaque types retain their representation boundary independently of Copy.
+
+### Anonymous proofs and per-field return planes
+
+`proof _: proposition by {omega};` and `proof proposition by {omega};` check an
+anonymous proof. `proof proposition;` uses the default arithmetic procedure.
+Anonymous proofs add the established proposition to the current reasoning
+context without retaining a named witness. Named proof syntax is unchanged.
+`examples/anonymous_proofs.evg` demonstrates these forms.
+
+Record returns declare provenance independently for each reference field:
+`borrows(data: first, data2: second)`. Both fields must be initialized and each
+must match its declared plane and projection. They may also share an origin,
+using `borrows(data: first, data2: first)`. `examples/borrowed_fields.evg` checks
+both origins and shows that a reference into one plane remains valid after the
+other plane is dropped. Plain `borrows(first)` describes a directly returned
+reference; record fields use explicit destinations.
+
+A named fact stores a proposition expression, which is evaluated against the
+current state when used. Proofs establish propositions about the values at that
+point. A later mutation does not retarget an old proof to the new value.
+`trustme` accepts an unproved proposition; admitting a contradiction makes later
+arithmetic goals vacuous. It does not justify earlier operations. Programs using
+it remain labeled as checked with trusted assumptions and are rejected by
+`--deny-trust`.

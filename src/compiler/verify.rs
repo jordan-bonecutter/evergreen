@@ -1936,11 +1936,20 @@ impl<'a> Context<'a> {
                 proposition,
                 steps,
             } => {
-                self.fresh_binding(name, proposition.line)?;
+                if name != "_" {
+                    self.fresh_binding(name, proposition.line)?;
+                }
                 let p = self.proposition(proposition)?;
-                self.prove_with(&p, &format!("proof {name}"), proposition.line, Some(steps))?;
+                let label = if name == "_" {
+                    "anonymous proof".into()
+                } else {
+                    format!("proof {name}")
+                };
+                self.prove_with(&p, &label, proposition.line, Some(steps))?;
                 self.assume(&p)?;
-                self.proof.witnesses.insert(name.clone(), p);
+                if name != "_" {
+                    self.proof.witnesses.insert(name.clone(), p);
+                }
                 Ok(())
             }
         }

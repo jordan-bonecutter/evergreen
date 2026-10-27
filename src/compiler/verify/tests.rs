@@ -3687,3 +3687,57 @@ fn return_provenance_errors_explain_the_required_surviving_planes() {
     let good = "fn foo(x: &usize) -> &usize borrows(x) {x} fn main() -> usize {let x: usize = 42; *foo(&x)}";
     assert_eq!(verify(good).unwrap().run().unwrap().to_string(), "42");
 }
+
+#[test]
+fn anonymous_proofs_check_goals_without_named_witnesses() {
+    let source = include_str!("../../../examples/anonymous_proofs.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    assert!(verify(&source.replace("x = x + 42", "x = x + 43")).is_err());
+    let failed_claim = "fn process(x: usize) where x == 42 {} fn main() -> usize {let x: usize = 43; process(x); proof _: x == 42 by {trustme}; 0}";
+    assert!(verify(failed_claim)
+        .unwrap_err()
+        .contains("precondition of process"));
+    let stale = "fn process(x: usize) where x == 42 {} fn test(x: usize) {fact known = x == 42; proof assume: known by {trustme}; x = x + 1; process(x);} fn main() {}";
+    assert!(verify(stale)
+        .unwrap_err()
+        .contains("precondition of process"));
+    let named = "fn main() -> usize {proof saved: true; proof true by {exact saved}; 42}";
+    assert_eq!(verify(named).unwrap().run().unwrap().to_string(), "42");
+}
+
+#[test]
+fn returned_reference_fields_keep_independent_plane_provenance() {
+    let source = include_str!("../../../examples/borrowed_fields.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    for invalid in [
+        source.replace("borrows(data: data, data2: data2)", "borrows(data: data)"),
+        source.replace(
+            "Self {data: data, data2: data2}",
+            "Self {data: data2, data2: data}",
+        ),
+        source.replace("Self {data: data, data2: data2}", "Self {data: data}"),
+        source.replace("    *data2", "    *data"),
+        source.replace("    drop(first);", "    drop(second);"),
+    ] {
+        assert!(verify(&invalid).is_err(), "{invalid}");
+    }
+    // Multiple fields may share one origin; both contracts are checked.
+    let shared = source
+        .replace("foo(&*first, &*second)", "foo(&*second, &*second)")
+        .replace("bar.data == &*first", "bar.data == &*second");
+    assert_eq!(verify(&shared).unwrap().run().unwrap().to_string(), "42");
+}

@@ -1,0 +1,12 @@
+fn process(x: usize) where x == 42 {}
+
+fn main() -> usize ensures result == 42 {
+    let x: usize = 0;
+    x = x + 42;
+    fact x_is_42 = x == 42;
+    proof _: x_is_42 by {omega};
+    proof x_is_42 by {omega};
+    proof x == 42;
+    process(x);
+    x
+}

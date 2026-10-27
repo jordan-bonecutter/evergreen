@@ -196,8 +196,20 @@ impl Parser {
     }
 
     fn proof_statement(&mut self) -> Result<Statement, String> {
-        let name = self.name()?;
-        self.expect(":")?;
+        let name = if self.eat("_") {
+            self.expect(":")?;
+            "_".into()
+        } else if self
+            .tokens
+            .get(self.pos + 1)
+            .is_some_and(|token| token.text == ":")
+        {
+            let name = self.name()?;
+            self.expect(":")?;
+            name
+        } else {
+            "_".into()
+        };
         let proposition = self.expr(0)?;
         let steps = if self.eat("by") {
             self.proof()?
