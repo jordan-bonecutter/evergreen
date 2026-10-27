@@ -75,6 +75,21 @@ nonzero weights in a kernel-checked certificate. This support is reconstructed
 from the checked certificate during both search and replay. Tests check that an
 unrelated constraint is excluded and an unsuccessful probe supplies no evidence.
 
-The proof DAG, state-version tracking, admission isolation, and dependency-aware
-call summaries remain to be integrated. Existing acceptance of contradictions
-through global `trustme` assumptions is a known gap, not the intended semantics.
+Named witnesses now refer to nodes in an append-only evidence DAG. Explicit
+logical rules (`exact`, `assumption`, `constructor`, introduction, cases, and
+application) record their premise edges. Admissions are distinct nodes. Traversal
+collects only reachable admissions, visits shared premises once, and preserves
+historical dependencies after lexical hypotheses leave scope. Node, edge, and
+aggregate claim-storage limits bound graph growth. Tests cover transitive and
+unused admissions, local hypotheses, deep chains, and reconstruction on replay.
+
+Arithmetic leaves are explicitly marked as having unresolved context provenance.
+An empty set of known admissions therefore does **not** imply admission-free
+evidence. Checked arithmetic row support still needs to be connected to path-row
+origins; scoped hypotheses also need explicit discharge metadata before the DAG
+can serve as independently checkable proof evidence.
+
+State-version tracking, admission isolation, and dependency-aware call summaries
+remain to be integrated. Existing acceptance of contradictions through global
+`trustme` assumptions is a known gap, not the intended semantics. The new graph
+records explicit logical dependencies; it does not yet change that behavior.

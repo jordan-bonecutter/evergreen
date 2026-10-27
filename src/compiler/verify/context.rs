@@ -24,7 +24,8 @@ pub(super) struct Locals {
 #[derive(Default)]
 pub(super) struct ProofState {
     pub(super) facts: BTreeMap<String, Expr>,
-    pub(super) witnesses: BTreeMap<String, Formula>,
+    pub(super) witnesses: BTreeMap<String, evidence::NodeId>,
+    pub(super) evidence: evidence::Evidence,
     pub(super) paths: Vec<Vec<Linear>>,
 }
 

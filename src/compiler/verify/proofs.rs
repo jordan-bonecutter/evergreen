@@ -23,7 +23,7 @@ impl Context<'_> {
         label: &str,
         line: usize,
         steps: &[String],
-    ) -> Result<()> {
+    ) -> Result<evidence::NodeId> {
         if steps.len() > 1024 {
             return Err(format!(
                 "line {line}: proof script limit reached (1024 steps)"
@@ -40,16 +40,18 @@ impl Context<'_> {
             self.session
                 .trust(&self.proof.paths, &proposition, line, label)?;
             self.work.obligations += 1;
-            return Ok(());
+            let node = self.proof.evidence.insert(goal.clone(), vec![], true)?;
+            debug_assert!(self.proof.evidence.admissions(node).complete);
+            return Ok(node);
         }
         let mut next = 0;
-        self.proof_goal(goal, label, line, steps, &mut next, 0)?;
+        let node = self.proof_goal(goal, label, line, steps, &mut next, 0)?;
         if next != steps.len() {
             return Err(format!(
                 "line {line}: unused proof steps after the goal was closed"
             ));
         }
-        Ok(())
+        Ok(node)
     }
 
     fn same_proposition(&mut self, a: &Formula, b: &Formula) -> Result<bool> {
@@ -61,9 +63,10 @@ impl Context<'_> {
     fn with_proof_hypotheses(
         &mut self,
         hypotheses: &[(&str, &Formula)],
+        parents: &[evidence::NodeId],
         line: usize,
-        check: impl FnOnce(&mut Self) -> Result<()>,
-    ) -> Result<()> {
+        check: impl FnOnce(&mut Self) -> Result<evidence::NodeId>,
+    ) -> Result<evidence::NodeId> {
         let mut names = BTreeSet::new();
         for (name, premise) in hypotheses {
             self.fresh_binding(name, line)?;
@@ -81,9 +84,11 @@ impl Context<'_> {
         let paths = self.proof.paths.clone();
         let result = (|| {
             for (name, premise) in hypotheses {
-                self.proof
-                    .witnesses
-                    .insert((*name).into(), (*premise).clone());
+                let node =
+                    self.proof
+                        .evidence
+                        .insert((*premise).clone(), parents.to_vec(), false)?;
+                self.proof.witnesses.insert((*name).into(), node);
                 self.assume(premise)?;
             }
             check(self)
@@ -103,7 +108,7 @@ impl Context<'_> {
         steps: &[String],
         next: &mut usize,
         depth: usize,
-    ) -> Result<()> {
+    ) -> Result<evidence::NodeId> {
         if depth >= 64 {
             return Err(format!(
                 "line {line}: proof goal nesting limit reached (64)"
@@ -115,15 +120,20 @@ impl Context<'_> {
             .ok_or_else(|| format!("line {line}: proof has an unfinished goal"))?;
         *next += 1;
         match step.as_str() {
-            "omega" | "rfl" | "simp_all" | "decide" => self.prove(goal, label, line),
+            "omega" | "rfl" | "simp_all" | "decide" => {
+                self.prove(goal, label, line)?;
+                // Arithmetic context provenance is the next integration step.
+                self.proof.evidence.arithmetic(goal.clone())
+            }
             "assumption" => {
                 let names = self.proof.witnesses.keys().cloned().collect::<Vec<_>>();
                 self.charge_value_work(names.len())?;
                 for name in names {
-                    let candidate = self.proof.witnesses[&name].clone();
+                    let node = self.proof.witnesses[&name];
+                    let candidate = self.proof.evidence.claim(node).clone();
                     if self.same_proposition(&candidate, goal)? {
                         self.work.obligations += 1;
-                        return Ok(());
+                        return self.proof.evidence.insert(goal.clone(), vec![node], false);
                     }
                 }
                 Err(format!(
@@ -136,30 +146,37 @@ impl Context<'_> {
                         "line {line}: constructor requires a conjunction goal"
                     ));
                 };
-                self.proof_goal(a, label, line, steps, next, depth + 1)?;
-                self.proof_goal(b, label, line, steps, next, depth + 1)
+                let a = self.proof_goal(a, label, line, steps, next, depth + 1)?;
+                let b = self.proof_goal(b, label, line, steps, next, depth + 1)?;
+                self.proof.evidence.insert(goal.clone(), vec![a, b], false)
             }
             "left" | "right" => {
                 let Formula::Or(a, b) = goal else {
                     return Err(format!("line {line}: {step} requires a disjunction goal"));
                 };
-                self.proof_goal(
+                let premise = self.proof_goal(
                     if step == "left" { a } else { b },
                     label,
                     line,
                     steps,
                     next,
                     depth + 1,
-                )
+                )?;
+                self.proof
+                    .evidence
+                    .insert(goal.clone(), vec![premise], false)
             }
             _ if step.starts_with("exact ") => {
                 let name = &step[6..];
                 let proven = self.proof.witnesses.get(name).cloned().ok_or_else(|| format!("line {line}: {name} is not a checked proof; fact declarations are propositions, not assumptions"))?;
-                if !self.same_proposition(&proven, goal)? {
+                let claim = self.proof.evidence.claim(proven).clone();
+                if !self.same_proposition(&claim, goal)? {
                     return Err(format!("line {line}: exact {name} proves a different proposition or an earlier state"));
                 }
                 self.work.obligations += 1;
-                Ok(())
+                self.proof
+                    .evidence
+                    .insert(goal.clone(), vec![proven], false)
             }
             _ if step.starts_with("intro ") => {
                 let (premise, consequence) = match goal {
@@ -172,18 +189,28 @@ impl Context<'_> {
                     }
                 };
                 let name = &step[6..];
-                self.with_proof_hypotheses(&[(name, premise)], line, |ctx| {
-                    ctx.proof_goal(consequence, label, line, steps, next, depth + 1)
-                })
+                let consequence =
+                    self.with_proof_hypotheses(&[(name, premise)], &[], line, |ctx| {
+                        ctx.proof_goal(consequence, label, line, steps, next, depth + 1)
+                    })?;
+                self.proof
+                    .evidence
+                    .insert(goal.clone(), vec![consequence], false)
             }
             _ if step.starts_with("cases ") => {
                 let parts = step.split_whitespace().collect::<Vec<_>>();
                 if let ["cases", name] = parts.as_slice() {
-                    if !matches!(self.proof.witnesses.get(*name), Some(Formula::False)) {
+                    let node = self.proof.witnesses.get(*name).copied();
+                    if !node
+                        .is_some_and(|id| matches!(self.proof.evidence.claim(id), Formula::False))
+                    {
                         return Err(format!("line {line}: cases {name} without a pattern requires a checked proof of false"));
                     }
                     self.work.obligations += 1;
-                    return Ok(());
+                    return self
+                        .proof
+                        .evidence
+                        .insert(goal.clone(), vec![node.unwrap()], false);
                 }
                 let ["cases", name, "with", first, separator, second] = parts.as_slice() else {
                     return Err(format!("line {line}: malformed cases step"));
@@ -192,32 +219,36 @@ impl Context<'_> {
                     self.proof.witnesses.get(*name).cloned().ok_or_else(|| {
                         format!("line {line}: cases {name} requires a checked proof")
                     })?;
-                match (theorem, *separator) {
+                let claim = self.proof.evidence.claim(theorem).clone();
+                match (claim, *separator) {
                     (Formula::And(a, b), ",") => {
-                        self.with_proof_hypotheses(&[(first, &a), (second, &b)], line, |ctx| {
+                        let branch = self.with_proof_hypotheses(&[(first, &a), (second, &b)], &[theorem], line, |ctx| {
                             ctx.proof_goal(goal, label, line, steps, next, depth + 1)
-                        })
+                        })?;
+                        self.proof.evidence.insert(goal.clone(), vec![theorem, branch], false)
                     }
                     (Formula::Or(a, b), "|") => {
                         // Validate both names before starting either branch.
                         self.fresh_binding(first, line)?;
                         self.fresh_binding(second, line)?;
-                        self.with_proof_hypotheses(&[(first, &a)], line, |ctx| {
+                        let left = self.with_proof_hypotheses(&[(first, &a)], &[theorem], line, |ctx| {
                             ctx.proof_goal(goal, label, line, steps, next, depth + 1)
                         })?;
-                        self.with_proof_hypotheses(&[(second, &b)], line, |ctx| {
+                        let right = self.with_proof_hypotheses(&[(second, &b)], &[theorem], line, |ctx| {
                             ctx.proof_goal(goal, label, line, steps, next, depth + 1)
-                        })
+                        })?;
+                        self.proof.evidence.insert(goal.clone(), vec![theorem, left, right], false)
                     }
                     _ => Err(format!("line {line}: cases requires a conjunction with ',' or a disjunction with '|'")),
                 }
             }
             _ if step.starts_with("apply ") => {
                 let name = &step[6..];
-                let mut theorem =
-                    self.proof.witnesses.get(name).cloned().ok_or_else(|| {
+                let source =
+                    self.proof.witnesses.get(name).copied().ok_or_else(|| {
                         format!("line {line}: apply {name} requires a checked proof")
                     })?;
+                let mut theorem = self.proof.evidence.claim(source).clone();
                 let mut premises = Vec::new();
                 while !self.same_proposition(&theorem, goal)? {
                     match theorem {
@@ -236,13 +267,108 @@ impl Context<'_> {
                         }
                     }
                 }
+                let mut parents = vec![source];
                 for premise in premises {
-                    self.proof_goal(&premise, label, line, steps, next, depth + 1)?;
+                    parents.push(self.proof_goal(&premise, label, line, steps, next, depth + 1)?);
                 }
                 self.work.obligations += 1;
-                Ok(())
+                self.proof.evidence.insert(goal.clone(), parents, false)
             }
             _ => Err(format!("line {line}: unsupported proof step {step}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_context<T>(session: &mut Session, check: impl FnOnce(&mut Context<'_>) -> T) -> T {
+        let functions = BTreeMap::new();
+        let structs = BTreeMap::new();
+        let names = BTreeSet::new();
+        let declarations = Declarations {
+            functions: &functions,
+            structs: &structs,
+            drops: &names,
+            destructors: &functions,
+            helpers: &names,
+            cleanup_helpers: &names,
+        };
+        check(&mut Context::new(declarations, session))
+    }
+
+    fn script(ctx: &mut Context<'_>, goal: &Formula, steps: &[&str]) -> evidence::NodeId {
+        let steps = steps
+            .iter()
+            .map(|step| (*step).to_owned())
+            .collect::<Vec<_>>();
+        ctx.proof_script(goal, "evidence test", 1, &steps).unwrap()
+    }
+
+    #[test]
+    fn tactics_track_only_the_admissions_they_use_and_replay_the_same_graph() {
+        fn check(session: &mut Session) -> evidence::AdmissionDependencies {
+            with_context(session, |ctx| {
+                let unused = script(ctx, &Formula::False, &["trustme"]);
+                ctx.proof.witnesses.insert("unused".into(), unused);
+                let premise = Formula::Ge(Linear::variable("premise"));
+                let conclusion = Formula::Ge(Linear::variable("conclusion"));
+                let implication =
+                    Formula::Implies(Box::new(premise.clone()), Box::new(conclusion.clone()));
+                let theorem = script(ctx, &implication, &["trustme"]);
+                ctx.proof.witnesses.insert("theorem".into(), theorem);
+                let premise_node = script(ctx, &premise, &["trustme"]);
+                ctx.proof.witnesses.insert("premise".into(), premise_node);
+                let root = script(ctx, &conclusion, &["apply theorem", "exact premise"]);
+                let dependencies = ctx.proof.evidence.admissions(root);
+                assert!(dependencies.complete);
+                assert_eq!(
+                    dependencies.admissions,
+                    BTreeSet::from([theorem, premise_node])
+                );
+                assert!(!dependencies.admissions.contains(&unused));
+                dependencies
+            })
+        }
+        let mut recording = Session::recording();
+        let expected = check(&mut recording);
+        recording.finish().unwrap();
+        let bundle = recording.bundle("proof graph replay").unwrap();
+        let mut replay = Session::replay(&bundle);
+        assert_eq!(check(&mut replay), expected);
+        replay.finish().unwrap();
+        assert_eq!(replay.search_count(), 0);
+    }
+
+    #[test]
+    fn cases_keeps_source_dependency_after_local_hypotheses_leave_scope() {
+        with_context(&mut Session::search(), |ctx| {
+            let proposition = Formula::Ge(Linear::variable("p"));
+            let conjunction = Formula::And(Box::new(proposition.clone()), Box::new(Formula::True));
+            let source = script(ctx, &conjunction, &["trustme"]);
+            ctx.proof.witnesses.insert("source".into(), source);
+            let result = script(ctx, &proposition, &["cases source with p , q", "exact p"]);
+            assert!(!ctx.proof.witnesses.contains_key("p"));
+            assert!(!ctx.proof.witnesses.contains_key("q"));
+            assert_eq!(
+                ctx.proof.evidence.admissions(result).admissions,
+                BTreeSet::from([source])
+            );
+        });
+    }
+
+    #[test]
+    fn introduction_preserves_claim_and_does_not_admit_its_hypothesis() {
+        with_context(&mut Session::search(), |ctx| {
+            let premise = Formula::Ge(Linear::variable("p"));
+            let goal = Formula::Implies(Box::new(premise.clone()), Box::new(premise));
+            let root = script(ctx, &goal, &["intro h", "exact h"]);
+            assert_eq!(ctx.proof.evidence.claim(root), &goal);
+            let dependencies = ctx.proof.evidence.admissions(root);
+            assert!(dependencies.complete);
+            assert!(dependencies.admissions.is_empty());
+            assert!(!ctx.proof.witnesses.contains_key("h"));
+        });
     }
 }

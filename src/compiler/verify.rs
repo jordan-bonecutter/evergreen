@@ -22,6 +22,7 @@ mod conditionals;
 mod context;
 mod conversions;
 use context::{Context, Declarations};
+mod evidence;
 mod external;
 mod heap;
 mod parameters;
@@ -1945,10 +1946,10 @@ impl<'a> Context<'a> {
                 } else {
                     format!("proof {name}")
                 };
-                self.prove_with(&p, &label, proposition.line, Some(steps))?;
+                let evidence = self.proof_script(&p, &label, proposition.line, steps)?;
                 self.assume(&p)?;
                 if name != "_" {
-                    self.proof.witnesses.insert(name.clone(), p);
+                    self.proof.witnesses.insert(name.clone(), evidence);
                 }
                 Ok(())
             }
@@ -2316,7 +2317,7 @@ impl<'a> Context<'a> {
         steps: Option<&[String]>,
     ) -> Result<()> {
         if let Some(steps) = steps {
-            return self.proof_script(goal, label, line, steps);
+            return self.proof_script(goal, label, line, steps).map(|_| ());
         }
         self.prove(goal, label, line)
     }

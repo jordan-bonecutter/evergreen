@@ -7,7 +7,7 @@ struct Scope {
     env: BTreeMap<String, Symbol>,
     roots: BTreeMap<String, PlaneId>,
     facts: BTreeMap<String, Expr>,
-    proofs: BTreeMap<String, Formula>,
+    proofs: BTreeMap<String, evidence::NodeId>,
     module: Option<String>,
     phase: Phase,
     current: Option<String>,
