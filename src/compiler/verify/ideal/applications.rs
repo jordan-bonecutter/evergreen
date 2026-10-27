@@ -13,19 +13,42 @@ enum Argument {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Application {
+pub(super) struct Application {
     function: String,
     arguments: Vec<Argument>,
 }
 
 #[derive(Default)]
-pub(in crate::compiler::verify) struct Applications(BTreeMap<Application, Symbol>);
+pub(in crate::compiler::verify) struct Applications {
+    model: BTreeMap<Application, Symbol>,
+    pub(super) computed: BTreeMap<Application, Symbol>,
+}
 
 impl Context<'_> {
     pub(in crate::compiler::verify) fn model_ideal_predicate(
         &mut self,
         function: &Function,
     ) -> Result<Option<Symbol>> {
+        let Some(key) = self.predicate_application(function)? else {
+            return Ok(None);
+        };
+        if let Some(value) = self
+            .applications
+            .computed
+            .get(&key)
+            .or_else(|| self.applications.model.get(&key))
+        {
+            return Ok(Some(value.clone()));
+        }
+        let value = self.arbitrary(&Ty::Bool)?;
+        self.applications.model.insert(key, value.clone());
+        Ok(Some(value))
+    }
+
+    pub(super) fn predicate_application(
+        &mut self,
+        function: &Function,
+    ) -> Result<Option<Application>> {
         if !function.ideal || function.ret != Type::Bool || !eligible(self, function) {
             return Ok(None);
         }
@@ -79,16 +102,10 @@ impl Context<'_> {
             };
             arguments.push(argument);
         }
-        let key = Application {
+        Ok(Some(Application {
             function: function.name.clone(),
             arguments,
-        };
-        if let Some(value) = self.applications.0.get(&key) {
-            return Ok(Some(value.clone()));
-        }
-        let value = self.arbitrary(&Ty::Bool)?;
-        self.applications.0.insert(key, value.clone());
-        Ok(Some(value))
+        }))
     }
 
     fn observation_type(&self, ty: &Ty) -> bool {

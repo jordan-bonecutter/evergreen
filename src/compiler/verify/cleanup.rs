@@ -198,10 +198,11 @@ impl Context<'_> {
         if self.symbol_is_move_only(&value) {
             self.validate_argument(&value, line)?;
         }
-        // Effect-free methods are checked universally at their declarations.
-        // Revalidate each receiver here, including later siblings whose type
-        // may have been affected by an earlier sibling's cleanup.
-        if !self.cleanup_effects(&value.ty()) {
+        // Reference-free cleanup can use its universal safety summary. A
+        // receiver with references must be rechecked against actual aliases;
+        // independent declaration ports may describe an impossible entry.
+        if !self.cleanup_effects(&value.ty()) && !self.ty_has_reference(&value.ty()) {
+            self.import_cleanup_safety(&value)?;
             return Ok(());
         }
         if let Symbol::Record(name, _) = &value {
@@ -244,9 +245,12 @@ impl Context<'_> {
                 }
             }
             Symbol::Array { element, len, .. }
-                if len != Linear::number(0) && self.cleanup_effects(&element) =>
+                if len != Linear::number(0)
+                    && (self.cleanup_effects(&element)
+                        || (self.ty_has_reference(&element)
+                            && self.has_runtime_cleanup(&element))) =>
             {
-                return Err("cleanup of opaque arrays with external effects requires element summaries; unsupported".into());
+                return Err("cleanup of opaque arrays with effects or reference-dependent destructors requires element summaries; unsupported".into());
             }
             _ => {}
         }

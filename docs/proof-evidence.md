@@ -31,6 +31,26 @@ postconditions, explicit proofs, and admissions still pass through ordinary
 checking. Nested references and resource-bearing inputs need transitive
 observation footprints and are excluded from this identification for now.
 
+Concrete Boolean reductions use the same revision-aware application keys to
+reuse bounded computation. The cache stores values, not proofs or admissions;
+every call still checks its precondition and imports its checked safety summary.
+No result obtained before a pointee write authorizes the new revision.
+
+Record refinements and functions are checked in one dependency graph. A record
+can call an already checked source predicate, and a predicate can use already
+checked record definitions. A cycle through a refinement and its own type is
+rejected rather than treating an unverified declaration as an axiom. Implicit
+destructor calls participate in that dependency order too.
+
+Implicit cleanup imports a destructor's safety dependencies even when the body
+has no visible writes. Reference-bearing destructors are elaborated against the
+actual receiver, since independent declaration ports can describe an impossible
+entry when the record invariant requires aliases. Their declaration summary
+alone cannot authorize operations on an actual aliased receiver. Opaque arrays
+with reference-dependent destructors still require element summaries and are
+rejected when those summaries cannot be established. Known empty arrays run no
+element cleanup and import no element safety dependencies.
+
 Runtime loops use a finite initialization/preservation/exit rule in the frontend.
 Their invariant imports have the same explicit unresolved context as checked
 function-contract imports. The proof graph remains acyclic: an arbitrary head

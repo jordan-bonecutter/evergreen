@@ -44,3 +44,32 @@ ideal fn scan(ideal n: nat, bytes: &[u8; n], index: nat,
 ideal fn valid(ideal n: nat, bytes: &[u8; n]) -> bool {
     scan(n, bytes, 0, 0, 128, 191)
 }
+
+// A borrowed UTF-8 view. Its representation and encoding invariant are library
+// definitions; there is no compiler-defined string object or runtime validator.
+opaque type Text struct {
+    length: usize,
+    data: linear_plane(u8, length),
+} where (fact valid_encoding = valid(data); valid_encoding);
+
+impl Text {
+    fn from_bytes(length: usize, data: linear_plane(u8, length)) -> Self
+        where valid(data)
+        borrows(data: data)
+        ensures result.length == length
+    {
+        Self {length: length, data: data}
+    }
+
+    method& len() -> usize ensures result == self.length {
+        self.length
+    }
+
+    method& bytes() -> linear_plane(u8, self.length) borrows(self.data) {
+        self.data
+    }
+
+    method& byte(index: usize) -> u8 where index < self.length {
+        (*self.data)[index]
+    }
+}

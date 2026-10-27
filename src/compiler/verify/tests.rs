@@ -2937,13 +2937,14 @@ fn destructors_use_checked_scalar_helpers_without_gaining_external_effects() {
 
 #[test]
 fn destructor_helper_summaries_reject_hidden_cleanup_divergence_and_external_writes() {
-    for source in [
-        "type Resource struct {} fn hidden() -> usize {let another = Resource {}; 0} impl Drop for Resource {fn drop(self){let n = hidden();}}",
-        "type Resource struct {} fn hidden() -> usize {let another = Resource {}; 0} fn wrapper() -> usize {hidden()} impl Drop for Resource {fn drop(self){let n = wrapper();}}",
-        "fn forever() -> usize {forever()} type Resource struct {} impl Drop for Resource {fn drop(self){let n = forever();}}",
+    for (source, expected) in [
+        ("type Resource struct {} fn hidden() -> usize {let another = Resource {}; 0} impl Drop for Resource {fn drop(self){let n = hidden();}}", "mutually recursive"),
+        ("type Resource struct {} fn hidden() -> usize {let another = Resource {}; 0} fn wrapper() -> usize {hidden()} impl Drop for Resource {fn drop(self){let n = wrapper();}}", "mutually recursive"),
+        ("fn forever() -> usize {forever()} type Resource struct {} impl Drop for Resource {fn drop(self){let n = forever();}}", "ownership-free"),
+        ("type Leaf struct {} impl Drop for Leaf {fn drop(self){}} fn hidden() -> usize {let leaf = Leaf {}; 0} type Resource struct {} impl Drop for Resource {fn drop(self){let n = hidden();}}", "ownership-free"),
     ] {
         let error = verify(source).unwrap_err();
-        assert!(error.contains("ownership-free"), "{error}: {source}");
+        assert!(error.contains(expected), "{error}: {source}");
     }
     let library = include_str!("../../../stdlib/counter.evg");
     for body in [

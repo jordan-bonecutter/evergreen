@@ -41,9 +41,34 @@ verified contracts; reduction never wraps ideal arithmetic. Its interpretation
 of source definitions remains part of the trusted frontend. Proof replay repeats
 that interpretation and checks the resulting arithmetic certificates.
 
-A source-defined UTF-8 type with a persistent validity refinement, construction
-from ideal values, and proofs preserving that refinement remains the next layer;
-no such invariant is silently assumed for arbitrary arrays.
+`utf8::Text` is an opaque borrowed view defined in the same source library. Its
+runtime fields are a length and a `linear_plane(u8, length)`. Its named
+`valid_encoding` refinement requires `valid(data)`; the compiler has no special
+UTF-8 type or validation rule.
+
+```evg
+fn main() -> usize {
+    let bytes = "Hello, λ🦀\n";
+    let text = utf8::Text::from_bytes(&bytes);
+    proof extent: text.len() == 14;
+    if text.byte(13) == 10 {42} else {1}
+}
+```
+
+The constructor infers the runtime length from the array type. `len()` returns
+the byte extent, `bytes()` returns a view borrowed from the original data plane,
+and `byte(index)` requires an in-bounds index. Invalid encodings fail the
+constructor's precondition. Mutating backing bytes must preserve the live view's
+encoding invariant, and dropping its backing plane invalidates the view. These
+are ordinary refinement and plane-liveness checks. See
+[`utf8_view.evg`](../examples/utf8_view.evg).
+
+Concrete predicate results are memoized by arguments and observed projection
+revisions, so repeated validation does not rescan unchanged bytes. A write
+changes the key; a cache hit still imports the function's safety dependencies.
+Symbolic input still needs a proof or a contract establishing validity. Creating
+runtime data from genuinely erased ideal strings and proving transformations on
+symbolic UTF-8 data remain future work.
 
 [`string_bytes.evg`](../examples/string_bytes.evg) checks Unicode bytes and
 extent inference without external calls. [`hello.evg`](../examples/hello.evg)

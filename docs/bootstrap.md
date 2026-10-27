@@ -195,14 +195,20 @@ contract. The ordinary alias checks, plane validity, and nominal invariants stil
 apply. Returning from a function preserves the value computed before cleanup,
 even when cleanup changes referenced storage.
 
-Effectful cleanup bodies are elaborated against the actual receiver. Child
+Effectful and reference-bearing cleanup bodies are elaborated against the actual
+receiver. A nominal alias invariant can make independent declaration ports
+infeasible, so even read-only cleanup must check actual aliases. Reference-free,
+effect-free cleanup imports its checked safety dependencies, including admissions
+used by child destructors. Known empty arrays import no element dependencies.
+Child
 cleanup uses fields left by the parent body, follows declaration order, and must
 fit the parent's declared effects. Local scope cleanup runs in reverse binding
 order; expression temporaries clean up in reverse creation order. Proof bundles
-include the resulting conditions. This bootstrap currently rechecks effectful
+include the resulting conditions. This bootstrap currently rechecks those
 bodies at cleanup sites; it does not yet have reusable summaries of final receiver
-state. Their helper callees must be verified before the consuming function. Opaque arrays with effectful element cleanup require element summaries and
-are rejected; known array values are supported.
+state. Their helper callees must be verified before the consuming function.
+Opaque arrays with effectful or reference-dependent element cleanup require
+element summaries and are rejected; known array values are supported.
 
 Receiver invariants must remain valid while the receiver exists. A destructor
 can now consume its entire `self` with a complete record pattern, moving every

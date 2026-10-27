@@ -1,0 +1,8 @@
+fn main() -> usize {
+    let bytes = "Hello, λ🦀\n";
+    let text = utf8::Text::from_bytes(&bytes);
+    proof extent: text.len() == 14;
+    let view = text.bytes();
+    proof first_byte: (*view)[0] == 72;
+    if text.byte(13) == 10 {42} else {1}
+}

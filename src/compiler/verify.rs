@@ -19,9 +19,12 @@ pub(crate) mod array_model;
 mod bodies;
 mod calls;
 mod cleanup;
+mod cleanup_summaries;
 mod conditionals;
 mod context;
 mod conversions;
+#[cfg(test)]
+mod declaration_tests;
 use context::{Context, Declarations};
 mod evidence;
 mod external;

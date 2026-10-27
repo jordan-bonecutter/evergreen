@@ -9,12 +9,19 @@ pub(super) fn verify(
     session: &mut Session,
 ) -> Result<VerifiedProgram> {
     prepare(&mut parsed)?;
-    let structs = check_records(&parsed, session)?;
-    let (drops, destructors) = check_destructors(&parsed.destructors, &structs)?;
+    // These headers validate Drop ownership/module declarations only. Contexts
+    // see a record after its fields and refinement have actually been checked.
+    let mut headers = BTreeMap::new();
+    for s in &parsed.structs {
+        if headers.insert(s.name.clone(), s.clone()).is_some() {
+            return Err(format!("line {}: duplicate struct {}", s.line, s.name));
+        }
+    }
+    let (drops, destructors) = check_destructors(&parsed.destructors, &headers)?;
     let mut functions = parsed.functions;
     functions.extend(parsed.destructors.into_iter().map(|(_, f)| f));
     let mut verification = Verification {
-        structs,
+        structs: BTreeMap::new(),
         drops,
         destructors,
         functions: BTreeMap::new(),
@@ -23,8 +30,26 @@ pub(super) fn verify(
         cleanup_helpers: BTreeSet::new(),
         obligations: 0,
     };
-    for function in &mut functions {
-        verification.check_function(function, session)?;
+    for declaration in
+        crate::compiler::declarations::verification_order(&parsed.structs, &functions)?
+    {
+        match declaration {
+            crate::compiler::declarations::Declaration::Record(index) => {
+                let record = &parsed.structs[index];
+                crate::compiler::copy::validate(
+                    record,
+                    &verification.structs,
+                    &verification.drops,
+                )?;
+                check_record(record, verification.declarations(), session)?;
+                verification
+                    .structs
+                    .insert(record.name.clone(), record.clone());
+            }
+            crate::compiler::declarations::Declaration::Function(index) => {
+                verification.check_function(&mut functions[index], session)?;
+            }
+        }
     }
     Ok(verification.finish(functions, session))
 }
@@ -37,52 +62,12 @@ fn prepare(parsed: &mut syntax::Program) -> Result<()> {
     crate::compiler::declarations::schedule_types(parsed)?;
     check_type_expansion(&parsed.structs)?;
     crate::compiler::field_sugar::expand(parsed);
-    crate::compiler::declarations::schedule_functions(parsed)?;
     Ok(())
 }
 
-fn check_records(
-    parsed: &syntax::Program,
-    session: &mut Session,
-) -> Result<BTreeMap<String, Struct>> {
-    let mut structs = BTreeMap::new();
-    let copy_forbidden = parsed
-        .destructors
-        .iter()
-        .map(|(name, _)| name.clone())
-        .collect::<BTreeSet<_>>();
-    for s in &parsed.structs {
-        crate::compiler::copy::validate(s, &structs, &copy_forbidden)?;
-        if structs.contains_key(&s.name) {
-            return Err(format!("line {}: duplicate struct {}", s.line, s.name));
-        }
-        check_record(s, &structs, session)?;
-        structs.insert(s.name.clone(), s.clone());
-    }
-    Ok(structs)
-}
-
-fn check_record(
-    s: &Struct,
-    structs: &BTreeMap<String, Struct>,
-    session: &mut Session,
-) -> Result<()> {
-    let empty_functions = BTreeMap::new();
-    let empty_summaries = BTreeMap::new();
-    let empty_drops = BTreeSet::new();
-    let empty_destructors = BTreeMap::new();
-    let mut ctx = Context::new(
-        Declarations {
-            functions: &empty_functions,
-            summaries: &empty_summaries,
-            structs,
-            drops: &empty_drops,
-            destructors: &empty_destructors,
-            helpers: &empty_drops,
-            cleanup_helpers: &empty_drops,
-        },
-        session,
-    );
+fn check_record(s: &Struct, declarations: Declarations<'_>, session: &mut Session) -> Result<()> {
+    let structs = declarations.structs;
+    let mut ctx = Context::new(declarations, session);
     ctx.locals.module = s.module.clone();
     ctx.locals.declaring = Some(s.name.clone());
     ctx.execution.phase = if s.ideal {
@@ -181,6 +166,18 @@ struct Verification {
 }
 
 impl Verification {
+    fn declarations(&self) -> Declarations<'_> {
+        Declarations {
+            functions: &self.functions,
+            summaries: &self.summaries,
+            structs: &self.structs,
+            drops: &self.drops,
+            destructors: &self.destructors,
+            helpers: &self.helpers,
+            cleanup_helpers: &self.cleanup_helpers,
+        }
+    }
+
     fn check_signature(&self, f: &Function) -> Result<()> {
         for (name, ty) in &f.params {
             if f.ideal_params.contains(name) && !erased_type(ty, &self.structs) {
@@ -253,18 +250,7 @@ impl Verification {
             self.functions.insert(f.name.clone(), f.clone());
         }
         let (obligations, partial, summary) = {
-            let mut ctx = Context::new(
-                Declarations {
-                    functions: &self.functions,
-                    summaries: &self.summaries,
-                    structs: &self.structs,
-                    drops: &self.drops,
-                    destructors: &self.destructors,
-                    helpers: &self.helpers,
-                    cleanup_helpers: &self.cleanup_helpers,
-                },
-                session,
-            );
+            let mut ctx = Context::new(self.declarations(), session);
             ctx.enter_function(f)?;
             ctx.check_declaration_body(f)?;
             let summary = ctx.declaration_summary()?;

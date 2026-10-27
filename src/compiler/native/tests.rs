@@ -129,6 +129,11 @@ fn native_execution_agrees_with_the_interpreter() {
     let mut cases = [
         include_str!("../../../examples/string_bytes.evg"),
         include_str!("../../../examples/utf8_literal.evg"),
+        include_str!("../../../examples/utf8_view.evg"),
+        r#"fn main() -> usize {let bytes = ""; let text = utf8::Text::from_bytes(&bytes); if text.len() == 0 {42} else {1}}"#,
+        r#"fn main() -> usize {let bytes = "a"; let text = utf8::Text::from_bytes(&bytes); bytes[0] = 98; if text.byte(0) == 98 {42} else {1}}"#,
+        "type Resource struct {value: usize} fn consume(value: Resource) -> usize {value.value} impl Drop for Resource {fn drop(self) {mark(self.value);}} fn mark(value: usize) {} fn main() -> usize {consume(Resource {value: 42})}",
+        "fn needs_bound(n: usize) -> usize where n < usize::MAX {n + 1} type Coupled struct {left: &usize, right: &usize} where left == right; impl Drop for Coupled {fn drop(self) {let next = needs_bound(*self.left);}} fn main() -> usize {let value: usize = 41; let coupled = Coupled {left: &value, right: &value}; 42}",
         r#"fn consume(value: [u8; 0]) -> usize {42} fn main() -> usize {let value: [u8; 0] | bool = ""; consume(value)}"#,
         include_str!("../../../examples/raw_union.evg"),
         include_str!("../../../examples/raw_union_drop.evg"),

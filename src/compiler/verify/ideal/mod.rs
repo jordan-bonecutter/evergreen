@@ -9,6 +9,8 @@ mod evaluate;
 #[cfg(test)]
 mod tests;
 mod values;
+#[cfg(test)]
+mod view_tests;
 pub(super) use applications::Applications;
 
 use values::{Budget, Importer, Value};
@@ -23,6 +25,13 @@ impl Context<'_> {
             )
         {
             return Ok(None);
+        }
+        let application = self.predicate_application(function)?;
+        if let Some(value) = application
+            .as_ref()
+            .and_then(|key| self.applications.computed.get(key))
+        {
+            return Ok(Some(value.clone()));
         }
         let (value, spent) = {
             let mut budget = Budget::new(MAX_VALUE_WORK.saturating_sub(self.work.value_work));
@@ -54,7 +63,11 @@ impl Context<'_> {
             (value, budget.spent)
         };
         self.charge_value_work(spent)?;
-        Ok(value.and_then(Value::scalar))
+        let value = value.and_then(Value::scalar);
+        if let (Some(key), Some(value)) = (application, value.as_ref()) {
+            self.applications.computed.insert(key, value.clone());
+        }
+        Ok(value)
     }
 }
 
