@@ -7,6 +7,8 @@
 
 use super::*;
 
+mod facts;
+use facts::{FactId, Facts};
 mod rules;
 pub(super) use rules::{HypothesisId, Rule};
 
@@ -48,7 +50,7 @@ impl NodeRule {
 
 #[derive(Debug)]
 struct Node {
-    claim: Formula,
+    claim: FactId,
     rule: NodeRule,
     hypotheses: BTreeSet<HypothesisId>,
     weight: usize,
@@ -60,14 +62,15 @@ struct Node {
 #[derive(Default, Debug)]
 pub(super) struct Evidence {
     nodes: Vec<Node>,
+    facts: Facts,
     edges: usize,
-    claim_weight: usize,
+    storage_weight: usize,
     rule_work: usize,
 }
 
 impl Evidence {
     pub(super) fn claim(&self, id: NodeId) -> &Formula {
-        &self.nodes[id.0].claim
+        self.facts.get(self.nodes[id.0].claim)
     }
 
     /// Only explicit admissions and checked imports can create leaf evidence.
@@ -184,8 +187,10 @@ impl Evidence {
             return Err("proof evidence graph limit reached".into());
         }
         let weight = Self::claim_weight(&claim)?;
-        let storage = weight.saturating_add(hypotheses.len());
-        if storage > MAX_VALUE_WORK.saturating_sub(self.claim_weight) {
+        let fresh_formula = self.facts.find(&claim).is_none();
+        let formula_storage = if fresh_formula { weight } else { 0 };
+        let storage = formula_storage.saturating_add(hypotheses.len());
+        if storage > MAX_VALUE_WORK.saturating_sub(self.storage_weight) {
             return Err("proof evidence claim storage limit reached".into());
         }
         if hypotheses.len() > 128 {
@@ -193,7 +198,8 @@ impl Evidence {
         }
         let id = NodeId(self.nodes.len());
         self.edges += parents.len();
-        self.claim_weight += storage;
+        self.storage_weight += storage;
+        let claim = self.facts.intern(claim);
         self.nodes.push(Node {
             claim,
             rule,
@@ -215,10 +221,10 @@ impl Evidence {
         if self.nodes[node.0].subjects.is_some() {
             return Err("proof node already has state subjects".into());
         }
-        if snapshot.reads.len() > MAX_VALUE_WORK.saturating_sub(self.claim_weight) {
+        if snapshot.reads.len() > MAX_VALUE_WORK.saturating_sub(self.storage_weight) {
             return Err("proof evidence subject storage limit reached".into());
         }
-        self.claim_weight += snapshot.reads.len();
+        self.storage_weight += snapshot.reads.len();
         self.nodes[node.0].subjects = Some(snapshot);
         Ok(())
     }
@@ -330,7 +336,7 @@ mod tests {
     #[test]
     fn oversized_claims_are_rejected_before_insertion() {
         let mut graph = Evidence {
-            claim_weight: MAX_VALUE_WORK,
+            storage_weight: MAX_VALUE_WORK,
             ..Evidence::default()
         };
         assert!(graph.insert(Formula::True, vec![], false).is_err());
@@ -348,6 +354,53 @@ mod tests {
         }
         assert_eq!(graph.admissions(root).admissions, BTreeSet::from([source]));
         assert_eq!(graph.edges, MAX_NODES - 1);
+        assert_eq!(graph.storage_weight, 1);
         assert!(graph.insert(Formula::True, vec![], false).is_err());
+    }
+
+    #[test]
+    fn a_stored_proposition_is_not_evidence_for_itself() {
+        let mut graph = Evidence::default();
+        let false_fact = graph.facts.intern(Formula::False);
+        assert_eq!(graph.facts.get(false_fact), &Formula::False);
+        assert!(graph.nodes.is_empty());
+        assert!(graph
+            .derive(Formula::False, Rule::Reuse(NodeId(0)))
+            .is_err());
+        assert!(graph.nodes.is_empty());
+    }
+
+    #[test]
+    fn shared_conclusions_preserve_distinct_proof_and_admission_identities() {
+        let mut graph = Evidence::default();
+        let first = graph.admit(Formula::False).unwrap();
+        let reused = graph.derive(Formula::False, Rule::Reuse(first)).unwrap();
+        let second = graph.admit(Formula::False).unwrap();
+        assert_ne!(first, reused);
+        assert_ne!(first, second);
+        assert_eq!(graph.nodes[first.0].claim, graph.nodes[reused.0].claim);
+        assert_eq!(graph.nodes[first.0].claim, graph.nodes[second.0].claim);
+        assert_eq!(graph.storage_weight, 1);
+        assert_eq!(graph.admissions(reused).admissions, BTreeSet::from([first]));
+        assert_eq!(
+            graph.admissions(second).admissions,
+            BTreeSet::from([second])
+        );
+    }
+
+    #[test]
+    fn shared_formula_storage_does_not_bypass_hypothesis_or_fresh_formula_limits() {
+        let mut graph = Evidence {
+            storage_weight: MAX_VALUE_WORK - 1,
+            ..Evidence::default()
+        };
+        let proof = graph.admit(Formula::False).unwrap();
+        assert_eq!(graph.storage_weight, MAX_VALUE_WORK);
+        graph.derive(Formula::False, Rule::Reuse(proof)).unwrap();
+        let nodes = graph.nodes.len();
+        assert!(graph.hypothesis(Formula::False).is_err());
+        assert!(graph.admit(Formula::True).is_err());
+        assert_eq!(graph.nodes.len(), nodes);
+        assert!(graph.facts.find(&Formula::True).is_none());
     }
 }

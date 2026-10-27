@@ -1,9 +1,9 @@
-//! Propositions and their checked connective normalization. Declaring a formula
+//! Propositions and connective normalization. Declaring a formula
 //! creates no evidence; inference rules consume separate proof identities.
 
 use crate::compiler::kernel::Linear;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Formula {
     True,
     False,

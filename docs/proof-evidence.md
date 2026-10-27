@@ -70,12 +70,25 @@ restoration pair the fact root with the corresponding memory view.
 establishes a fact about a saved scalar, changes the source, and reuses the saved
 proof. The pointer and multi-plane rejection cases are regression tests.
 
-This is the first immutable state layer. Fact declarations and the proof DAG still
-use the bootstrap's existing representations; memory, path constraints, and lexical
+Instantiated propositions entering the evidence graph are interned in an
+append-only arena. Proof nodes hold a distinct `FactId` for their conclusion;
+several proofs can share that proposition without sharing their admission or
+hypothesis dependencies. Formula storage is counted once, while graph edges,
+state dependencies, and open hypotheses keep their own bounds. Interning preserves
+connectives needed by inference rules rather than identifying every logically
+equivalent formula. The formula index and arena share the same immutable allocation.
+
+A raw fact ID establishes nothing and cannot occupy a proof-premise slot. Named
+source facts remain lazy expression templates until instantiated; an unused fact
+is not eagerly copied into the evidence graph. Tests cover false propositions
+without evidence, separately admitted proofs of the same conclusion, sharing
+through deep derivations, and storage limits for both fresh formulas and scoped
+hypotheses.
+
+This is the first immutable state layer. Memory, path constraints, and lexical
 scopes have not all migrated to a unified persistent state. Complete statement
-footprints, proposition interning, and function-summary transport remain work in
-progress. The target model keeps propositions distinct from their evidence:
-raw fact references require a witness or a scoped hypothesis to serve as premises.
+footprints and function-summary transport remain work in progress. Raw fact
+references require a witness or a scoped hypothesis to serve as premises.
 
 ## State dependencies
 
