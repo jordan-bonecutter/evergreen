@@ -1,6 +1,7 @@
 // An abstract move-only credit library. The representation cannot be constructed,
 // read, assigned, or destructured by clients. No public minting operation exists.
-// These credits conserve a quantity; they are not allocation authority yet.
+// Generic erased-resource example, not part of Rc's owner-census implementation.
+// These credits conserve a quantity and grant no allocation authority.
 module credits;
 ideal opaque type Credit struct {units: nat}
 ideal type Split struct {left: Credit, right: Credit}

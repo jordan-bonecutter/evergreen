@@ -153,7 +153,7 @@ impl Target {
             }
             Type::Bool => "bool".into(),
             Type::Unit => "unit".into(),
-            Type::Ref(_) | Type::Plane(_) => "pointer".into(),
+            Type::Ref(_) | Type::Plane(_) | Type::Owner(_) => "pointer".into(),
             _ => return Err("aggregate or ideal type requested as a target scalar".into()),
         };
         self.layouts

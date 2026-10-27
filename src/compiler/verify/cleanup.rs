@@ -142,7 +142,7 @@ impl Context<'_> {
     fn cleanup_effects_type(&self, ty: &Type) -> bool {
         match ty {
             Type::Union(_) => true,
-            Type::Plane(_) => true,
+            Type::Plane(_) | Type::Owner(_) => true,
             Type::Named(name) => {
                 self.declarations
                     .destructors
@@ -161,7 +161,7 @@ impl Context<'_> {
     fn cleanup_effects(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Union(_) => true,
-            Ty::Plane(_) => true,
+            Ty::Plane(_) | Ty::Owner(_) => true,
             Ty::Record(name) => self.cleanup_effects_type(&Type::Named(name.clone())),
             Ty::Array(element, _) => self.cleanup_effects(element),
             _ => false,
@@ -172,7 +172,7 @@ impl Context<'_> {
         match ty {
             Ty::Union(_) => true,
             Ty::Array(inner, _) => self.has_runtime_cleanup(inner),
-            Ty::Plane(_) => true,
+            Ty::Plane(_) | Ty::Owner(_) => true,
             Ty::Record(name) => crate::shared::ownership::needs_drop(
                 &Type::Named(name.clone()),
                 self.declarations.structs,
@@ -219,6 +219,10 @@ impl Context<'_> {
         }
         self.charge_value_work(1)?;
         match value {
+            Symbol::Owner(ty, owner) => {
+                let unique = self.recover_owning_reference(ty, owner, line)?;
+                self.cleanup_value(unique, line)?;
+            }
             Symbol::Plane(_, reference) => {
                 let plane = self.storage.memory.plane(reference)?;
                 let payload = self.take_symbol(plane)?;

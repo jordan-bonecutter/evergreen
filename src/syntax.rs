@@ -61,6 +61,7 @@ pub enum Type {
     Unit,
     Ref(Box<Type>),
     Plane(Box<Type>),
+    Owner(Box<Type>),
     Machine(MachineInt),
     Named(String),
     Array(Box<Type>, Box<Expr>),
@@ -85,11 +86,11 @@ impl Type {
     /// This selects a type for elaboration; the checker must prove it active.
     pub(crate) fn pointer_member(&self) -> Option<&Type> {
         match self {
-            Self::Ref(_) | Self::Plane(_) => Some(self),
+            Self::Ref(_) | Self::Plane(_) | Self::Owner(_) => Some(self),
             Self::Union(members) => {
                 let mut pointers = members
                     .iter()
-                    .filter(|ty| matches!(ty, Self::Ref(_) | Self::Plane(_)));
+                    .filter(|ty| matches!(ty, Self::Ref(_) | Self::Plane(_) | Self::Owner(_)));
                 let pointer = pointers.next()?;
                 pointers.next().is_none().then_some(pointer)
             }
@@ -157,6 +158,9 @@ impl Expr {
             }
             Kind::Call(name, args) if name == "plane" && args.len() == 1 => {
                 args[0].literal_type().map(|ty| Type::Plane(Box::new(ty)))
+            }
+            Kind::Call(name, args) if name == "owner" && args.len() == 1 => {
+                args[0].literal_type().map(|ty| Type::Owner(Box::new(ty)))
             }
             _ => None,
         }
@@ -577,7 +581,11 @@ impl Parser {
                 Box::new(element),
                 Box::new(count),
             ))))
-        } else if self.eat("plane") {
+        } else if self.peek() == "plane" || self.peek() == "owner" {
+            let shared = self.eat("owner");
+            if !shared {
+                self.expect("plane")?;
+            }
             self.expect("(")?;
             let mut inner = self.ty()?;
             if self.eat(",") {
@@ -585,7 +593,11 @@ impl Parser {
                 inner = Type::Array(Box::new(inner), Box::new(count));
             }
             self.expect(")")?;
-            Ok(Type::Plane(Box::new(inner)))
+            Ok(if shared {
+                Type::Owner(Box::new(inner))
+            } else {
+                Type::Plane(Box::new(inner))
+            })
         } else if self.eat("(") {
             if self.eat(")") {
                 Ok(Type::Unit)

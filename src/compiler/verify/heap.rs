@@ -8,7 +8,9 @@ pub(super) fn payload_type(ty: &Type, structs: &BTreeMap<String, Struct>) -> boo
         Type::Ref(_) => false,
         Type::Union(members) => members.iter().all(|ty| payload_type(ty, structs)),
         Type::Shape(_) => true,
-        Type::Plane(inner) | Type::Array(inner, _) => payload_type(inner, structs),
+        Type::Plane(inner) | Type::Owner(inner) | Type::Array(inner, _) => {
+            payload_type(inner, structs)
+        }
         Type::Named(name) => structs.get(name).is_some_and(|definition| {
             definition
                 .fields
@@ -21,7 +23,7 @@ pub(super) fn payload_type(ty: &Type, structs: &BTreeMap<String, Struct>) -> boo
 
 pub(super) fn owns_planes_type(ty: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match ty {
-        Type::Plane(_) => true,
+        Type::Plane(_) | Type::Owner(_) => true,
         Type::Union(members) => members.iter().any(|ty| owns_planes_type(ty, structs)),
         Type::Shape(_) => false,
         Type::Array(inner, _) => owns_planes_type(inner, structs),
@@ -41,7 +43,7 @@ pub(super) fn function_uses_planes(
 ) -> bool {
     fn ty(value: &Type, structs: &BTreeMap<String, Struct>) -> bool {
         match value {
-            Type::Plane(_) => true,
+            Type::Plane(_) | Type::Owner(_) => true,
             Type::Union(members) => members.iter().any(|member| ty(member, structs)),
             Type::Shape(_) => false,
             Type::Ref(inner) | Type::Array(inner, _) => ty(inner, structs),
@@ -109,6 +111,7 @@ pub(super) fn syntax_type(ty: &Ty, line: usize) -> Result<Type> {
         Ty::Machine(t) => Type::Machine(*t),
         Ty::Record(name) => Type::Named(name.clone()),
         Ty::Plane(inner) => Type::Plane(Box::new(syntax_type(inner, line)?)),
+        Ty::Owner(inner) => Type::Owner(Box::new(syntax_type(inner, line)?)),
         Ty::Ref(inner) => Type::Ref(Box::new(syntax_type(inner, line)?)),
         Ty::Array(inner, len) if len.terms.is_empty() => Type::Array(
             Box::new(syntax_type(inner, line)?),
@@ -269,6 +272,15 @@ impl Context<'_> {
         while let Some((value, guard)) = pending.pop() {
             self.charge_value_work(1usize.saturating_add(guard.storage_weight()?))?;
             match value {
+                Symbol::Owner(_, owner) => {
+                    let reference = self.storage.memory.borrow_owned(owner)?;
+                    let owned = self.storage.memory.plane(reference)?;
+                    if owned == plane {
+                        authority = authority.or(guard.clone());
+                    }
+                    self.charge_value_work(symbol_weight(self.storage.memory.read(reference)?)?)?;
+                    pending.push((self.storage.memory.read(reference)?.clone(), guard));
+                }
                 Symbol::Plane(_, reference) => {
                     let paths = self.proof.paths.clone();
                     if self.checked_impossible(&paths, &guard)? {

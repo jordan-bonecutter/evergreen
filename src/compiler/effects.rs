@@ -107,7 +107,7 @@ fn place(
                 _ => expression(pointer, None, env, functions, safe)?,
             };
             match ty {
-                Type::Ref(target) | Type::Plane(target) => Some(*target),
+                Type::Ref(target) | Type::Plane(target) | Type::Owner(target) => Some(*target),
                 _ => None,
             }
         }

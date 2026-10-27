@@ -21,6 +21,12 @@ impl<'a> Context<'a> {
         expected: Option<&Ty>,
         line: usize,
     ) -> Result<Symbol> {
+        if matches!(
+            name,
+            "owners" | "share_owner" | "duplicate_owner" | "release_owner" | "recover_owner"
+        ) {
+            return self.owner_operation(name, args, line);
+        }
         if name == "typeof" || name == "shape" {
             return self.eval_type_operation(name, args, expected, line);
         }
@@ -327,6 +333,7 @@ impl<'a> Context<'a> {
         actuals: Arguments,
         line: usize,
     ) -> Result<Symbol> {
+        let ownership_epoch = self.work.ownership_transitions;
         let mut saved = std::mem::take(&mut self.locals.values);
         let saved_roots = std::mem::take(&mut self.locals.places);
         let saved_old = std::mem::take(&mut self.entry.values);
@@ -541,7 +548,7 @@ impl<'a> Context<'a> {
                 .unwrap_or_default();
             self.retained_valid_with(&stored, line, &lifted)?;
         }
-        if !f.modifies.is_empty() {
+        if !f.modifies.is_empty() || self.work.ownership_transitions != ownership_epoch {
             self.validate_live(line)?;
         }
         self.proof.contract_parents = inherited_contracts;

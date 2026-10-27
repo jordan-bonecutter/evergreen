@@ -14,6 +14,7 @@ mod allocation;
 mod atomic;
 mod elf;
 mod order;
+mod ownership;
 mod program;
 mod storage;
 mod syscall;
@@ -160,7 +161,7 @@ impl Emitter<'_> {
     fn has_drop(&self, ty: &Type) -> bool {
         match ty {
             Type::Union(_) => true,
-            Type::Plane(_) => true,
+            Type::Plane(_) | Type::Owner(_) => true,
             Type::Named(name) => {
                 self.drops.contains(name)
                     || self
@@ -262,6 +263,10 @@ impl Emitter<'_> {
     fn drop_frame(&mut self, ty: &Type, offset: i32) -> Result<()> {
         if !self.has_drop(ty) {
             return Ok(());
+        }
+        if let Type::Owner(inner) = ty {
+            // Each implicit cleanup site proved uniqueness in the frontend.
+            return self.drop_frame(&Type::Plane(inner.clone()), offset);
         }
         if let Type::Plane(payload) = ty {
             if self.has_drop(payload) {
@@ -401,7 +406,9 @@ impl Emitter<'_> {
             }
             // Source verification already checked pointee compatibility. The
             // native reference ABI is one address even for dependent pointees.
-            (Type::Ref(_), Type::Ref(_)) | (Type::Plane(_), Type::Plane(_)) => Ok(true),
+            (Type::Ref(_), Type::Ref(_))
+            | (Type::Plane(_), Type::Plane(_))
+            | (Type::Owner(_), Type::Owner(_)) => Ok(true),
             (Type::Array(a, al), Type::Array(b, bl)) => {
                 Ok(Self::compatible(a, b)?
                     && layout::array_length(al)? == layout::array_length(bl)?)
@@ -474,7 +481,7 @@ impl Emitter<'_> {
             Kind::Unary(op, _) if op == "!" => Some(Type::Bool),
             Kind::Unary(op, x) if op == "&" => self.hint(x).map(|t| Type::Ref(Box::new(t))),
             Kind::Unary(op, x) if op == "*" => match self.hint(x)?.pointer_member()? {
-                Type::Ref(inner) | Type::Plane(inner) => Some(*inner.clone()),
+                Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) => Some(*inner.clone()),
                 _ => None,
             },
             Kind::Unary(_, x) => self.hint(x),
@@ -496,7 +503,13 @@ impl Emitter<'_> {
             Kind::Call(n, args) if n == "alloc" && args.len() == 1 => {
                 self.hint(&args[0]).map(|t| Type::Plane(Box::new(t)))
             }
-            Kind::Call(n, _) => self.functions.get(n).map(|f| f.ret.clone()),
+            Kind::Call(n, args) => self.functions.get(n).map(|f| f.ret.clone()).or_else(|| {
+                if args.len() == 1 {
+                    crate::shared::ownership::operation_result(n, &self.hint(&args[0])?)
+                } else {
+                    None
+                }
+            }),
             Kind::If(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
             _ => None,
         }
@@ -518,7 +531,7 @@ impl Emitter<'_> {
                 Ok(ty.clone())
             }
             Kind::Unary(op, x) if op == "*" => match self.pointer_operand(x)? {
-                Type::Ref(inner) | Type::Plane(inner) => Ok(*inner),
+                Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) => Ok(*inner),
                 _ => Err("native place dereference requires a reference".into()),
             },
             Kind::Bytes(_) | Kind::Record(..) | Kind::Call(..) | Kind::If(..) => {
@@ -642,7 +655,7 @@ impl Emitter<'_> {
             Kind::Unary(op, x) if op == "&" => Type::Ref(Box::new(self.address(x)?)),
             Kind::Unary(op, x) if op == "*" => {
                 let inner = match self.pointer_operand(x)? {
-                    Type::Ref(inner) | Type::Plane(inner) => inner,
+                    Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) => inner,
                     _ => {
                         return Err("native dereference requires a reference or owned plane".into())
                     }
@@ -780,6 +793,14 @@ impl Emitter<'_> {
                 } else {
                     ty
                 }
+            }
+            Kind::Call(name, args)
+                if matches!(
+                    name.as_str(),
+                    "share_owner" | "duplicate_owner" | "release_owner" | "recover_owner"
+                ) =>
+            {
+                self.owner_operation(name, args)?
             }
             Kind::Call(name, args) if name == "alloc" && args.len() == 2 => {
                 self.allocate_filled(args, expected)?

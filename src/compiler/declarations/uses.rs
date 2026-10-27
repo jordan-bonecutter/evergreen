@@ -27,7 +27,7 @@ impl Uses {
             Type::Named(name) => {
                 self.types.insert(name.clone());
             }
-            Type::Ref(inner) | Type::Plane(inner) | Type::Shape(inner) => {
+            Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) | Type::Shape(inner) => {
                 self.ty(inner, bound, depth + 1)?
             }
             Type::Array(inner, count) => {
@@ -50,7 +50,9 @@ impl Uses {
             Type::Named(name) => {
                 self.owned.insert(name.clone());
             }
-            Type::Plane(inner) | Type::Array(inner, _) => self.owned_type(inner, depth + 1)?,
+            Type::Plane(inner) | Type::Owner(inner) | Type::Array(inner, _) => {
+                self.owned_type(inner, depth + 1)?
+            }
             Type::Union(members) => {
                 for member in members {
                     self.owned_type(member, depth + 1)?;

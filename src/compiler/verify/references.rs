@@ -171,6 +171,12 @@ impl Context<'_> {
                             1 + match step {
                                 Projection::Field(name) => name.len() / 32,
                                 Projection::Index(index) => index.terms.len(),
+                                Projection::Owners => {
+                                    return Err(
+                                        "owner census regions are not runtime reference ports"
+                                            .into(),
+                                    )
+                                }
                             },
                         );
                     }
@@ -194,6 +200,18 @@ impl Context<'_> {
                         &target,
                         format!("(*{origin})"),
                         (strict, true),
+                        inputs,
+                        work,
+                        limit,
+                    )?;
+                }
+                Symbol::Owner(pointee, owner) => {
+                    let reference = ctx.storage.memory.borrow_owned(*owner)?;
+                    visit(
+                        ctx,
+                        &Symbol::Plane(pointee.clone(), reference),
+                        origin,
+                        mode,
                         inputs,
                         work,
                         limit,

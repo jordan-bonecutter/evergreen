@@ -126,7 +126,9 @@ impl Aliases {
                     *ty = value.clone();
                 }
             }
-            Type::Ref(inner) | Type::Plane(inner) | Type::Shape(inner) => self.ty(inner, module),
+            Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) | Type::Shape(inner) => {
+                self.ty(inner, module)
+            }
             Type::Union(members) => {
                 for member in members {
                     self.ty(member, module);

@@ -49,6 +49,8 @@ impl PlaneId {
 pub enum Projection<I = usize> {
     Field(String),
     Index(I),
+    /// Logical ownership state, never an addressable runtime field.
+    Owners,
 }
 
 #[derive(Clone, Debug)]

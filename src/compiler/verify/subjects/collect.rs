@@ -80,6 +80,21 @@ impl Context<'_> {
                 }
                 complete.then_some(ClaimKey::Record(name.clone(), keys))
             }
+            Kind::Call(name, arguments) if name == "owners" && arguments.len() == 1 => {
+                if let Some(reference) = self.owner_subject_reference(&arguments[0]) {
+                    let stamp = self.proof.subjects.observe(
+                        &self.storage.memory,
+                        reference,
+                        ownership::census_path(),
+                    )?;
+                    Some(ClaimKey::Unary(
+                        name.clone(),
+                        Box::new(ClaimKey::Read(stamp)),
+                    ))
+                } else {
+                    None
+                }
+            }
             Kind::Call(name, arguments) if name == "old" && arguments.len() == 1 => {
                 if let Kind::Unary(op, base) = &arguments[0].kind {
                     if op == "*" {
@@ -88,6 +103,7 @@ impl Context<'_> {
                             let place = match value {
                                 Some(Symbol::Ref(_, reference, path)) => Some((reference, path)),
                                 Some(Symbol::Plane(_, reference)) => Some((reference, vec![])),
+                                Some(Symbol::Owner(_, owner)) => Some((owner.reference(), vec![])),
                                 _ => None,
                             };
                             if let Some((reference, path)) = place {
@@ -228,6 +244,7 @@ impl Context<'_> {
                                 Some((*reference, path.clone()))
                             }
                             Some(Symbol::Plane(_, reference)) => Some((*reference, vec![])),
+                            Some(Symbol::Owner(_, owner)) => Some((owner.reference(), vec![])),
                             _ => None,
                         });
                     }
@@ -255,6 +272,9 @@ impl Context<'_> {
                     other => other,
                 };
                 match pointer {
+                    Some(Symbol::Owner(_, owner)) => {
+                        Ok(Some((self.storage.memory.borrow_owned(*owner)?, vec![])))
+                    }
                     Some(Symbol::Ref(_, reference, path)) => Ok(Some((*reference, path.clone()))),
                     Some(Symbol::Plane(_, reference)) => Ok(Some((*reference, vec![]))),
                     _ => Ok(None),

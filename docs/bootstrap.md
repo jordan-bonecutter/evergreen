@@ -309,7 +309,7 @@ Use ideal arithmetic in invariants when intermediate machine arithmetic could
 overflow: `integer(sum) == 14 * integer(count)` states the mathematical relation
 without requiring `14 * count` to fit before the invariant is established.
 
-Not yet supported: non-record patterns, shared heap ownership, general C FFI, foreign aggregate
+Not yet supported: non-record patterns, complete Rc/Arc protocols, general C FFI, foreign aggregate
 layouts. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
 
@@ -320,6 +320,12 @@ old binding but preserves borrows of the data. `*owner` reads its payload;
 frees the allocation. Old data borrows become `never`; a later allocation or
 owner restoration cannot revive them. A borrow of the owner *slot* observes a
 same-layout replacement of that slot and then refers to its new owner value.
+
+Generic `owner(T)` values can share lifetime responsibility without adding a
+runtime counter to the compiler. Releasing a nonfinal claim and recovering the
+sole owner require checked census conditions. See
+[`owning-references.md`](owning-references.md) for the operations, proof-state
+behavior, and remaining protocol restrictions.
 
 Payloads currently require fixed runtime layouts and cannot contain borrowed
 references, including erased borrowed fields. Nested owned planes, fixed arrays,

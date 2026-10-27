@@ -62,7 +62,7 @@ impl<'a> Dependencies<'a> {
                         dependencies.insert(method.name.as_str());
                     }
                 }
-                Source::Type(Type::Plane(inner) | Type::Array(inner, _)) => {
+                Source::Type(Type::Plane(inner) | Type::Owner(inner) | Type::Array(inner, _)) => {
                     pending.push(Source::Type(inner));
                 }
                 Source::Type(Type::Union(members)) => {

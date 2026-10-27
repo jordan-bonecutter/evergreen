@@ -1,0 +1,12 @@
+// Generic lifetime capabilities: no compiler-defined Rc counter or destructor.
+fn main() -> usize {
+    let allocation: plane(usize) = alloc(42);
+    let first = share_owner(allocation);
+    proof initially_unique: owners(first) == 1;
+    let second = duplicate_owner(&first);
+    proof shared: owners(first) == 2;
+    release_owner(first);
+    proof unique_again: owners(second) == 1;
+    let unique = recover_owner(second);
+    *unique
+}

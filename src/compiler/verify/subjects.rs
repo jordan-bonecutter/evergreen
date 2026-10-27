@@ -249,6 +249,11 @@ impl Subjects {
 }
 
 pub(super) fn overlap(a: &[Projection<Linear>], b: &[Projection<Linear>]) -> bool {
+    let a_owners = matches!(a.first(), Some(Projection::Owners));
+    let b_owners = matches!(b.first(), Some(Projection::Owners));
+    if a_owners || b_owners {
+        return a_owners && b_owners;
+    }
     for (a, b) in a.iter().zip(b) {
         match (a, b) {
             (Projection::Field(a), Projection::Field(b)) if a != b => return false,

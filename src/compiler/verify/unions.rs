@@ -25,11 +25,11 @@ pub(super) fn type_equal(a: &Ty, b: &Ty) -> Result<Formula> {
 impl Ty {
     pub(super) fn pointer_member(&self) -> Option<&Ty> {
         match self {
-            Self::Ref(_) | Self::Plane(_) => Some(self),
+            Self::Ref(_) | Self::Plane(_) | Self::Owner(_) => Some(self),
             Self::Union(members) => {
                 let mut pointers = members
                     .iter()
-                    .filter(|ty| matches!(ty, Self::Ref(_) | Self::Plane(_)));
+                    .filter(|ty| matches!(ty, Self::Ref(_) | Self::Plane(_) | Self::Owner(_)));
                 let pointer = pointers.next()?;
                 pointers.next().is_none().then_some(pointer)
             }
@@ -68,6 +68,12 @@ impl Context<'_> {
     // resulting place names its existing allocation, never the union's bytes.
     pub(super) fn pointer_operand(&mut self, expression: &Expr) -> Result<Symbol> {
         let value = self.storage(expression)?;
+        if self.execution.phase == Phase::Specification {
+            if let Symbol::Owner(ty, owner) = &value {
+                self.storage.memory.read(owner.reference())?;
+                return Ok(Symbol::Ref(ty.clone(), owner.reference(), vec![]));
+            }
+        }
         let pointer = value.ty().pointer_member().cloned().ok_or_else(|| {
             format!("line {}: dereference requires a reference, owned plane, or one proved active pointer member", expression.line)
         })?;
@@ -83,6 +89,9 @@ impl Context<'_> {
             Kind::Call(name, args) if name == "plane" && args.len() == 1 => self
                 .type_literal(&args[0])
                 .map(|ty| Ty::Plane(Box::new(ty))),
+            Kind::Call(name, args) if name == "owner" && args.len() == 1 => self
+                .type_literal(&args[0])
+                .map(|ty| Ty::Owner(Box::new(ty))),
             Kind::Name(name) => {
                 MachineInt::parse(name)
                     .map(Ty::Machine)

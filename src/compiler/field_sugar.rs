@@ -87,7 +87,7 @@ impl Shapes {
         fn extent(ty: &Type) -> Option<&Expr> {
             match ty {
                 Type::Array(_, count) => Some(count),
-                Type::Ref(inner) | Type::Plane(inner) => extent(inner),
+                Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) => extent(inner),
                 _ => None,
             }
         }
@@ -149,7 +149,9 @@ impl Shapes {
 
     fn ty(&self, ty: &mut Type, scope: &Scope) {
         match ty {
-            Type::Ref(inner) | Type::Plane(inner) | Type::Shape(inner) => self.ty(inner, scope),
+            Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) | Type::Shape(inner) => {
+                self.ty(inner, scope)
+            }
             Type::Union(members) => {
                 for member in members {
                     self.ty(member, scope);
@@ -275,7 +277,7 @@ impl Shapes {
             }
             Kind::Field(base, name) => {
                 let mut ty = self.expr(base, scope, None)?;
-                while let Type::Ref(inner) | Type::Plane(inner) = ty {
+                while let Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) = ty {
                     let operand = (**base).clone();
                     **base = Expr {
                         line: operand.line,
@@ -296,7 +298,9 @@ impl Shapes {
                 let ty = self.expr(value, scope, None)?;
                 match (op.as_str(), ty) {
                     ("&", ty) => Some(Type::Ref(Box::new(ty))),
-                    ("*", Type::Ref(inner) | Type::Plane(inner)) => Some(*inner),
+                    ("*", Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner)) => {
+                        Some(*inner)
+                    }
                     ("!", _) => Some(Type::Bool),
                     (_, ty) => Some(ty),
                 }
@@ -323,7 +327,7 @@ impl Shapes {
                 if let Some(method) = name.strip_prefix("evg_method_") {
                     let mut ty = first?;
                     let mut receiver = args.first()?.clone();
-                    while let Type::Ref(inner) | Type::Plane(inner) = ty {
+                    while let Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) = ty {
                         let line = receiver.line;
                         receiver = Expr {
                             line,
@@ -351,6 +355,10 @@ impl Shapes {
                     return Some(Type::Machine(machine));
                 }
                 match name.as_str() {
+                    "share_owner" | "duplicate_owner" | "release_owner" | "recover_owner" => {
+                        crate::shared::ownership::operation_result(name, &first?)
+                    }
+                    "owners" => Some(Type::Nat),
                     "old" | "move" => first,
                     "integer" => Some(Type::Int),
                     "nat" => Some(Type::Nat),

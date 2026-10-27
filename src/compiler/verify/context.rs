@@ -97,6 +97,7 @@ pub(super) struct Work {
     pub(super) eval_steps: usize,
     pub(super) value_work: usize,
     pub(super) obligations: usize,
+    pub(super) ownership_transitions: usize,
 }
 
 pub(super) struct Context<'a> {
@@ -108,6 +109,7 @@ pub(super) struct Context<'a> {
     pub(super) entry: EntryState,
     pub(super) arrays: Arrays,
     pub(super) applications: ideal::Applications,
+    pub(super) censuses: BTreeMap<Reference, Linear>,
     pub(super) work: Work,
     pub(super) session: &'a mut Session,
 }
@@ -126,6 +128,7 @@ impl<'a> Context<'a> {
             entry: EntryState::default(),
             arrays: Arrays::default(),
             applications: ideal::Applications::default(),
+            censuses: BTreeMap::new(),
             work: Work::default(),
             session,
         }

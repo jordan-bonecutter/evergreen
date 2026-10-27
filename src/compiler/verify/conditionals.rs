@@ -6,6 +6,7 @@ use super::*;
 struct BranchView {
     memory: Memory<Symbol>,
     facts: state::State,
+    censuses: BTreeMap<Reference, Linear>,
 }
 
 impl Context<'_> {
@@ -180,10 +181,17 @@ impl Context<'_> {
         Ok(BranchView {
             memory: self.snapshot_memory()?,
             facts: self.proof.subjects.snapshot(),
+            censuses: self.censuses.clone(),
         })
     }
 
     fn restore_branch_view(&mut self, view: &BranchView) -> Result<()> {
+        if self.censuses != view.censuses {
+            return Err(
+                "conditional owner-census transitions require guarded token joins; unsupported"
+                    .into(),
+            );
+        }
         self.storage.memory = self.clone_store(&view.memory)?;
         self.proof.subjects.restore(view.facts.clone());
         Ok(())

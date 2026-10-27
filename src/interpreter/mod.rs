@@ -12,6 +12,7 @@ use std::{
 
 mod atomic;
 mod compat;
+mod ownership;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -29,6 +30,7 @@ pub enum Value {
     Unit,
     Ref(Box<Type>, Reference, Vec<Projection>),
     Plane(Box<Type>, Reference),
+    Owner(Box<Type>, crate::shared::planes::OwnedReference),
     Machine(MachineInt, i128),
 }
 
@@ -79,6 +81,7 @@ impl std::fmt::Display for Value {
             Self::Unit => write!(f, "()"),
             Self::Ref(_, _, _) => write!(f, "<reference>"),
             Self::Plane(_, _) => write!(f, "<owned plane>"),
+            Self::Owner(_, _) => write!(f, "<owning reference>"),
         }
     }
 }
@@ -123,6 +126,7 @@ impl Value {
             Self::Record(n, _) => Some(Type::Named(n.clone())),
             Self::Ref(t, _, _) => Some(Type::Ref(t.clone())),
             Self::Plane(t, _) => Some(Type::Plane(t.clone())),
+            Self::Owner(t, _) => Some(Type::Owner(t.clone())),
             Self::Unit => Some(Type::Unit),
             Self::Machine(t, _) => Some(Type::Machine(*t)),
             Self::Array(element, items) => Some(Type::Array(
@@ -179,7 +183,7 @@ impl Evaluator<'_> {
             Kind::Record(n, _) => Some(Type::Named(n.clone())),
             Kind::Unary(op, x) if op == "&" => self.hint(x, env).map(|t| Type::Ref(Box::new(t))),
             Kind::Unary(op, x) if op == "*" => match self.hint(x, env)?.pointer_member()? {
-                Type::Ref(t) | Type::Plane(t) => Some(*t.clone()),
+                Type::Ref(t) | Type::Plane(t) | Type::Owner(t) => Some(*t.clone()),
                 _ => None,
             },
             Kind::Unary(_, x) => self.hint(x, env),
@@ -188,6 +192,15 @@ impl Evaluator<'_> {
             }
             Kind::Call(name, args) if name == "shape" && args.len() == 1 => {
                 args[0].literal_type().map(|ty| Type::Shape(Box::new(ty)))
+            }
+            Kind::Call(name, args)
+                if args.len() == 1
+                    && matches!(
+                        name.as_str(),
+                        "share_owner" | "duplicate_owner" | "release_owner" | "recover_owner"
+                    ) =>
+            {
+                crate::shared::ownership::operation_result(name, &self.hint(&args[0], env)?)
             }
             Kind::Call(name, args) if name == "alloc" && args.len() == 1 => {
                 self.hint(&args[0], env).map(|t| Type::Plane(Box::new(t)))
@@ -415,7 +428,7 @@ impl Evaluator<'_> {
     fn value_is_move_only(&self, value: &Value) -> bool {
         match value {
             Value::Union(_, _) | Value::Shape(_) => true,
-            Value::Plane(..) => true,
+            Value::Plane(..) | Value::Owner(..) => true,
             Value::Record(n, _) => crate::shared::ownership::is_move_only(
                 &Type::Named(n.clone()),
                 self.structs,
@@ -454,6 +467,12 @@ impl Evaluator<'_> {
 
     fn drop_fields(&mut self, value: Value) -> Result<()> {
         match value {
+            Value::Owner(ty, owner) => {
+                let reference = self.memory.borrow_owned(owner)?;
+                let census = self.memory.owner_census(reference)?;
+                self.memory.recover_unique_owner_at(owner, census)?;
+                self.drop_fields(Value::Plane(ty, reference))?;
+            }
             Value::Plane(_, reference) => {
                 let plane = self.memory.plane(reference)?;
                 let payload = self.memory.take(plane)?;
@@ -830,6 +849,12 @@ impl Evaluator<'_> {
                 })
             }
             Kind::Call(name, args) => {
+                if matches!(
+                    name.as_str(),
+                    "share_owner" | "duplicate_owner" | "release_owner" | "recover_owner"
+                ) {
+                    return self.owner_operation(name, args, env);
+                }
                 if name == "shape" {
                     let ty = args[0].literal_type().ok_or("shape requires a type")?;
                     return Ok(Value::Shape(Box::new(ty)));
@@ -986,6 +1011,7 @@ impl Evaluator<'_> {
                 let (r, p) = match pointer {
                     Value::Ref(_, r, p) => (r, p),
                     Value::Plane(_, r) => (r, Vec::new()),
+                    Value::Owner(_, owner) => (self.memory.borrow_owned(owner)?, Vec::new()),
                     _ => return Err("expected reference or owned plane".into()),
                 };
                 self.memory.read(r)?;
@@ -1082,6 +1108,7 @@ fn same_layout(a: &Value, b: &Value) -> bool {
         | (Value::Bool(_), Value::Bool(_))
         | (Value::Ref(..), Value::Ref(..))
         | (Value::Plane(..), Value::Plane(..))
+        | (Value::Owner(..), Value::Owner(..))
         | (Value::Unit, Value::Unit) => true,
         (Value::Machine(a, _), Value::Machine(b, _)) => a == b,
         _ => false,

@@ -3,6 +3,18 @@
 use crate::syntax::{Struct, Type};
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(crate) fn operation_result(name: &str, argument: &Type) -> Option<Type> {
+    match (name, argument) {
+        ("share_owner", Type::Plane(inner)) => Some(Type::Owner(inner.clone())),
+        ("recover_owner", Type::Owner(inner)) => Some(Type::Plane(inner.clone())),
+        ("duplicate_owner", Type::Ref(inner)) if matches!(inner.as_ref(), Type::Owner(_)) => {
+            Some(*inner.clone())
+        }
+        ("release_owner", Type::Owner(_)) => Some(Type::Unit),
+        _ => None,
+    }
+}
+
 pub(crate) fn is_move_only(
     t: &Type,
     structs: &BTreeMap<String, Struct>,
@@ -10,7 +22,7 @@ pub(crate) fn is_move_only(
 ) -> bool {
     match t {
         Type::Union(_) | Type::Shape(_) => true,
-        Type::Plane(_) => true,
+        Type::Plane(_) | Type::Owner(_) => true,
         Type::Machine(_) | Type::Bool | Type::Unit | Type::Ref(_) => {
             !super::target::native().is_ok_and(|target| target.is_copy(t))
         }
@@ -38,7 +50,7 @@ pub(crate) fn needs_drop(
     match t {
         Type::Union(_) => true, // Raw unions require explicit active-member elimination.
         Type::Shape(_) => false,
-        Type::Plane(_) => true,
+        Type::Plane(_) | Type::Owner(_) => true,
         Type::Named(name) => {
             drops.contains(name)
                 || structs.get(name).is_some_and(|record| {

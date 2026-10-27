@@ -17,6 +17,14 @@ pub struct OwnedReference {
     token: u64,
 }
 
+impl OwnedReference {
+    /// Observe the pointer identity without granting the token's authority.
+    /// Memory reads still check generation/liveness; owner operations check token membership.
+    pub fn reference(self) -> Reference {
+        self.reference
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) enum Ownership {
     Unique,

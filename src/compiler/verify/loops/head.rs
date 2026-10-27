@@ -15,6 +15,7 @@ pub(super) struct Head {
     ideal: BTreeSet<String>,
     results: usize,
     contexts: usize,
+    censuses: BTreeMap<Reference, Linear>,
 }
 
 impl Head {
@@ -45,6 +46,7 @@ impl Head {
             ideal: ctx.locals.ideal_bindings.clone(),
             results: ctx.proof.results.len(),
             contexts: ctx.proof.recursive_contexts.len(),
+            censuses: ctx.censuses.clone(),
             control: ctx.proof.control.clone(),
         })
     }
@@ -64,6 +66,7 @@ impl Head {
     }
 
     pub(super) fn restore(self, ctx: &mut Context<'_>) {
+        ctx.censuses = self.censuses;
         ctx.storage.memory = self.memory;
         ctx.proof.subjects.restore(self.state);
         ctx.locals.values = self.env;

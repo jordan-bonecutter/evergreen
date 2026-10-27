@@ -182,7 +182,9 @@ fn cleanup_dependencies(
             }
             match ty {
                 Type::Named(name) => pending.push(name.clone()),
-                Type::Plane(inner) | Type::Array(inner, _) => fields.push(inner),
+                Type::Plane(inner) | Type::Owner(inner) | Type::Array(inner, _) => {
+                    fields.push(inner)
+                }
                 Type::Union(members) => fields.extend(members),
                 _ => {}
             }

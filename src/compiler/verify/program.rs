@@ -228,7 +228,19 @@ impl Verification {
         if MachineInt::parse(f.name.rsplit("::").next().unwrap_or(&f.name)).is_some()
             || matches!(
                 f.name.rsplit("::").next().unwrap_or(&f.name),
-                "move" | "drop" | "alloc" | "integer" | "nat" | "old" | "typeof" | "shape"
+                "move"
+                    | "drop"
+                    | "alloc"
+                    | "integer"
+                    | "nat"
+                    | "old"
+                    | "typeof"
+                    | "shape"
+                    | "owners"
+                    | "share_owner"
+                    | "duplicate_owner"
+                    | "release_owner"
+                    | "recover_owner"
             )
         {
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));

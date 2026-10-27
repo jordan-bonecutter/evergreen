@@ -198,7 +198,9 @@ impl Context<'_> {
 
 pub(super) fn infer_extent(formal: &Type, actual: &Ty, parameter: &str, out: &mut Vec<Linear>) {
     match (formal, actual) {
-        (Type::Ref(formal), Ty::Ref(actual)) | (Type::Plane(formal), Ty::Plane(actual)) => {
+        (Type::Ref(formal), Ty::Ref(actual))
+        | (Type::Plane(formal), Ty::Plane(actual))
+        | (Type::Owner(formal), Ty::Owner(actual)) => {
             infer_extent(formal, actual, parameter, out);
         }
         (Type::Array(element, extent), Ty::Array(actual, length)) => {

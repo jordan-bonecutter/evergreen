@@ -33,6 +33,7 @@ mod heap;
 mod ideal;
 mod literals;
 mod loops;
+mod ownership;
 mod parameters;
 mod paths;
 use paths::{extend, extend_from};
@@ -58,6 +59,7 @@ enum Ty {
     Unit,
     Ref(Box<Ty>),
     Plane(Box<Ty>),
+    Owner(Box<Ty>),
     Machine(MachineInt),
     Array(Box<Ty>, Linear),
     Record(String),
@@ -91,6 +93,7 @@ enum Symbol {
     Unit,
     Ref(Box<Ty>, Reference, Vec<Projection<Linear>>),
     Plane(Box<Ty>, Reference),
+    Owner(Box<Ty>, crate::shared::planes::OwnedReference),
 }
 
 impl Symbol {
@@ -106,6 +109,7 @@ impl Symbol {
             Self::Unit => Ty::Unit,
             Self::Ref(t, _, _) => Ty::Ref(t.clone()),
             Self::Plane(t, _) => Ty::Plane(t.clone()),
+            Self::Owner(t, _) => Ty::Owner(t.clone()),
         }
     }
 
@@ -171,9 +175,10 @@ fn symbol_weight(value: &Symbol) -> Result<usize> {
                 pending.extend(members.iter().map(|ty| Node::Type(ty, depth + 1)));
             }
             Node::Value(Symbol::Shape(inner), depth) => pending.push(Node::Type(inner, depth + 1)),
-            Node::Type(Ty::Ref(inner) | Ty::Plane(inner) | Ty::Shape(inner), depth) => {
-                pending.push(Node::Type(inner, depth + 1))
-            }
+            Node::Type(
+                Ty::Ref(inner) | Ty::Plane(inner) | Ty::Owner(inner) | Ty::Shape(inner),
+                depth,
+            ) => pending.push(Node::Type(inner, depth + 1)),
             Node::Type(Ty::Union(members), depth) => {
                 pending.extend(members.iter().map(|ty| Node::Type(ty, depth + 1)))
             }
@@ -308,7 +313,7 @@ fn project_mut<'a>(value: &'a mut Symbol, path: &[Projection<Linear>]) -> Result
 
 fn type_has_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match t {
-        Type::Ref(_) | Type::Plane(_) => true,
+        Type::Ref(_) | Type::Plane(_) | Type::Owner(_) => true,
         Type::Union(members) => members.iter().any(|ty| type_has_reference(ty, structs)),
         Type::Shape(_) => false,
         Type::Array(t, _) => type_has_reference(t, structs),
@@ -322,7 +327,9 @@ fn type_has_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
 fn type_has_borrowed_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match t {
         Type::Ref(_) => true,
-        Type::Plane(inner) | Type::Array(inner, _) => type_has_borrowed_reference(inner, structs),
+        Type::Plane(inner) | Type::Owner(inner) | Type::Array(inner, _) => {
+            type_has_borrowed_reference(inner, structs)
+        }
         Type::Shape(_) => false,
         Type::Union(members) => members
             .iter()
@@ -358,7 +365,7 @@ fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
             .get(n)
             .is_some_and(|s| !s.ideal && s.runtime_fields().all(|(_, t)| runtime_type(t, structs))),
         Type::Union(members) => members.iter().all(|ty| runtime_type(ty, structs)),
-        Type::Array(t, _) | Type::Ref(t) | Type::Plane(t) | Type::Shape(t) => {
+        Type::Array(t, _) | Type::Ref(t) | Type::Plane(t) | Type::Owner(t) | Type::Shape(t) => {
             runtime_type(t, structs)
         }
         _ => true,
@@ -369,7 +376,7 @@ fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
 // boundary; their provenance and liveness use the ordinary reference rules.
 fn erased_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match t {
-        Type::Plane(_) => false,
+        Type::Plane(_) | Type::Owner(_) => false,
         Type::Ref(_) => true,
         Type::Named(name) => structs
             .get(name)
@@ -557,7 +564,7 @@ fn needs_old_memory(function: &Function) -> bool {
 
     fn ty(t: &Type) -> bool {
         match t {
-            Type::Ref(t) | Type::Plane(t) | Type::Shape(t) => ty(t),
+            Type::Ref(t) | Type::Plane(t) | Type::Owner(t) | Type::Shape(t) => ty(t),
             Type::Union(members) => members.iter().any(ty),
             Type::Array(t, n) => ty(t) || expression(n),
             _ => false,
@@ -610,6 +617,7 @@ struct EntryMemory {
     memory: Memory<Symbol>,
     facts: state::State,
     module: Option<String>,
+    censuses: BTreeMap<Reference, Linear>,
 }
 
 #[derive(Clone)]
@@ -774,7 +782,10 @@ impl<'a> Context<'a> {
     }
 
     fn snapshot_memory(&mut self) -> Result<Memory<Symbol>> {
-        self.charge_value_work(store_weight(&self.storage.memory)?)?;
+        self.charge_value_work(
+            store_weight(&self.storage.memory)?
+                .saturating_add(self.censuses.len().saturating_mul(2)),
+        )?;
         Ok(self.storage.memory.snapshot())
     }
 
@@ -786,7 +797,7 @@ impl<'a> Context<'a> {
     fn erased_value(&self, value: &Symbol) -> bool {
         match value.ty() {
             Ty::Union(members) => members.iter().all(|ty| self.proof_storage(ty)),
-            Ty::Plane(_) => false,
+            Ty::Plane(_) | Ty::Owner(_) => false,
             Ty::Record(name) => erased_type(&Type::Named(name), self.declarations.structs),
             Ty::Array(element, _) => self.erased_ty(&element),
             Ty::Ref(_) => true,
@@ -809,7 +820,7 @@ impl<'a> Context<'a> {
     fn erased_ty(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Union(members) => members.iter().all(|ty| self.proof_storage(ty)),
-            Ty::Plane(_) => false,
+            Ty::Plane(_) | Ty::Owner(_) => false,
             Ty::Record(name) => erased_type(&Type::Named(name.clone()), self.declarations.structs),
             Ty::Array(element, _) => self.erased_ty(element),
             Ty::Ref(_) => true,
@@ -1053,6 +1064,8 @@ impl<'a> Context<'a> {
                         symbol_weight(project(self.storage.memory.read(*reference)?, fields)?)?
                     } else if let Symbol::Plane(_, reference) = value {
                         symbol_weight(self.storage.memory.read(*reference)?)?
+                    } else if let Symbol::Owner(_, owner) = value {
+                        symbol_weight(self.storage.memory.read(owner.reference())?)?
                     } else {
                         0
                     };
@@ -1067,6 +1080,8 @@ impl<'a> Context<'a> {
                 targets.push((name.clone(), *reference, fields.clone()));
             } else if let Symbol::Plane(_, reference) = value {
                 targets.push((name.clone(), *reference, Vec::new()));
+            } else if let Symbol::Owner(_, owner) = value {
+                targets.push((name.clone(), owner.reference(), Vec::new()));
             }
         }
         for (name, reference, fields) in targets {
@@ -1080,6 +1095,7 @@ impl<'a> Context<'a> {
                 memory: self.snapshot_memory()?,
                 facts: self.proof.subjects.snapshot(),
                 module: self.locals.module.clone(),
+                censuses: self.censuses.clone(),
             }))
         } else {
             None
@@ -1094,7 +1110,7 @@ impl<'a> Context<'a> {
         match &expression.kind {
             Kind::Call(name, args) => {
                 let scalar_call = MachineInt::parse(name).is_some()
-                    || matches!(name.as_str(), "integer" | "nat")
+                    || matches!(name.as_str(), "integer" | "nat" | "owners")
                     || self
                         .declarations
                         .functions
@@ -1152,6 +1168,7 @@ impl<'a> Context<'a> {
         std::mem::swap(&mut self.locals.places, &mut entry.roots);
         std::mem::swap(&mut self.storage.memory, &mut entry.memory);
         std::mem::swap(&mut self.locals.module, &mut entry.module);
+        std::mem::swap(&mut self.censuses, &mut entry.censuses);
         let live_state = self.proof.subjects.snapshot();
         self.proof.subjects.restore(entry.facts.clone());
         let facts = std::mem::take(&mut self.proof.facts);
@@ -1169,6 +1186,7 @@ impl<'a> Context<'a> {
         std::mem::swap(&mut self.locals.places, &mut entry.roots);
         std::mem::swap(&mut self.storage.memory, &mut entry.memory);
         std::mem::swap(&mut self.locals.module, &mut entry.module);
+        std::mem::swap(&mut self.censuses, &mut entry.censuses);
         entry.facts = self.proof.subjects.snapshot();
         self.proof.subjects.restore(live_state);
         self.entry.memory = Some(entry);
@@ -1281,6 +1299,13 @@ impl<'a> Context<'a> {
                 heap::payload_layout(t, self.declarations.structs)?;
                 Ok(Ty::Plane(Box::new(self.resolve(t)?)))
             }
+            Type::Owner(t) => {
+                if !runtime_type(t, self.declarations.structs) || !heap::payload_type(t, self.declarations.structs) {
+                    return Err("owning references require runtime payloads without borrowed references".into());
+                }
+                heap::payload_layout(t, self.declarations.structs)?;
+                Ok(Ty::Owner(Box::new(self.resolve(t)?)))
+            }
             Type::Named(n) => {
                 if !self.declarations.structs.contains_key(n) {
                     return Err(format!(
@@ -1326,6 +1351,7 @@ impl<'a> Context<'a> {
             | (Ty::Unit, Ty::Unit) => Ok(()),
             (Ty::Ref(a), Ty::Ref(b)) => self.compatible(a, b, line),
             (Ty::Plane(a), Ty::Plane(b)) => self.compatible(a, b, line),
+            (Ty::Owner(a), Ty::Owner(b)) => self.compatible(a, b, line),
             (Ty::Machine(a), Ty::Machine(b)) if a == b => Ok(()),
             (Ty::Record(a), Ty::Record(b)) if a == b => Ok(()),
             (Ty::Array(a, n), Ty::Array(b, m)) => {
@@ -1362,6 +1388,7 @@ impl<'a> Context<'a> {
                 Ok(Symbol::Number(Ty::Machine(*t), n))
             }
             Ty::Unit => Ok(Symbol::Unit),
+            Ty::Owner(t) => self.arbitrary_owner(t),
             Ty::Plane(t) => {
                 if let Ty::Array(element, length) = t.as_ref() {
                     let syntax = heap::syntax_type(element, 0)?;
@@ -1968,6 +1995,7 @@ impl<'a> Context<'a> {
             | (Symbol::Bool(_), Symbol::Bool(_))
             | (Symbol::Ref(..), Symbol::Ref(..))
             | (Symbol::Plane(..), Symbol::Plane(..))
+            | (Symbol::Owner(..), Symbol::Owner(..))
             | (Symbol::Unit, Symbol::Unit) => Ok(true),
             _ => Ok(false),
         }
@@ -2049,6 +2077,9 @@ impl<'a> Context<'a> {
                 let (r, path) = match self.pointer_operand(x)? {
                     Symbol::Ref(_, r, path) => (r, path),
                     Symbol::Plane(_, r) => (r, Vec::new()),
+                    Symbol::Owner(_, owner) => {
+                        (self.storage.memory.borrow_owned(owner)?, Vec::new())
+                    }
                     _ => return Err("dereference requires a reference or owned plane".into()),
                 };
                 self.storage.memory.read(r)?;
@@ -2085,6 +2116,7 @@ impl<'a> Context<'a> {
             Type::Named(n) => Some(Ty::Record(n.clone())),
             Type::Ref(t) => Self::declared_hint(t).map(|t| Ty::Ref(Box::new(t))),
             Type::Plane(t) => Self::declared_hint(t).map(|t| Ty::Plane(Box::new(t))),
+            Type::Owner(t) => Self::declared_hint(t).map(|t| Ty::Owner(Box::new(t))),
             Type::Array(element, count) => Some(Ty::Array(
                 Box::new(Self::declared_hint(element)?),
                 Linear::number(crate::compiler::layout::array_length(count).ok()? as i128),
@@ -2122,6 +2154,12 @@ impl<'a> Context<'a> {
                     project(self.storage.memory.read(*reference).ok()?, path).ok()
                 }
                 Symbol::Plane(_, reference) => self.storage.memory.read(*reference).ok(),
+                Symbol::Owner(_, owner) => self
+                    .storage
+                    .memory
+                    .borrow_owned(*owner)
+                    .ok()
+                    .and_then(|reference| self.storage.memory.read(reference).ok()),
                 _ => None,
             },
             Kind::Index(base, index) => {
@@ -2161,6 +2199,27 @@ impl<'a> Context<'a> {
                 MachineInt::parse(name).map(Ty::Machine)
             }
             Kind::Call(name, _) if name == "nat" => Some(Ty::Nat),
+            Kind::Call(name, _) if name == "owners" => Some(Ty::Nat),
+            Kind::Call(name, args)
+                if args.len() == 1
+                    && matches!(
+                        name.as_str(),
+                        "share_owner" | "duplicate_owner" | "release_owner" | "recover_owner"
+                    ) =>
+            {
+                let ty = self.hint(&args[0])?;
+                match (name.as_str(), ty) {
+                    ("share_owner", Ty::Plane(inner)) => Some(Ty::Owner(inner)),
+                    ("recover_owner", Ty::Owner(inner)) => Some(Ty::Plane(inner)),
+                    ("duplicate_owner", Ty::Ref(inner))
+                        if matches!(inner.as_ref(), Ty::Owner(_)) =>
+                    {
+                        Some(*inner)
+                    }
+                    ("release_owner", Ty::Owner(_)) => Some(Ty::Unit),
+                    _ => None,
+                }
+            }
             Kind::Call(name, _) if name == "integer" => Some(Ty::Int),
             Kind::Call(name, args) if name == "alloc" && args.len() == 1 => {
                 self.hint(&args[0]).map(|t| Ty::Plane(Box::new(t)))
@@ -2172,7 +2231,7 @@ impl<'a> Context<'a> {
             Kind::Unary(op, x) if op == "*" => {
                 let pointer = self.hint(x)?;
                 match pointer.pointer_member()? {
-                    Ty::Ref(t) | Ty::Plane(t) => Some(*t.clone()),
+                    Ty::Ref(t) | Ty::Plane(t) | Ty::Owner(t) => Some(*t.clone()),
                     _ => None,
                 }
             }
@@ -2309,7 +2368,7 @@ impl<'a> Context<'a> {
     fn symbol_is_move_only(&self, value: &Symbol) -> bool {
         match value {
             Symbol::Union { .. } | Symbol::Shape(_) => true,
-            Symbol::Plane(..) => true,
+            Symbol::Plane(..) | Symbol::Owner(..) => true,
             Symbol::Record(n, _) => is_move_only(
                 &Type::Named(n.clone()),
                 self.declarations.structs,
@@ -2327,7 +2386,7 @@ impl<'a> Context<'a> {
     fn ty_is_move_only(&self, t: &Ty) -> bool {
         match t {
             Ty::Union(_) | Ty::Shape(_) => true,
-            Ty::Plane(_) => true,
+            Ty::Plane(_) | Ty::Owner(_) => true,
             Ty::Record(n) => is_move_only(
                 &Type::Named(n.clone()),
                 self.declarations.structs,
@@ -2360,14 +2419,14 @@ impl<'a> Context<'a> {
                 Type::Named(name) => structs.get(name).is_some_and(|definition| {
                     definition.fields.iter().all(|(_, ty)| fields(ty, structs))
                 }),
-                Type::Ref(_) | Type::Plane(_) | Type::Array(..) => false,
+                Type::Ref(_) | Type::Plane(_) | Type::Owner(_) | Type::Array(..) => false,
                 _ => true,
             }
         }
         match t {
             Ty::Union(_) | Ty::Shape(_) | Ty::Type => false,
             Ty::Record(name) => fields(&Type::Named(name.clone()), self.declarations.structs),
-            Ty::Ref(_) | Ty::Plane(_) | Ty::Array(..) => false,
+            Ty::Ref(_) | Ty::Plane(_) | Ty::Owner(_) | Ty::Array(..) => false,
             _ => true,
         }
     }
@@ -2378,7 +2437,7 @@ impl<'a> Context<'a> {
 
     fn ty_has_reference(&self, t: &Ty) -> bool {
         match t {
-            Ty::Ref(_) | Ty::Plane(_) => true,
+            Ty::Ref(_) | Ty::Plane(_) | Ty::Owner(_) => true,
             Ty::Union(members) => members.iter().any(|ty| self.ty_has_reference(ty)),
             Ty::Array(element, _) => self.ty_has_reference(element),
             Ty::Record(name) => {
@@ -3144,7 +3203,9 @@ fn check_type_expansion(structs: &[Struct]) -> Result<()> {
     fn cost(t: &Type, known: &BTreeMap<String, (usize, usize)>) -> (usize, usize) {
         let (nodes, depth) = match t {
             Type::Named(n) => known.get(n).copied().unwrap_or((1, 1)),
-            Type::Ref(t) | Type::Plane(t) | Type::Array(t, _) | Type::Shape(t) => cost(t, known),
+            Type::Ref(t) | Type::Plane(t) | Type::Owner(t) | Type::Array(t, _) | Type::Shape(t) => {
+                cost(t, known)
+            }
             Type::Union(members) => members.iter().fold((0usize, 0usize), |(nodes, depth), ty| {
                 let (child_nodes, child_depth) = cost(ty, known);
                 (nodes.saturating_add(child_nodes), depth.max(child_depth))
