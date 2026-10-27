@@ -162,7 +162,7 @@ impl Context<'_> {
         if args.len() != 1 {
             return Err("alloc expects a payload, or a count and initial element".into());
         }
-        let hint = match expected {
+        let hint = match expected.and_then(Ty::pointer_member) {
             Some(Ty::Unique(inner) | Ty::Shared(inner)) => Some(inner.as_ref()),
             _ => None,
         };
@@ -191,7 +191,7 @@ impl Context<'_> {
     ) -> Result<Symbol> {
         let count_type = Ty::Machine(MachineInt::parse("usize").unwrap());
         let count = self.eval(&args[0], Some(&count_type))?.number()?;
-        let hint = match expected {
+        let hint = match expected.and_then(Ty::pointer_member) {
             Some(Ty::Unique(inner) | Ty::Shared(inner)) => match inner.as_ref() {
                 Ty::Array(element, _) => Some(element.as_ref()),
                 _ => None,

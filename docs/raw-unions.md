@@ -88,9 +88,27 @@ destructor once; an empty container has no payload cleanup. Native compilation
 orders ordinary calls together with implicit cleanup dependencies, including
 helpers that themselves release owned payloads.
 
+An existing union slot can now be initialized when its current active member is
+proved to be a shape. This works for local slots, record fields, and declared
+write footprints through references. `examples/slot_initialization.evg` defines
+a generic source initializer for `T | shape(T)` and initializes an owning byte
+pointer without creating a copy of that owner. The declared union layout stays
+unchanged; aliases to the union slot observe its new active type.
+
+The empty-member obligation is checked after evaluating the replacement. If the
+right-hand side initializes the same slot first, the outer assignment cannot
+overwrite its now-live payload. Each write advances the affected plane's proof
+state and rechecks enclosing requirements. A past empty-slot proof cannot
+authorize a second initialization. Union-write calls recheck their actual bodies
+so a summary cannot replace the slot with an unrelated invented payload.
+
+This is initialization without old-payload cleanup, not arbitrary replacement
+of an initialized union. Moving a member out and leaving its shape in the slot
+remains the next storage transition to implement.
+
 Borrowed-reference members remain rejected until return-plane contracts and
 conditional borrow footprints describe their provenance. Joining two different
-allocations in the same member, general member replacement through a borrowed
+allocations in the same member, initialized-member replacement through a borrowed
 union, partial initialization of enclosing records, dynamic array member
 interpretation, and generic Option remain work in progress. Member cases are
 bounded and currently elaborated eagerly; deferred member constraints are also

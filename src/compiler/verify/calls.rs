@@ -433,6 +433,9 @@ impl<'a> Context<'a> {
             }
         }
         let heap_call = heap::function_uses_planes(f, self.declarations.structs);
+        // Raw union transitions transfer real payloads. Recheck their bodies
+        // rather than replacing the target with an unrelated arbitrary member.
+        let union_write = writes.iter().any(|write| matches!(*write.ty, Ty::Union(_)));
         let deferred_ports = f
             .params
             .iter()
@@ -446,6 +449,7 @@ impl<'a> Context<'a> {
         }
         let value = if overlaps
             || heap_call
+            || union_write
             || deferred_ports
             || conditional_ports
             || !self.storage.opened_planes.is_empty() && !f.modifies.is_empty()
@@ -454,6 +458,8 @@ impl<'a> Context<'a> {
                 "overlaps incoming references"
             } else if heap_call {
                 "uses owned planes"
+            } else if union_write {
+                "changes raw union storage"
             } else if deferred_ports {
                 "observes deferred reference ports"
             } else if conditional_ports {

@@ -42,6 +42,11 @@ sparse tracking of `T | shape(T)`, checked initialization transitions, consuming
 element access, and cleanup of exactly the initialized prefix. Those rules must
 be general storage rules rather than Vec-specific compiler behavior.
 
+Initialization of an existing union slot with a proved active shape is now
+available independently of Vec; see [slot_initialization.evg](../examples/slot_initialization.evg).
+Sparse repeated uninitialized storage and extracting a member while leaving its
+shape are still unfinished.
+
 Run [vec_generic.evg](../examples/vec_generic.evg) with:
 
 ```sh

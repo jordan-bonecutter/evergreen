@@ -172,6 +172,7 @@ impl Context<'_> {
         self.compatible(&value.ty(), &old.ty(), line)?;
         if self.has_runtime_cleanup(&old.ty())
             && !(self.execution.phase == Phase::Ideal && self.erased_value(&old))
+            && !self.uninitialized_union(&old, line)?
         {
             return Err("overwriting owned fields through references requires ownership effect proofs; unsupported".into());
         }

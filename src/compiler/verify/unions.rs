@@ -64,6 +64,29 @@ pub(super) fn observations_equal(a: &Symbol, b: &Symbol) -> Result<Formula> {
 }
 
 impl Context<'_> {
+    // A declared union can reserve storage without containing a live payload.
+    // Unlike replacing an initialized member, this transition has no cleanup.
+    pub(super) fn uninitialized_union(&mut self, value: &Symbol, line: usize) -> Result<bool> {
+        let Symbol::Union {
+            members, active, ..
+        } = value
+        else {
+            return Ok(false);
+        };
+        let mut empty = Formula::False;
+        for (index, member) in members.iter().enumerate() {
+            if matches!(member, Ty::Shape(_)) {
+                empty = empty.or(equal(active, &Linear::number(index as i128))?);
+            }
+        }
+        self.prove(
+            &empty,
+            "raw union replacement requires a current uninitialized shape member",
+            line,
+        )?;
+        Ok(true)
+    }
+
     // Observing a pointer header to follow it does not move the owner. The
     // resulting place names its existing allocation, never the union's bytes.
     pub(super) fn pointer_operand(&mut self, expression: &Expr) -> Result<Symbol> {

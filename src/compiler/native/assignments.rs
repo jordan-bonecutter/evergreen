@@ -19,7 +19,9 @@ impl Emitter<'_> {
         let pointer = self.allocate(&pointer_ty)?;
         self.copy_frame(pointer, &pointer_ty)?;
         self.expr(value, Some(&ty))?;
-        if self.has_drop(&ty) {
+        // Live union replacement is admitted only for a proved shape member. No
+        // payload exists to drop, and the active selector is erased.
+        if self.has_drop(&ty) && !matches!(ty, Type::Union(_)) {
             let new_value = self.allocate(&ty)?;
             self.copy_frame(new_value, &ty)?;
             if let Some(owner) = owner {

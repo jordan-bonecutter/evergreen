@@ -827,7 +827,7 @@ impl Emitter<'_> {
                 self.allocate_filled(args, expected)?
             }
             Kind::Call(name, args) if name == "alloc" => {
-                let hint = match expected {
+                let hint = match expected.and_then(Type::pointer_member) {
                     Some(Type::Unique(inner) | Type::Shared(inner)) => Some(inner.as_ref()),
                     _ => None,
                 };

@@ -524,6 +524,7 @@ impl Evaluator<'_> {
             let new = self.expr(value, env, old.hint().as_ref())?;
             let id = self.memory.plane(r)?;
             let mut root = copy_value(self.memory.read(r)?, &mut self.fuel)?;
+            check_union_initialization(project(&root, &path)?)?;
             replace_projection(&mut root, &path, new)?;
             let replace_plane = !same_layout(&old, project(&root, &path)?);
             self.memory
@@ -594,7 +595,11 @@ impl Evaluator<'_> {
         } else {
             old
         };
-        if old_live && (self.value_is_move_only(&old) || Self::contains_shared(&old)) {
+        let empty_union = old_live && check_union_initialization(&old)?;
+        if old_live
+            && !empty_union
+            && (self.value_is_move_only(&old) || Self::contains_shared(&old))
+        {
             let old_copy = copy_value(&old, &mut self.fuel)?;
             self.drop_value(old_copy)?;
         }
@@ -906,7 +911,7 @@ impl Evaluator<'_> {
                     let count =
                         usize::try_from(self.expr(&args[0], env, Some(&count_type))?.number()?)
                             .map_err(|_| "invalid allocation count")?;
-                    let hint = match expected {
+                    let hint = match expected.and_then(Type::pointer_member) {
                         Some(Type::Unique(inner) | Type::Shared(inner)) => match inner.as_ref() {
                             Type::Array(element, _) => Some(element.as_ref()),
                             _ => None,
@@ -949,7 +954,7 @@ impl Evaluator<'_> {
                     return Ok(Value::Unique(Box::new(ty), self.memory.borrow(plane)?));
                 }
                 if name == "alloc" {
-                    let hint = match expected {
+                    let hint = match expected.and_then(Type::pointer_member) {
                         Some(Type::Unique(inner) | Type::Shared(inner)) => Some(inner.as_ref()),
                         _ => None,
                     };
@@ -1129,6 +1134,14 @@ fn root_name(e: &Expr) -> Result<String> {
         Kind::Name(n) => Ok(n.clone()),
         Kind::Field(b, _) => root_name(b),
         _ => Err("not a local place".into()),
+    }
+}
+
+fn check_union_initialization(value: &Value) -> Result<bool> {
+    match value {
+        Value::Union(_, payload) if matches!(payload.as_ref(), Value::Shape(_)) => Ok(true),
+        Value::Union(..) => Err("raw union replacement requires an uninitialized shape member: compiler/runtime disagreement".into()),
+        _ => Ok(false),
     }
 }
 

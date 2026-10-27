@@ -43,7 +43,7 @@ impl Emitter<'_> {
         self.expr(&args[0], Some(&count_type))?;
         let count = self.allocate(&count_type)?;
         self.copy_frame(count, &count_type)?;
-        let hint = match expected {
+        let hint = match expected.and_then(Type::pointer_member) {
             Some(Type::Unique(inner) | Type::Shared(inner)) => match inner.as_ref() {
                 Type::Array(element, _) => Some(element.as_ref()),
                 _ => None,

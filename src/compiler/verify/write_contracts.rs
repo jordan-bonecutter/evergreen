@@ -170,6 +170,7 @@ impl Context<'_> {
             return Err("ideal modifies must target proof storage; erased references do not grant writes to runtime pointees".into());
         }
         let supported_region = match &*place.ty {
+            Ty::Union(members) => members.iter().any(|member| matches!(member, Ty::Shape(_))),
             Ty::Machine(_) | Ty::Bool => true,
             Ty::Nat | Ty::Int => erased,
             Ty::Record(_) => {

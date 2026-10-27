@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn raw_union_shape_storage_can_be_initialized_without_cleanup() {
+    for source in [
+        include_str!("../../../../examples/slot_initialization.evg"),
+        "fn main() -> usize {let slot: unique(usize) | shape(unique(usize)) = shape(unique(usize)); slot = alloc(42); let value: unique(usize) = slot; *value}",
+        "type Slot struct {data: unique(usize) | shape(unique(usize))} fn main() -> usize {let slot = Slot {data: shape(unique(usize))}; slot.data = alloc(42); let Slot {data} = slot; let value: unique(usize) = data; *value}",
+        "type Resource struct {tag: usize} impl Drop for Resource {fn drop(self) {}} fn main() -> usize {let slot: Resource | shape(Resource) = shape(Resource); slot = Resource {tag: 42}; let value: Resource = slot; value.tag}",
+    ] {
+        let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
+    }
+}
+
+#[test]
+fn raw_union_initialization_requires_current_empty_storage() {
+    for source in [
+        "fn main() {let slot: unique(usize) | shape(unique(usize)) = alloc(7); slot = alloc(42);}",
+        "fn init(slot: &(unique(usize) | shape(unique(usize))), value: unique(usize)) modifies(slot) {*slot = value;} fn main() {}",
+        "fn main() {let slot: unique(usize) | shape(unique(usize)) = shape(unique(usize)); let view = &slot; proof was_empty: typeof(*view) == shape(unique(usize)); *view = alloc(7); *view = alloc(42);}",
+        "fn fill(slot: &(unique(usize) | shape(unique(usize)))) -> unique(usize) where typeof(*slot) == shape(unique(usize)) modifies(slot) ensures typeof(*slot) == unique(usize) {*slot = alloc(7); alloc(42)} fn main() {let slot: unique(usize) | shape(unique(usize)) = shape(unique(usize)); let view = &slot; *view = fill(view);}",
+    ] {
+        let error = verify(source).unwrap_err();
+        assert!(error.contains("raw union replacement requires a current uninitialized shape member"), "{error}");
+    }
+    let dependent = "type Slot struct {empty: bool, data: unique(usize) | shape(unique(usize))} where empty == (typeof(data) == shape(unique(usize))); fn main() {let slot = Slot {empty: true, data: shape(unique(usize))}; slot.data = alloc(42);}";
+    assert!(
+        verify(dependent).is_err(),
+        "initialization forgot its enclosing invariant"
+    );
+    let missing_effect = "fn init(slot: &(unique(usize) | shape(unique(usize))), value: unique(usize)) where typeof(*slot) == shape(unique(usize)) {*slot = value;} fn main() {}";
+    assert!(verify(missing_effect)
+        .unwrap_err()
+        .contains("effect contract"));
+}
+
+#[test]
 fn source_destructors_dispose_only_the_active_allocation_and_its_payload() {
     let source = include_str!("../../../../examples/raw_union_owner_drop.evg");
     let (program, bundle) = prove(source).unwrap();

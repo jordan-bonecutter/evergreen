@@ -1,0 +1,16 @@
+// A shape reserves storage without granting a live payload or destruction work.
+fn initialize<T>(slot: &(T | shape(T)), value: T)
+where typeof(*slot) == shape(T)
+modifies(slot)
+ensures typeof(*slot) == T {
+    *slot = value;
+}
+
+fn main() -> u8 {
+    let slot: unique(u8) | shape(unique(u8)) = shape(unique(u8));
+    let view = &slot;
+    initialize::<unique(u8)>(view, alloc(42));
+    proof initialized: typeof(*view) == unique(u8);
+    let value: unique(u8) = slot;
+    *value
+}
