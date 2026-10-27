@@ -42,8 +42,11 @@ mod proofs;
 mod proposition;
 use proposition::Formula;
 mod references;
+#[cfg(test)]
+pub(crate) mod replacement_tests;
 mod returns;
 mod state;
+mod storage_layout;
 mod subjects;
 mod summaries;
 mod unions;
@@ -1336,6 +1339,9 @@ impl<'a> Context<'a> {
             Type::Plane(inner) => Ok(self
                 .literal_element_hint(inner)?
                 .map(|t| Ty::Plane(Box::new(t)))),
+            Type::Owner(inner) => Ok(self
+                .literal_element_hint(inner)?
+                .map(|t| Ty::Owner(Box::new(t)))),
             _ => self.resolve(t).map(Some),
         }
     }
@@ -1603,9 +1609,16 @@ impl<'a> Context<'a> {
         if !fields.is_empty() && !old_live {
             return Err(format!("line {}: field assignment cannot restore shape(T); replace consumed owner {name} as a whole", place.line));
         }
-        if old_live && self.symbol_is_move_only(&old) {
+        let cleaned_old = old_live && self.symbol_is_move_only(&old);
+        if cleaned_old {
             self.validate_argument(&old, place.line)?;
-            self.cleanup_value(old, place.line)?;
+            // The old slot remains observable during its destructor. Validate
+            // retained caller views after installing the replacement, when the
+            // destroyed old payload no longer inhabits that slot.
+            self.execution.replacing_cleanup += 1;
+            let cleanup = self.cleanup_value(old, place.line);
+            self.execution.replacing_cleanup -= 1;
+            cleanup?;
         }
         let mut root = if let Some(value) = self
             .locals
@@ -1640,7 +1653,11 @@ impl<'a> Context<'a> {
         }
         self.retained_valid_with(&root, place.line, &lifted)?;
         self.locals.values.insert(name, root);
-        self.validate_opened_planes(place.line)
+        self.validate_opened_planes(place.line)?;
+        if cleaned_old {
+            self.finish_replacement_cleanup(place.line)?;
+        }
+        Ok(())
     }
 
     fn statement(&mut self, s: &Statement) -> Result<()> {
@@ -1752,12 +1769,6 @@ impl<'a> Context<'a> {
                         .is_some_and(|method| {
                             self.execution.current.as_ref() == Some(&method.name)
                         });
-                if self.declarations.drops.contains(record) && !drop_receiver {
-                    return Err(format!(
-                        "line {}: destructuring {record} would bypass its Drop implementation",
-                        value.line
-                    ));
-                }
                 let expected = def
                     .fields
                     .iter()
@@ -1922,83 +1933,6 @@ impl<'a> Context<'a> {
             _ => {}
         }
         Ok(())
-    }
-
-    fn same_layout(&mut self, a: &Symbol, b: &Symbol) -> Result<bool> {
-        match (a, b) {
-            (Symbol::Union { members: a, .. }, Symbol::Union { members: b, .. }) => Ok(a == b),
-            (Symbol::Shape(a), Symbol::Shape(b)) => Ok(a == b),
-            (Symbol::Record(an, a), Symbol::Record(bn, b)) => {
-                if an != bn || a.len() != b.len() {
-                    return Ok(false);
-                }
-                for (name, value) in a {
-                    let Some(other) = b.get(name) else {
-                        return Ok(false);
-                    };
-                    if !self.same_layout(value, other)? {
-                        return Ok(false);
-                    }
-                }
-                Ok(true)
-            }
-            (
-                Symbol::Array {
-                    len: a,
-                    items: av,
-                    element,
-                    identity: ai,
-                    ..
-                },
-                Symbol::Array {
-                    len: b,
-                    items: bv,
-                    identity: bi,
-                    ..
-                },
-            ) => {
-                self.work.obligations += 1;
-                for path in extend(
-                    &self.proof.paths,
-                    &equal(a, b)?,
-                    true,
-                    self.session,
-                    &mut self.work.value_work,
-                )?
-                .iter()
-                {
-                    if !self.session.probe(path)? {
-                        return Ok(false);
-                    }
-                }
-                match (av, bv) {
-                    (Some(a), Some(b)) => {
-                        if a.len() != b.len() {
-                            return Ok(false);
-                        }
-                        for (a, b) in a.iter().zip(b) {
-                            if !self.same_layout(a, b)? {
-                                return Ok(false);
-                            }
-                        }
-                        Ok(true)
-                    }
-                    _ => Ok(ai == bi
-                        || self.history_element(element)
-                        || matches!(
-                            **element,
-                            Ty::Int | Ty::Nat | Ty::Machine(_) | Ty::Bool | Ty::Ref(_) | Ty::Unit
-                        )),
-                }
-            }
-            (Symbol::Number(_, _), Symbol::Number(_, _))
-            | (Symbol::Bool(_), Symbol::Bool(_))
-            | (Symbol::Ref(..), Symbol::Ref(..))
-            | (Symbol::Plane(..), Symbol::Plane(..))
-            | (Symbol::Owner(..), Symbol::Owner(..))
-            | (Symbol::Unit, Symbol::Unit) => Ok(true),
-            _ => Ok(false),
-        }
     }
 
     fn location(&mut self, e: &Expr) -> Result<(Reference, Vec<Projection<Linear>>)> {

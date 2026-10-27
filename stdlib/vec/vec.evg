@@ -1,19 +1,41 @@
 // An owned vector of initialized machine words. Capacity changes are explicit.
 module vec;
+
+// A target-sized word whose only value is zero.
+type Zero struct {word: usize} where word == 0;
+impl Copy for Zero {}
 opaque type Vec struct {
     cap: usize,
     len: usize,
-    data: plane(usize, cap)
+    data: Zero | plane(usize, cap)
 } where (
     fact length_fits = len <= cap;
-    length_fits
+    fact storage_matches_capacity = (cap == 0) == (typeof(data) == Zero);
+    length_fits && storage_matches_capacity
 );
+
+fn allocate_buffer(capacity: usize) -> plane(usize, capacity)
+where(capacity > 0 && integer(capacity) * 8 <= integer(isize::MAX)) {
+    alloc(capacity, 0)
+}
 
 fn new(capacity: usize) -> Vec
 where(integer(capacity) * 8 <= integer(isize::MAX))
 ensures(result.len == 0 && result.cap == capacity) {
-    let data: plane(usize, capacity) = alloc(capacity, 0);
+    let data: Zero | plane(usize, capacity) = if capacity == 0 {
+        Zero {word: 0}
+    } else {allocate_buffer(capacity)};
     Vec {cap: capacity, len: 0, data: data}
+}
+
+fn discard_zero(value: Zero) {}
+fn discard_buffer(ideal n: nat, value: plane(usize, n)) {}
+
+impl Drop for Vec {
+    fn drop(self) {
+        let Vec {cap, len, data} = self;
+        if cap == 0 {discard_zero(data)} else {discard_buffer(data)}
+    }
 }
 
 fn length(value: &Vec) -> usize
@@ -69,10 +91,13 @@ modifies(target) {
 fn reallocate(value: &Vec, new_capacity: usize) -> Vec
 where(value.len <= new_capacity && integer(new_capacity) * 8 <= integer(isize::MAX))
 ensures(result.len == value.len && result.cap == new_capacity) {
-    let data: plane(usize, new_capacity) = alloc(new_capacity, 0);
-    copy_prefix(value.cap, &*value.data, new_capacity, &*data,
-        value.len, 0);
-    Vec {cap: new_capacity, len: value.len, data: data}
+    let grown = new(new_capacity);
+    if value.len == 0 {()} else {
+        copy_prefix(value.cap, &*value.data, new_capacity, &*grown.data,
+            value.len, 0)
+    };
+    grown.len = value.len;
+    grown
 }
 
 // Inherent methods use the same checked operations as the function interface.
@@ -115,9 +140,11 @@ impl Vec {
         reallocate(self, new_capacity)
     }
 
-    // Consume the header while transferring the same allocation to the caller.
-    method into_data() -> plane(usize, self.cap) {
+    // Complete consumption transfers the live allocation; an empty vector has
+    // no allocated plane to return.
+    method into_data() -> plane(usize, self.cap) where self.cap > 0 {
         let Vec {cap, len, data} = self;
         data
     }
+
 }

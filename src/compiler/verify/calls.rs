@@ -213,9 +213,22 @@ impl<'a> Context<'a> {
                 Type::Bool => Some(Ty::Bool),
                 Type::Machine(t) => Some(Ty::Machine(*t)),
                 Type::Union(_) | Type::Shape(_) => Self::declared_hint(t),
-                Type::Plane(_) => self.literal_element_hint(t)?,
+                Type::Plane(_) | Type::Owner(_) => self.literal_element_hint(t)?,
                 _ => Self::declared_hint(t),
             };
+            // A dependent formal may not yet have its length parameter. Select
+            // the actual union's checked pointer member first; callee binding
+            // still checks element type and extent in the full parameter scope.
+            let hint = hint.or_else(|| {
+                let actual = self.hint(arg)?;
+                let pointer = actual.pointer_member()?;
+                match (t, pointer) {
+                    (Type::Plane(_), Ty::Plane(_)) | (Type::Owner(_), Ty::Owner(_)) => {
+                        Some(pointer.clone())
+                    }
+                    _ => None,
+                }
+            });
             if f.pre.is_some()
                 || !self.proof.claims.is_empty()
                 || self

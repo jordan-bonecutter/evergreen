@@ -194,6 +194,9 @@ fn native_execution_agrees_with_the_interpreter() {
         "type Size struct {len: usize} fn first(size: &Size, data: linear_plane(usize, size.len)) -> usize where(size.len > 0) {(*data)[0]} fn main() -> usize {let size = Size {len: 1}; let data: array(usize, 1) = [42]; first(&size, &data)}",
         "type Inner struct {value: usize} type Outer struct {inner: plane(Inner)} fn main() -> usize {let outer = alloc(Outer {inner: alloc(Inner {value: 41})}); let a = &outer; let b = &a; b.inner.value = 42; b.inner.value}",
         include_str!("../../../examples/vec.evg"),
+        crate::compiler::verify::replacement_tests::OLD_SLOT_DURING_DROP,
+        "fn main() -> usize {let values = vec::Vec::new(0); let header = &values; values = values.reallocate(4); proof grown: header.capacity() == 4; values.push(42); values = values.reallocate(8); proof grown_again: header.capacity() == 8; values.pop()}",
+        "fn main() -> usize {let values = vec::Vec::new(1); values.push(42); let removed = values.pop(); values = values.reallocate(0); values = values.reallocate(0); proof empty: values.capacity() == 0; removed}",
         "fn main() -> usize {let a: plane(usize, 9000) = alloc(9000, 42); (*a)[8999]}",
         "fn main() -> usize {let v = vec::new(9000); vec::push(&v, 42); vec::pop(&v)}",
         "fn consume(owner: plane(usize, count), count: usize) -> usize where(count > 0) {(*owner)[0]} fn main() -> usize {let count: usize = 7; let owner: plane(usize, 2) = alloc(2, 42); consume(owner, 2)}",
@@ -332,6 +335,12 @@ fn native_execution_agrees_with_the_interpreter() {
         "fn add(a: usize, b: usize) -> usize where (a <= 10 && b <= 10) ensures (result == a + b) {a + b} fn main() -> usize {add(1, add(2, 3))}",
         "fn sum(a: usize,b: usize,c: usize,d: usize,e: usize,f: usize,g: usize,h: usize) -> usize where (a <= 10 && b <= 10 && c <= 10 && d <= 10 && e <= 10 && f <= 10 && g <= 10 && h <= 10) {a+b+c+d+e+f+g+h} fn main() -> usize {sum(1,2,3,4,5,6,7,8)}",
     ].map(str::to_owned).to_vec();
+    cases.push(
+        include_str!("../../../examples/drop_receiver_pattern.evg").replace(
+            "drop(resource);",
+            "let Resource {data, child} = resource; drop(child);",
+        ),
+    );
     cases.push(
         include_str!("../../../examples/drop_receiver_pattern.evg").replace(
             "proof local_owner_is_valid: *data == 42;",

@@ -2474,7 +2474,9 @@ fn complete_patterns_transfer_each_field_without_partial_moves() {
         verify(&source.replace("let b = consume(second);", "let b = consume(first);")).is_err()
     );
     let destructor = "type Guard struct {tag: usize} impl Drop for Guard {fn drop(self) {}} fn main() -> usize {let g = Guard {tag: 7}; let Guard {tag} = g; tag}";
-    assert!(verify(destructor).unwrap_err().contains("bypass"));
+    let (value, events) = verify(destructor).unwrap().run_with_events().unwrap();
+    assert_eq!(value.to_string(), "7");
+    assert!(events.is_empty());
     let ideal = "ideal type Ticket struct {tag: nat} ideal type Pair struct {left: Ticket, right: Ticket} ideal fn split() -> nat {let pair = Pair {left: Ticket {tag: 2}, right: Ticket {tag: 3}}; let Pair {left, right} = pair; left.tag + right.tag}";
     assert!(verify(ideal).is_ok());
     let credits = include_str!("../../../proofs/move_only_credits.evg");
@@ -3413,6 +3415,13 @@ fn destructors_can_decompose_only_their_complete_receiver() {
             .proof_search_count(),
         0
     );
+    let consumed = source.replace(
+        "drop(resource);",
+        "let Resource {data, child} = resource; drop(child);",
+    );
+    let (value, events) = verify(&consumed).unwrap().run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert_eq!(events, ["drop Child"]);
     for bad in [
         source.replace("modifies(self.child.finished)", ""),
         source.replace(
@@ -3427,7 +3436,6 @@ fn destructors_can_decompose_only_their_complete_receiver() {
             "let Resource {data, child} = self;",
             "let Resource {data, child} = self; let Resource {data: again, child: another} = self;",
         ),
-        source.replace("drop(resource);", "let Resource {data, child} = resource;"),
         source
             .replace(
                 "let payload = &*self.data;",

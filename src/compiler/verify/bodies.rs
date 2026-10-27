@@ -11,6 +11,7 @@ impl Context<'_> {
         writes: Vec<WritePlace>,
         inputs: Vec<InputReference>,
     ) -> Result<Symbol> {
+        self.execution.rechecking += 1;
         // The caller has already bound arguments, checked preconditions and
         // authorized every declared write. Isolate lexical proof state and give
         // the body only its own grants, retaining actual plane identities.
@@ -76,6 +77,7 @@ impl Context<'_> {
         self.locals.declaring = declaring;
         self.execution.ideal_execution = ideal_execution;
         self.execution.phase = phase;
+        self.execution.rechecking -= 1;
         checked
     }
 

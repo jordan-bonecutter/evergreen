@@ -340,13 +340,17 @@ mod filled_tests {
         );
         let large = "fn main() -> usize {let a: plane(usize, 9000) = alloc(9000, 42); (*a)[8999]}";
         assert_eq!(verify(large).unwrap().run().unwrap().to_string(), "42");
-        let enormous =
-            "fn main() -> usize {let a: plane(u8, 1000000000) = alloc(1000000000, 0); 42}";
-        assert!(verify(enormous)
-            .unwrap()
-            .run()
-            .unwrap_err()
-            .contains("before allocation"));
+        // Verification and replay must depend on observations and stores, not
+        // the buffer extent. Never execute this allocation in the test runner.
+        let enormous = "fn main() -> usize {let a: plane(u8, 1000000000) = alloc(1000000000, 0); proof last_initialized: (*a)[999999999] == 0; (*a)[17] = 42; proof stored: (*a)[17] == 42; proof untouched: (*a)[0] == 0 && (*a)[999999999] == 0; 42}";
+        let (program, bundle) = prove(enormous).unwrap();
+        assert_eq!(
+            verify_with_certificate(enormous, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        assert!(program.run().unwrap_err().contains("before allocation"));
         let empty = "fn main() -> usize {let a: plane(usize, 0) = alloc(0, 7); let b: plane(usize, 0) = alloc(0, 9); if &*a != &*b {42} else {1}}";
         assert_eq!(verify(empty).unwrap().run().unwrap().to_string(), "42");
     }

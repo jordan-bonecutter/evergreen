@@ -21,6 +21,17 @@ impl Context<'_> {
         let p = self
             .scoped_eval(condition, Some(&Ty::Bool))?
             .proposition()?;
+        // The declaration already checked both branches. A body recheck can
+        // follow an actual, admission-free decision without manufacturing the
+        // allocations or ownership states of an unreachable branch.
+        if self.execution.rechecking != 0 || self.execution.cleanup_depth != 0 {
+            if self.checked_entails(&p)? {
+                return self.scoped_eval(yes, expected);
+            }
+            if self.checked_entails(&p.clone().not())? {
+                return self.scoped_eval(no, expected);
+            }
+        }
         let base = self.proof.paths.clone();
         let control_weight = self
             .proof

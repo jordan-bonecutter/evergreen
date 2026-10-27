@@ -47,7 +47,19 @@ pub(super) fn verify(
                     .insert(record.name.clone(), record.clone());
             }
             crate::compiler::declarations::Declaration::Function(index) => {
-                verification.check_function(&mut functions[index], session)?;
+                let function = &mut functions[index];
+                verification
+                    .check_function(function, session)
+                    .map_err(|error| {
+                        if error.starts_with("line ") {
+                            error
+                        } else {
+                            format!(
+                                "line {}: while checking {}: {error}",
+                                function.line, function.name
+                            )
+                        }
+                    })?;
             }
         }
     }

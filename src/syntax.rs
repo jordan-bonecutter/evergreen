@@ -956,7 +956,7 @@ impl Parser {
     }
 }
 
-fn constant_extent(expression: &Expr) -> bool {
+pub(crate) fn constant_extent(expression: &Expr) -> bool {
     match &expression.kind {
         Kind::Number(_) | Kind::Constant(..) => true,
         Kind::Unary(op, value) if op == "-" => constant_extent(value),

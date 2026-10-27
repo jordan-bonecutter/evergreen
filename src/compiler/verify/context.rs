@@ -48,6 +48,9 @@ pub(super) struct Execution {
     pub(super) partial_execution: bool,
     pub(super) dropping: bool,
     pub(super) cleanup_depth: usize,
+    pub(super) replacing_cleanup: usize,
+    pub(super) rechecking: usize,
+    pub(super) deferred_cleanup_roots: BTreeSet<PlaneId>,
 }
 
 impl Default for Execution {
@@ -60,6 +63,9 @@ impl Default for Execution {
             partial_execution: false,
             dropping: false,
             cleanup_depth: 0,
+            replacing_cleanup: 0,
+            rechecking: 0,
+            deferred_cleanup_roots: BTreeSet::new(),
         }
     }
 }

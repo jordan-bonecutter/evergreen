@@ -322,6 +322,24 @@ impl Context<'_> {
         self.execution.cleanup_depth -= 1;
         let changed =
             checked.map_err(|error| format!("line {line}: cleanup of {name}: {error}"))?;
+        if self.execution.replacing_cleanup != 0 {
+            self.execution.deferred_cleanup_roots.extend(changed);
+            return Ok(());
+        }
+        self.validate_cleanup_roots(changed, line)?;
+        self.validate_live(line)
+    }
+
+    pub(super) fn finish_replacement_cleanup(&mut self, line: usize) -> Result<()> {
+        if self.execution.replacing_cleanup != 0 {
+            return Ok(());
+        }
+        let changed = std::mem::take(&mut self.execution.deferred_cleanup_roots);
+        self.validate_cleanup_roots(changed, line)?;
+        self.validate_live(line)
+    }
+
+    fn validate_cleanup_roots(&mut self, changed: BTreeSet<PlaneId>, line: usize) -> Result<()> {
         for id in changed {
             // A receiver may mutate its owned payload before child cleanup
             // releases it. Only surviving roots have post-state invariants.
@@ -337,6 +355,6 @@ impl Context<'_> {
                 }
             }
         }
-        self.validate_live(line)
+        Ok(())
     }
 }

@@ -210,10 +210,12 @@ state. Their helper callees must be verified before the consuming function.
 Opaque arrays with effectful or reference-dependent element cleanup require
 element summaries and are rejected; known array values are supported.
 
-Receiver invariants must remain valid while the receiver exists. A destructor
-can now consume its entire `self` with a complete record pattern, moving every
-field into a local. The consumed receiver becomes inaccessible; those locals
-receive normal reverse-binding-order cleanup instead of a second parent Drop.
+Receiver invariants must remain valid while the receiver exists. A complete
+record pattern consumes the parent and moves every field into a local, including
+when the parent implements Drop. The parent becomes inaccessible and its Drop
+does not run; the fields receive normal reverse-binding-order cleanup. Opaque
+records still restrict field access to their defining module. A destructor can
+also consume its entire `self` this way, without running a second parent Drop.
 After decomposition, complete local bindings can be moved or explicitly dropped;
 ordinary ownership, liveness, and effect checks still apply. `drop(self)` and
 moving the receiver directly remain rejected. Record construction, other
@@ -1809,6 +1811,15 @@ allocations retain distinct identities and are still releasable. The interpreter
 retains its execution/value-work limits and rejects allocations exceeding its
 remaining work before reserving host storage.
 
+The checker's scalar-array model is sparse. A filled allocation stores one
+initializer and its extent, then records observed indices and immutable stores
+or branch choices as needed. Checking a billion-element buffer does not create a
+billion element facts. Literal arrays still contain their explicit elements.
+Incoming fixed arrays containing references currently materialize their ports,
+with a 2048-element expansion limit; larger ones are rejected. Lazy reference
+ports remain future work. These verification limits are separate from memory
+needed to execute a program.
+
 A formed view keeps its proved extent: assigning a larger value to a length
 variable does not enlarge existing storage or justify a formerly out-of-bounds
 index. Replacing/freeing its allocation invalidates old references as before.
@@ -1821,8 +1832,11 @@ for uninitialized generic element storage or arbitrary resizing in place.
 ### Owned machine-word vector
 
 `stdlib/vec/vec.evg` supplies an initial `vec::Vec` with an opaque three-word
-representation: capacity, length, and an owning pointer whose extent depends on
-capacity. `examples/vec.evg` checks and runs without explicitly supplying library
+representation: capacity, length, and `Zero | plane(usize, cap)`. `Zero` is a
+source-defined, machine-word-sized record constrained to zero. The invariant
+selects `Zero` exactly when capacity is zero; otherwise the pointer's extent
+depends on capacity. The raw union has no runtime discriminator.
+`examples/vec.evg` checks and runs without explicitly supplying library
 files:
 
 ```sh
@@ -1830,7 +1844,9 @@ cargo run -- run examples/vec.evg
 cargo run -- build examples/vec.evg -o /tmp/vec
 ```
 
-`new(capacity)` allocates initialized `usize` storage; `push(&value, item)` requires
+`new(0)` stores a zero word without allocating; positive capacities allocate
+initialized `usize` storage. Its source-defined Drop releases only the allocated
+case. `push(&value, item)` requires
 spare capacity, `pop(&value)` requires a nonempty vector, and `get(&value, index)`
 returns a checked reference to an element below length. `length` and `capacity`
 expose those quantities without exposing the representation. Capacity is bounded
@@ -1838,8 +1854,10 @@ by addressability: `integer(capacity) * 8 <= integer(isize::MAX)` for machine-wo
 Native allocation can still fail at runtime; the interpreter has a separate work
 budget. Neither imposes a 8192-element language limit.
 
-`value = vec::reallocate(&value, new_capacity)` copies the live prefix to a fresh
-allocation and releases the previous buffer on assignment. Existing references
+`value = vec::reallocate(&value, new_capacity)` copies the live prefix to fresh
+storage and releases the previous buffer on assignment. Reallocating an empty
+vector to zero performs no allocation. Borrows of the Vec header remain valid
+across replacement because its storage layout is unchanged. Existing references
 into the released buffer become invalid. Pushes within capacity retain the same
 allocation, preserving references to existing cells. Reallocation must accommodate
 all live elements; shrinking below length is rejected.
@@ -1943,7 +1961,7 @@ are bootstrap compiler resource limits, separate from compiled heap allocation.
 `examples/drop_receiver_pattern.evg` demonstrates complete receiver consumption,
 stable payload borrows, and a child destructor with a checked effect contract.
 It checks and runs without trusted assumptions. Partial/repeated decomposition,
-subsequent receiver access, external bypass of Drop, and omitted cleanup effects
+subsequent receiver access, opaque field access, and omitted cleanup effects
 are rejected. This enables another generic library operation but does not yet
 implement shared owning references or Rc/Arc.
 

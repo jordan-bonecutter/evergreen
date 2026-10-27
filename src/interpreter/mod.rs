@@ -13,6 +13,7 @@ use std::{
 mod atomic;
 mod compat;
 mod ownership;
+mod type_match;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -90,13 +91,21 @@ impl Value {
     fn matches_type(&self, expected: &Type) -> Result<bool> {
         match (self, expected) {
             (Self::Array(actual, items), Type::Array(element, count)) => {
-                let length = crate::compiler::layout::array_length(count)?;
-                if items.len() != length || !crate::compiler::layout::same_type(actual, element)? {
+                if crate::syntax::constant_extent(count)
+                    && items.len() != crate::compiler::layout::array_length(count)?
+                    || !type_match::same_runtime_type(actual, element)?
+                {
                     return Ok(false);
                 }
                 items
                     .iter()
                     .try_fold(true, |same, value| Ok(same && value.matches_type(element)?))
+            }
+            (Self::Plane(actual, _), Type::Plane(expected))
+            | (Self::Owner(actual, _), Type::Owner(expected))
+            | (Self::Ref(actual, _, _), Type::Ref(expected))
+            | (Self::Shape(actual), Type::Shape(expected)) => {
+                type_match::same_runtime_type(actual, expected)
             }
             _ => Ok(self.hint().as_ref() == Some(expected)),
         }
