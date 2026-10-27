@@ -5,6 +5,10 @@
 use super::*;
 use std::collections::BTreeSet;
 
+mod census;
+use census::fresh_revision;
+pub use census::OwnerCensus;
+
 static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,7 +47,9 @@ impl<T> Memory<T> {
             return Err("plane is already managed by owning references".into());
         }
         let token = fresh_token()?;
+        let revision = fresh_revision()?;
         self.planes[id.slot].ownership = Ownership::Shared(BTreeSet::from([token]));
+        self.planes[id.slot].census_revision = revision;
         Ok(OwnedReference { reference, token })
     }
 
@@ -55,15 +61,6 @@ impl<T> Memory<T> {
         }
     }
 
-    /// An observation does not register an owner or consume the observed token.
-    pub fn owner_count(&self, reference: Reference) -> Result<usize, String> {
-        let id = self.plane(reference)?;
-        Ok(match &self.planes[id.slot].ownership {
-            Ownership::Unique => 1,
-            Ownership::Shared(tokens) => tokens.len(),
-        })
-    }
-
     pub fn borrow_owned(&self, owner: OwnedReference) -> Result<Reference, String> {
         self.owner_plane(owner)?;
         Ok(owner.reference)
@@ -72,10 +69,12 @@ impl<T> Memory<T> {
     pub fn duplicate_owner(&mut self, owner: OwnedReference) -> Result<OwnedReference, String> {
         let id = self.owner_plane(owner)?;
         let token = fresh_token()?;
+        let revision = fresh_revision()?;
         let Ownership::Shared(tokens) = &mut self.planes[id.slot].ownership else {
             unreachable!()
         };
         tokens.insert(token);
+        self.planes[id.slot].census_revision = revision;
         Ok(OwnedReference {
             reference: owner.reference,
             token,
@@ -87,10 +86,12 @@ impl<T> Memory<T> {
     /// right to reclaim it through an old PlaneId or a borrowed reference.
     pub fn release_owner(&mut self, owner: OwnedReference) -> Result<(), String> {
         let id = self.owner_plane(owner)?;
+        let revision = fresh_revision()?;
         let Ownership::Shared(tokens) = &mut self.planes[id.slot].ownership else {
             unreachable!()
         };
         tokens.remove(&owner.token);
+        self.planes[id.slot].census_revision = revision;
         Ok(())
     }
 
@@ -104,7 +105,9 @@ impl<T> Memory<T> {
         if tokens.len() != 1 {
             return Err("unique recovery requires exactly one owner".into());
         }
+        let revision = fresh_revision()?;
         self.planes[id.slot].ownership = Ownership::Unique;
+        self.planes[id.slot].census_revision = revision;
         Ok(id)
     }
 }

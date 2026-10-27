@@ -115,6 +115,16 @@ IDs are fresh even across checker snapshots, and state changes in one snapshot
 do not affect another. Tests cover stale/forged identities, cross-plane/arena
 use, duplicate release, re-sharing, and attempted bypass of uniqueness.
 
+The store also exposes immutable `OwnerCensus` observations. They name a live
+plane generation, an ownership revision, and the total registered token count.
+Borrowing and ordinary payload writes preserve that revision. Sharing,
+duplication, release, and uniqueness recovery create fresh revisions, including
+across checker snapshots. Returning to the same numeric count cannot revive an
+old observation. `recover_unique_owner_at` requires both a live owning token
+and a current count-one observation for that exact plane. An observation alone
+grants no ownership. These remain host-side semantics; no source `owners()` API
+or modular abstraction of hidden caller ownership is claimed yet.
+
 A low-level release of the last token leaves an allocated but unowned plane;
 it leaks rather than freeing behind borrows or manufacturing recovery authority.
 A correct library must recover and destroy its final owner instead. This is not

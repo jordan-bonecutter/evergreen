@@ -9,7 +9,7 @@ use std::sync::{
 };
 
 mod owners;
-pub use owners::OwnedReference;
+pub use owners::{OwnedReference, OwnerCensus};
 
 static NEXT_ARENA: AtomicU64 = AtomicU64::new(1);
 
@@ -54,6 +54,7 @@ pub enum Projection<I = usize> {
 #[derive(Clone, Debug)]
 struct Plane<T> {
     ownership: owners::Ownership,
+    census_revision: u64,
     generation: u64,
     value: Option<T>,
 }
@@ -133,6 +134,7 @@ impl<T> Memory<T> {
         self.pad_to(slot);
         self.planes.push(Plane {
             ownership: owners::Ownership::Unique,
+            census_revision: 0,
             generation: 0,
             value: Some(value),
         });
@@ -143,6 +145,7 @@ impl<T> Memory<T> {
         while self.planes.len() < length {
             self.planes.push(Plane {
                 ownership: owners::Ownership::Unique,
+                census_revision: 0,
                 generation: 0,
                 value: None,
             });
