@@ -57,12 +57,12 @@ impl Context<'_> {
         }
         let env = self.clone_env()?;
         let roots = self.locals.places.clone();
-        let store = self.branch_view()?;
+        let mut store = self.branch_view()?;
         self.proof.paths = extend(&base, &p, false, self.session, &mut self.work.value_work)?;
         self.proof.control = Some(control.clone().and(p.clone()));
         let a = self.scoped_eval(yes, expected)?;
         let a_paths = self.proof.paths.clone();
-        let a_store = self.branch_view()?;
+        let mut a_store = self.branch_view()?;
         self.proof.claims = claims.clone();
         self.proof.value_claims = value_claims.clone();
         self.proof.paths = extend(&base, &p, true, self.session, &mut self.work.value_work)?;
@@ -73,7 +73,18 @@ impl Context<'_> {
         self.proof.control = Some(control.clone().and(p.clone().not()));
         let b = self.scoped_eval(no, Some(&a.ty()))?;
         let b_paths = self.proof.paths.clone();
-        let b_store = self.branch_view()?;
+        let mut b_store = self.branch_view()?;
+        // A deferred input was present before the branch even if only one
+        // arm first observed it. Join its actual contents against the initial
+        // recipe in the other arm, rather than treating it as a new allocation.
+        self.charge_value_work(
+            values_weight(self.arrays.initial_planes.values())?.saturating_mul(3),
+        )?;
+        for (&plane, initial) in &self.arrays.initial_planes {
+            store.memory.materialize_input(plane, initial)?;
+            a_store.memory.materialize_input(plane, initial)?;
+            b_store.memory.materialize_input(plane, initial)?;
+        }
         self.proof.claims = claims;
         self.proof.value_claims = value_claims;
         self.proof.paths = base;

@@ -293,6 +293,11 @@ impl Context<'_> {
 
     pub(super) fn allocate_symbol(&mut self, value: Symbol) -> Result<PlaneId> {
         let plane = self.storage.memory.allocate(value)?;
+        if self.execution.materializing_input {
+            // This is an existing caller plane being observed for the first
+            // time, not a source allocation or a change to its contents.
+            return Ok(plane);
+        }
         self.record_plane_presence(plane)?;
         // Each allocation gets a fresh identity, including across snapshots.
         self.note_state_write(plane, &[])?;

@@ -1,0 +1,21 @@
+// Checking this function observes one reference slot, not a billion slots.
+// main uses a separate, small buffer and does not allocate the huge array.
+fn read_far(references: linear_plane(&usize, 1000000000)) -> usize {
+    *(*references)[999999999]
+}
+
+fn set_first(count: usize, references: linear_plane(&usize, count))
+where count > 0
+modifies((*references)[0])
+ensures *(*references)[0] == 42 {
+    *(*references)[0] = 42;
+}
+
+fn main() -> usize {
+    let value: usize = 0;
+    let other: usize = 7;
+    let references: [&usize; 2] = [&value, &other];
+    set_first(2, &references);
+    proof untouched: other == 7;
+    value
+}

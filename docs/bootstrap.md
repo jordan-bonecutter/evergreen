@@ -670,13 +670,22 @@ also alias when that body and its invariants remain valid.
 The checker compares actual planes and projection paths: distinct fields or
 proved-distinct array cells can be disjoint within one plane. Pointer equality
 does not merge independent reference fields. Fixed-size input arrays containing
-references now model each element's reference ports once. Contracts may name
+references model only observed element ports. Contracts may name
 `refs[1]` or `(*views)[1].target`, including arrays nested in records. Known
-reference ports remain stable across reads and forwarding calls. Per-array
-materialization is bounded to 2048 elements, with the general symbolic work and
-fresh-value limits also applying. Symbolic-size arrays with hidden references
-remain unsupported in modifying interfaces. `examples/reference_array_inputs.evg`
+reference ports remain stable across reads, frozen entry observations, branches,
+and forwarding calls. Array extent does not enumerate ports: even billion-element
+inputs can inspect a distant fixed index. Immutable initial-plane recipes supply
+previously unobserved input storage in an older snapshot without overwriting
+current contents or reviving a consumed generation. General symbolic work limits
+still bound actual demands. Modifying interfaces can name fixed ports of a
+runtime-sized array when their bounds are proved. Symbolic selection among
+reference-bearing cells still requires conditional plane identities and is
+rejected. Calls involving reference-bearing arrays recheck actual storage, so
+unobserved aliases cannot hide behind independent-port summaries.
+`examples/reference_array_inputs.evg`
 checks an element write, a returned alias, and an unchanged sibling.
+`examples/sparse_arrays.evg` checks a distant slot of a billion-element input
+and runs a small runtime-sized reference buffer without allocating a huge array.
 `examples/reference_fields.evg` checks borrowed
 counter views, nested fields, double indirection, and returned aliases. These
 views do not represent reference-count ownership or allocation.
@@ -1201,15 +1210,19 @@ borrows(result[0]: &(*data)[index], result[1]: &(*data)[index + 1]) {
 ```
 
 Target indices must be nonnegative integer literals; incoming indices may use
-checked arithmetic. Reference-bearing return arrays currently require literal
-extents and alias expansion is bounded to 2048 visited type nodes and depth 64.
+checked arithmetic. Reference-bearing return arrays require fixed extents.
+The checker validates supplied paths and counts required leaves with saturation
+at the number of supplied aliases plus one; it does not enumerate the array or
+multiply huge nested extents into an unbounded count. Named record shapes share
+their coverage calculation. Constructed return shapes contain only supplied
+ports. These are proof representations; runtime inline arrays keep their layout.
 `examples/borrowed_array.evg` demonstrates forwarding and later writes;
 `examples/borrowed_array_owners.evg` returns an array of resources whose Drop
 writes through the declared references. Its consuming function declares the
 implicit cleanup writes through its incoming array elements. Arrays are cleaned
 in ascending order.
-Symbolic-size reference arrays and contracts selecting between different target
-planes remain unsupported.
+Symbolic-size reference-array returns and contracts selecting between different
+target planes remain unsupported.
 All call arguments are rechecked together after evaluation, preventing a later
 argument from consuming storage borrowed by an earlier one.
 
@@ -1815,10 +1828,12 @@ The checker's scalar-array model is sparse. A filled allocation stores one
 initializer and its extent, then records observed indices and immutable stores
 or branch choices as needed. Checking a billion-element buffer does not create a
 billion element facts. Literal arrays still contain their explicit elements.
-Incoming fixed arrays containing references currently materialize their ports,
-with a 2048-element expansion limit; larger ones are rejected. Lazy reference
-ports remain future work. These verification limits are separate from memory
-needed to execute a program.
+Incoming arrays containing references also create only demanded fixed-index
+ports, with no per-array element expansion cap. Return provenance validates
+explicit paths and coverage without enumerating the return type's elements.
+Cleanup that has no universal element summary demands every affected element;
+that expansion is charged against the general work budget before it starts.
+These verification limits are separate from memory needed to execute a program.
 
 A formed view keeps its proved extent: assigning a larger value to a length
 variable does not enlarge existing storage or justify a formerly out-of-bounds

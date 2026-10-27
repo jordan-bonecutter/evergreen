@@ -13,6 +13,7 @@ type Result<T> = std::result::Result<T, String>;
 
 mod admissions;
 mod array_history;
+mod array_ports;
 
 #[cfg(test)]
 pub(crate) mod array_model;
@@ -1197,6 +1198,7 @@ impl<'a> Context<'a> {
         // selections may introduce a new symbolic cell path on an incoming
         // handle. Materialize its LIVE view separately from the frozen read.
         if let Ok(value) = &value {
+            self.materialize_input_planes()?;
             self.materialize_live_reference_views(value, expression.line)?;
         }
         value
@@ -1436,29 +1438,11 @@ impl<'a> Context<'a> {
                 Ok(Symbol::Bool(equal(&n, &Linear::number(1))?))
             }
             Ty::Array(element, len) => {
-                // Reference ports must be stable across every observation of an
-                // incoming fixed array. Model each port once, rather than
-                // manufacturing a new pointee whenever an element is read.
-                let items = if self.ty_has_reference(element) && len.terms.is_empty() {
-                    let length = usize::try_from(len.constant)
-                        .map_err(|_| "invalid reference array extent")?;
-                    if length > 2048 {
-                        return Err(
-                            "incoming reference array expansion limit reached (2048)".into()
-                        );
-                    }
-                    let mut items = Vec::with_capacity(length);
-                    for _ in 0..length {
-                        items.push(self.arbitrary(element)?);
-                    }
-                    Some(items)
-                } else {
-                    None
-                };
+                self.arrays.inputs.insert(name.clone());
                 Ok(Symbol::Array {
                     element: element.clone(),
                     len: len.clone(),
-                    items,
+                    items: None,
                     cells: BTreeMap::new(),
                     identity: name,
                 })
@@ -1991,7 +1975,9 @@ impl<'a> Context<'a> {
                 if !cells.contains_key(&index)
                     && (literal.is_none() || self.history_element(element.as_ref()))
                 {
-                    if !self.history_element(element.as_ref()) {
+                    if !self.history_element(element.as_ref())
+                        && !self.ty_has_reference(element.as_ref())
+                    {
                         return Err("borrowing opaque array elements requires scalars or reference-free records without runtime cleanup".into());
                     }
                     let value =
@@ -2440,6 +2426,17 @@ impl<'a> Context<'a> {
         items: Option<&[Symbol]>,
         cells: &BTreeMap<Linear, Symbol>,
     ) -> Result<Symbol> {
+        if self.ty_has_reference(element) {
+            if let Some(index) = constant_index(index) {
+                if let Some(value) = items.and_then(|items| items.get(index)) {
+                    return Ok(value.clone());
+                }
+            }
+            if let Some(value) = cells.get(index) {
+                return Ok(value.clone());
+            }
+            return self.input_array_port(element, identity, index);
+        }
         if self.history_element(element) {
             let observations = values_weight(cells.values())?
                 .saturating_add(values_weight(items.into_iter().flatten())?);

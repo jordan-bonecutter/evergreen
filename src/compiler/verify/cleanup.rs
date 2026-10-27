@@ -248,13 +248,33 @@ impl Context<'_> {
                     self.cleanup_value(value, line)?;
                 }
             }
-            Symbol::Array { element, len, .. }
-                if len != Linear::number(0)
-                    && (self.cleanup_effects(&element)
-                        || (self.ty_has_reference(&element)
-                            && self.has_runtime_cleanup(&element))) =>
+            Symbol::Array {
+                element,
+                len,
+                identity,
+                cells,
+                ..
+            } if len != Linear::number(0)
+                && (self.cleanup_effects(&element)
+                    || (self.ty_has_reference(&element) && self.has_runtime_cleanup(&element))) =>
             {
-                return Err("cleanup of opaque arrays with effects or reference-dependent destructors requires element summaries; unsupported".into());
+                let Some(length) = constant_index(&len) else {
+                    return Err("cleanup of opaque arrays with effects or reference-dependent destructors requires element summaries; unsupported".into());
+                };
+                // Cleanup observes every element when it has no universal
+                // summary. Charge that demand before expanding any cells;
+                // merely declaring or reading the array never does this.
+                self.charge_value_work(length)?;
+                for index in 0..length {
+                    let value = self.read_array(
+                        &element,
+                        &identity,
+                        &Linear::number(index as i128),
+                        None,
+                        &cells,
+                    )?;
+                    self.cleanup_value(value, line)?;
+                }
             }
             _ => {}
         }
@@ -274,7 +294,7 @@ impl Context<'_> {
         let saved = Scope::enter(self, &method, receiver);
         let checked = (|| -> Result<BTreeSet<PlaneId>> {
             self.capture_old(&method)?;
-            let inputs = self.incoming_references(&method, true)?;
+            let inputs = self.incoming_references(&method)?;
             let writes = self.write_places(&method, &inputs)?;
             // This method is elaborated against the actual receiver below.
             // Its postcondition is proved again, so overlapping ports do not

@@ -382,7 +382,7 @@ impl<'a> Context<'a> {
             .iter()
             .any(|(_, ty)| type_has_reference(ty, self.declarations.structs))
         {
-            self.incoming_references(f, !f.modifies.is_empty())?
+            self.incoming_references(f)?
         } else {
             Vec::new()
         };
@@ -424,14 +424,21 @@ impl<'a> Context<'a> {
             }
         }
         let heap_call = heap::function_uses_planes(f, self.declarations.structs);
+        let deferred_ports = f
+            .params
+            .iter()
+            .any(|(_, ty)| array_ports::contains_reference_array(ty, self.declarations.structs));
         let value = if overlaps
             || heap_call
+            || deferred_ports
             || !self.storage.opened_planes.is_empty() && !f.modifies.is_empty()
         {
             let reason = if overlaps {
                 "overlaps incoming references"
             } else if heap_call {
                 "uses owned planes"
+            } else if deferred_ports {
+                "observes deferred reference ports"
             } else {
                 "writes while invariants are open"
             };

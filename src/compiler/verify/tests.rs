@@ -1503,10 +1503,7 @@ fn fixed_reference_array_inputs_cannot_hide_aliases_or_escape_origins() {
     }
     let invalidated = format!("{declarations} type Positive struct {{target: &usize}} where(*target > 0); fn main() {{let a: usize = 7; let b: usize = 1; let positive = Positive {{target: &b}}; let views: [View; 2] = [View {{target: &a}}, View {{target: &b}}]; set_second(&views, 0);}}");
     assert!(verify(&invalidated).is_err());
-    let large = "fn oversized(refs: [&usize; 2049]) {}";
-    assert!(verify(large)
-        .unwrap_err()
-        .contains("incoming reference array expansion"));
+    assert!(verify("fn oversized(refs: [&usize; 1000000000]) {}").is_ok());
     let dangling = include_str!("../../../examples/reference_array_inputs.evg")
         .replace("set_second(&views, 42);", "drop(last); last = 42;");
     assert!(verify(&dangling).is_err());
@@ -1556,10 +1553,6 @@ fn returned_reference_arrays_reject_missing_duplicate_and_forged_origins() {
     ] {
         assert!(verify(source).is_err(), "accepted {source}");
     }
-    let expansion = "fn bad(a: &usize) -> [[[&usize; 0]; 2048]; 2048] {}";
-    assert!(verify(expansion)
-        .unwrap_err()
-        .contains("return alias expansion"));
 }
 
 #[test]

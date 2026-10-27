@@ -133,6 +133,12 @@ impl Context<'_> {
         for v in items.iter().flatten().chain(cells.values()) {
             self.validate_argument_mode(v, line, mode)?;
         }
+        if self.ty_has_reference(element) {
+            self.materialize_input_planes()?;
+            for (_, value) in self.observed_input_ports(identity) {
+                self.validate_argument_mode(&value, line, mode)?;
+            }
+        }
         Ok(())
     }
 

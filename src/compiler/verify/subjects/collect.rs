@@ -257,7 +257,7 @@ impl Context<'_> {
                     .memory
                     .read(reference)
                     .ok()
-                    .and_then(|value| project(value, &path).ok());
+                    .and_then(|value| self.observed_projection(value, &path));
                 // Resolve identity without elaborating a second read. The
                 // operational dereference separately proves this member active.
                 let pointer = match value {

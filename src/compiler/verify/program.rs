@@ -349,7 +349,7 @@ impl Context<'_> {
         let inputs = if f.modifies.is_empty() && f.borrows.is_empty() {
             Vec::new()
         } else {
-            self.incoming_references(f, !f.modifies.is_empty())?
+            self.incoming_references(f)?
         };
         self.storage.writable = self.write_places(f, &inputs)?;
         self.storage.inputs = inputs.clone();

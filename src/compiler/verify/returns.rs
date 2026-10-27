@@ -91,53 +91,83 @@ fn check_result_anchor(
 }
 
 pub(super) fn check_return_borrows(f: &Function, structs: &BTreeMap<String, Struct>) -> Result<()> {
-    fn paths(
+    // Count only up to one more than the number of supplied aliases. This
+    // detects missing coverage without enumerating elements or overflowing on
+    // huge nested arrays. Named shapes are shared across repeated fields.
+    fn required_count(
         ty: &Type,
         structs: &BTreeMap<String, Struct>,
-        path: &mut Vec<ReturnProjection>,
-        out: &mut BTreeSet<Vec<ReturnProjection>>,
-        work: &mut usize,
-    ) -> Result<()> {
-        *work += 1;
-        if *work > 2048 || path.len() > 64 {
-            return Err("return alias expansion exceeds verification limit".into());
-        }
-        match ty {
-            Type::Ref(_) => {
-                out.insert(path.clone());
-            }
+        cap: usize,
+        records: &mut BTreeMap<String, usize>,
+    ) -> Result<usize> {
+        Ok(match ty {
+            Type::Ref(_) => 1,
             Type::Named(name) => {
-                for (name, ty) in &structs.get(name).ok_or("unknown return type")?.fields {
-                    path.push(ReturnProjection::Field(name.clone()));
-                    paths(ty, structs, path, out, work)?;
-                    path.pop();
+                if let Some(count) = records.get(name) {
+                    return Ok(*count);
+                }
+                let mut count = 0usize;
+                for (_, ty) in &structs.get(name).ok_or("unknown return type")?.fields {
+                    count = count
+                        .saturating_add(required_count(ty, structs, cap, records)?)
+                        .min(cap);
+                }
+                records.insert(name.clone(), count);
+                count
+            }
+            Type::Array(element, len) => {
+                let count = required_count(element, structs, cap, records)?;
+                if count == 0 {
+                    0
+                } else {
+                    let length = crate::compiler::layout::array_length(len)
+                        .map_err(|_| "reference-bearing array returns require a fixed extent")?;
+                    count.saturating_mul(length).min(cap)
                 }
             }
-            Type::Array(element, len) if type_has_reference(element, structs) => {
-                let Kind::Number(len) = len.kind else {
-                    return Err("reference-bearing array returns require a literal extent".into());
-                };
-                let len = usize::try_from(len).map_err(|_| "invalid return array extent")?;
-                if len > 2048 {
-                    return Err("return alias expansion exceeds verification limit".into());
-                }
-                for index in 0..len {
-                    path.push(ReturnProjection::Index(index));
-                    paths(element, structs, path, out, work)?;
-                    path.pop();
-                }
-            }
-            _ => {}
-        }
-        Ok(())
+            _ => 0,
+        })
     }
-    let mut required = BTreeSet::new();
-    paths(&f.ret, structs, &mut Vec::new(), &mut required, &mut 0)?;
+
+    fn valid_path<'a>(
+        mut ty: &'a Type,
+        path: &[ReturnProjection],
+        structs: &'a BTreeMap<String, Struct>,
+    ) -> Result<bool> {
+        for step in path {
+            ty = match (ty, step) {
+                (Type::Named(name), ReturnProjection::Field(field)) => {
+                    let Some((_, ty)) = structs
+                        .get(name)
+                        .and_then(|record| record.fields.iter().find(|(name, _)| name == field))
+                    else {
+                        return Ok(false);
+                    };
+                    ty
+                }
+                (Type::Array(element, length), ReturnProjection::Index(index))
+                    if *index < crate::compiler::layout::array_length(length)? =>
+                {
+                    element
+                }
+                _ => return Ok(false),
+            };
+        }
+        Ok(matches!(ty, Type::Ref(_)))
+    }
+    let required = required_count(
+        &f.ret,
+        structs,
+        f.borrows.len().saturating_add(1),
+        &mut BTreeMap::new(),
+    )?;
     let mut supplied = BTreeSet::new();
+    let mut valid = true;
     for alias in &f.borrows {
         if !borrow_expression(&alias.reference) || !supplied.insert(alias.path.clone()) {
             return Err(format!("line {}: borrows requires unique return paths and checked incoming reference projections", f.line));
         }
+        valid &= valid_path(&f.ret, &alias.path, structs)?;
         if root(&alias.reference) == Some("result") {
             if f.params.iter().any(|(name, _)| name == "result") {
                 return Err("result in a borrow contract names the returned value; rename the input parameter".into());
@@ -145,8 +175,8 @@ pub(super) fn check_return_borrows(f: &Function, structs: &BTreeMap<String, Stru
             check_result_anchor(&alias.reference, &f.ret, structs)?;
         }
     }
-    if supplied != required {
-        if required.is_empty() {
+    if !valid || supplied.len() != required {
+        if required == 0 {
             return Err(format!(
                 "line {}: borrows describes return-plane provenance, but the return type contains no references",
                 f.line
@@ -234,13 +264,10 @@ impl Context<'_> {
                     (Symbol::Record(_, members), ReturnProjection::Field(field)) => {
                         members.get(field).ok_or("unknown return alias field")?
                     }
-                    (
-                        Symbol::Array {
-                            items: Some(items), ..
-                        },
-                        ReturnProjection::Index(index),
-                    ) => items
-                        .get(*index)
+                    (Symbol::Array { items, cells, .. }, ReturnProjection::Index(index)) => items
+                        .as_ref()
+                        .and_then(|items| items.get(*index))
+                        .or_else(|| cells.get(&Linear::number(*index as i128)))
                         .ok_or("return alias index out of bounds")?,
                     _ => return Err("return alias requires a known inline field or element".into()),
                 };
@@ -319,22 +346,28 @@ impl Context<'_> {
                 if !len.terms.is_empty() {
                     return Err("reference-bearing return array extent must be fixed".into());
                 }
-                let length =
-                    usize::try_from(len.constant).map_err(|_| "invalid return array extent")?;
-                if length > 2048 {
-                    return Err("return alias expansion exceeds verification limit".into());
-                }
-                let mut items = Vec::with_capacity(length);
-                for index in 0..length {
+                let indices = aliases
+                    .keys()
+                    .filter(|alias| alias.starts_with(path))
+                    .filter_map(|alias| match alias.get(path.len()) {
+                        Some(ReturnProjection::Index(index)) => Some(*index),
+                        _ => None,
+                    })
+                    .collect::<BTreeSet<_>>();
+                let mut cells = BTreeMap::new();
+                for index in indices {
                     path.push(ReturnProjection::Index(index));
-                    items.push(self.return_shape(element, path, aliases)?);
+                    cells.insert(
+                        Linear::number(index as i128),
+                        self.return_shape(element, path, aliases)?,
+                    );
                     path.pop();
                 }
                 Ok(Symbol::Array {
                     element: element.clone(),
                     len: len.clone(),
-                    items: Some(items),
-                    cells: BTreeMap::new(),
+                    items: None,
+                    cells,
                     identity: self.fresh_name(),
                 })
             }

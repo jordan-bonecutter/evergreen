@@ -143,18 +143,35 @@ impl Context<'_> {
     pub(super) fn incoming_references(
         &mut self,
         function: &Function,
-        strict: bool,
     ) -> Result<Vec<InputReference>> {
+        // Only declared footprints demand reference-bearing cells up front.
+        // Body observations remain lazy and cannot acquire new write grants.
+        let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
+        let demanded = function
+            .modifies
+            .iter()
+            .chain(function.borrows.iter().filter_map(|alias| {
+                (effect_origin(&alias.reference) != Some("result")).then_some(&alias.reference)
+            }));
+        let needs_ports = function
+            .params
+            .iter()
+            .any(|(_, ty)| array_ports::contains_reference_array(ty, self.declarations.structs));
+        let prepared = demanded
+            .filter(|_| needs_ports)
+            .filter(|expression| borrow_expression(expression))
+            .try_for_each(|expression| self.eval(expression, None).map(|_| ()));
+        self.execution.phase = phase;
+        prepared?;
         fn visit(
             ctx: &mut Context<'_>,
             value: &Symbol,
             origin: String,
-            mode: (bool, bool),
+            borrowed: bool,
             inputs: &mut Vec<InputReference>,
             work: &mut usize,
             limit: usize,
         ) -> Result<()> {
-            let (strict, borrowed) = mode;
             *work = work.saturating_add(1 + origin.len() / 32);
             if *work > limit {
                 return Err(
@@ -163,9 +180,6 @@ impl Context<'_> {
             }
             match value {
                 Symbol::Ref(pointee, reference, path) => {
-                    if inputs.len() >= 8192 {
-                        return Err("incoming reference graph limit reached (8192)".into());
-                    }
                     for step in path {
                         *work = work.saturating_add(
                             1 + match step {
@@ -199,7 +213,7 @@ impl Context<'_> {
                         ctx,
                         &target,
                         format!("(*{origin})"),
-                        (strict, true),
+                        true,
                         inputs,
                         work,
                         limit,
@@ -211,7 +225,7 @@ impl Context<'_> {
                         ctx,
                         &Symbol::Plane(pointee.clone(), reference),
                         origin,
-                        mode,
+                        borrowed,
                         inputs,
                         work,
                         limit,
@@ -219,9 +233,6 @@ impl Context<'_> {
                 }
                 Symbol::Plane(pointee, reference) => {
                     if borrowed {
-                        if inputs.len() >= 8192 {
-                            return Err("incoming reference graph limit reached (8192)".into());
-                        }
                         inputs.push(InputReference {
                             origin: origin.clone(),
                             reference: *reference,
@@ -236,7 +247,7 @@ impl Context<'_> {
                         ctx,
                         &target,
                         format!("(*{origin})"),
-                        mode,
+                        borrowed,
                         inputs,
                         work,
                         limit,
@@ -257,7 +268,7 @@ impl Context<'_> {
                         // An undecided union is still rechecked with actual storage
                         // at calls; it cannot grant a conditional write contract.
                         if ctx.checked_entails(&guard)? {
-                            visit(ctx, payload, origin.clone(), mode, inputs, work, limit)?;
+                            visit(ctx, payload, origin.clone(), borrowed, inputs, work, limit)?;
                         }
                     }
                 }
@@ -267,7 +278,7 @@ impl Context<'_> {
                             ctx,
                             value,
                             format!("{origin}.{name}"),
-                            mode,
+                            borrowed,
                             inputs,
                             work,
                             limit,
@@ -276,8 +287,9 @@ impl Context<'_> {
                 }
                 Symbol::Array {
                     element,
-                    len,
                     items,
+                    cells,
+                    identity,
                     ..
                 } if ctx.ty_has_reference(element) => {
                     if let Some(items) = items {
@@ -286,17 +298,33 @@ impl Context<'_> {
                                 ctx,
                                 value,
                                 format!("{origin}[{index}]"),
-                                mode,
+                                borrowed,
                                 inputs,
                                 work,
                                 limit,
                             )?;
                         }
-                    } else if strict && *len != Linear::number(0) {
-                        return Err(
-                            "write contracts cannot summarize opaque arrays containing references"
-                                .into(),
-                        );
+                    }
+                    let observed = cells
+                        .iter()
+                        .map(|(index, value)| (index.clone(), value.clone()))
+                        .chain(ctx.observed_input_ports(identity))
+                        .collect::<BTreeMap<_, _>>();
+                    for (index, value) in observed {
+                        let index = constant_index(&index)
+                            .ok_or("incoming reference port needs a fixed element identity")?;
+                        if items.as_ref().is_some_and(|items| index < items.len()) {
+                            continue;
+                        }
+                        visit(
+                            ctx,
+                            &value,
+                            format!("{origin}[{index}]"),
+                            borrowed,
+                            inputs,
+                            work,
+                            limit,
+                        )?;
                     }
                 }
                 _ => {}
@@ -320,7 +348,7 @@ impl Context<'_> {
                     self,
                     &value,
                     name.clone(),
-                    (strict, false),
+                    false,
                     &mut inputs,
                     &mut work,
                     remaining,

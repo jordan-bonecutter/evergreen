@@ -50,6 +50,7 @@ pub(super) struct Execution {
     pub(super) cleanup_depth: usize,
     pub(super) replacing_cleanup: usize,
     pub(super) rechecking: usize,
+    pub(super) materializing_input: bool,
     pub(super) deferred_cleanup_roots: BTreeSet<PlaneId>,
 }
 
@@ -65,6 +66,7 @@ impl Default for Execution {
             cleanup_depth: 0,
             replacing_cleanup: 0,
             rechecking: 0,
+            materializing_input: false,
             deferred_cleanup_roots: BTreeSet::new(),
         }
     }
@@ -94,6 +96,9 @@ pub(super) struct Arrays {
     pub(super) reads: BTreeMap<(String, Linear), Symbol>,
     pub(super) history: BTreeMap<String, ArrayHistory>,
     pub(super) read_depth: usize,
+    pub(super) inputs: BTreeSet<String>,
+    pub(super) ports: BTreeMap<String, BTreeMap<Linear, Symbol>>,
+    pub(super) initial_planes: BTreeMap<PlaneId, Symbol>,
 }
 
 #[derive(Default)]

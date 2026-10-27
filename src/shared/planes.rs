@@ -154,6 +154,53 @@ impl<T> Memory<T> {
         }
     }
 
+    pub(crate) fn materialization_checkpoint(&self) -> usize {
+        self.planes.len()
+    }
+
+    pub(crate) fn materialized_since(
+        &self,
+        checkpoint: usize,
+    ) -> impl Iterator<Item = (PlaneId, &T)> {
+        self.planes
+            .iter()
+            .enumerate()
+            .skip(checkpoint)
+            .filter_map(|(slot, plane)| {
+                plane.value.as_ref().map(|value| {
+                    (
+                        PlaneId {
+                            owner: self.owner,
+                            slot,
+                        },
+                        value,
+                    )
+                })
+            })
+    }
+
+    /// Supply the initial contents of a deferred input plane in a snapshot
+    /// which has never observed it. Existing contents and consumed generations
+    /// are never overwritten. The caller retains the immutable input recipe.
+    pub(crate) fn materialize_input(&mut self, id: PlaneId, initial: &T) -> Result<(), String>
+    where
+        T: Clone,
+    {
+        if id.owner != self.owner || id.slot >= self.next_slot.load(Ordering::Relaxed) {
+            return Err("input plane belongs to a different arena or was never reserved".into());
+        }
+        self.pad_to(id.slot + 1);
+        let plane = &mut self.planes[id.slot];
+        if plane.value.is_some() || plane.generation != 0 {
+            return Ok(());
+        }
+        if !plane.ownership.is_unique() {
+            return Err("cannot materialize a consumed input plane".into());
+        }
+        plane.value = Some(initial.clone());
+        Ok(())
+    }
+
     /// Import allocations born after a saved world, keeping their globally
     /// unique IDs. Their conditional presence is checked by the frontend.
     pub(crate) fn import_new_planes(
@@ -277,6 +324,30 @@ impl<T> Memory<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deferred_inputs_seed_unobserved_snapshots_without_overwriting_or_resurrection() {
+        let mut live = Memory::default();
+        let mut entry = live.snapshot();
+        let input = live.allocate(7).unwrap();
+        entry.materialize_input(input, &7).unwrap();
+        assert_eq!(*entry.get(input).unwrap(), 7);
+        entry.write(input, 42, false).unwrap();
+        entry.materialize_input(input, &7).unwrap();
+        assert_eq!(*entry.get(input).unwrap(), 42);
+        assert_eq!(*live.get(input).unwrap(), 7);
+        entry.take(input).unwrap();
+        entry.materialize_input(input, &7).unwrap();
+        assert!(entry.get(input).is_err());
+        assert!(Memory::<i32>::default()
+            .materialize_input(input, &7)
+            .is_err());
+        let unreserved = PlaneId {
+            owner: input.owner,
+            slot: input.slot + 1,
+        };
+        assert!(live.materialize_input(unreserved, &7).is_err());
+    }
 
     #[test]
     fn branch_allocations_keep_distinct_identities_after_restore_and_join() {
