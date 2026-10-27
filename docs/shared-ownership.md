@@ -164,11 +164,19 @@ model caches, reads-from edges, release sequences, hardware instructions,
 thread scheduling, or payload accesses. Those must be connected by a refinement
 proof before this becomes an Arc safety argument.
 
-The generic retry loops now live in `stdlib/atomic_counter/atomic_counter.evg`; increment checks
+The generic retry loops live in `stdlib/atomic_counter/atomic_counter.evg`; increment checks
 saturation before choosing its desired word, and decrement returns the observed
 old count. They are actual Evergreen code executed by both backends, with only
 the target compare-exchange contract trusted. Their present checked contracts
 still describe sequential execution.
+
+Retries use verified `while` loops rather than self-recursion, so the native
+recursive-activation budget does not limit the number of attempts. Each loop
+states its unchanged-until-completion invariant and explicitly proves the CAS
+observation and preserved invariant before iteration-local values are cleaned
+up. Saturation and empty decrements retain their existing checked behavior.
+The interpreter's execution fuel still bounds interpreted retries. No concurrent
+interference or progress guarantee is claimed by these sequential contracts.
 
 The Lean protocol relates each attempt's word effect to a strong CAS at the
 atomic point. With the corresponding token held, a successful attempt is a

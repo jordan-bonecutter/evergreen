@@ -155,3 +155,26 @@ fn loop_local_facts_and_witnesses_have_lexical_scope() {
     let escaped = "fn main() {let i: usize = 0; while i < 2 invariant(i <= 2) modifies(&i) {fact local = i < 2; proof witness: local; i = i + 1;} proof leak: true by {exact witness};}";
     assert!(verify(escaped).is_err());
 }
+
+#[test]
+fn atomic_counter_retries_are_library_loops_without_recursive_calls() {
+    let source = include_str!("../../../../examples/atomic_counter.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.trusted_assumptions().len(), 1);
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    for name in [
+        "atomic_counter::increment_from",
+        "atomic_counter::decrement_from",
+    ] {
+        let function = program.functions.iter().find(|f| f.name == name).unwrap();
+        assert!(!crate::compiler::effects::recursive(function));
+        assert!(crate::compiler::effects::looping(function));
+        assert!(function.partial);
+    }
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+}
