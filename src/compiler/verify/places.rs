@@ -100,7 +100,12 @@ impl Context<'_> {
         }
     }
 
-    fn index_reference(&mut self, case: &Case, index: &Linear, line: usize) -> Result<Symbol> {
+    pub(super) fn index_reference(
+        &mut self,
+        case: &Case,
+        index: &Linear,
+        line: usize,
+    ) -> Result<Symbol> {
         self.charge_value_work(symbol_weight(self.storage.memory.read(case.reference)?)?)?;
         let mut root = self.storage.memory.read(case.reference)?.clone();
         let Symbol::Array {
@@ -118,6 +123,13 @@ impl Context<'_> {
             "reference index < length",
             line,
         )?;
+        if matches!(
+            self.arrays.history.get(&identity),
+            Some(ArrayHistory::Uninitialized(_))
+        ) {
+            return self
+                .uninitialized_index_reference(case, index, &element, &identity, &cells, line);
+        }
         let literal =
             constant_index(index).and_then(|i| items.as_ref().and_then(|items| items.get(i)));
         if !cells.contains_key(index) && (literal.is_none() || self.history_element(&element)) {

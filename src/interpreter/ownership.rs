@@ -52,6 +52,11 @@ impl Evaluator<'_> {
         expected: Option<&Type>,
     ) -> Result<Value> {
         match (value, expected) {
+            (Value::Unique(source, reference), Some(Type::Unique(target)))
+                if Self::empty_array_target(&source, target)? =>
+            {
+                self.narrow_empty_array(reference, target)
+            }
             (Value::Unique(ty, reference), Some(Type::Shared(target)))
                 if type_match::same_runtime_type(&ty, target)? =>
             {

@@ -131,6 +131,11 @@ their ordinary census claims; putting them into an untagged union cannot hide
 copies from the ownership model. Converting a plain unique field to a shared
 result cannot bypass the existing restriction on moving ordinary owning fields.
 
+`alloc(capacity, shape(T))` now supplies sparse owning arrays of
+`T | shape(T)`. Observed indices retain real locations, possible aliases use
+separate checked states, and empty-buffer conversion proves that no initialized
+member remains before ordinary deallocation. See [sparse-storage.md](sparse-storage.md).
+
 Borrowed-reference members remain rejected until return-plane contracts and
 conditional borrow footprints describe their provenance. Joining two different
 allocations in the same member, initialized-member replacement through a borrowed

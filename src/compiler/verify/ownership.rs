@@ -136,6 +136,11 @@ impl Context<'_> {
         line: usize,
     ) -> Result<Symbol> {
         match (value, expected) {
+            (Symbol::Unique(source, reference), Some(Ty::Unique(target)))
+                if Self::empty_array_target(&source, target) =>
+            {
+                self.narrow_empty_array(&source, reference, target, line)
+            }
             (Symbol::Unique(ty, reference), Some(Ty::Shared(target))) => {
                 if self.execution.phase != Phase::Runtime || !self.storage.opened_planes.is_empty()
                 {

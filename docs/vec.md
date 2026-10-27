@@ -37,17 +37,18 @@ Existing calls without arguments continue to use `usize`.
 
 This is a precursor to the README's vector, not its full implementation. Repeated
 initialization requires actual Copy permission; pointers with unique authority
-and resource values cannot be duplicated into storage. Move-only elements need
-sparse tracking of `T | shape(T)`, checked initialization transitions, consuming
-element access, and cleanup of exactly the initialized prefix. Those rules must
-be general storage rules rather than Vec-specific compiler behavior.
+and resource values cannot be duplicated into storage. Move-only elements still
+need range initialization proofs, typed member borrowing, and cleanup of exactly
+the initialized prefix. Those rules must be general storage rules rather than
+Vec-specific compiler behavior.
 
 Initialization of an existing union slot and extraction into its matching shape
 are now available independently of Vec; see
 [slot_initialization.evg](../examples/slot_initialization.evg) and
 [slot_extraction.evg](../examples/slot_extraction.evg). Sparse repeated
-uninitialized storage, range initialization proofs, typed member borrowing, and
-cleanup of a dynamically initialized prefix remain unfinished.
+uninitialized storage and empty-buffer conversion are also implemented; see
+[sparse-storage.md](sparse-storage.md). Range initialization proofs, typed member
+borrowing, and cleanup of a dynamically initialized prefix remain unfinished.
 
 Run [vec_generic.evg](../examples/vec_generic.evg) with:
 

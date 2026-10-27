@@ -201,10 +201,11 @@ impl Context<'_> {
         let initial = self.eval(&args[1], hint)?;
         let element = initial.ty();
         let syntax = syntax_type(&element, line)?;
-        if self.symbol_is_move_only(&initial)
-            || !payload_type(&syntax, self.declarations.structs)
-            || !self.history_element(&element)
+        let uninitialized = self.shape_initializer(&initial);
+        if !payload_type(&syntax, self.declarations.structs)
             || !runtime_type(&syntax, self.declarations.structs)
+            || !uninitialized
+                && (self.symbol_is_move_only(&initial) || !self.history_element(&element))
         {
             return Err("filled allocation requires copyable scalar or flat scalar-record elements without references".into());
         }
@@ -223,9 +224,14 @@ impl Context<'_> {
         self.validate_argument(&initial, line)?;
         let identity = self.fresh_name();
         self.charge_value_work(symbol_weight(&initial)?)?;
-        self.arrays
-            .history
-            .insert(identity.clone(), ArrayHistory::Fill(initial));
+        self.arrays.history.insert(
+            identity.clone(),
+            if uninitialized {
+                ArrayHistory::Uninitialized(initial)
+            } else {
+                ArrayHistory::Fill(initial)
+            },
+        );
         let value = Symbol::Array {
             element: Box::new(element.clone()),
             len: count.clone(),

@@ -86,7 +86,7 @@ impl Context<'_> {
             return Ok(());
         };
         let cost = match history {
-            ArrayHistory::Fill(value) => symbol_weight(value)?,
+            ArrayHistory::Fill(value) | ArrayHistory::Uninitialized(value) => symbol_weight(value)?,
             ArrayHistory::Store { index, value, .. } => {
                 index.terms.len().saturating_add(symbol_weight(value)?)
             }
@@ -103,6 +103,9 @@ impl Context<'_> {
             .ok_or("array history disappeared")?;
         match history {
             ArrayHistory::Fill(initial) => self.assume(&self.symbol_equal(value, &initial)?),
+            ArrayHistory::Uninitialized(_) => {
+                Err("uninitialized arrays require sparse ownership reads".into())
+            }
             ArrayHistory::Store {
                 base,
                 index: target,

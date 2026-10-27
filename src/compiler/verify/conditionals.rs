@@ -320,6 +320,20 @@ impl Context<'_> {
             return Ok((a.clone(), Formula::True, Formula::True));
         }
         match (a, b) {
+            (Symbol::Array { identity: a, .. }, Symbol::Array { identity: b, .. })
+                if matches!(
+                    self.arrays.history.get(a),
+                    Some(ArrayHistory::Uninitialized(_))
+                ) || matches!(
+                    self.arrays.history.get(b),
+                    Some(ArrayHistory::Uninitialized(_))
+                ) =>
+            {
+                self.resource_join_error(
+                    "sparse ownership arrays require separate alias and initialization states"
+                        .into(),
+                )
+            }
             (Symbol::Array { identity: a_id, .. }, Symbol::Array { identity: b_id, .. })
                 if a_id == b_id =>
             {

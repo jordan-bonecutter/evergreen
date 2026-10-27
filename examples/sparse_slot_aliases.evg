@@ -1,0 +1,27 @@
+fn probe(i: usize, j: usize) -> usize
+where i < 8 && j < 8
+ensures result == 42 {
+    let buffer: unique(unique(usize) | shape(unique(usize)), 8) =
+        alloc(8, shape(unique(usize)));
+    let a = &(*buffer)[i];
+    let b = &(*buffer)[j];
+    if i == j {
+        *a = alloc(42);
+        let value: unique(usize) = *b;
+        let empty: unique(shape(unique(usize)), 8) = buffer;
+        drop(empty);
+        *value
+    } else {
+        *a = alloc(7);
+        *b = alloc(42);
+        let first: unique(usize) = *a;
+        let second: unique(usize) = *b;
+        let empty: unique(shape(unique(usize)), 8) = buffer;
+        drop(empty);
+        *second
+    }
+}
+
+fn main() -> usize {
+    probe(2, 2) + probe(2, 7) - 42
+}

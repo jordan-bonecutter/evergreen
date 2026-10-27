@@ -1982,14 +1982,21 @@ Cleanup that has no universal element summary demands every affected element;
 that expansion is charged against the general work budget before it starts.
 These verification limits are separate from memory needed to execute a program.
 
+`alloc(capacity, shape(T))` now reserves sparse owning arrays of `T | shape(T)`.
+Slot initialization and extraction retain real locations across possible index
+aliases. A proved-empty buffer can convert to `unique(shape(T), capacity)` and
+release its allocation without scanning capacity. See
+[sparse-storage.md](sparse-storage.md), including a source Rc payload example.
+
 A formed view keeps its proved extent: assigning a larger value to a length
 variable does not enlarge existing storage or justify a formerly out-of-bounds
 index. Replacing/freeing its allocation invalidates old references as before.
 `examples/runtime_planes.evg` exercises a runtime allocation bound, initialization,
 mutation, borrowed views, and returned ownership in both backends without trust.
 The full relationship between mutable dependent fields and logical Vec length is
-being worked through with the vector implementation; this does not claim support
-for uninitialized generic element storage or arbitrary resizing in place.
+being worked through with the vector implementation. Range initialization and
+cleanup of a dynamic prefix, typed member borrowing, and arbitrary resizing in
+place remain unfinished.
 
 ### Owned vector with initialized backing storage
 

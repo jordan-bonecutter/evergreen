@@ -51,7 +51,10 @@ impl Emitter<'_> {
             _ => None,
         };
         let element = self.expr(&args[1], hint)?;
-        if self.has_drop(&element) {
+        // Verified filled unions and shapes contain no initialized member.
+        // Mapping storage needs no repeated writes for those empty slots.
+        let uninitialized = matches!(element, Type::Shape(_) | Type::Union(_));
+        if self.has_drop(&element) && !uninitialized {
             return Err("filled allocation cannot duplicate owning values".into());
         }
         let layout = layout::of(&element, self.structs)?;
@@ -70,6 +73,11 @@ impl Emitter<'_> {
         )));
         let home = self.allocate(&result)?;
         self.copy_frame(home, &result)?;
+        if uninitialized {
+            self.frame_address(home);
+            self.load_scalar(&result)?;
+            return Ok(result);
+        }
         self.code.extend([0x49, 0x89, 0xc1]); // r9 = cursor
         self.code.extend([0x4c, 0x8b, 0x85]); // r8 = count
         self.code.extend(count.to_le_bytes());

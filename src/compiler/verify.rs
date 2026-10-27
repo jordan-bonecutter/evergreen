@@ -15,6 +15,7 @@ mod admissions;
 mod array_history;
 mod array_ports;
 mod assignments;
+mod uninitialized_arrays;
 
 #[cfg(test)]
 pub(crate) mod array_model;
@@ -660,6 +661,8 @@ struct EntryMemory {
 #[derive(Clone)]
 enum ArrayHistory {
     Fill(Symbol),
+    // Empty default; live resource cells stay in the array's sparse map.
+    Uninitialized(Symbol),
     Store {
         base: String,
         index: Linear,
@@ -921,7 +924,17 @@ impl<'a> Context<'a> {
                 *identity = next;
                 return Ok(());
             }
+            let empty = match self.arrays.history.get(identity) {
+                Some(ArrayHistory::Uninitialized(initial)) => Some(initial.clone()),
+                _ => None,
+            };
             *identity = self.fresh_name();
+            if let Some(initial) = empty {
+                self.charge_value_work(symbol_weight(&initial)?)?;
+                self.arrays
+                    .history
+                    .insert(identity.clone(), ArrayHistory::Uninitialized(initial));
+            }
         }
         let child = match (&path[0], value) {
             (Projection::Field(name), Symbol::Record(_, fields)) => {
@@ -2173,6 +2186,12 @@ impl<'a> Context<'a> {
         items: Option<&[Symbol]>,
         cells: &BTreeMap<Linear, Symbol>,
     ) -> Result<Symbol> {
+        if matches!(
+            self.arrays.history.get(identity),
+            Some(ArrayHistory::Uninitialized(_))
+        ) {
+            return self.read_uninitialized_array(identity, index, cells);
+        }
         if self.ty_has_reference(element) {
             if let Some(index) = constant_index(index) {
                 if let Some(value) = items.and_then(|items| items.get(index)) {

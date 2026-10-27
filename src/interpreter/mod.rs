@@ -15,6 +15,7 @@ mod blocks;
 mod compat;
 mod ownership;
 mod type_match;
+mod uninitialized_arrays;
 mod union_moves;
 
 type Result<T> = std::result::Result<T, String>;
