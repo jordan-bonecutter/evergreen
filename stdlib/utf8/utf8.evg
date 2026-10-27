@@ -1,0 +1,46 @@
+module utf8;
+
+ideal fn lead_valid(byte: u8) -> bool {
+    byte <= 127 || (byte >= 194 && byte <= 244)
+}
+
+ideal fn lead_count(byte: u8) -> nat ensures result <= 3 {
+    if byte <= 127 {0} else {
+        if byte <= 223 {1} else {
+            if byte <= 239 {2} else {3}
+        }
+    }
+}
+
+// The first continuation excludes overlong encodings, surrogates, and values
+// above U+10FFFF. Later continuations always use [128, 191].
+ideal fn first_low(byte: u8) -> u8 {
+    if byte == 224 {160} else {if byte == 240 {144} else {128}}
+}
+
+ideal fn first_high(byte: u8) -> u8 {
+    if byte == 237 {159} else {if byte == 244 {143} else {191}}
+}
+
+ideal fn scan(ideal n: nat, bytes: &[u8; n], index: nat,
+              remaining: nat, low: u8, high: u8) -> bool
+    where index <= n && remaining <= 3
+    decreases n - index
+{
+    let byte: u8 = if index < n {(*bytes)[index]} else {0};
+    if index == n {remaining == 0} else {
+        if remaining != 0 {
+            if byte >= low && byte <= high {
+                scan(n, bytes, index + 1, remaining - 1, 128, 191)
+            } else {false}
+        } else {
+            if lead_valid(byte) {
+                scan(n, bytes, index + 1, lead_count(byte), first_low(byte), first_high(byte))
+            } else {false}
+        }
+    }
+}
+
+ideal fn valid(ideal n: nat, bytes: &[u8; n]) -> bool {
+    scan(n, bytes, 0, 0, 128, 191)
+}

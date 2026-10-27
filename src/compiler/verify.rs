@@ -27,6 +27,7 @@ mod evidence;
 mod external;
 mod footprints;
 mod heap;
+mod ideal;
 mod literals;
 mod loops;
 mod parameters;

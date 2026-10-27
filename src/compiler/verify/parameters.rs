@@ -196,7 +196,7 @@ impl Context<'_> {
     }
 }
 
-fn infer_extent(formal: &Type, actual: &Ty, parameter: &str, out: &mut Vec<Linear>) {
+pub(super) fn infer_extent(formal: &Type, actual: &Ty, parameter: &str, out: &mut Vec<Linear>) {
     match (formal, actual) {
         (Type::Ref(formal), Ty::Ref(actual)) | (Type::Plane(formal), Ty::Plane(actual)) => {
             infer_extent(formal, actual, parameter, out);

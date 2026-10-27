@@ -15,6 +15,12 @@ struct Library {
 
 const LIBRARIES: &[Library] = &[
     Library {
+        module: Some("utf8"),
+        exports: &[],
+        path: "stdlib/utf8/utf8.evg",
+        source: include_str!("../../stdlib/utf8/utf8.evg"),
+    },
+    Library {
         module: Some("vec"),
         exports: &[],
         path: "stdlib/vec/vec.evg",

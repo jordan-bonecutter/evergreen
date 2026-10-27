@@ -10,8 +10,17 @@ type equality or read permission. `typeof` claims carry plane/revision subjects,
 including when an explicit admission authorizes an interpretation. The native
 backend erases selectors and copies the proved member at offset zero. This
 extends the frontend and backend trust boundary; it is not an independent kernel
-proof of type elaboration or machine-code preservation. Pointer member authority
-remains unsupported until conditional footprints are checked.
+proof of type elaboration or machine-code preservation. Owning pointer members
+now use guarded footprints and allocation-presence checks. Borrowed-reference
+members still need conditional provenance contracts.
+
+Read-only ideal definitions can reduce concrete scalar results using bounded,
+explicit evaluation stacks. Argument references are imported as immutable value
+snapshots with their existing identities; the evaluator cannot write caller
+storage or invoke external operations. Function safety imports and scoped
+admissions still use the ordinary call checker. Definition interpretation is a
+frontend trust boundary, rather than an independent kernel reduction certificate.
+Symbolic inputs and unsupported computations continue through verified contracts.
 
 Runtime loops use a finite initialization/preservation/exit rule in the frontend.
 Their invariant imports have the same explicit unresolved context as checked

@@ -428,7 +428,9 @@ impl<'a> Context<'a> {
             let contract = self.import_summary(name, summaries::Aspect::Contract)?;
             self.proof.contract_parents.extend(contract);
             call_dependencies = self.proof.contract_parents.clone();
-            let value = if !f.borrows.is_empty() {
+            let value = if let Some(value) = self.reduce_ideal(f)? {
+                value
+            } else if !f.borrows.is_empty() {
                 let aliases = self.return_aliases(f, None)?;
                 self.return_shape(&ret, &mut Vec::new(), &aliases)?
             } else {

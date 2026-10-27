@@ -1,0 +1,11 @@
+fn main() -> usize {
+    let greeting = "Hello, λ🦀\n";
+    let empty = "";
+    let invalid: [u8; 2] = [192, 128];
+    ideal let compile_time = "Verified before runtime";
+    proof text: utf8::valid(&greeting);
+    proof no_bytes: utf8::valid(&empty);
+    proof rejects_overlong: !utf8::valid(&invalid);
+    proof erased_data: utf8::valid(&compile_time);
+    42
+}
