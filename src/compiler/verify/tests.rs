@@ -3607,3 +3607,53 @@ fn borrowed_temporary_methods_keep_statement_lifetimes_and_cleanup() {
     assert_eq!(value.to_string(), "42");
     assert_eq!(events, ["drop Item"]);
 }
+
+#[test]
+fn struct_where_clauses_accept_unparenthesized_self_projections() {
+    let declaration = "type NonZero struct {data: usize} where self.data != 0;";
+    assert!(verify(&format!("{declaration} fn main() -> usize {{0}}")).is_ok());
+    let good = format!("{declaration} fn main() -> usize {{let n = NonZero {{data: 42}}; n.data}}");
+    assert_eq!(verify(&good).unwrap().run().unwrap().to_string(), "42");
+    for body in [
+        "let n = NonZero {data: 0}; 0",
+        "let n = NonZero {data: 42}; n.data = 0; 0",
+        "let n = NonZero {data: 42}; let p = &n.data; *p = 0; 0",
+    ] {
+        assert!(
+            verify(&format!("{declaration} fn main() -> usize {{{body}}}")).is_err(),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn dependent_runtime_lengths_are_inferred_from_actual_array_types() {
+    let functions = "fn first(length: usize, data: linear_plane(usize, length)) -> usize where length > 0 {(*data)[0]} fn same(length: usize, a: linear_plane(usize, length), b: linear_plane(usize, length)) -> usize where length > 0 {(*a)[0]}";
+    let source = format!(
+        "{functions} fn main() -> usize {{let data: array(usize, 2) = [42, 7]; first(&data)}}"
+    );
+    let (program, certificate) = prove(&source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(&source, &certificate)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let dynamic = format!("{functions} fn forward(n: usize, data: linear_plane(usize, n)) -> usize where n > 0 {{first(data)}} fn main() -> usize {{let data: array(usize, 2) = [42, 7]; forward(&data)}}");
+    assert_eq!(verify(&dynamic).unwrap().run().unwrap().to_string(), "42");
+    let mismatch = format!("{functions} fn main() -> usize {{let a: array(usize, 1) = [21]; let b: array(usize, 2) = [21, 0]; same(&a, &b)}}");
+    assert!(verify(&mismatch).is_err());
+    let constructor = "type NonZero struct {data: usize} where self.data != 0; impl NonZero {fn new(x: usize) -> Self where x != 0 {return Self {data: x}}} fn main() -> usize {let x = NonZero::new(1); 0}";
+    assert!(verify(constructor).is_ok());
+    assert!(verify(&constructor.replace("new(1)", "new(0)"))
+        .unwrap_err()
+        .contains("precondition of NonZero::new"));
+}
+
+#[test]
+fn nonzero_addition_uses_mathematical_bounds_for_machine_arithmetic() {
+    let source = include_str!("../../../examples/nonzero.evg");
+    assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+    assert!(verify(&source.replace("new(10)", "new(0)")).is_err());
+}

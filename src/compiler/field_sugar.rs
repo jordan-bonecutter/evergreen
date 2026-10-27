@@ -26,6 +26,20 @@ pub(super) fn expand(program: &mut Program) {
                 ))
             })
             .collect(),
+        parameters: program
+            .functions
+            .iter()
+            .map(|f| {
+                (
+                    f.name.clone(),
+                    f.params
+                        .iter()
+                        .filter(|(name, _)| !f.ideal_params.contains(name))
+                        .cloned()
+                        .collect(),
+                )
+            })
+            .collect(),
         returns: program
             .functions
             .iter()
@@ -56,10 +70,83 @@ pub(super) fn expand(program: &mut Program) {
 struct Shapes {
     records: BTreeMap<String, Vec<(String, Type)>>,
     returns: Scope,
+    parameters: BTreeMap<String, Vec<(String, Type)>>,
     methods: BTreeMap<(String, String), (String, Type, MethodReceiver)>,
 }
 
 impl Shapes {
+    // Fill runtime lengths from the actual array's type. This only proposes
+    // ordinary expressions; the verifier still proves every dependent bound.
+    fn infer_lengths(
+        &self,
+        name: &str,
+        args: &mut Vec<Expr>,
+        types: &[Option<Type>],
+        scope: &Scope,
+    ) {
+        fn extent(ty: &Type) -> Option<&Expr> {
+            match ty {
+                Type::Array(_, count) => Some(count),
+                Type::Ref(inner) | Type::Plane(inner) => extent(inner),
+                _ => None,
+            }
+        }
+        fn stable(e: &Expr, scope: &Scope) -> bool {
+            match &e.kind {
+                Kind::Name(n) => scope.contains_key(n),
+                Kind::Number(_) | Kind::Constant(..) => true,
+                Kind::Field(base, _) => stable(base, scope),
+                Kind::Unary(op, base) if op == "*" => stable(base, scope),
+                Kind::Binary(op, a, b) if matches!(op.as_str(), "+" | "-" | "*") => {
+                    stable(a, scope) && stable(b, scope)
+                }
+                _ => false,
+            }
+        }
+        let Some(parameters) = self.parameters.get(name) else {
+            return;
+        };
+        if args.len() >= parameters.len() {
+            return;
+        }
+        let inferred = parameters.iter().filter(|(name, ty)| {
+            *ty == Type::Machine(MachineInt::parse("usize").expect("usize")) && parameters.iter().any(|(_, t)| matches!(extent(t).map(|e| &e.kind), Some(Kind::Name(n)) if n == name))
+        }).map(|(n, _)| n.clone()).collect::<Vec<_>>();
+        if args.len() + inferred.len() != parameters.len() {
+            return;
+        }
+        let supplied = parameters
+            .iter()
+            .filter(|(n, _)| !inferred.contains(n))
+            .zip(types);
+        let mut lengths = BTreeMap::new();
+        for ((_, parameter), actual) in supplied {
+            let Some(Kind::Name(n)) = extent(parameter).map(|e| &e.kind) else {
+                continue;
+            };
+            if !inferred.contains(n) {
+                continue;
+            }
+            let Some(actual) = actual.as_ref().and_then(extent) else {
+                continue;
+            };
+            if stable(actual, scope) {
+                lengths.entry(n.clone()).or_insert_with(|| actual.clone());
+            }
+        }
+        if inferred.iter().any(|n| !lengths.contains_key(n)) {
+            return;
+        }
+        let mut original = std::mem::take(args).into_iter();
+        for (n, _) in parameters {
+            args.push(if let Some(length) = lengths.get(n) {
+                length.clone()
+            } else {
+                original.next().expect("matched supplied arity")
+            });
+        }
+    }
+
     fn ty(&self, ty: &mut Type, scope: &Scope) {
         match ty {
             Type::Ref(inner) | Type::Plane(inner) => self.ty(inner, scope),
@@ -197,12 +284,15 @@ impl Shapes {
             }
             Kind::Call(name, args) => {
                 let mut first = None;
+                let mut types = Vec::new();
                 for (i, arg) in args.iter_mut().enumerate() {
                     let ty = self.expr(arg, scope, None);
                     if i == 0 {
-                        first = ty;
+                        first = ty.clone();
                     }
+                    types.push(ty);
                 }
+                self.infer_lengths(name, args, &types, scope);
                 if let Some(method) = name.strip_prefix("evg_method_") {
                     let mut ty = first?;
                     let mut receiver = args.first()?.clone();
@@ -227,6 +317,7 @@ impl Shapes {
                     }
                     args[0] = receiver;
                     *name = function.clone();
+                    self.infer_lengths(name, args, &types, scope);
                     return Some(result.clone());
                 }
                 if let Some(machine) = MachineInt::parse(name) {

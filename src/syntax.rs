@@ -767,7 +767,7 @@ impl Parser {
         }
         let mut facts = Vec::new();
         let invariant = if self.eat("where") {
-            self.expect("(")?;
+            let parenthesized = self.eat("(");
             while self.peek() == "fact" || self.peek() == "pub" {
                 self.eat("pub");
                 self.expect("fact")?;
@@ -778,7 +778,9 @@ impl Parser {
                 facts.push((name, value));
             }
             let value = self.expr(0)?;
-            self.expect(")")?;
+            if parenthesized {
+                self.expect(")")?;
+            }
             Some(value)
         } else {
             None

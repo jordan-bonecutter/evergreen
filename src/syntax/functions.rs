@@ -171,9 +171,7 @@ impl Parser {
         if !self.eat(keyword) {
             return Ok(None);
         }
-        self.expect("(")?;
         let expression = self.expr(0)?;
-        self.expect(")")?;
         Ok(Some(expression))
     }
 

@@ -1995,3 +1995,17 @@ have checked effects. Calls retain ordinary invariant validation and write
 permissions; a whole-record method cannot observe a receiver whose required
 invariant is lifted. `examples/update_methods.evg` calls methods on a separate,
 valid receiver while the pair's invariant is temporarily lifted.
+
+### Inferred runtime lengths and clause spelling
+
+Calls may omit runtime `usize` parameters that are determined by another
+parameter's array extent. For example, `linux_io::print_bytes(&message)` infers
+the length from `message`'s array type. This elaborates to an ordinary call with
+an ordinary runtime integer; the verifier proves the full dependent signature.
+Dynamic planes can use an in-scope runtime extent. Different array extents still
+fail the dependent type check, and explicit lengths remain accepted.
+
+Simple `where`, `ensures`, and `decreases` clauses accept expressions with or
+without surrounding parentheses. Struct clauses containing named facts retain
+the existing parenthesized form. `examples/nonzero.evg` shows checked nonzero
+construction and addition with an ideal integer view for the overflow bound.
