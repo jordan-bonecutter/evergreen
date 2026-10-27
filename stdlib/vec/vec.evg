@@ -15,12 +15,12 @@ opaque type Vec struct {
 );
 
 fn allocate_buffer(capacity: usize) -> unique(usize, capacity)
-where(capacity > 0 && integer(capacity) * 8 <= integer(isize::MAX)) {
+where(capacity > 0 && integer(capacity) * integer(size_of(usize)) <= integer(isize::MAX)) {
     alloc(capacity, 0)
 }
 
 fn new(capacity: usize) -> Vec
-where(integer(capacity) * 8 <= integer(isize::MAX))
+where(integer(capacity) * integer(size_of(usize)) <= integer(isize::MAX))
 ensures(result.len == 0 && result.cap == capacity) {
     let data: Zero | unique(usize, capacity) = if capacity == 0 {
         Zero {word: 0}
@@ -89,7 +89,7 @@ modifies(target) {
 // Return a fresh allocation. Assigning this result over the old Vec releases
 // its old allocation and invalidates outstanding references into that buffer.
 fn reallocate(value: &Vec, new_capacity: usize) -> Vec
-where(value.len <= new_capacity && integer(new_capacity) * 8 <= integer(isize::MAX))
+where(value.len <= new_capacity && integer(new_capacity) * integer(size_of(usize)) <= integer(isize::MAX))
 ensures(result.len == value.len && result.cap == new_capacity) {
     let grown = new(new_capacity);
     if value.len == 0 {()} else {
@@ -103,7 +103,7 @@ ensures(result.len == value.len && result.cap == new_capacity) {
 // Inherent methods use the same checked operations as the function interface.
 impl Vec {
     fn new(capacity: usize) -> Self
-    where(integer(capacity) * 8 <= integer(isize::MAX))
+    where(integer(capacity) * integer(size_of(usize)) <= integer(isize::MAX))
     ensures(result.len == 0 && result.cap == capacity) {
         new(capacity)
     }
@@ -135,7 +135,7 @@ impl Vec {
     }
 
     method& reallocate(new_capacity: usize) -> Self
-    where(self.len <= new_capacity && integer(new_capacity) * 8 <= integer(isize::MAX))
+    where(self.len <= new_capacity && integer(new_capacity) * integer(size_of(usize)) <= integer(isize::MAX))
     ensures(result.len == self.len && result.cap == new_capacity) {
         reallocate(self, new_capacity)
     }

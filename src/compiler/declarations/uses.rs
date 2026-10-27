@@ -72,12 +72,13 @@ impl Uses {
     ) -> Result<()> {
         self.tick(depth)?;
         match &expression.kind {
+            Kind::Type(ty) => self.ty(ty, bound, depth + 1)?,
             Kind::Name(name) if !bound.contains(name) => {
                 self.types.insert(name.clone());
             }
             Kind::Call(name, args) => {
                 self.calls.insert(name.clone());
-                if matches!(name.as_str(), "shape" | "plane") && args.len() == 1 {
+                if matches!(name.as_str(), "shape" | "unique") && args.len() == 1 {
                     if let Some(ty) = args[0].literal_type() {
                         self.ty(&ty, bound, depth + 1)?;
                     }

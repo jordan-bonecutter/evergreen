@@ -201,6 +201,9 @@ impl Evaluator<'_> {
             Kind::Call(name, _) if MachineInt::parse(name).is_some() => {
                 MachineInt::parse(name).map(Type::Machine)
             }
+            Kind::Call(name, _) if matches!(name.as_str(), "size_of" | "align_of") => {
+                Some(Type::Machine(MachineInt::parse("usize").unwrap()))
+            }
             Kind::Call(name, args) if name == "shape" && args.len() == 1 => {
                 args[0].literal_type().map(|ty| Type::Shape(Box::new(ty)))
             }
@@ -875,6 +878,13 @@ impl Evaluator<'_> {
                 self.copy_pointer_read(value)
             }
             Kind::Call(name, args) => {
+                if matches!(name.as_str(), "size_of" | "align_of") {
+                    let value = crate::compiler::layout::query::value(name, args, self.structs)?;
+                    return Ok(Value::Machine(
+                        MachineInt::parse("usize").unwrap(),
+                        value as i128,
+                    ));
+                }
                 if name == "shape" {
                     let ty = args[0].literal_type().ok_or("shape requires a type")?;
                     return Ok(Value::Shape(Box::new(ty)));

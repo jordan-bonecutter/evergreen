@@ -70,6 +70,22 @@ Vec still specializes its payload to `usize`. Arrays still
 use their existing layout rule; replacing it with a source const-generic
 definition using `make_type` remains future work.
 
+`size_of(T)` and `align_of(T)` return target-derived `usize` values in runtime
+expressions and specifications. Their operand uses type syntax, including generic
+instances, arrays, and pointer types. Ideal mathematical types have no storage
+layout. Inspecting a type neither allocates storage nor grants ownership.
+
+A generic allocation bound can use
+`integer(count) * integer(size_of(T)) <= integer(isize::MAX)` rather than assuming
+an element width. Array layout uses checked multiplication, so measuring a
+billion-element array does not visit its elements. A layout must fit the target's
+addressable object range. This observation does not increase the backend's
+separate budget for inline values. Dependent type bounds are checked as
+specifications and cannot execute runtime effects.
+
+See [layout_queries.evg](../examples/layout_queries.evg) for generic byte counts,
+record padding, and large-array layout observations.
+
 The example runs with:
 
 ```sh

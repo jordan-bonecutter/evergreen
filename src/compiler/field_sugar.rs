@@ -357,6 +357,9 @@ impl Shapes {
                     return Some(Type::Machine(machine));
                 }
                 match name.as_str() {
+                    "size_of" | "align_of" => {
+                        Some(Type::Machine(MachineInt::parse("usize").unwrap()))
+                    }
                     "owner_count" => Some(Type::Nat),
                     "old" | "move" => first,
                     "integer" => Some(Type::Int),

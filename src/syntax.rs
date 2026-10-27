@@ -39,6 +39,8 @@ pub(crate) fn is_builtin_name(name: &str) -> bool {
                 | "typeof"
                 | "shape"
                 | "owner_count"
+                | "size_of"
+                | "align_of"
         )
 }
 
@@ -766,6 +768,17 @@ impl Parser {
         }
         let name = parts.join("::");
         if self.eat("(") {
+            if matches!(name.as_str(), "size_of" | "align_of") {
+                let ty = self.ty()?;
+                self.expect(")")?;
+                return Ok(Kind::Call(
+                    name,
+                    vec![Expr {
+                        kind: Kind::Type(ty),
+                        line,
+                    }],
+                ));
+            }
             return Ok(Kind::Call(name, self.arguments()?));
         }
         if parts.len() == 2 {

@@ -36,6 +36,7 @@ mod footprints;
 mod guarded_references;
 mod heap;
 mod ideal;
+mod layout_queries;
 mod literals;
 mod loops;
 #[cfg(test)]
@@ -431,6 +432,15 @@ fn place_index_expression(e: &Expr) -> bool {
             place_index_expression(condition)
                 && place_index_expression(yes)
                 && place_index_expression(no)
+        }
+        Kind::Call(name, args) if matches!(name.as_str(), "size_of" | "align_of") => {
+            matches!(
+                args.as_slice(),
+                [Expr {
+                    kind: Kind::Type(_),
+                    ..
+                }]
+            )
         }
         Kind::Call(name, args)
             if (matches!(name.as_str(), "integer" | "nat")
@@ -1027,9 +1037,13 @@ impl<'a> Context<'a> {
             return true;
         }
         match &expression.kind {
+            Kind::Type(_) => true,
             Kind::Call(name, args) => {
                 let observed_call = MachineInt::parse(name).is_some()
-                    || matches!(name.as_str(), "integer" | "nat" | "owner_count")
+                    || matches!(
+                        name.as_str(),
+                        "integer" | "nat" | "owner_count" | "size_of" | "align_of"
+                    )
                     || self
                         .declarations
                         .functions
@@ -1841,6 +1855,9 @@ impl<'a> Context<'a> {
         match &e.kind {
             Kind::Bytes(bytes) => Self::declared_hint(&Type::bytes(bytes.len(), e.line)),
             Kind::Type(_) => Some(Ty::Type),
+            Kind::Call(name, _) if matches!(name.as_str(), "size_of" | "align_of") => {
+                Some(Ty::Machine(MachineInt::parse("usize").unwrap()))
+            }
             Kind::Call(name, _) if name == "typeof" => Some(Ty::Type),
             Kind::Call(name, args) if name == "shape" && args.len() == 1 => self
                 .type_literal(&args[0])

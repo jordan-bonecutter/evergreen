@@ -199,6 +199,9 @@ fn expression(
             expression(b, Some(&t), env, functions, safe)?;
             t
         }
+        Kind::Call(n, _) if matches!(n.as_str(), "size_of" | "align_of") => {
+            Type::Machine(MachineInt::parse("usize")?)
+        }
         Kind::Call(n, args) if MachineInt::parse(n).is_some() => {
             let [argument] = args.as_slice() else {
                 return None;

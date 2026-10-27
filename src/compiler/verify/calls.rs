@@ -21,6 +21,9 @@ impl<'a> Context<'a> {
         expected: Option<&Ty>,
         line: usize,
     ) -> Result<Symbol> {
+        if matches!(name, "size_of" | "align_of") {
+            return self.layout_query(name, args);
+        }
         if name == "owner_count" {
             return self.observe_owner_count(args);
         }

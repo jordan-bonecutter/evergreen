@@ -7,6 +7,7 @@ use crate::syntax::{Expr, Kind, Struct, Type};
 use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
+pub(crate) mod query;
 
 // Bound compiler-expanded inline values independently of runtime heap storage.
 pub const MAX_LAYOUT_BYTES: usize = 65536;
@@ -108,6 +109,17 @@ pub(crate) fn same_type(a: &Type, b: &Type) -> Result<bool> {
 }
 
 pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
+    compute_layout(ty, structs, MAX_LAYOUT_BYTES)
+}
+
+/// Target storage geometry without materializing an inline value or array cells.
+pub(crate) fn storage(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
+    let limit = usize::try_from(MAX_ALLOCATION_BYTES)
+        .map_err(|_| "target storage sizes exceed bootstrap host resolution")?;
+    compute_layout(ty, structs, limit)
+}
+
+fn compute_layout(ty: &Type, structs: &BTreeMap<String, Struct>, limit: usize) -> Result<Layout> {
     fn compute(
         ty: &Type,
         structs: &BTreeMap<String, Struct>,
@@ -115,6 +127,7 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
         target: &Target,
         cache: &mut BTreeMap<String, Layout>,
         work: &mut usize,
+        limit: usize,
     ) -> Result<Layout> {
         *work = work.saturating_add(1);
         if *work > 262_144 {
@@ -135,7 +148,7 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
                 if matches!(inner.as_ref(), Type::Shape(_)) {
                     return Err("shape(shape(T)) is not a distinct storage state".into());
                 }
-                let storage = compute(inner, structs, active, target, cache, work)?;
+                let storage = compute(inner, structs, active, target, cache, work, limit)?;
                 align = storage.align;
                 storage.size
             }
@@ -151,11 +164,12 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
                     if duplicate || matches!(member, Type::Union(_)) {
                         return Err("raw union members must be distinct and flattened".into());
                     }
-                    let storage = compute(member, structs, active, target, cache, work)?;
+                    let storage = compute(member, structs, active, target, cache, work, limit)?;
                     align = align.max(storage.align);
                     size = size.max(storage.size);
                 }
-                size.next_multiple_of(align)
+                size.checked_next_multiple_of(align)
+                    .ok_or("native layout alignment overflow")?
             }
             Type::Machine(_)
             | Type::Bool
@@ -171,7 +185,7 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
                 return Err("ideal mathematical types have no native runtime layout".into())
             }
             Type::Array(element, count) => {
-                let element = compute(element, structs, active, target, cache, work)?;
+                let element = compute(element, structs, active, target, cache, work, limit)?;
                 align = element.align;
                 element
                     .size
@@ -191,9 +205,11 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
                 }
                 let mut offset = 0usize;
                 for (name, ty) in definition.runtime_fields() {
-                    let layout = compute(ty, structs, active, target, cache, work)?;
+                    let layout = compute(ty, structs, active, target, cache, work, limit)?;
                     align = align.max(layout.align);
-                    offset = offset.next_multiple_of(layout.align);
+                    offset = offset
+                        .checked_next_multiple_of(layout.align)
+                        .ok_or("native layout alignment overflow")?;
                     if fields
                         .insert(
                             name.clone(),
@@ -209,16 +225,19 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
                     offset = offset
                         .checked_add(layout.size)
                         .ok_or("native record layout overflow")?;
-                    if offset > MAX_LAYOUT_BYTES {
-                        return Err("native object exceeds 64 KiB layout budget".into());
+                    if offset > limit {
+                        return Err(layout_limit_error(limit));
                     }
                 }
                 active.remove(name);
-                offset.next_multiple_of(align).max(1)
+                offset
+                    .checked_next_multiple_of(align)
+                    .ok_or("native layout alignment overflow")?
+                    .max(1)
             }
         };
-        if size > MAX_LAYOUT_BYTES {
-            return Err("native object exceeds 64 KiB layout budget".into());
+        if size > limit {
+            return Err(layout_limit_error(limit));
         }
         let layout = Layout {
             size,
@@ -237,7 +256,16 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
         target::native()?,
         &mut BTreeMap::new(),
         &mut 0,
+        limit,
     )
+}
+
+fn layout_limit_error(limit: usize) -> String {
+    if limit == MAX_LAYOUT_BYTES {
+        "native object exceeds 64 KiB layout budget".into()
+    } else {
+        "native object exceeds target addressable object range".into()
+    }
 }
 
 #[cfg(test)]

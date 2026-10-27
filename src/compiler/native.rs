@@ -520,6 +520,9 @@ impl Emitter<'_> {
             Kind::Call(n, _) if MachineInt::parse(n).is_some() => {
                 MachineInt::parse(n).map(Type::Machine)
             }
+            Kind::Call(name, _) if matches!(name.as_str(), "size_of" | "align_of") => {
+                Some(Type::Machine(MachineInt::parse("usize").unwrap()))
+            }
             Kind::Call(name, args) if name == "shape" && args.len() == 1 => {
                 args[0].literal_type().map(|ty| Type::Shape(Box::new(ty)))
             }
@@ -785,6 +788,11 @@ impl Emitter<'_> {
                 ty
             }
             Kind::Block(body, tail) => self.block_value(body, tail, expected)?,
+            Kind::Call(name, args) if matches!(name.as_str(), "size_of" | "align_of") => {
+                let value = layout::query::value(name, args, self.structs)?;
+                self.immediate(value as u64);
+                Type::Machine(MachineInt::parse("usize").unwrap())
+            }
             Kind::Call(name, args) if MachineInt::parse(name).is_some() => {
                 let target = Type::Machine(MachineInt::parse(name).unwrap());
                 let [argument] = args.as_slice() else {

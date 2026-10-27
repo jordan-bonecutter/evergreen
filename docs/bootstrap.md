@@ -379,6 +379,15 @@ implementation code. The Lean owner-slot model separately proves that an owner
 move preserves payload references and a free invalidates them; it does not prove
 move-only enforcement, the allocator, or compilation correctness.
 
+`size_of(T)` and `align_of(T)` observe target storage geometry as `usize`
+values without constructing a `T`. Generic source allocation bounds can therefore
+use `size_of(T)` instead of a fixed element width. Array geometry uses checked
+multiplication without expanding cells, and can describe objects larger than the
+inline-value budget. The verifier, interpreter, and native emitter share this
+layout computation. Ideal mathematical types have no runtime storage layout;
+layout queries also reject runtime effects in dependent type bounds. See
+`examples/layout_queries.evg`.
+
 `examples/owned_planes.evg` runs, builds, and replays with stable data borrows,
 borrowed write contracts, entry payload snapshots via `old(*owner)`, owner-slot
 replacement, and nested payload cleanup.
@@ -1995,7 +2004,8 @@ case. `push(&value, item)` requires
 spare capacity, `pop(&value)` requires a nonempty vector, and `get(&value, index)`
 returns a checked reference to an element below length. `length` and `capacity`
 expose those quantities without exposing the representation. Capacity is bounded
-by addressability: `integer(capacity) * 8 <= integer(isize::MAX)` for machine-word elements.
+by addressability:
+`integer(capacity) * integer(size_of(usize)) <= integer(isize::MAX)`.
 Native allocation can still fail at runtime; the interpreter has a separate work
 budget. Neither imposes a 8192-element language limit.
 
