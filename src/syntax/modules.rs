@@ -42,7 +42,12 @@ impl Scope<'_> {
                 }
                 *name = resolve(self.module, name, self.types);
             }
-            Type::Ref(ty) | Type::Plane(ty) => self.ty(ty),
+            Type::Ref(ty) | Type::Plane(ty) | Type::Shape(ty) => self.ty(ty),
+            Type::Union(members) => {
+                for member in members {
+                    self.ty(member);
+                }
+            }
             Type::Array(ty, len) => {
                 self.ty(ty);
                 self.expr(len);

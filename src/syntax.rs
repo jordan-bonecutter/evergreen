@@ -63,6 +63,8 @@ pub enum Type {
     Machine(MachineInt),
     Named(String),
     Array(Box<Type>, Box<Expr>),
+    Union(Vec<Type>),
+    Shape(Box<Type>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -424,6 +426,31 @@ impl Parser {
     }
 
     fn ty(&mut self) -> Result<Type, String> {
+        let first = self.type_atom()?;
+        if !self.eat("|") {
+            return Ok(first);
+        }
+        let mut members = Vec::new();
+        fn append(members: &mut Vec<Type>, ty: Type) {
+            match ty {
+                Type::Union(nested) => members.extend(nested),
+                ty => members.push(ty),
+            }
+        }
+        append(&mut members, first);
+        loop {
+            append(&mut members, self.type_atom()?);
+            if members.len() > 16 {
+                return Err(self.err("raw union member limit reached (16)"));
+            }
+            if !self.eat("|") {
+                break;
+            }
+        }
+        Ok(Type::Union(members))
+    }
+
+    fn type_atom(&mut self) -> Result<Type, String> {
         if self.depth >= 128 {
             return Err(self.err("syntax nesting limit reached"));
         }
@@ -435,12 +462,20 @@ impl Parser {
                 Err(self.err("syntax nesting limit reached"))
             } else {
                 self.depth += 1;
-                let nested = self.ty();
+                let nested = self.type_atom();
                 self.depth -= 1;
                 nested.map(|ty| Type::Ref(Box::new(Type::Ref(Box::new(ty)))))
             }
         } else if self.eat("&") {
-            Ok(Type::Ref(Box::new(self.ty()?)))
+            Ok(Type::Ref(Box::new(self.type_atom()?)))
+        } else if self.eat("shape") {
+            self.expect("(")?;
+            let inner = self.ty()?;
+            self.expect(")")?;
+            if matches!(inner, Type::Shape(_)) {
+                return Err(self.err("shape(shape(T)) is not a distinct storage state"));
+            }
+            Ok(Type::Shape(Box::new(inner)))
         } else if self.eat("array") {
             let (element, count) = self.array_arguments()?;
             if !constant_extent(&count) {
@@ -463,8 +498,13 @@ impl Parser {
             self.expect(")")?;
             Ok(Type::Plane(Box::new(inner)))
         } else if self.eat("(") {
-            self.expect(")")?;
-            Ok(Type::Unit)
+            if self.eat(")") {
+                Ok(Type::Unit)
+            } else {
+                let inner = self.ty()?;
+                self.expect(")")?;
+                Ok(inner)
+            }
         } else if self.eat("[") {
             let t = self.ty()?;
             self.expect(";")?;

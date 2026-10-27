@@ -3741,3 +3741,15 @@ fn returned_reference_fields_keep_independent_plane_provenance() {
         .replace("bar.data == &*first", "bar.data == &*second");
     assert_eq!(verify(&shared).unwrap().run().unwrap().to_string(), "42");
 }
+#[test]
+fn union_and_shape_storage_do_not_bypass_active_member_checking() {
+    for source in [
+        "fn main() {let value: usize | bool = 42;}",
+        "type Slot struct {value: usize | shape(usize)} fn main() {}",
+        "fn consume(value: shape(usize)) {}",
+        "fn pass(value: &shape(usize)) {}",
+    ] {
+        let error = verify(source).unwrap_err();
+        assert!(error.contains("active-member verification"), "{error}");
+    }
+}

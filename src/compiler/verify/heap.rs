@@ -6,6 +6,8 @@ use super::*;
 pub(super) fn payload_type(ty: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match ty {
         Type::Ref(_) => false,
+        Type::Union(members) => members.iter().all(|ty| payload_type(ty, structs)),
+        Type::Shape(_) => true,
         Type::Plane(inner) | Type::Array(inner, _) => payload_type(inner, structs),
         Type::Named(name) => structs.get(name).is_some_and(|definition| {
             definition
@@ -20,6 +22,8 @@ pub(super) fn payload_type(ty: &Type, structs: &BTreeMap<String, Struct>) -> boo
 pub(super) fn owns_planes_type(ty: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match ty {
         Type::Plane(_) => true,
+        Type::Union(members) => members.iter().any(|ty| owns_planes_type(ty, structs)),
+        Type::Shape(_) => false,
         Type::Array(inner, _) => owns_planes_type(inner, structs),
         Type::Named(name) => structs.get(name).is_some_and(|definition| {
             definition
@@ -38,6 +42,8 @@ pub(super) fn function_uses_planes(
     fn ty(value: &Type, structs: &BTreeMap<String, Struct>) -> bool {
         match value {
             Type::Plane(_) => true,
+            Type::Union(members) => members.iter().any(|member| ty(member, structs)),
+            Type::Shape(_) => false,
             Type::Ref(inner) | Type::Array(inner, _) => ty(inner, structs),
             Type::Named(name) => structs.get(name).is_some_and(|definition| {
                 definition

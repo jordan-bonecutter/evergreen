@@ -28,7 +28,10 @@ pub struct Layout {
 }
 
 pub fn aggregate(ty: &Type) -> bool {
-    matches!(ty, Type::Array(..) | Type::Named(_))
+    matches!(
+        ty,
+        Type::Array(..) | Type::Named(_) | Type::Union(_) | Type::Shape(_)
+    )
 }
 
 pub fn array_length(expression: &Expr) -> Result<usize> {
@@ -67,15 +70,76 @@ pub fn array_length(expression: &Expr) -> Result<usize> {
 }
 
 pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
+    fn same_member(a: &Type, b: &Type) -> Result<bool> {
+        Ok(match (a, b) {
+            (Type::Union(a), Type::Union(b)) => {
+                if a.len() != b.len() {
+                    false
+                } else {
+                    a.iter().try_fold(true, |same, member| {
+                        Ok::<_, String>(
+                            same && b.iter().try_fold(false, |found, candidate| {
+                                Ok::<_, String>(found || same_member(member, candidate)?)
+                            })?,
+                        )
+                    })?
+                }
+            }
+            (Type::Array(a, al), Type::Array(b, bl)) => {
+                same_member(a, b)? && array_length(al)? == array_length(bl)?
+            }
+            (Type::Ref(a), Type::Ref(b))
+            | (Type::Plane(a), Type::Plane(b))
+            | (Type::Shape(a), Type::Shape(b)) => same_member(a, b)?,
+            _ => a == b,
+        })
+    }
     fn compute(
         ty: &Type,
         structs: &BTreeMap<String, Struct>,
         active: &mut BTreeSet<String>,
         target: &Target,
+        cache: &mut BTreeMap<String, Layout>,
+        work: &mut usize,
     ) -> Result<Layout> {
+        *work = work.saturating_add(1);
+        if *work > 262_144 {
+            return Err("native layout work limit reached".into());
+        }
+        if let Type::Named(name) = ty {
+            if let Some(layout) = cache.get(name) {
+                return Ok(layout.clone());
+            }
+        }
         let mut fields = BTreeMap::new();
         let mut align = 1;
         let size = match ty {
+            Type::Shape(inner) => {
+                if matches!(inner.as_ref(), Type::Shape(_)) {
+                    return Err("shape(shape(T)) is not a distinct storage state".into());
+                }
+                let storage = compute(inner, structs, active, target, cache, work)?;
+                align = storage.align;
+                storage.size
+            }
+            Type::Union(members) => {
+                if !(2..=16).contains(&members.len()) {
+                    return Err("raw unions require between 2 and 16 distinct members".into());
+                }
+                let mut size = 1;
+                for (index, member) in members.iter().enumerate() {
+                    let duplicate = members[..index].iter().try_fold(false, |found, prior| {
+                        Ok::<_, String>(found || same_member(prior, member)?)
+                    })?;
+                    if duplicate || matches!(member, Type::Union(_)) {
+                        return Err("raw union members must be distinct and flattened".into());
+                    }
+                    let storage = compute(member, structs, active, target, cache, work)?;
+                    align = align.max(storage.align);
+                    size = size.max(storage.size);
+                }
+                size.next_multiple_of(align)
+            }
             Type::Machine(_) | Type::Bool | Type::Unit | Type::Ref(_) | Type::Plane(_) => {
                 let scalar = target.scalar(ty)?;
                 align = scalar.align;
@@ -85,7 +149,7 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
                 return Err("ideal mathematical types have no native runtime layout".into())
             }
             Type::Array(element, count) => {
-                let element = compute(element, structs, active, target)?;
+                let element = compute(element, structs, active, target, cache, work)?;
                 align = element.align;
                 element
                     .size
@@ -105,7 +169,7 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
                 }
                 let mut offset = 0usize;
                 for (name, ty) in definition.runtime_fields() {
-                    let layout = compute(ty, structs, active, target)?;
+                    let layout = compute(ty, structs, active, target, cache, work)?;
                     align = align.max(layout.align);
                     offset = offset.next_multiple_of(layout.align);
                     if fields
@@ -134,13 +198,24 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
         if size > MAX_LAYOUT_BYTES {
             return Err("native object exceeds 64 KiB layout budget".into());
         }
-        Ok(Layout {
+        let layout = Layout {
             size,
             align,
             fields,
-        })
+        };
+        if let Type::Named(name) = ty {
+            cache.insert(name.clone(), layout.clone());
+        }
+        Ok(layout)
     }
-    compute(ty, structs, &mut BTreeSet::new(), target::native()?)
+    compute(
+        ty,
+        structs,
+        &mut BTreeSet::new(),
+        target::native()?,
+        &mut BTreeMap::new(),
+        &mut 0,
+    )
 }
 
 #[cfg(test)]
@@ -240,5 +315,69 @@ mod tests {
                 "{source}"
             );
         }
+    }
+
+    #[test]
+    fn raw_unions_share_payload_storage_without_a_runtime_tag() {
+        let defs = definitions("type Three struct {data: [u8; 3]} type Wide struct {data: [u16; 3]} type Slot struct {head: u8, payload: Three | Wide | shape(Wide), tail: u8}");
+        let storage = &defs["Slot"].fields[1].1;
+        let union = of(storage, &defs).unwrap();
+        assert_eq!((union.size, union.align), (6, 2));
+        assert!(union.fields.is_empty());
+        let slot = of(&Type::Named("Slot".into()), &defs).unwrap();
+        assert_eq!((slot.size, slot.align), (10, 2));
+        assert_eq!(slot.fields["payload"].offset, 2);
+        assert_eq!(slot.fields["tail"].offset, 8);
+        let shape = of(&Type::Shape(Box::new(Type::Named("Wide".into()))), &defs).unwrap();
+        assert_eq!((shape.size, shape.align), (6, 2));
+        assert!(shape.fields.is_empty());
+        assert!(crate::shared::ownership::is_move_only(
+            storage,
+            &defs,
+            &BTreeSet::new()
+        ));
+        assert!(crate::shared::ownership::needs_drop(
+            storage,
+            &defs,
+            &BTreeSet::new()
+        ));
+        assert!(!crate::shared::ownership::needs_drop(
+            &Type::Shape(Box::new(Type::Named("Wide".into()))),
+            &defs,
+            &BTreeSet::new()
+        ));
+    }
+
+    #[test]
+    fn union_layouts_reject_duplicate_members_and_invalid_storage() {
+        for source in [
+            "type Bad struct {data: u8 | u8}",
+            "type Bad struct {data: [u8; 2] | [u8; 1 + 1]}",
+            "type Bad struct {data: [u8; 2] |\n [u8; 2]}",
+            "type Bad struct {data: integer | usize}",
+            "type Bad struct {data: shape(integer)}",
+            "type Bad struct {data: u8 | [u8; 65537]}",
+            "type Bad struct {data: Bad | usize}",
+            "type Bad struct {data: &(u8 | u16) | &(u16 | u8)}",
+        ] {
+            let defs = definitions(source);
+            assert!(of(&Type::Named("Bad".into()), &defs).is_err(), "{source}");
+        }
+    }
+
+    #[test]
+    fn overlapping_union_layout_graphs_do_not_expand_exponentially() {
+        let mut source = "type Layer struct {value: u64}".to_owned();
+        let mut prior = "Layer".to_owned();
+        for index in 0..48 {
+            let next = format!("Layer{index}");
+            source.push_str(&format!(
+                " type {next} struct {{value: {prior} | shape({prior})}}"
+            ));
+            prior = next;
+        }
+        let defs = definitions(&source);
+        let layout = of(&Type::Named(prior), &defs).unwrap();
+        assert_eq!((layout.size, layout.align), (8, 8));
     }
 }

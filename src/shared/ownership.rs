@@ -9,6 +9,7 @@ pub(crate) fn is_move_only(
     drops: &BTreeSet<String>,
 ) -> bool {
     match t {
+        Type::Union(_) | Type::Shape(_) => true,
         Type::Plane(_) => true,
         Type::Machine(_) | Type::Bool | Type::Unit | Type::Ref(_) => {
             !super::target::native().is_ok_and(|target| target.is_copy(t))
@@ -35,6 +36,8 @@ pub(crate) fn needs_drop(
     drops: &BTreeSet<String>,
 ) -> bool {
     match t {
+        Type::Union(_) => true, // Raw unions require explicit active-member elimination.
+        Type::Shape(_) => false,
         Type::Plane(_) => true,
         Type::Named(name) => {
             drops.contains(name)

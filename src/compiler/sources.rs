@@ -89,7 +89,12 @@ impl Names {
             Type::Named(name) => {
                 self.0.insert(name.clone());
             }
-            Type::Ref(inner) | Type::Plane(inner) => self.ty(inner),
+            Type::Ref(inner) | Type::Plane(inner) | Type::Shape(inner) => self.ty(inner),
+            Type::Union(members) => {
+                for member in members {
+                    self.ty(member);
+                }
+            }
             Type::Array(inner, extent) => {
                 self.ty(inner);
                 self.expr(extent);

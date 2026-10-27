@@ -53,7 +53,12 @@ fn ty(ty: &Type, names: &mut Names, calls: bool) {
         Type::Named(name) if !calls => {
             names.insert(name.clone());
         }
-        Type::Ref(inner) | Type::Plane(inner) => self::ty(inner, names, calls),
+        Type::Ref(inner) | Type::Plane(inner) | Type::Shape(inner) => self::ty(inner, names, calls),
+        Type::Union(members) => {
+            for member in members {
+                self::ty(member, names, calls);
+            }
+        }
         Type::Array(inner, count) => {
             self::ty(inner, names, calls);
             expression(count, names, calls);

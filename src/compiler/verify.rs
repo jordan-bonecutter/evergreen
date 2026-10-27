@@ -253,6 +253,8 @@ fn project_mut<'a>(value: &'a mut Symbol, path: &[Projection<Linear>]) -> Result
 fn type_has_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match t {
         Type::Ref(_) | Type::Plane(_) => true,
+        Type::Union(members) => members.iter().any(|ty| type_has_reference(ty, structs)),
+        Type::Shape(_) => false,
         Type::Array(t, _) => type_has_reference(t, structs),
         Type::Named(n) => structs
             .get(n)
@@ -282,7 +284,10 @@ fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
         Type::Named(n) => structs
             .get(n)
             .is_some_and(|s| !s.ideal && s.runtime_fields().all(|(_, t)| runtime_type(t, structs))),
-        Type::Array(t, _) | Type::Ref(t) | Type::Plane(t) => runtime_type(t, structs),
+        Type::Union(members) => members.iter().all(|ty| runtime_type(ty, structs)),
+        Type::Array(t, _) | Type::Ref(t) | Type::Plane(t) | Type::Shape(t) => {
+            runtime_type(t, structs)
+        }
         _ => true,
     }
 }
@@ -297,6 +302,8 @@ fn erased_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
             .get(name)
             .is_some_and(|s| s.ideal && s.fields.iter().all(|(_, t)| erased_type(t, structs))),
         Type::Array(element, _) => erased_type(element, structs),
+        Type::Union(members) => members.iter().all(|ty| erased_type(ty, structs)),
+        Type::Shape(_) => true,
         _ => true,
     }
 }
@@ -477,7 +484,8 @@ fn needs_old_memory(function: &Function) -> bool {
 
     fn ty(t: &Type) -> bool {
         match t {
-            Type::Ref(t) | Type::Plane(t) => ty(t),
+            Type::Ref(t) | Type::Plane(t) | Type::Shape(t) => ty(t),
+            Type::Union(members) => members.iter().any(ty),
             Type::Array(t, n) => ty(t) || expression(n),
             _ => false,
         }
@@ -1321,6 +1329,7 @@ impl<'a> Context<'a> {
 
     fn resolve(&mut self, t: &Type) -> Result<Ty> {
         match t {
+            Type::Union(_) | Type::Shape(_) => Err("raw union and shape storage types are being bootstrapped; active-member verification is not implemented yet".into()),
             Type::Int | Type::Nat if self.execution.phase == Phase::Runtime => Err("integer and nat are proof-only; use a machine integer for runtime storage or declare ideal code".into()),
             Type::Int => Ok(Ty::Int), Type::Nat => Ok(Ty::Nat),
             Type::Bool => Ok(Ty::Bool),
@@ -2122,7 +2131,7 @@ impl<'a> Context<'a> {
             Type::Named(n) => Some(Ty::Record(n.clone())),
             Type::Ref(t) => Self::declared_hint(t).map(|t| Ty::Ref(Box::new(t))),
             Type::Plane(t) => Self::declared_hint(t).map(|t| Ty::Plane(Box::new(t))),
-            Type::Array(..) => None,
+            Type::Array(..) | Type::Union(_) | Type::Shape(_) => None,
         }
     }
 
@@ -3115,7 +3124,11 @@ fn check_type_expansion(structs: &[Struct]) -> Result<()> {
     fn cost(t: &Type, known: &BTreeMap<String, (usize, usize)>) -> (usize, usize) {
         let (nodes, depth) = match t {
             Type::Named(n) => known.get(n).copied().unwrap_or((1, 1)),
-            Type::Ref(t) | Type::Plane(t) | Type::Array(t, _) => cost(t, known),
+            Type::Ref(t) | Type::Plane(t) | Type::Array(t, _) | Type::Shape(t) => cost(t, known),
+            Type::Union(members) => members.iter().fold((0usize, 0usize), |(nodes, depth), ty| {
+                let (child_nodes, child_depth) = cost(ty, known);
+                (nodes.saturating_add(child_nodes), depth.max(child_depth))
+            }),
             _ => (0, 0),
         };
         (nodes.saturating_add(1), depth.saturating_add(1))

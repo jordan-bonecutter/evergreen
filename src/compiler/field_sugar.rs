@@ -149,7 +149,12 @@ impl Shapes {
 
     fn ty(&self, ty: &mut Type, scope: &Scope) {
         match ty {
-            Type::Ref(inner) | Type::Plane(inner) => self.ty(inner, scope),
+            Type::Ref(inner) | Type::Plane(inner) | Type::Shape(inner) => self.ty(inner, scope),
+            Type::Union(members) => {
+                for member in members {
+                    self.ty(member, scope);
+                }
+            }
             Type::Array(inner, count) => {
                 self.ty(inner, scope);
                 self.expr(count, scope, None);

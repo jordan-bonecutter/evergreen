@@ -134,3 +134,29 @@ fn nested_while_statements_have_a_parser_depth_limit() {
     );
     assert!(super::parse(&source).unwrap_err().contains("nesting limit"));
 }
+#[test]
+fn raw_union_types_flatten_members_and_bind_reference_prefixes() {
+    let program = parse("module data {type Payload struct {value: u8} type Slot struct {a: Payload | shape(Payload), b: &usize | bool, c: &(usize | bool), d: u8 | (u16 | u32)}}").unwrap();
+    let slot = &program.structs[1];
+    let Type::Union(members) = &slot.fields[0].1 else {
+        panic!("missing union")
+    };
+    assert_eq!(members[0], Type::Named("data::Payload".into()));
+    assert_eq!(
+        members[1],
+        Type::Shape(Box::new(Type::Named("data::Payload".into())))
+    );
+    assert!(
+        matches!(&slot.fields[1].1, Type::Union(members) if matches!(&members[0], Type::Ref(_)))
+    );
+    assert!(
+        matches!(&slot.fields[2].1, Type::Ref(inner) if matches!(inner.as_ref(), Type::Union(members) if members.len() == 2))
+    );
+    assert!(matches!(&slot.fields[3].1, Type::Union(members) if members.len() == 3));
+    for bad in [
+        "type Bad struct {data: shape(shape(usize))}",
+        "type Bad struct {data: usize |}",
+    ] {
+        assert!(parse(bad).is_err());
+    }
+}
