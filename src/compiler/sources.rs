@@ -1,7 +1,10 @@
 //! Resolve bundled standard-library dependencies without filesystem searches.
 //! Each input keeps its own line numbers. Loaded library bytes bind certificates.
 
-use crate::syntax::{self, Expr, Function, Kind, Program, Statement, Struct, Type};
+use crate::syntax::{
+    self, Expr, Function, GenericArgument, GenericDeclaration, Kind, Program, Statement, Struct,
+    Type,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
@@ -104,6 +107,10 @@ struct Names(BTreeSet<String>);
 impl Names {
     fn ty(&mut self, ty: &Type) {
         match ty {
+            Type::Apply(name, arguments) => {
+                self.0.insert(name.clone());
+                self.arguments(arguments);
+            }
             Type::Named(name) => {
                 self.0.insert(name.clone());
             }
@@ -125,6 +132,13 @@ impl Names {
 
     fn expr(&mut self, e: &Expr) {
         match &e.kind {
+            Kind::Type(ty) => self.ty(ty),
+            Kind::Generic {
+                arguments, value, ..
+            } => {
+                self.arguments(arguments);
+                self.expr(value);
+            }
             Kind::Call(name, values) => {
                 self.0.insert(name.clone());
                 for value in values {
@@ -159,6 +173,41 @@ impl Names {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn arguments(&mut self, arguments: &[GenericArgument]) {
+        for argument in arguments {
+            match argument {
+                GenericArgument::Type(ty) => self.ty(ty),
+                GenericArgument::Const(value) => self.expr(value),
+            }
+        }
+    }
+
+    fn generic(&mut self, declaration: &GenericDeclaration) {
+        let parameters = match declaration {
+            GenericDeclaration::Record { parameters, .. }
+            | GenericDeclaration::Function { parameters, .. } => parameters,
+        };
+        for parameter in parameters {
+            match parameter {
+                syntax::GenericParameter::Type { default, .. } => {
+                    if let Some(ty) = default {
+                        self.ty(ty);
+                    }
+                }
+                syntax::GenericParameter::Const { ty, default, .. } => {
+                    self.ty(ty);
+                    if let Some(value) = default {
+                        self.expr(value);
+                    }
+                }
+            }
+        }
+        match declaration {
+            GenericDeclaration::Record { definition, .. } => self.structure(definition),
+            GenericDeclaration::Function { definition, .. } => self.function(definition),
         }
     }
 
@@ -329,6 +378,9 @@ impl Loader {
 
     fn dependencies(&self, program: &Program) -> Vec<usize> {
         let mut names = Names::default();
+        for declaration in &program.generics {
+            names.generic(declaration);
+        }
         for structure in &program.structs {
             names.structure(structure);
         }
@@ -349,6 +401,7 @@ impl Loader {
             }
         }
         self.output.program.copy_impls.extend(program.copy_impls);
+        self.output.program.generics.extend(program.generics);
         self.output
             .program
             .scalar_types
@@ -411,6 +464,7 @@ pub(super) fn load(source: &str) -> Result<Loaded> {
             functions: BTreeSet::new(),
             output: Loaded {
                 program: Program {
+                    generics: Vec::new(),
                     copy_impls: user.copy_impls,
                     imports: user.imports,
                     scalar_types: user.scalar_types,
@@ -422,6 +476,14 @@ pub(super) fn load(source: &str) -> Result<Loaded> {
                 fingerprint: source.into(),
             },
         };
+        for declaration in user.generics {
+            let mut names = Names::default();
+            names.generic(&declaration);
+            for index in loader.needed(names) {
+                loader.functions(index)?;
+            }
+            loader.output.program.generics.push(declaration);
+        }
         for structure in user.structs {
             let mut names = Names::default();
             names.structure(&structure);

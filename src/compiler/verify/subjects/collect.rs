@@ -26,6 +26,10 @@ impl Context<'_> {
             return Ok(None);
         }
         let key = match &expression.kind {
+            Kind::Type(_) => self.type_literal(expression).map(ClaimKey::Type),
+            Kind::Generic { .. } => {
+                return Err("unlowered generic expression reached proof-state collection".into())
+            }
             Kind::Bytes(bytes) => Some(ClaimKey::Array(
                 bytes
                     .iter()

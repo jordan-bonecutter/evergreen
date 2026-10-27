@@ -6,6 +6,7 @@ mod copy;
 mod declarations;
 mod effects;
 mod field_sugar;
+mod generics;
 pub mod kernel;
 pub mod layout;
 mod methods;

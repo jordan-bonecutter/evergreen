@@ -34,7 +34,9 @@ impl Parser {
         &mut self,
         receiver: Option<&str>,
         ideal: bool,
-    ) -> Result<Function, String> {
+    ) -> Result<(Vec<GenericParameter>, Function), String> {
+        let saved_consts = self.generic_consts.clone();
+        let saved_names = self.generic_names.clone();
         let line = self.line();
         let external = if self.eat("extern") {
             if self.eat("compare_exchange64") {
@@ -62,6 +64,7 @@ impl Parser {
             return Err(self.err("methods require an impl scope and a checked body"));
         }
         let name = self.name()?;
+        let generics = self.generic_parameters()?;
         let mut parameters = self.function_parameters(receiver)?;
         if method {
             if parameters.values.iter().any(|(name, _)| name == "self") {
@@ -104,37 +107,42 @@ impl Parser {
         } else {
             None
         };
-        Ok(Function {
-            impl_target: None,
-            receiver: if method {
-                Some(if by_reference {
-                    MethodReceiver::Reference
+        self.generic_consts = saved_consts;
+        self.generic_names = saved_names;
+        Ok((
+            generics,
+            Function {
+                impl_target: None,
+                receiver: if method {
+                    Some(if by_reference {
+                        MethodReceiver::Reference
+                    } else {
+                        MethodReceiver::Value
+                    })
                 } else {
-                    MethodReceiver::Value
-                })
-            } else {
-                None
+                    None
+                },
+                name,
+                external,
+                params: parameters.values,
+                ret,
+                pre,
+                post,
+                decreases,
+                borrows,
+                body,
+                result,
+                proof,
+                line,
+                drop_target: receiver.map(str::to_owned),
+                ideal,
+                modifies,
+                ideal_params: parameters.ideal,
+                module: None,
+                partial: false,
+                entry_memory: false,
             },
-            name,
-            external,
-            params: parameters.values,
-            ret,
-            pre,
-            post,
-            decreases,
-            borrows,
-            body,
-            result,
-            proof,
-            line,
-            drop_target: receiver.map(str::to_owned),
-            ideal,
-            modifies,
-            ideal_params: parameters.ideal,
-            module: None,
-            partial: false,
-            entry_memory: false,
-        })
+        ))
     }
 
     fn function_parameters(&mut self, receiver: Option<&str>) -> Result<Parameters, String> {

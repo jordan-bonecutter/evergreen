@@ -1219,6 +1219,7 @@ impl<'a> Context<'a> {
 
     fn resolve(&mut self, t: &Type) -> Result<Ty> {
         match t {
+            Type::Apply(..) => Err("generic type requires concrete specialization before verification".into()),
             Type::Union(members) => self.resolve_union(members),
             Type::Shape(inner) => {
                 let inner = self.resolve(inner)?;
@@ -1755,6 +1756,7 @@ impl<'a> Context<'a> {
 
     fn declared_hint(t: &Type) -> Option<Ty> {
         match t {
+            Type::Apply(..) => None,
             Type::Int => Some(Ty::Int),
             Type::Nat => Some(Ty::Nat),
             Type::Bool => Some(Ty::Bool),
@@ -1834,6 +1836,7 @@ impl<'a> Context<'a> {
         }
         match &e.kind {
             Kind::Bytes(bytes) => Self::declared_hint(&Type::bytes(bytes.len(), e.line)),
+            Kind::Type(_) => Some(Ty::Type),
             Kind::Call(name, _) if name == "typeof" => Some(Ty::Type),
             Kind::Call(name, args) if name == "shape" && args.len() == 1 => self
                 .type_literal(&args[0])
@@ -2373,6 +2376,14 @@ impl<'a> Context<'a> {
             }
         }
         match &e.kind {
+            Kind::Type(ty) if self.execution.phase != Phase::Runtime => Ok(Symbol::Type {
+                members: vec![self.resolve(ty)?],
+                active: Linear::number(0),
+            }),
+            Kind::Type(_) => Err("type values are ideal; they have no runtime storage".into()),
+            Kind::Generic { .. } => {
+                Err("generic expression requires specialization before verification".into())
+            }
             Kind::Bytes(bytes) => self.byte_literal(bytes),
             Kind::FactAt(place, name) => Ok(Symbol::Bool(self.fact_at(place, name, e.line)?)),
             Kind::Unit => Ok(Symbol::Unit),

@@ -69,9 +69,10 @@ pub(super) fn verify(
 
 fn prepare(parsed: &mut syntax::Program) -> Result<()> {
     crate::shared::target::native()?;
-    crate::compiler::methods::validate(parsed)?;
     crate::compiler::copy::configure(parsed)?;
     crate::compiler::scalar_types::lower(parsed)?;
+    crate::compiler::generics::lower(parsed)?;
+    crate::compiler::methods::validate(parsed)?;
     crate::compiler::declarations::schedule_types(parsed)?;
     check_type_expansion(&parsed.structs)?;
     crate::compiler::field_sugar::expand(parsed);
@@ -260,21 +261,7 @@ impl Verification {
         {
             return Err(format!("line {}: runtime signatures require fixed-layout types; integer/nat and ideal records are proof-only", f.line));
         }
-        if MachineInt::parse(f.name.rsplit("::").next().unwrap_or(&f.name)).is_some()
-            || matches!(
-                f.name.rsplit("::").next().unwrap_or(&f.name),
-                "move"
-                    | "drop"
-                    | "leak"
-                    | "alloc"
-                    | "integer"
-                    | "nat"
-                    | "old"
-                    | "typeof"
-                    | "shape"
-                    | "owner_count"
-            )
-        {
+        if syntax::is_builtin_name(&f.name) {
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));
         }
         returns::check_return_borrows(f, &self.structs)?;

@@ -82,6 +82,7 @@ impl Context<'_> {
 
     pub(super) fn type_literal(&self, expression: &Expr) -> Option<Ty> {
         match &expression.kind {
+            Kind::Type(ty) => Self::declared_hint(ty),
             Kind::Unary(op, inner) if op == "&" => {
                 self.type_literal(inner).map(|ty| Ty::Ref(Box::new(ty)))
             }

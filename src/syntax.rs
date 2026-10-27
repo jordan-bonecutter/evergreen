@@ -9,6 +9,9 @@ mod strings;
 pub use representation::{Endianness, IntegralEncoding, Representation, ScalarDefinition};
 
 mod functions;
+mod generics;
+pub(crate) mod visit;
+pub use generics::{GenericArgument, GenericDeclaration, GenericParameter};
 mod matches;
 mod statements;
 
@@ -16,6 +19,24 @@ mod statements;
 pub struct MachineInt {
     pub signed: bool,
     pub bits: u8,
+}
+
+pub(crate) fn is_builtin_name(name: &str) -> bool {
+    let name = name.rsplit("::").next().unwrap_or(name);
+    MachineInt::parse(name).is_some()
+        || matches!(
+            name,
+            "move"
+                | "drop"
+                | "leak"
+                | "alloc"
+                | "integer"
+                | "nat"
+                | "old"
+                | "typeof"
+                | "shape"
+                | "owner_count"
+        )
 }
 
 impl MachineInt {
@@ -56,6 +77,7 @@ impl MachineInt {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
+    Apply(String, Vec<GenericArgument>),
     Int,
     Nat,
     Bool,
@@ -141,6 +163,7 @@ impl Expr {
     /// dependent extents remain the verifier's responsibility.
     pub(crate) fn literal_type(&self) -> Option<Type> {
         match &self.kind {
+            Kind::Type(ty) => Some(ty.clone()),
             Kind::Unit => Some(Type::Unit),
             Kind::Name(name) => Some(MachineInt::parse(name).map(Type::Machine).unwrap_or_else(
                 || match name.as_str() {
@@ -184,6 +207,15 @@ impl Expr {
         }
         let child = |e: &Expr| e.bounded_depth(remaining - 1);
         match &self.kind {
+            Kind::Generic {
+                arguments, value, ..
+            } => {
+                child(value)
+                    && arguments.iter().all(|argument| match argument {
+                        GenericArgument::Const(value) => child(value),
+                        GenericArgument::Type(_) => true,
+                    })
+            }
             Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => child(e),
             Kind::Binary(_, a, b) | Kind::Index(a, b) => child(a) && child(b),
             Kind::If(c, a, b) => child(c) && child(a) && child(b),
@@ -199,6 +231,12 @@ impl Expr {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Kind {
+    Type(Type),
+    Generic {
+        arguments: Vec<GenericArgument>,
+        member: Option<String>,
+        value: Box<Expr>,
+    },
     Bytes(Vec<u8>),
     Number(i128),
     Constant(MachineInt, i128),
@@ -353,6 +391,7 @@ pub struct CopyImplementation {
 
 #[derive(Clone, Debug)]
 pub struct Program {
+    pub generics: Vec<GenericDeclaration>,
     pub copy_impls: Vec<CopyImplementation>,
     pub imports: std::collections::BTreeSet<String>,
     pub scalar_types: Vec<ScalarDefinition>,
@@ -419,6 +458,8 @@ struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     depth: usize,
+    generic_consts: std::collections::BTreeSet<String>,
+    generic_names: std::collections::BTreeSet<String>,
 }
 
 impl Parser {
@@ -461,6 +502,7 @@ impl Parser {
             || matches!(
                 s.as_str(),
                 "fn" | "let"
+                    | "const"
                     | "fact"
                     | "return"
                     | "result"
@@ -612,7 +654,7 @@ impl Parser {
             Ok(Type::Shape(Box::new(inner)))
         } else if self.eat("array") {
             let (element, count) = self.array_arguments()?;
-            if !constant_extent(&count) {
+            if !constant_extent(&count) && !self.generic_extent(&count) {
                 return Err(self.err("array(T, N) requires a compile-time extent; use linear_plane(T, n) for a runtime-bound pointer"));
             }
             Ok(Type::Array(Box::new(element), Box::new(count)))
@@ -673,7 +715,12 @@ impl Parser {
                     Ok(Type::Bool)
                 }
                 _ if self.peek().starts_with(|c: char| c.is_ascii_alphabetic()) => {
-                    Ok(Type::Named(self.path_name()?))
+                    let name = self.path_name()?;
+                    Ok(if self.peek() == "<" {
+                        Type::Apply(name, self.generic_arguments()?)
+                    } else {
+                        Type::Named(name)
+                    })
                 }
                 _ => Err(self.err("expected isize, usize, bool, [T; n], or a struct name")),
             }
@@ -685,6 +732,29 @@ impl Parser {
     fn named_expression(&mut self, line: usize) -> Result<Kind, String> {
         let mut parts = vec![self.name()?];
         while self.eat("::") {
+            if self.peek() == "<" {
+                let arguments = self.generic_arguments()?;
+                let member = if self.eat("::") {
+                    Some(self.path_name()?)
+                } else {
+                    None
+                };
+                let name = parts.join("::");
+                let kind = if self.eat("(") {
+                    Kind::Call(name, self.arguments()?)
+                } else if self.eat("{") && member.is_none() {
+                    Kind::Record(name, self.record_fields()?)
+                } else if member.is_none() {
+                    Kind::Name(name)
+                } else {
+                    return Err(self.err("generic associated calls require parentheses"));
+                };
+                return Ok(Kind::Generic {
+                    arguments,
+                    member,
+                    value: Box::new(Expr { kind, line }),
+                });
+            }
             if parts.len() >= 128 {
                 return Err(self.err("expression tree depth limit reached (128 path segments)"));
             }
@@ -704,6 +774,9 @@ impl Parser {
                 };
                 return Ok(Kind::Constant(integer, value));
             }
+        }
+        if parts.len() == 1 && self.generic_names.contains(&name) {
+            return Ok(Kind::Name(name));
         }
         if parts
             .last()
@@ -924,7 +997,10 @@ impl Parser {
         self.expect("for")?;
         let target = self.path_name()?;
         self.expect("{")?;
-        let mut function = self.function(Some(&target), false)?;
+        let (generics, mut function) = self.function(Some(&target), false)?;
+        if !generics.is_empty() {
+            return Err(self.err("Drop does not take function generic parameters"));
+        }
         if function.name != "drop"
             || function.params != vec![("self".into(), Type::Named(target.clone()))]
             || function.ret != Type::Unit
@@ -942,10 +1018,13 @@ impl Parser {
         Ok((target, function))
     }
 
-    fn structure(&mut self, ideal: bool) -> Result<Struct, String> {
+    fn structure(&mut self, ideal: bool) -> Result<(Vec<GenericParameter>, Struct), String> {
+        let saved_consts = self.generic_consts.clone();
+        let saved_names = self.generic_names.clone();
         let line = self.line();
         self.expect("type")?;
         let name = self.name()?;
+        let generics = self.generic_parameters()?;
         if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
             return Err(self.err("struct names must start with an uppercase letter"));
         }
@@ -992,18 +1071,23 @@ impl Parser {
             None
         };
         self.eat(";");
-        Ok(Struct {
-            copy: false,
-            name,
-            fields,
-            ideal_fields,
-            invariant,
-            line,
-            ideal,
-            facts,
-            opaque: false,
-            module: None,
-        })
+        self.generic_consts = saved_consts;
+        self.generic_names = saved_names;
+        Ok((
+            generics,
+            Struct {
+                copy: false,
+                name,
+                fields,
+                ideal_fields,
+                invariant,
+                line,
+                ideal,
+                facts,
+                opaque: false,
+                module: None,
+            },
+        ))
     }
 }
 
@@ -1026,8 +1110,11 @@ fn parse_unit(source: &str) -> Result<Program, String> {
         tokens: lex(source)?,
         pos: 0,
         depth: 0,
+        generic_consts: std::collections::BTreeSet::new(),
+        generic_names: std::collections::BTreeSet::new(),
     };
     let mut copy_impls = Vec::new();
+    let mut generics = Vec::new();
     let mut imports = std::collections::BTreeSet::new();
     let mut scalar_types = Vec::new();
     let mut functions = Vec::new();
@@ -1059,6 +1146,7 @@ fn parse_unit(source: &str) -> Result<Program, String> {
                     || !scalar_types.is_empty()
                     || !imports.is_empty()
                     || !copy_impls.is_empty()
+                    || !generics.is_empty()
                     || modules.len() != 1
                 {
                     return Err(p.err("a file module declaration must precede all declarations"));
@@ -1085,6 +1173,7 @@ fn parse_unit(source: &str) -> Result<Program, String> {
                 || !destructors.is_empty()
                 || !scalar_types.is_empty()
                 || !copy_impls.is_empty()
+                || !generics.is_empty()
             {
                 return Err(p.err("imports must precede declarations"));
             }
@@ -1112,13 +1201,20 @@ fn parse_unit(source: &str) -> Result<Program, String> {
             definition.module = module.clone();
             scalar_types.push(definition);
         } else if p.peek() == "type" {
-            let mut structure = p.structure(ideal)?;
+            let (parameters, mut structure) = p.structure(ideal)?;
             if opaque && module.is_none() {
                 return Err(p.err("opaque representations require a defining module"));
             }
             structure.opaque = opaque;
             structure.module = module.clone();
-            structs.push(structure);
+            if parameters.is_empty() {
+                structs.push(structure);
+            } else {
+                generics.push(GenericDeclaration::Record {
+                    parameters,
+                    definition: Box::new(structure),
+                });
+            }
         } else if p.peek() == "impl" {
             if opaque {
                 return Err(p.err("opaque modifies type declarations"));
@@ -1153,7 +1249,10 @@ fn parse_unit(source: &str) -> Result<Program, String> {
                 p.expect("{")?;
                 while !p.eat("}") {
                     let ideal = p.eat("ideal");
-                    let mut function = p.function(Some(&target), ideal)?;
+                    let (parameters, mut function) = p.function(Some(&target), ideal)?;
+                    if !parameters.is_empty() {
+                        return Err(p.err("generic inherent methods are not implemented yet"));
+                    }
                     if function.receiver.is_none()
                         && function.params.iter().any(|(name, _)| name == "self")
                     {
@@ -1173,9 +1272,19 @@ fn parse_unit(source: &str) -> Result<Program, String> {
             if opaque {
                 return Err(p.err("opaque modifies type declarations"));
             }
-            let mut function = p.function(None, ideal)?;
+            let (parameters, mut function) = p.function(None, ideal)?;
             function.module = module.clone();
-            functions.push(function);
+            if parameters.is_empty() {
+                functions.push(function);
+            } else {
+                if function.name == "main" {
+                    return Err(p.err("main cannot have generic parameters"));
+                }
+                generics.push(GenericDeclaration::Function {
+                    parameters,
+                    definition: Box::new(function),
+                });
+            }
         }
     }
     if module.is_some() && !file_module {
@@ -1185,10 +1294,12 @@ fn parse_unit(source: &str) -> Result<Program, String> {
         && destructors.is_empty()
         && structs.is_empty()
         && scalar_types.is_empty()
+        && generics.is_empty()
     {
         return Err("expected at least one declaration".into());
     }
     Ok(Program {
+        generics,
         copy_impls,
         imports,
         scalar_types,
@@ -1231,6 +1342,7 @@ pub fn parse(source: &str) -> Result<Program, String> {
         program.structs.extend(unit.structs);
         program.functions.extend(unit.functions);
         program.destructors.extend(unit.destructors);
+        program.generics.extend(unit.generics);
     }
     modules::qualify(&mut program);
     Ok(program)

@@ -1,0 +1,14 @@
+// Concrete type and const parameters are specialized before proof checking.
+type Buffer<T, const N: usize> struct {data: array(T, N)}
+
+fn get<T, const N: usize>(buffer: &Buffer<T, N>, index: usize) -> T
+where index < N {
+    buffer.data[index]
+}
+
+fn identity<T>(value: T) -> T {value}
+
+fn main() -> usize {
+    let buffer: Buffer<usize, 3> = Buffer::<usize, 3> {data: [7, 42, 9]};
+    identity::<usize>(get::<usize, 3>(&buffer, 1))
+}

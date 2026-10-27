@@ -1,7 +1,10 @@
 //! Resolve lexical module names once, before type/proof checking. Modules do not
 //! load files or supply trusted declarations; their functions are checked normally.
 
-use crate::syntax::{Expr, Function, Kind, Program, Statement, Type};
+use crate::syntax::{
+    Expr, Function, GenericArgument, GenericDeclaration, GenericParameter, Kind, Program,
+    Statement, Type,
+};
 use std::collections::BTreeSet;
 
 fn defined(module: Option<&str>, name: &str) -> String {
@@ -24,6 +27,7 @@ fn resolve(module: Option<&str>, name: &str, names: &BTreeSet<String>) -> String
 }
 
 struct Scope<'a> {
+    bound: BTreeSet<String>,
     self_type: Option<&'a str>,
     module: Option<&'a str>,
     types: &'a BTreeSet<String>,
@@ -34,6 +38,9 @@ impl Scope<'_> {
     fn ty(&self, ty: &mut Type) {
         match ty {
             Type::Named(name) => {
+                if self.bound.contains(name) {
+                    return;
+                }
                 if name == "Self" {
                     if let Some(target) = self.self_type {
                         *name = target.to_owned();
@@ -41,6 +48,10 @@ impl Scope<'_> {
                     }
                 }
                 *name = resolve(self.module, name, self.types);
+            }
+            Type::Apply(name, arguments) => {
+                *name = resolve(self.module, name, self.types);
+                self.arguments(arguments);
             }
             Type::Ref(ty) | Type::Unique(ty) | Type::Shared(ty) | Type::Shape(ty) => self.ty(ty),
             Type::Union(members) => {
@@ -58,6 +69,23 @@ impl Scope<'_> {
 
     fn expr(&self, expression: &mut Expr) {
         match &mut expression.kind {
+            Kind::Type(ty) => self.ty(ty),
+            Kind::Generic {
+                arguments,
+                value,
+                member,
+            } => {
+                self.arguments(arguments);
+                if let Kind::Name(name) = &mut value.kind {
+                    *name = resolve(self.module, name, self.types);
+                }
+                if member.is_some() {
+                    if let Kind::Call(name, _) = &mut value.kind {
+                        *name = resolve(self.module, name, self.types);
+                    }
+                }
+                self.expr(value);
+            }
             Kind::Record(name, fields) => {
                 if name == "Self" {
                     if let Some(target) = self.self_type {
@@ -117,8 +145,37 @@ impl Scope<'_> {
         }
     }
 
+    fn arguments(&self, arguments: &mut [GenericArgument]) {
+        for argument in arguments {
+            match argument {
+                GenericArgument::Type(ty) => self.ty(ty),
+                GenericArgument::Const(value) => self.expr(value),
+            }
+        }
+    }
+
+    fn parameters(&self, parameters: &mut [GenericParameter]) {
+        for parameter in parameters {
+            match parameter {
+                GenericParameter::Type { default, .. } => {
+                    if let Some(ty) = default {
+                        self.ty(ty);
+                    }
+                }
+                GenericParameter::Const { ty, default, .. } => {
+                    self.ty(ty);
+                    if let Some(value) = default {
+                        self.expr(value);
+                    }
+                }
+            }
+        }
+    }
+
     fn type_expression(&self, expression: &mut Expr) {
         match &mut expression.kind {
+            Kind::Type(ty) => self.ty(ty),
+            Kind::Generic { .. } => self.expr(expression),
             Kind::Name(name) => {
                 let mut ty = Type::Named(name.clone());
                 self.ty(&mut ty);
@@ -235,6 +292,17 @@ pub(crate) fn qualify(program: &mut Program) {
         .map(|s| defined(s.module.as_deref(), &s.name))
         .chain(
             program
+                .generics
+                .iter()
+                .filter_map(|declaration| match declaration {
+                    GenericDeclaration::Record { definition, .. } => {
+                        Some(defined(definition.module.as_deref(), &definition.name))
+                    }
+                    _ => None,
+                }),
+        )
+        .chain(
+            program
                 .scalar_types
                 .iter()
                 .map(|s| defined(s.module.as_deref(), &s.name)),
@@ -257,6 +325,17 @@ pub(crate) fn qualify(program: &mut Program) {
         })
         .chain(
             program
+                .generics
+                .iter()
+                .filter_map(|declaration| match declaration {
+                    GenericDeclaration::Function { definition, .. } => {
+                        Some(defined(definition.module.as_deref(), &definition.name))
+                    }
+                    _ => None,
+                }),
+        )
+        .chain(
+            program
                 .scalar_types
                 .iter()
                 .map(|s| defined(s.module.as_deref(), &s.name)),
@@ -271,6 +350,7 @@ pub(crate) fn qualify(program: &mut Program) {
     }
     for structure in &mut program.structs {
         let scope = Scope {
+            bound: BTreeSet::new(),
             self_type: None,
             module: structure.module.as_deref(),
             types: &types,
@@ -294,6 +374,7 @@ pub(crate) fn qualify(program: &mut Program) {
             .as_ref()
             .map(|target| resolve(module.as_deref(), target, &types));
         let scope = Scope {
+            bound: BTreeSet::new(),
             self_type: target.as_deref(),
             module: module.as_deref(),
             types: &types,
@@ -310,6 +391,7 @@ pub(crate) fn qualify(program: &mut Program) {
         let module = function.module.clone();
         *target = resolve(module.as_deref(), target, &types);
         let scope = Scope {
+            bound: BTreeSet::new(),
             self_type: Some(target.as_str()),
             module: module.as_deref(),
             types: &types,
@@ -318,5 +400,49 @@ pub(crate) fn qualify(program: &mut Program) {
         function.name = format!("evg_drop_{target}");
         function.drop_target = Some(target.clone());
         scope.function(function);
+    }
+    for declaration in &mut program.generics {
+        match declaration {
+            GenericDeclaration::Record {
+                parameters,
+                definition,
+            } => {
+                let module = definition.module.clone();
+                let scope = Scope {
+                    bound: parameters.iter().map(|p| p.name().to_owned()).collect(),
+                    self_type: None,
+                    module: module.as_deref(),
+                    types: &types,
+                    functions: &functions,
+                };
+                definition.name = defined(scope.module, &definition.name);
+                scope.parameters(parameters);
+                for (_, ty) in &mut definition.fields {
+                    scope.ty(ty);
+                }
+                for (_, fact) in &mut definition.facts {
+                    scope.expr(fact);
+                }
+                if let Some(invariant) = &mut definition.invariant {
+                    scope.expr(invariant);
+                }
+            }
+            GenericDeclaration::Function {
+                parameters,
+                definition,
+            } => {
+                let module = definition.module.clone();
+                let scope = Scope {
+                    bound: parameters.iter().map(|p| p.name().to_owned()).collect(),
+                    self_type: None,
+                    module: module.as_deref(),
+                    types: &types,
+                    functions: &functions,
+                };
+                definition.name = defined(scope.module, &definition.name);
+                scope.parameters(parameters);
+                scope.function(definition);
+            }
+        }
     }
 }

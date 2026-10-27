@@ -186,6 +186,7 @@ impl Evaluator<'_> {
 
     fn hint(&self, e: &Expr, env: &BTreeMap<String, Value>) -> Option<Type> {
         match &e.kind {
+            Kind::Type(_) | Kind::Generic { .. } => None,
             Kind::Bytes(bytes) => Some(Type::bytes(bytes.len(), e.line)),
             Kind::Bool(_) => Some(Type::Bool),
             Kind::Constant(t, _) => Some(Type::Machine(*t)),
@@ -673,6 +674,9 @@ impl Evaluator<'_> {
         expected: Option<&Type>,
     ) -> Result<Value> {
         match &e.kind {
+            Kind::Type(_) | Kind::Generic { .. } => {
+                Err("ideal type or generic template reached runtime execution".into())
+            }
             Kind::Bytes(bytes) => {
                 let element = MachineInt {
                     signed: false,

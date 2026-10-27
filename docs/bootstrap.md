@@ -315,6 +315,11 @@ Not yet supported: non-record patterns, complete Rc/Arc protocols, general C FFI
 layouts. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
 
+Records and free functions now support concrete type and const-generic
+specialization. For syntax, proof checking, specialization reuse, and current
+limits, see [generics.md](generics.md) and `examples/generics.evg`. Generic
+methods, Drop, traits, and the source array reimplementation remain unfinished.
+
 Unique heap ownership uses `unique(T)` and `alloc(value)`. An owner is move-only and
 owns a separately allocated, stable data plane. Moving the owner invalidates its
 old binding but preserves borrows of the data. `*owner` reads its payload;

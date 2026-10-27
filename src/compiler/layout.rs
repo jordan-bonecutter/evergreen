@@ -128,6 +128,9 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
         let mut fields = BTreeMap::new();
         let mut align = 1;
         let size = match ty {
+            Type::Apply(..) => {
+                return Err("generic type requires concrete specialization before layout".into())
+            }
             Type::Shape(inner) => {
                 if matches!(inner.as_ref(), Type::Shape(_)) {
                     return Err("shape(shape(T)) is not a distinct storage state".into());

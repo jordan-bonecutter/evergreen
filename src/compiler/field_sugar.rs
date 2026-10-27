@@ -262,6 +262,7 @@ impl Shapes {
 
     fn expr(&self, expr: &mut Expr, scope: &Scope, expected: Option<&Type>) -> Option<Type> {
         match &mut expr.kind {
+            Kind::Type(_) | Kind::Generic { .. } => None,
             Kind::Bytes(bytes) => Some(Type::bytes(bytes.len(), expr.line)),
             Kind::Name(name) => scope.get(name).cloned(),
             Kind::Record(name, fields) => {

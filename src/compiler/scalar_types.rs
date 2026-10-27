@@ -11,7 +11,8 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
     let mut seen = BTreeSet::new();
     let profile = program.functions.is_empty()
         && program.structs.is_empty()
-        && program.destructors.is_empty();
+        && program.destructors.is_empty()
+        && program.generics.is_empty();
     for definition in &program.scalar_types {
         definition.validate()?;
         let qualified = definition.module.as_ref().map_or_else(
@@ -68,28 +69,80 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
         }
         aliases.insert(qualified, ty);
     }
-    let aliases = Aliases(aliases);
+    let aliases = Aliases {
+        values: &aliases,
+        bound: BTreeSet::new(),
+    };
     for structure in &mut program.structs {
-        for (_, ty) in &mut structure.fields {
-            aliases.ty(ty, structure.module.as_deref());
-        }
-        for (_, fact) in &mut structure.facts {
-            aliases.expr(fact, structure.module.as_deref());
-        }
-        if let Some(invariant) = &mut structure.invariant {
-            aliases.expr(invariant, structure.module.as_deref());
-        }
+        aliases.record(structure);
     }
     for function in program
         .functions
         .iter_mut()
         .chain(program.destructors.iter_mut().map(|(_, f)| f))
     {
+        aliases.function(function);
+    }
+    for declaration in &mut program.generics {
+        let parameters = match declaration {
+            crate::syntax::GenericDeclaration::Record { parameters, .. }
+            | crate::syntax::GenericDeclaration::Function { parameters, .. } => parameters,
+        };
+        let scope = Aliases {
+            values: aliases.values,
+            bound: parameters.iter().map(|p| p.name().to_owned()).collect(),
+        };
+        for parameter in parameters {
+            match parameter {
+                crate::syntax::GenericParameter::Type { default, .. } => {
+                    if let Some(ty) = default {
+                        scope.ty(ty, None);
+                    }
+                }
+                crate::syntax::GenericParameter::Const { ty, default, .. } => {
+                    scope.ty(ty, None);
+                    if let Some(value) = default {
+                        scope.expr(value, None);
+                    }
+                }
+            }
+        }
+        match declaration {
+            crate::syntax::GenericDeclaration::Record { definition, .. } => {
+                scope.record(definition)
+            }
+            crate::syntax::GenericDeclaration::Function { definition, .. } => {
+                scope.function(definition)
+            }
+        }
+    }
+    Ok(())
+}
+
+struct Aliases<'a> {
+    values: &'a BTreeMap<String, Type>,
+    bound: BTreeSet<String>,
+}
+
+impl Aliases<'_> {
+    fn record(&self, structure: &mut crate::syntax::Struct) {
+        for (_, ty) in &mut structure.fields {
+            self.ty(ty, structure.module.as_deref());
+        }
+        for (_, fact) in &mut structure.facts {
+            self.expr(fact, structure.module.as_deref());
+        }
+        if let Some(invariant) = &mut structure.invariant {
+            self.expr(invariant, structure.module.as_deref());
+        }
+    }
+
+    fn function(&self, function: &mut crate::syntax::Function) {
         let module = function.module.as_deref();
         for (_, ty) in &mut function.params {
-            aliases.ty(ty, module);
+            self.ty(ty, module);
         }
-        aliases.ty(&mut function.ret, module);
+        self.ty(&mut function.ret, module);
         for expression in function
             .pre
             .iter_mut()
@@ -97,32 +150,42 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
             .chain(function.decreases.iter_mut())
             .chain(function.modifies.iter_mut())
         {
-            aliases.expr(expression, module);
+            self.expr(expression, module);
         }
         for borrow in &mut function.borrows {
-            aliases.expr(&mut borrow.reference, module);
+            self.expr(&mut borrow.reference, module);
         }
         for statement in &mut function.body {
-            aliases.statement(statement, module);
+            self.statement(statement, module);
         }
-        aliases.expr(&mut function.result, module);
+        self.expr(&mut function.result, module);
     }
-    Ok(())
-}
 
-struct Aliases(BTreeMap<String, Type>);
-
-impl Aliases {
+    fn arguments(&self, arguments: &mut [crate::syntax::GenericArgument], module: Option<&str>) {
+        for argument in arguments {
+            match argument {
+                crate::syntax::GenericArgument::Type(ty) => self.ty(ty, module),
+                crate::syntax::GenericArgument::Const(value) => self.expr(value, module),
+            }
+        }
+    }
     fn lookup(&self, name: &str, module: Option<&str>) -> Option<&Type> {
+        if self.bound.contains(name) {
+            return None;
+        }
         module
-            .and_then(|module| self.0.get(&format!("{module}::{name}")))
-            .or_else(|| self.0.get(name))
+            .and_then(|module| self.values.get(&format!("{module}::{name}")))
+            .or_else(|| self.values.get(name))
     }
 
     fn ty(&self, ty: &mut Type, module: Option<&str>) {
         match ty {
+            Type::Apply(_, arguments) => self.arguments(arguments, module),
             Type::Named(name) => {
-                if let Some(value) = self.0.get(name) {
+                if self.bound.contains(name) {
+                    return;
+                }
+                if let Some(value) = self.values.get(name) {
                     *ty = value.clone();
                 }
             }
@@ -144,6 +207,13 @@ impl Aliases {
 
     fn expr(&self, expr: &mut Expr, module: Option<&str>) {
         match &mut expr.kind {
+            Kind::Type(ty) => self.ty(ty, module),
+            Kind::Generic {
+                arguments, value, ..
+            } => {
+                self.arguments(arguments, module);
+                self.expr(value, module);
+            }
             Kind::Call(name, args) => {
                 for arg in args {
                     self.expr(arg, module);
