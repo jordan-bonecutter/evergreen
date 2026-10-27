@@ -827,6 +827,9 @@ impl Emitter<'_> {
 
     fn statement_inner(&mut self, statement: &Statement) -> Result<()> {
         match statement {
+            Statement::While {
+                condition, body, ..
+            } => self.while_loop(condition, body),
             Statement::Ideal(_) | Statement::Fact { .. } | Statement::Proof { .. } => Ok(()),
             Statement::Let { name, ty, value } => {
                 let ty = self.expr(value, ty.as_ref())?;
@@ -916,6 +919,41 @@ impl Emitter<'_> {
                 self.drop_value(&ty)
             }
         }
+    }
+
+    fn while_loop(&mut self, condition: &Expr, body: &[Statement]) -> Result<()> {
+        let slots = self.slots.clone();
+        let alive = self.alive.clone();
+        let head = self.code.len();
+        self.scoped_expr(condition, Some(&Type::Bool))?;
+        self.code.extend([0x48, 0x85, 0xc0, 0x0f, 0x84]); // test rax; jz exit
+        let exit = self.code.len();
+        self.code.extend([0; 4]);
+        for item in body {
+            self.statement(item)?;
+        }
+        let names = body
+            .iter()
+            .flat_map(|s| s.runtime_bindings(self.structs))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        for name in names.into_iter().rev() {
+            if self.alive.remove(&name) {
+                let (offset, ty) = self.slots.get(&name).cloned().ok_or("missing loop local")?;
+                self.drop_frame(&ty, offset)?;
+            }
+        }
+        if self.alive != alive {
+            return Err("loop body changes surrounding native ownership".into());
+        }
+        self.slots = slots;
+        self.alive = alive;
+        self.code.push(0xe9);
+        let back = self.code.len();
+        self.code.extend([0; 4]);
+        patch(self.code, back, head)?;
+        let end = self.code.len();
+        patch(self.code, exit, end)
     }
 
     fn heap_guard(&mut self, success: u8) {

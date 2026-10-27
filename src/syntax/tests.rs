@@ -125,3 +125,12 @@ fn mistaken_refined_alias_reports_the_supported_alternative() {
     assert!(error.contains("type aliases are not supported"), "{error}");
     assert!(error.contains("struct with a where clause"), "{error}");
 }
+#[test]
+fn nested_while_statements_have_a_parser_depth_limit() {
+    let source = format!(
+        "fn main() {{{}{}}}",
+        "while false invariant(true) {".repeat(129),
+        "}".repeat(129)
+    );
+    assert!(super::parse(&source).unwrap_err().contains("nesting limit"));
+}

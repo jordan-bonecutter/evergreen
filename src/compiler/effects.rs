@@ -296,7 +296,9 @@ fn scalar_effects(
                 }
             }
             Statement::Ideal(_) | Statement::Fact { .. } | Statement::Proof { .. } => {} // Checked proof code, erased at execution.
-            Statement::Update { .. } | Statement::Destructure { .. } => return false,
+            Statement::Update { .. } | Statement::Destructure { .. } | Statement::While { .. } => {
+                return false
+            }
         }
     }
     expression(&f.result, Some(&f.ret), &env, functions, safe).is_some()
@@ -325,8 +327,23 @@ pub(crate) fn recursive(function: &Function) -> bool {
                 expression(target, name) || expression(value, name)
             }
             Statement::Update { body, .. } => body.iter().any(|s| statement(s, name)),
+            Statement::While {
+                condition, body, ..
+            } => expression(condition, name) || body.iter().any(|s| statement(s, name)),
         }
     }
     function.body.iter().any(|s| statement(s, &function.name))
         || expression(&function.result, &function.name)
+}
+
+pub(crate) fn looping(function: &Function) -> bool {
+    fn contains(statement: &Statement) -> bool {
+        match statement {
+            Statement::While { .. } => true,
+            Statement::Ideal(inner) => contains(inner),
+            Statement::Update { body, .. } => body.iter().any(contains),
+            _ => false,
+        }
+    }
+    function.body.iter().any(contains)
 }

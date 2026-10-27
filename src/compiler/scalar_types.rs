@@ -200,6 +200,22 @@ impl Aliases {
                 self.expr(target, module);
                 self.expr(value, module);
             }
+            Statement::While {
+                condition,
+                invariant,
+                modifies,
+                body,
+                ..
+            } => {
+                self.expr(condition, module);
+                self.expr(invariant, module);
+                for effect in modifies {
+                    self.expr(effect, module);
+                }
+                for item in body {
+                    self.statement(item, module);
+                }
+            }
             Statement::Update { places, body, .. } => {
                 for place in places {
                     self.expr(place, module);

@@ -220,6 +220,23 @@ impl Shapes {
             Statement::Proof { proposition, .. } => {
                 self.expr(proposition, scope, None);
             }
+            Statement::While {
+                condition,
+                invariant,
+                modifies,
+                body,
+                ..
+            } => {
+                self.expr(condition, scope, Some(&Type::Bool));
+                self.expr(invariant, scope, Some(&Type::Bool));
+                for effect in modifies {
+                    self.expr(effect, scope, None);
+                }
+                let mut local = scope.clone();
+                for item in body {
+                    self.statement(item, &mut local);
+                }
+            }
             Statement::Update { places, body, .. } => {
                 for place in places {
                     self.expr(place, scope, None);

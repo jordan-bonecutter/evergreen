@@ -246,6 +246,7 @@ impl Verification {
     fn check_function(&mut self, f: &mut Function, session: &mut Session) -> Result<()> {
         f.entry_memory = needs_old_memory(f);
         f.partial = f.external.is_some()
+            || !f.ideal && crate::compiler::effects::looping(f)
             || !f.ideal && f.decreases.is_none() && crate::compiler::effects::recursive(f);
         self.check_signature(f)?;
         if f.decreases.is_some() || f.partial {

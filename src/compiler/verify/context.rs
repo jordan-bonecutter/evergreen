@@ -71,6 +71,7 @@ pub(super) struct Storage {
     pub(super) writable: Vec<WritePlace>,
     pub(super) inputs: Vec<InputReference>,
     pub(super) temporaries: Vec<(Symbol, usize)>,
+    pub(super) loops: Vec<loops::Frame>,
 }
 
 #[derive(Default)]

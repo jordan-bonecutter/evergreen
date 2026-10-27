@@ -81,6 +81,22 @@ fn statement(statement: &Statement, names: &mut Names) {
             expression(target, names, true);
             expression(value, names, true);
         }
+        Statement::While {
+            condition,
+            invariant,
+            modifies,
+            body,
+            ..
+        } => {
+            expression(condition, names, true);
+            expression(invariant, names, true);
+            for effect in modifies {
+                expression(effect, names, true);
+            }
+            for item in body {
+                self::statement(item, names);
+            }
+        }
         Statement::Update { places, body, .. } => {
             for place in places {
                 expression(place, names, true);

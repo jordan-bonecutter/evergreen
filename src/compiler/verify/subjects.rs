@@ -282,6 +282,7 @@ impl Context<'_> {
         path: &[Projection<Linear>],
     ) -> Result<()> {
         self.charge_value_work(1usize.saturating_add(path.len()))?;
+        self.check_loop_write(plane, path)?;
         self.proof.subjects.write(plane, path)
     }
 

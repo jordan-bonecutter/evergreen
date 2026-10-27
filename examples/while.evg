@@ -1,0 +1,17 @@
+// No unrolling or termination proof: one invariant-preserving step is checked.
+fn count_to(limit: usize) -> usize
+    ensures result == limit
+{
+    let count: usize = 0;
+    while count < limit
+        invariant(count <= limit)
+        modifies(&count)
+    {
+        count = count + 1;
+    }
+    count
+}
+
+fn main() -> usize {
+    count_to(42)
+}

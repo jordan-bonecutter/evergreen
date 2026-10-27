@@ -151,6 +151,13 @@ pub enum Statement {
         body: Vec<Statement>,
         line: usize,
     },
+    While {
+        condition: Expr,
+        invariant: Expr,
+        modifies: Vec<Expr>,
+        body: Vec<Statement>,
+        line: usize,
+    },
 }
 
 impl Statement {
@@ -334,6 +341,8 @@ impl Parser {
                     | "ideal"
                     | "if"
                     | "else"
+                    | "while"
+                    | "invariant"
                     | "true"
                     | "false"
                     | "by"

@@ -76,6 +76,55 @@ impl Scope {
 }
 
 impl Context<'_> {
+    pub(super) fn finish_scope(&mut self, f: &Function) -> Result<()> {
+        let mut names = f.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
+        names.extend(
+            f.body
+                .iter()
+                .flat_map(|s| s.bindings().into_iter().map(str::to_owned)),
+        );
+        self.finish_bindings(names, f.drop_target.is_some(), f.result.line)
+    }
+
+    pub(super) fn finish_bindings(
+        &mut self,
+        names: Vec<String>,
+        drop_receiver: bool,
+        line: usize,
+    ) -> Result<()> {
+        for name in names.into_iter().rev() {
+            let value = if let Some(id) = self.locals.places.get(&name).copied() {
+                if self.storage.memory.get(id).is_err() {
+                    continue;
+                }
+                let before = self.storage.memory.get(id)?.clone();
+                if self.symbol_is_move_only(&before) {
+                    self.validate_argument(&before, line)?;
+                }
+                self.take_symbol(id)?
+            } else {
+                let value = self
+                    .locals
+                    .values
+                    .remove(&name)
+                    .ok_or("unknown cleanup binding")?;
+                if self.symbol_is_move_only(&value) {
+                    self.validate_argument(&value, line)?;
+                }
+                value
+            };
+            if self.execution.phase == Phase::Runtime && !self.locals.ideal_bindings.contains(&name)
+            {
+                if name == "self" && drop_receiver {
+                    self.cleanup_fields(value, line)?;
+                } else {
+                    self.cleanup_value(value, line)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     // The destructor is already running. Consuming its complete receiver moves
     // all fields into locals; scope cleanup must not run the parent Drop again.
     pub(super) fn take_drop_receiver(&mut self, record: &str, expression: &Expr) -> Result<Symbol> {

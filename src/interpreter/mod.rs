@@ -212,6 +212,102 @@ impl Evaluator<'_> {
         }
     }
 
+    fn statement(
+        &mut self,
+        statement: &Statement,
+        env: &mut BTreeMap<String, Value>,
+    ) -> Result<()> {
+        match statement {
+            Statement::While {
+                condition, body, ..
+            } => {
+                let names = body
+                    .iter()
+                    .flat_map(|s| s.runtime_bindings(self.structs))
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                while self
+                    .scoped_expr(condition, env, Some(&Type::Bool))?
+                    .boolean()?
+                {
+                    for item in body {
+                        self.statement(item, env)?;
+                    }
+                    for name in names.iter().rev() {
+                        let value = if let Some(plane) = self.roots.remove(name) {
+                            self.memory.take(plane).ok()
+                        } else {
+                            env.get(name)
+                                .map(|value| copy_value(value, &mut self.fuel))
+                                .transpose()?
+                        };
+                        if let Some(value) = value {
+                            self.drop_value(value)?;
+                        }
+                        env.remove(name);
+                    }
+                }
+            }
+            Statement::Destructure {
+                record,
+                fields,
+                value,
+            } => {
+                let Value::Record(_, mut values) =
+                    self.expr(value, env, Some(&Type::Named(record.clone())))?
+                else {
+                    return Err("record pattern requires a record".into());
+                };
+                for (field, name) in fields {
+                    if self.structs[record].ideal_fields.contains(field) {
+                        continue;
+                    }
+                    env.insert(
+                        name.clone(),
+                        values.remove(field).ok_or("missing pattern field")?,
+                    );
+                }
+            }
+            Statement::Assign { target, value } => self.assign(target, value, env)?,
+            Statement::Update { body, .. } => {
+                let mut locals = Vec::new();
+                for update in body {
+                    match update {
+                        Statement::Assign { target, value } => self.assign(target, value, env)?,
+                        Statement::Let { name, ty, value } => {
+                            let value = self.expr(value, env, ty.as_ref())?;
+                            env.insert(name.clone(), value);
+                            locals.push(name.clone());
+                        }
+                        Statement::Ideal(_) | Statement::Fact { .. } | Statement::Proof { .. } => {}
+                        Statement::Effect(expression) => {
+                            let value = self.expr(expression, env, None)?;
+                            self.drop_value(value)?;
+                        }
+                        _ => return Err("unverified operation in update".into()),
+                    }
+                    self.finish_temporaries(0)?;
+                }
+                for name in locals.into_iter().rev() {
+                    if let Some(id) = self.roots.remove(&name) {
+                        self.memory.take(id)?;
+                    }
+                    env.remove(&name);
+                }
+            }
+            Statement::Effect(e) => {
+                let value = self.expr(e, env, None)?;
+                self.drop_value(value)?;
+            }
+            Statement::Ideal(_) | Statement::Fact { .. } | Statement::Proof { .. } => {}
+            Statement::Let { name, ty, value } => {
+                let v = self.expr(value, env, ty.as_ref())?;
+                env.insert(name.clone(), v);
+            }
+        }
+        self.finish_temporaries(0)
+    }
+
     fn call(&mut self, name: &str, actuals: Vec<Value>) -> Result<Value> {
         if self.depth >= 128 {
             return Err("execution call depth limit reached".into());
@@ -251,69 +347,7 @@ impl Evaluator<'_> {
         self.depth += 1;
         // Contracts were discharged by the verifier and are erased here.
         for statement in &f.body {
-            match statement {
-                Statement::Destructure {
-                    record,
-                    fields,
-                    value,
-                } => {
-                    let Value::Record(_, mut values) =
-                        self.expr(value, &env, Some(&Type::Named(record.clone())))?
-                    else {
-                        return Err("record pattern requires a record".into());
-                    };
-                    for (field, name) in fields {
-                        if self.structs[record].ideal_fields.contains(field) {
-                            continue;
-                        }
-                        env.insert(
-                            name.clone(),
-                            values.remove(field).ok_or("missing pattern field")?,
-                        );
-                    }
-                }
-                Statement::Assign { target, value } => self.assign(target, value, &mut env)?,
-                Statement::Update { body, .. } => {
-                    let mut locals = Vec::new();
-                    for update in body {
-                        match update {
-                            Statement::Assign { target, value } => {
-                                self.assign(target, value, &mut env)?
-                            }
-                            Statement::Let { name, ty, value } => {
-                                let value = self.expr(value, &env, ty.as_ref())?;
-                                env.insert(name.clone(), value);
-                                locals.push(name.clone());
-                            }
-                            Statement::Ideal(_)
-                            | Statement::Fact { .. }
-                            | Statement::Proof { .. } => {}
-                            Statement::Effect(expression) => {
-                                let value = self.expr(expression, &env, None)?;
-                                self.drop_value(value)?;
-                            }
-                            _ => return Err("unverified operation in update".into()),
-                        }
-                        self.finish_temporaries(0)?;
-                    }
-                    for name in locals.into_iter().rev() {
-                        if let Some(id) = self.roots.remove(&name) {
-                            self.memory.take(id)?;
-                        }
-                        env.remove(&name);
-                    }
-                }
-                Statement::Effect(e) => {
-                    let value = self.expr(e, &env, None)?;
-                    self.drop_value(value)?;
-                }
-                Statement::Ideal(_) | Statement::Fact { .. } | Statement::Proof { .. } => {}
-                Statement::Let { name, ty, value } => {
-                    let v = self.expr(value, &env, ty.as_ref())?;
-                    env.insert(name.clone(), v);
-                }
-            }
-            self.finish_temporaries(0)?;
+            self.statement(statement, &mut env)?;
         }
         let value = self.scoped_expr(&f.result, &env, Some(&f.ret))?;
         let mut names = f

@@ -26,6 +26,7 @@ use context::{Context, Declarations};
 mod evidence;
 mod external;
 mod heap;
+mod loops;
 mod parameters;
 mod paths;
 use paths::{extend, extend_from};
@@ -377,6 +378,7 @@ fn destructor_body(body: &[Statement]) -> bool {
         }
         Statement::Proof { proposition, .. } => destructor_expression(proposition),
         Statement::Update { body, .. } => destructor_body(body),
+        Statement::While { .. } => false,
     })
 }
 
@@ -491,6 +493,18 @@ fn needs_old_memory(function: &Function) -> bool {
             Statement::Proof { proposition, .. } => expression(proposition),
             Statement::Assign { target, value } => expression(target) || expression(value),
             Statement::Update { body, .. } => body.iter().any(statement),
+            Statement::While {
+                condition,
+                invariant,
+                modifies,
+                body,
+                ..
+            } => {
+                expression(condition)
+                    || expression(invariant)
+                    || modifies.iter().any(expression)
+                    || body.iter().any(statement)
+            }
         }
     }
     function.params.iter().any(|(_, t)| ty(t))
@@ -1675,6 +1689,13 @@ impl<'a> Context<'a> {
 
     fn statement_inner(&mut self, s: &Statement) -> Result<()> {
         match s {
+            Statement::While {
+                condition,
+                invariant,
+                modifies,
+                body,
+                line,
+            } => self.check_while(condition, invariant, modifies, body, *line),
             Statement::Ideal(binding) => {
                 if let Statement::Assign { target, .. } = binding.as_ref() {
                     fn erased(context: &Context<'_>, expression: &Expr) -> bool {
@@ -2416,46 +2437,6 @@ impl<'a> Context<'a> {
                 self.locals.places = roots;
                 self.proof.facts = facts;
                 self.locals.module = saved_module;
-            }
-        }
-        Ok(())
-    }
-
-    fn finish_scope(&mut self, f: &Function) -> Result<()> {
-        let mut names = f.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
-        names.extend(
-            f.body
-                .iter()
-                .flat_map(|s| s.bindings().into_iter().map(str::to_owned)),
-        );
-        for name in names.into_iter().rev() {
-            let value = if let Some(id) = self.locals.places.get(&name).copied() {
-                if self.storage.memory.get(id).is_err() {
-                    continue;
-                }
-                let before = self.storage.memory.get(id)?.clone();
-                if self.symbol_is_move_only(&before) {
-                    self.validate_argument(&before, f.result.line)?;
-                }
-                self.take_symbol(id)?
-            } else {
-                let value = self
-                    .locals
-                    .values
-                    .remove(&name)
-                    .ok_or("unknown cleanup binding")?;
-                if self.symbol_is_move_only(&value) {
-                    self.validate_argument(&value, f.result.line)?;
-                }
-                value
-            };
-            if self.execution.phase == Phase::Runtime && !self.locals.ideal_bindings.contains(&name)
-            {
-                if name == "self" && f.drop_target.is_some() {
-                    self.cleanup_fields(value, f.result.line)?;
-                } else {
-                    self.cleanup_value(value, f.result.line)?;
-                }
             }
         }
         Ok(())

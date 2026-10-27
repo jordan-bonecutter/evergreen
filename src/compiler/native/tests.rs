@@ -127,6 +127,10 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        include_str!("../../../examples/while.evg"),
+        "fn main() -> usize {let i: usize = 0; let sum: usize = 0; while i < 3 invariant(i <= 3 && integer(sum) == 14 * integer(i)) modifies(&i, &sum) {let j: usize = 0; while j < 14 invariant(j <= 14) modifies(&j) {j = j + 1;} sum = sum + j; i = i + 1;} sum}",
+        "fn fill(data: &[usize; 3]) modifies(data) {let i: usize = 0; while i < 3 invariant(i <= 3) modifies(&i, data) {let value: usize = 42; (*data)[i] = value; i = i + 1;}} fn main() -> usize {let data: [usize; 3] = [0, 0, 0]; fill(&data); data[2]}",
+        "type Guard struct {target: &usize} impl Drop for Guard {fn drop(self) modifies(self.target) ensures *self.target == 42 {*self.target = 42;}} fn main() -> usize {let i: usize = 0; let out: usize = 0; while i < 2 invariant(i <= 2 && (i == 0 || out == 42)) modifies(&i, &out) {let guard = Guard {target: &out}; i = i + 1;} out}",
         include_str!("../../../examples/owned_method_transfer.evg"),
         include_str!("../../../examples/methods.evg"),
         include_str!("../../../examples/anonymous_proofs.evg"),

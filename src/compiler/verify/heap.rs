@@ -75,6 +75,9 @@ pub(super) fn function_uses_planes(
             Statement::Proof { proposition, .. } => expression(proposition),
             Statement::Assign { target, value } => expression(target) || expression(value),
             Statement::Update { body, .. } => body.iter().any(|s| statement(s, structs)),
+            Statement::While {
+                condition, body, ..
+            } => expression(condition) || body.iter().any(|s| statement(s, structs)),
         }
     }
     function.params.iter().any(|(_, t)| ty(t, structs))

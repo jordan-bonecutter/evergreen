@@ -4,6 +4,14 @@ This records the requested proof model and the partial implementation below.
 It is not a completed trust boundary: complete value provenance and independent
 checking of frontend state/contract imports remain work in progress.
 
+Runtime loops use a finite initialization/preservation/exit rule in the frontend.
+Their invariant imports have the same explicit unresolved context as checked
+function-contract imports. The proof graph remains acyclic: an arbitrary head
+is checked once, and exit evidence points back to entry and preservation
+obligations. This is not yet an independently kernel-checked state-transition or
+loop-induction certificate. Known admission sources used in the loop propagate
+through its exit invariant and function summaries.
+
 ## Claims and evidence
 
 A named fact stores a proposition expression. It does not establish truth.

@@ -250,6 +250,41 @@ is strictly smaller than the entry measure. The callee contract is available
 only under this well-founded induction rule. Recursive calls in specifications
 are rejected. Mutual recursion is not implemented yet.
 
+Runtime `while` loops check an invariant without unrolling the body:
+
+```evg
+let count: usize = 0;
+while count < limit
+    invariant(count <= limit)
+    modifies(&count)
+{
+    count = count + 1;
+}
+proof finished: count == limit;
+```
+
+The invariant must hold on entry and after an arbitrary iteration, including
+cleanup of iteration-local values. The checker replaces the declared mutable
+contents with fresh symbolic values, checks the body under the invariant and
+true guard, then exposes the invariant and false guard at exit. Neither checking
+cost nor generated code grows with the runtime iteration count. Runtime loops
+may diverge; functions containing them cannot be observed by specification or
+ideal code as total functions. The interpreter retains its execution fuel limit.
+
+`modifies(...)` is the loop's storage frame. It accepts structural references to
+scalar contents, reference-free records without cleanup, or arrays of such
+elements. Writes through aliases, helpers, and destructors must stay within that
+frame and the surrounding function's permissions. Iteration-local storage is
+cleaned up on each back edge. Existing plane generations and ownership must
+survive; general ownership-changing iteration requires shape invariants and is
+not implemented yet. Frame entries cannot overlap. Conditions currently allow
+scalar expressions without calls; ideal loops, `break`, `continue`, and returns
+from inside loops are not implemented. See `examples/while.evg`.
+
+Use ideal arithmetic in invariants when intermediate machine arithmetic could
+overflow: `integer(sum) == 14 * integer(count)` states the mathematical relation
+without requiring `14 * count` to fit before the invariant is established.
+
 Not yet supported: non-record patterns, shared heap ownership, general C FFI, foreign aggregate
 layouts. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.

@@ -119,6 +119,22 @@ impl Scope<'_> {
                 self.expr(target);
                 self.expr(value);
             }
+            Statement::While {
+                condition,
+                invariant,
+                modifies,
+                body,
+                ..
+            } => {
+                self.expr(condition);
+                self.expr(invariant);
+                for effect in modifies {
+                    self.expr(effect);
+                }
+                for item in body {
+                    self.statement(item);
+                }
+            }
             Statement::Update {
                 places,
                 lifts,

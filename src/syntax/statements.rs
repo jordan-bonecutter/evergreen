@@ -9,6 +9,10 @@ enum BindingKind {
 
 impl Parser {
     pub(super) fn function_body(&mut self) -> Result<(Vec<Statement>, Expr), String> {
+        self.block(true)
+    }
+
+    fn block(&mut self, returns: bool) -> Result<(Vec<Statement>, Expr), String> {
         self.expect("{")?;
         let mut body = Vec::new();
         let result = loop {
@@ -23,6 +27,11 @@ impl Parser {
                 continue;
             }
             if self.eat("return") {
+                if !returns {
+                    return Err(
+                        self.err("return inside a loop needs an exit invariant; unsupported")
+                    );
+                }
                 let value = self.expr(0)?;
                 self.eat(";");
                 break value;
@@ -47,6 +56,8 @@ impl Parser {
             self.ideal_statement()?
         } else if self.eat("update") {
             self.update_statement()?
+        } else if self.eat("while") {
+            self.while_statement()?
         } else if self.eat("proof") {
             self.proof_statement()?
         } else if self.eat("let") {
@@ -63,6 +74,34 @@ impl Parser {
         let value = self.expr(0)?;
         self.expect(";")?;
         Ok(Statement::Assign { target, value })
+    }
+
+    fn while_statement(&mut self) -> Result<Statement, String> {
+        let line = self.line();
+        if self.depth >= 128 {
+            return Err(self.err("statement nesting limit reached (128)"));
+        }
+        self.depth += 1;
+        let condition = self.expr(0)?;
+        self.expect("invariant")?;
+        let invariant = self.expr(0)?;
+        let modifies = if self.eat("modifies") {
+            self.nonempty_expressions()?
+        } else {
+            Vec::new()
+        };
+        let (mut body, tail) = self.block(false)?;
+        if tail.kind != Kind::Unit {
+            body.push(Statement::Effect(tail));
+        }
+        self.depth -= 1;
+        Ok(Statement::While {
+            condition,
+            invariant,
+            modifies,
+            body,
+            line,
+        })
     }
 
     fn update_statement(&mut self) -> Result<Statement, String> {
