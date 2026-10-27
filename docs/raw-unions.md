@@ -55,11 +55,20 @@ selected nominal member runs its destructor, and that an enclosing Drop method
 eliminates its raw payload by ordinary source-level branches. Both execute natively; no built-in
 Option representation or destructor dispatch is involved.
 
-Pointer members are still rejected. Conditional ownership and borrowed-reference
-footprints must follow the active member before that restriction can be removed;
-inactive alternatives must carry no owner or borrow authority. General member
-replacement through a borrowed union, partial initialization of enclosing
-records, dynamic array member interpretation, and generic Option remain work in
-progress. Member cases are bounded and currently elaborated eagerly; deferred
+Owning plane members now follow the active selector. `examples/raw_union_owner.evg`
+selects between `plane(usize)` and `shape(plane(usize))`, returns that union through
+a checked function contract, and consumes the active member in another function.
+Only the active payload grants owner authority. Virtual allocations for inactive
+members do not grant owners, and only admission-free checked reachability can
+justify discarding their counterfactual storage at a branch join. Actual moves
+and releases still invalidate handles through the generation-checked plane store.
+Allocation identities remain distinct across branch snapshots.
+
+Borrowed-reference members remain rejected until return-plane contracts and
+conditional borrow footprints describe their provenance. References to an owning
+union cannot move its owner out. Joining two different allocations in the same
+member, general member replacement through a borrowed union, partial initialization
+of enclosing records, dynamic array member interpretation, and generic Option
+remain work in progress. Member cases are bounded and currently elaborated eagerly; deferred
 member constraints are also pending. `Option`, Vec, Rc, and Arc remain ordinary
 library code built on the eventual generic rules.

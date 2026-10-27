@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn conditional_owners_survive_calls_and_only_the_active_owner_is_released() {
+    let source = include_str!("../../../../examples/raw_union_owner.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    assert!(
+        verify(&source.replace("if full {consume(value)}", "if !full {consume(value)}")).is_err()
+    );
+}
+
+#[test]
+fn union_members_cannot_duplicate_owners_or_revive_freed_planes() {
+    for source in [
+        "fn bad(v: plane(usize) | shape(plane(usize))) -> usize {let p: plane(usize) = v; *p}",
+        "fn main() {let p: plane(usize) = alloc(42); let v: plane(usize) | bool = p; let a: plane(usize) = v; let b: plane(usize) = v;}",
+        "fn main() -> usize {let p: plane(usize) = alloc(42); let r = &*p; let v: plane(usize) | bool = p; let a: plane(usize) = v; drop(a); *r}",
+        "fn bad(v: &(plane(usize) | bool)) -> usize where typeof(*v) == plane(usize) {let stolen: plane(usize) = *v; *stolen}",
+        "fn drop_owner(v: plane(usize)) {drop(v);} fn keep(v: plane(usize)) {} fn bad(flag: bool, p: plane(usize)) {if flag {drop_owner(p)} else {()}; keep(p);}",
+    ] {
+        assert!(verify(source).is_err(), "accepted {source}");
+    }
+}
+
+#[test]
 fn checked_union_injection_and_extraction_use_active_member_evidence() {
     let source = "fn extract(value: usize | bool) -> usize where typeof(value) == usize {let number: usize = value; number} fn main() -> usize {extract(42)}";
     let (program, bundle) = prove(source).unwrap();

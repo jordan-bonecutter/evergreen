@@ -80,6 +80,26 @@ impl Context<'_> {
         for (index, (id, generation, original)) in store.memory.states().into_iter().enumerate() {
             let (_, ag, av) = a_states.get(index).ok_or("missing branch plane")?;
             let (_, bg, bv) = b_states.get(index).ok_or("missing branch plane")?;
+            // A union's virtual allocation exists only in its active case.
+            // Consuming it there also consumes the counterfactual slot in the
+            // other branch, provided that branch proves it never existed.
+            let absent_in = match (av, bv) {
+                (Some(_), None) if *ag == generation && *bg == generation.saturating_add(1) => {
+                    Some(&a_paths)
+                }
+                (None, Some(_)) if *bg == generation && *ag == generation.saturating_add(1) => {
+                    Some(&b_paths)
+                }
+                _ => None,
+            };
+            if let Some(live_paths) = absent_in {
+                if original.is_some()
+                    && self.checked_impossible(live_paths, &self.plane_presence(id))?
+                {
+                    self.take_symbol(id)?;
+                    continue;
+                }
+            }
             if ag != bg {
                 return Err("conditional branches have different ownership or storage generations; conditional shapes are not implemented".into());
             }
@@ -113,6 +133,12 @@ impl Context<'_> {
                 }
             }
         }
+        self.storage
+            .memory
+            .import_new_planes(&a_store.memory, &store.memory)?;
+        self.storage
+            .memory
+            .import_new_planes(&b_store.memory, &store.memory)?;
         for (name, id) in &self.locals.places {
             if let Ok(value) = self.storage.memory.get(*id) {
                 self.locals.values.insert(name.clone(), value.clone());

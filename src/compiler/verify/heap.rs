@@ -263,28 +263,50 @@ impl Context<'_> {
             } else {
                 value
             };
-            pending.push(value.clone());
+            pending.push((value.clone(), Formula::True));
         }
-        while let Some(value) = pending.pop() {
-            self.charge_value_work(1)?;
+        let mut authority = Formula::False;
+        while let Some((value, guard)) = pending.pop() {
+            self.charge_value_work(1usize.saturating_add(guard.storage_weight()?))?;
             match value {
                 Symbol::Plane(_, reference) => {
+                    let paths = self.proof.paths.clone();
+                    if self.checked_impossible(&paths, &guard)? {
+                        continue;
+                    }
                     let owned = self.storage.memory.plane(reference)?;
                     if owned == plane {
-                        return Ok(true);
+                        authority = authority.or(guard.clone());
                     }
                     self.charge_value_work(symbol_weight(self.storage.memory.read(reference)?)?)?;
-                    pending.push(self.storage.memory.read(reference)?.clone());
+                    pending.push((self.storage.memory.read(reference)?.clone(), guard));
                 }
-                Symbol::Record(_, fields) => pending.extend(fields.into_values()),
+                Symbol::Union {
+                    active, payloads, ..
+                } => {
+                    for (index, payload) in payloads.into_iter().enumerate() {
+                        if let Some(payload) = payload {
+                            let active = equal(&active, &Linear::number(index as i128))?;
+                            pending.push((payload, guard.clone().and(active)));
+                        }
+                    }
+                }
+                Symbol::Record(_, fields) => {
+                    pending.extend(fields.into_values().map(|value| (value, guard.clone())));
+                }
                 Symbol::Array { items, cells, .. } => {
-                    pending.extend(items.into_iter().flatten());
-                    pending.extend(cells.into_values());
+                    pending.extend(
+                        items
+                            .into_iter()
+                            .flatten()
+                            .map(|value| (value, guard.clone())),
+                    );
+                    pending.extend(cells.into_values().map(|value| (value, guard.clone())));
                 }
                 _ => {} // A borrowed pointer does not own its target.
             }
         }
-        Ok(false)
+        self.checked_entails(&authority)
     }
 }
 

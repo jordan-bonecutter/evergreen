@@ -3,7 +3,10 @@
 //! The checker and interpreter instantiate this store with their own value types.
 //! Generated executables use the native backend's Linux allocator.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    atomic::{AtomicU64, AtomicUsize, Ordering},
+    Arc,
+};
 
 mod owners;
 pub use owners::OwnedReference;
@@ -58,6 +61,7 @@ struct Plane<T> {
 #[derive(Debug)]
 pub struct Memory<T> {
     owner: u64,
+    next_slot: Arc<AtomicUsize>,
     planes: Vec<Plane<T>>,
 }
 
@@ -80,6 +84,7 @@ impl<T> Default for Memory<T> {
         }
         Self {
             owner,
+            next_slot: Arc::new(AtomicUsize::new(0)),
             planes: Vec::new(),
         }
     }
@@ -92,6 +97,7 @@ impl<T> Memory<T> {
     {
         Self {
             owner: self.owner,
+            next_slot: Arc::clone(&self.next_slot),
             planes: self.planes.clone(),
         }
     }
@@ -114,19 +120,65 @@ impl<T> Memory<T> {
     }
 
     pub fn allocate(&mut self, value: T) -> Result<PlaneId, String> {
-        if self.planes.len() >= 100_000 {
-            return Err("plane allocation limit reached".into());
-        }
+        let slot = self
+            .next_slot
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |slot| {
+                (slot < 100_000).then_some(slot + 1)
+            })
+            .map_err(|_| "plane allocation limit reached")?;
         let id = PlaneId {
             owner: self.owner,
-            slot: self.planes.len(),
+            slot,
         };
+        self.pad_to(slot);
         self.planes.push(Plane {
             ownership: owners::Ownership::Unique,
             generation: 0,
             value: Some(value),
         });
         Ok(id)
+    }
+
+    fn pad_to(&mut self, length: usize) {
+        while self.planes.len() < length {
+            self.planes.push(Plane {
+                ownership: owners::Ownership::Unique,
+                generation: 0,
+                value: None,
+            });
+        }
+    }
+
+    /// Import allocations born after a saved world, keeping their globally
+    /// unique IDs. Their conditional presence is checked by the frontend.
+    pub(crate) fn import_new_planes(
+        &mut self,
+        branch: &Self,
+        base: &Self,
+    ) -> Result<Vec<PlaneId>, String>
+    where
+        T: Clone,
+    {
+        if self.owner != branch.owner || self.owner != base.owner {
+            return Err("cannot join different plane arenas".into());
+        }
+        let mut imported = Vec::new();
+        for slot in base.planes.len()..branch.planes.len() {
+            let plane = &branch.planes[slot];
+            if plane.value.is_none() {
+                continue;
+            }
+            self.pad_to(slot + 1);
+            if self.planes[slot].value.is_some() {
+                return Err("branch allocation identity collision".into());
+            }
+            self.planes[slot] = plane.clone();
+            imported.push(PlaneId {
+                owner: self.owner,
+                slot,
+            });
+        }
+        Ok(imported)
     }
 
     pub fn borrow(&self, id: PlaneId) -> Result<Reference, String> {
@@ -220,6 +272,52 @@ impl<T> Memory<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn branch_allocations_keep_distinct_identities_after_restore_and_join() {
+        let mut base = Memory::default();
+        let original = base.allocate(7).unwrap();
+        let mut original_world = base.snapshot();
+        let mut left = base.snapshot();
+        let mut right = base.snapshot();
+        let a = left.allocate(41).unwrap();
+        let b = right.allocate(42).unwrap();
+        assert_ne!(a, b);
+        let old_left = left.borrow(a).unwrap();
+        assert!(right.read(old_left).is_err());
+        assert_eq!(base.import_new_planes(&left, &original_world).unwrap(), [a]);
+        // Use the original world as the import boundary for both branches.
+        assert_eq!(
+            base.import_new_planes(&right, &original_world).unwrap(),
+            [b]
+        );
+        assert_eq!(*base.get(original).unwrap(), 7);
+        assert_eq!(*base.read(old_left).unwrap(), 41);
+        assert_eq!(*base.get(b).unwrap(), 42);
+        let c = original_world.allocate(99).unwrap();
+        assert_ne!(c, a);
+        assert_ne!(c, b);
+        assert!(original_world.read(old_left).is_err());
+    }
+
+    #[test]
+    fn plane_import_rejects_collisions_and_foreign_arenas() {
+        let base = Memory::default();
+        let mut branch = base.snapshot();
+        let id = branch.allocate(42).unwrap();
+        let mut joined = base.snapshot();
+        joined.import_new_planes(&branch, &base).unwrap();
+        assert!(joined.import_new_planes(&branch, &base).is_err());
+        let unrelated = Memory::<i32>::default();
+        assert!(joined.import_new_planes(&unrelated, &base).is_err());
+        branch.take(id).unwrap();
+        let mut empty_join = base.snapshot();
+        assert!(empty_join
+            .import_new_planes(&branch, &base)
+            .unwrap()
+            .is_empty());
+        assert!(empty_join.get(id).is_err());
+    }
 
     #[test]
     fn proof_snapshots_isolate_branch_writes_and_consumption() {

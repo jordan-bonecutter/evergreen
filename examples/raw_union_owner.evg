@@ -1,0 +1,22 @@
+// The flag proves which untagged member owns a live allocation.
+fn consume(value: plane(usize)) -> usize {
+    let n = *value;
+    drop(value);
+    n
+}
+fn empty(value: shape(plane(usize))) -> usize {0}
+fn take(value: plane(usize) | shape(plane(usize)), full: bool) -> usize
+    where full == (typeof(value) == plane(usize))
+{
+    if full {consume(value)} else {empty(value)}
+}
+fn make() -> plane(usize) {alloc(42)}
+fn choose(full: bool) -> plane(usize) | shape(plane(usize))
+    ensures full == (typeof(result) == plane(usize))
+{
+    if full {make()} else {shape(plane(usize))}
+}
+fn main() -> usize {
+    take(choose(false), false);
+    take(choose(true), true)
+}

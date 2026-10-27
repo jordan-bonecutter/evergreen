@@ -288,8 +288,8 @@ impl Context<'_> {
 
     pub(super) fn allocate_symbol(&mut self, value: Symbol) -> Result<PlaneId> {
         let plane = self.storage.memory.allocate(value)?;
-        // Branch memory snapshots may reuse a slot. Allocating there cannot
-        // revive a stamp for a different allocation in an earlier branch.
+        self.record_plane_presence(plane)?;
+        // Each allocation gets a fresh identity, including across snapshots.
         self.note_state_write(plane, &[])?;
         Ok(plane)
     }

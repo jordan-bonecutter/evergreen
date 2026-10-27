@@ -129,6 +129,7 @@ fn native_execution_agrees_with_the_interpreter() {
     let mut cases = [
         include_str!("../../../examples/raw_union.evg"),
         include_str!("../../../examples/raw_union_drop.evg"),
+        include_str!("../../../examples/raw_union_owner.evg"),
         "fn view(value: &(usize | bool)) -> usize where typeof(*value) == usize {*value} fn main() -> usize {let value: usize | bool = 42; let n = view(&value); let consumed: usize = value; n}",
         "fn first(value: [u8; 2]) -> u8 {value[0]} fn main() -> u8 {let payload: [u8; 2] | bool = [42, 7]; first(payload)}",
         "fn extract(value: i8 | usize) -> i8 where typeof(value) == i8 {let n: i8 = value; n} fn main() -> usize {if extract(i8(-42)) == -42 {42} else {1}}",

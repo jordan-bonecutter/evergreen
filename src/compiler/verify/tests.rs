@@ -3742,15 +3742,12 @@ fn returned_reference_fields_keep_independent_plane_provenance() {
     assert_eq!(verify(&shared).unwrap().run().unwrap().to_string(), "42");
 }
 #[test]
-fn union_pointer_storage_waits_for_conditional_authority_checking() {
+fn union_borrowed_storage_waits_for_conditional_provenance() {
     for source in [
         "fn consume(value: &usize | bool) {}",
-        "type Slot struct {value: plane(usize) | shape(plane(usize))} fn main() {}",
+        "type View struct {value: &usize} fn consume(value: View | bool) {}",
     ] {
         let error = verify(source).unwrap_err();
-        assert!(
-            error.contains("conditional ownership and borrow footprints"),
-            "{error}"
-        );
+        assert!(error.contains("conditional borrow footprints"), "{error}");
     }
 }

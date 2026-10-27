@@ -103,10 +103,8 @@ impl Context<'_> {
             return Err("duplicate raw union member".into());
         }
         for member in source {
-            // Pointer alternatives need guarded ownership/borrow footprints.
-            // Never instantiate inactive pointer members as extra authorities.
-            if type_has_reference(member, self.declarations.structs) {
-                return Err("raw union pointer members need conditional ownership and borrow footprints; not implemented yet".into());
+            if type_has_borrowed_reference(member, self.declarations.structs) {
+                return Err("raw union borrowed-reference members need conditional borrow footprints; not implemented yet".into());
             }
         }
         Ok(Ty::Union(members))
@@ -128,16 +126,26 @@ impl Context<'_> {
         let mut alternatives = paths::Paths::default();
         let mut payloads = Vec::with_capacity(members.len());
         for (index, ty) in members.iter().enumerate() {
+            let member_guard = equal(&active, &Linear::number(index as i128))?;
             self.proof.paths = extend(
                 &base,
-                &equal(&active, &Linear::number(index as i128))?,
+                &member_guard,
                 false,
                 self.session,
                 &mut self.work.value_work,
             )?;
             // A member's refinement holds only while that member is active.
             // An uninhabited alternative cannot make another one impossible.
-            payloads.push(Some(self.arbitrary(ty)?));
+            let outer_guard = self.storage.allocation_guard.clone();
+            self.storage.allocation_guard = Some(
+                outer_guard
+                    .clone()
+                    .unwrap_or(Formula::True)
+                    .and(member_guard),
+            );
+            let payload = self.arbitrary(ty);
+            self.storage.allocation_guard = outer_guard;
+            payloads.push(Some(payload?));
             alternatives.extend(self.proof.paths.clone());
         }
         self.proof.paths = paths::bounded(alternatives, self.session, &mut self.work.value_work)?;

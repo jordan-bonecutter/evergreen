@@ -229,7 +229,7 @@ fn aliases_share_epochs_but_sibling_fields_do_not() {
 }
 
 #[test]
-fn same_value_writes_and_reused_branch_allocations_cannot_revive_claims() {
+fn same_value_writes_and_restored_branch_allocations_cannot_revive_claims() {
     let mut memory = Memory::default();
     let baseline = memory.snapshot();
     let plane = memory.allocate(value(42)).unwrap();
@@ -242,7 +242,8 @@ fn same_value_writes_and_reused_branch_allocations_cannot_revive_claims() {
     let new = snapshot(subjects.observe(&memory, reference, vec![]).unwrap());
     memory = baseline;
     let reused = memory.allocate(value(42)).unwrap();
-    assert_eq!(plane, reused);
+    assert_ne!(plane, reused);
+    assert!(memory.read(reference).is_err());
     subjects.write(reused, &[]).unwrap();
     assert!(!subjects.current(&new, &memory).unwrap());
 }

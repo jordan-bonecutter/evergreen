@@ -25,6 +25,7 @@ mod conversions;
 use context::{Context, Declarations};
 mod evidence;
 mod external;
+mod footprints;
 mod heap;
 mod loops;
 mod parameters;
@@ -309,6 +310,23 @@ fn type_has_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
         Type::Named(n) => structs
             .get(n)
             .is_some_and(|s| s.fields.iter().any(|(_, t)| type_has_reference(t, structs))),
+        _ => false,
+    }
+}
+
+fn type_has_borrowed_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
+    match t {
+        Type::Ref(_) => true,
+        Type::Plane(inner) | Type::Array(inner, _) => type_has_borrowed_reference(inner, structs),
+        Type::Shape(_) => false,
+        Type::Union(members) => members
+            .iter()
+            .any(|ty| type_has_borrowed_reference(ty, structs)),
+        Type::Named(name) => structs.get(name).is_some_and(|s| {
+            s.fields
+                .iter()
+                .any(|(_, ty)| type_has_borrowed_reference(ty, structs))
+        }),
         _ => false,
     }
 }
@@ -2491,6 +2509,7 @@ impl<'a> Context<'a> {
     fn ty_has_reference(&self, t: &Ty) -> bool {
         match t {
             Ty::Ref(_) | Ty::Plane(_) => true,
+            Ty::Union(members) => members.iter().any(|ty| self.ty_has_reference(ty)),
             Ty::Array(element, _) => self.ty_has_reference(element),
             Ty::Record(name) => {
                 type_has_reference(&Type::Named(name.clone()), self.declarations.structs)

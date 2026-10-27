@@ -64,7 +64,12 @@ impl Context<'_> {
                             self.session,
                             &mut self.work.value_work,
                         )?;
-                        let checked = self.validate_value(value, line, &BTreeSet::new(), mode);
+                        let case = self.proof.paths.clone();
+                        let checked = if self.checked_impossible(&case, &Formula::True)? {
+                            Ok(())
+                        } else {
+                            self.validate_argument_mode(value, line, mode)
+                        };
                         self.proof.paths = paths.clone();
                         checked?;
                     }

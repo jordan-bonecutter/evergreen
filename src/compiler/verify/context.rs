@@ -67,6 +67,8 @@ impl Default for Execution {
 #[derive(Default)]
 pub(super) struct Storage {
     pub(super) memory: Memory<Symbol>,
+    pub(super) presence: BTreeMap<PlaneId, Formula>,
+    pub(super) allocation_guard: Option<Formula>,
     pub(super) opened_planes: BTreeMap<PlaneId, BTreeSet<String>>,
     pub(super) writable: Vec<WritePlace>,
     pub(super) inputs: Vec<InputReference>,
