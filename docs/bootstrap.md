@@ -1832,9 +1832,13 @@ This is a machine-word specialization with explicit reallocation, not yet the
 README's generic vector. All capacity slots are initialized copyable values;
 uninitialized slots and arbitrary element destructors need further work. The
 checker proves access bounds, ownership, and the length/capacity invariant. Prefix
-copying is implemented in Evergreen with a checked decreasing measure proving
-termination, subject to the bootstrap execution limits. Interpreter/native
-comparisons exercise its behavior; its contract does not yet prove preservation
+copying is implemented as an Evergreen `while` loop whose invariant proves the
+cursor stays within both buffer extents. Native copies no longer consume a
+recursive activation per element. Runtime loops currently provide partial
+correctness rather than termination evidence; interpreter execution remains
+fuel-bounded. `examples/buffer_copy.evg` exercises a nonzero starting index and
+an untouched suffix. Interpreter/native comparisons exercise its behavior;
+its contract does not yet prove preservation
 of every copied element. No vector-specific compiler primitive or trusted proof
 was added.
 

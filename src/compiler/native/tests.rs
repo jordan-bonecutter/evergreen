@@ -130,6 +130,7 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/string_bytes.evg"),
         include_str!("../../../examples/utf8_literal.evg"),
         include_str!("../../../examples/utf8_view.evg"),
+        include_str!("../../../examples/buffer_copy.evg"),
         r#"fn main() -> usize {let bytes = ""; let text = utf8::Text::from_bytes(&bytes); if text.len() == 0 {42} else {1}}"#,
         r#"fn main() -> usize {let bytes = "a"; let text = utf8::Text::from_bytes(&bytes); bytes[0] = 98; if text.byte(0) == 98 {42} else {1}}"#,
         "type Resource struct {value: usize} fn consume(value: Resource) -> usize {value.value} impl Drop for Resource {fn drop(self) {mark(self.value);}} fn mark(value: usize) {} fn main() -> usize {consume(Resource {value: 42})}",
@@ -559,6 +560,16 @@ fn native_execution_agrees_with_the_interpreter() {
     assert_eq!(
         execute_test_binary(&directory.join("divergent"), &binary, spin).code(),
         Some(125)
+    );
+    // The library copy loop must not consume a native recursive activation for
+    // each element. This length exceeds the recursion guard by a wide margin.
+    let copied = "fn main() -> usize {let source: plane(usize, 4096) = alloc(4096, 42); let target: plane(usize, 4096) = alloc(4096, 0); vec::copy_prefix(&*source, &*target, 4096, 0); if (*target)[0] == 42 && (*target)[2048] == 42 && (*target)[4095] == 42 {42} else {1}}";
+    let program = verify(copied).unwrap();
+    assert!(program.trusted_assumptions().is_empty());
+    let binary = emit(&program).unwrap();
+    assert_eq!(
+        execute_test_binary(&directory.join("large-buffer-copy"), &binary, copied).code(),
+        Some(42)
     );
     let source = format!("{recursive} fn main() -> usize {{count(127) + count(127)}}");
     let binary = emit(&verify(&source).unwrap()).unwrap();

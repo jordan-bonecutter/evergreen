@@ -1,0 +1,9 @@
+// Copy only [index, count); both pointer extents come from their array types.
+fn main() -> usize {
+    let source: [usize; 4] = [1, 2, 42, 4];
+    let target: [usize; 4] = [9, 9, 9, 9];
+    vec::copy_prefix(&source, &target, 3, 1);
+    if target[0] == 9 && target[1] == 2 && target[2] == 42 && target[3] == 9 {
+        42
+    } else {1}
+}

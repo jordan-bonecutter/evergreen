@@ -3235,7 +3235,13 @@ fn cleanup_can_write_live_owned_heap_and_pending_return_allocations() {
 fn owned_word_vectors_check_capacity_and_reference_lifetimes() {
     let source = include_str!("../../../examples/vec.evg");
     let (program, bundle) = prove(source).unwrap();
-    assert_eq!(program.potentially_diverging_functions().count(), 0);
+    let copy = program
+        .functions
+        .iter()
+        .find(|f| f.name == "vec::copy_prefix")
+        .unwrap();
+    assert!(!crate::compiler::effects::recursive(copy));
+    assert!(copy.partial); // Runtime loops do not yet carry termination evidence.
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.trusted_assumptions().is_empty());
     assert_eq!(

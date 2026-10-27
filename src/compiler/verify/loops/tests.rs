@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn library_buffer_copy_uses_a_checked_loop_with_explicit_bounds() {
+    let source = include_str!("../../../../examples/buffer_copy.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    let function = program
+        .functions
+        .iter()
+        .find(|f| f.name == "vec::copy_prefix")
+        .unwrap();
+    assert!(!crate::compiler::effects::recursive(function));
+    assert!(function
+        .body
+        .iter()
+        .any(|statement| matches!(statement, Statement::While { .. })));
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    for invalid in ["5, 1", "3, 4"] {
+        let error = verify(&source.replace("3, 1", invalid)).unwrap_err();
+        assert!(
+            error.contains("precondition of vec::copy_prefix"),
+            "{error}"
+        );
+    }
+    for source in [
+        "fn main() -> usize {let data: [usize; 1] = [42]; vec::copy_prefix(&data, &data, 1, 0); data[0]}",
+        "fn main() -> usize {let source: [usize; 0] = []; let target: [usize; 0] = []; vec::copy_prefix(&source, &target, 0, 0); 42}",
+    ] {
+        assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+    }
+}
+
+#[test]
 fn runtime_while_checks_induction_and_replays_without_unrolling() {
     let source = include_str!("../../../../examples/while.evg");
     let (program, bundle) = prove(source).unwrap();
