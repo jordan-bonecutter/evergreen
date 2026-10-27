@@ -70,6 +70,12 @@ impl Scope<'_> {
                 }
             }
             Kind::Call(name, args) => {
+                if name == "shape" {
+                    for argument in args {
+                        self.type_expression(argument);
+                    }
+                    return;
+                }
                 if let Some((base, member)) = name.rsplit_once("::") {
                     let target = if base == "Self" {
                         self.self_type.map(str::to_owned)
@@ -99,6 +105,25 @@ impl Scope<'_> {
             Kind::Array(items) => {
                 for item in items {
                     self.expr(item);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn type_expression(&self, expression: &mut Expr) {
+        match &mut expression.kind {
+            Kind::Name(name) => {
+                let mut ty = Type::Named(name.clone());
+                self.ty(&mut ty);
+                if let Type::Named(qualified) = ty {
+                    *name = qualified;
+                }
+            }
+            Kind::Unary(_, inner) => self.type_expression(inner),
+            Kind::Call(_, arguments) => {
+                for argument in arguments {
+                    self.type_expression(argument);
                 }
             }
             _ => {}

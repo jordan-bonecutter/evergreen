@@ -39,11 +39,12 @@ mod returns;
 mod state;
 mod subjects;
 mod summaries;
+mod unions;
 mod updates;
 mod validation;
 mod value_evidence;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Ty {
     Int,
     Nat,
@@ -54,10 +55,23 @@ enum Ty {
     Machine(MachineInt),
     Array(Box<Ty>, Linear),
     Record(String),
+    Union(Vec<Ty>),
+    Shape(Box<Ty>),
+    Type,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Symbol {
+    Union {
+        members: Vec<Ty>,
+        active: Linear,
+        payloads: Vec<Option<Symbol>>,
+    },
+    Shape(Box<Ty>),
+    Type {
+        members: Vec<Ty>,
+        active: Linear,
+    },
     Number(Ty, Linear),
     Bool(Formula),
     Array {
@@ -76,6 +90,9 @@ enum Symbol {
 impl Symbol {
     fn ty(&self) -> Ty {
         match self {
+            Self::Union { members, .. } => Ty::Union(members.clone()),
+            Self::Shape(inner) => Ty::Shape(inner.clone()),
+            Self::Type { .. } => Ty::Type,
             Self::Number(t, _) => t.clone(),
             Self::Bool(_) => Ty::Bool,
             Self::Array { element, len, .. } => Ty::Array(element.clone(), len.clone()),
@@ -113,18 +130,51 @@ fn symbol_weight(value: &Symbol) -> Result<usize> {
     enum Node<'a> {
         Value(&'a Symbol, usize),
         Formula(&'a Formula, usize),
+        Type(&'a Ty, usize),
     }
     let mut pending = vec![Node::Value(value, 0)];
     let mut weight = 0usize;
     while let Some(node) = pending.pop() {
         weight = weight.saturating_add(1);
         let depth = match &node {
-            Node::Value(_, depth) | Node::Formula(_, depth) => *depth,
+            Node::Value(_, depth) | Node::Formula(_, depth) | Node::Type(_, depth) => *depth,
         };
         if depth >= 128 || weight > MAX_VALUE_NODES {
             return Err("symbolic value expansion limit reached (32768 nodes, depth 128)".into());
         }
         match node {
+            Node::Value(
+                Symbol::Union {
+                    members,
+                    active,
+                    payloads,
+                },
+                depth,
+            ) => {
+                weight = weight.saturating_add(active.terms.len());
+                pending.extend(members.iter().map(|ty| Node::Type(ty, depth + 1)));
+                pending.extend(
+                    payloads
+                        .iter()
+                        .flatten()
+                        .map(|value| Node::Value(value, depth + 1)),
+                );
+            }
+            Node::Value(Symbol::Type { members, active }, depth) => {
+                weight = weight.saturating_add(active.terms.len());
+                pending.extend(members.iter().map(|ty| Node::Type(ty, depth + 1)));
+            }
+            Node::Value(Symbol::Shape(inner), depth) => pending.push(Node::Type(inner, depth + 1)),
+            Node::Type(Ty::Ref(inner) | Ty::Plane(inner) | Ty::Shape(inner), depth) => {
+                pending.push(Node::Type(inner, depth + 1))
+            }
+            Node::Type(Ty::Union(members), depth) => {
+                pending.extend(members.iter().map(|ty| Node::Type(ty, depth + 1)))
+            }
+            Node::Type(Ty::Array(inner, length), depth) => {
+                weight = weight.saturating_add(length.terms.len());
+                pending.push(Node::Type(inner, depth + 1));
+            }
             Node::Value(Symbol::Number(_, n), _) => weight = weight.saturating_add(n.terms.len()),
             Node::Value(Symbol::Bool(p), depth) => pending.push(Node::Formula(p, depth + 1)),
             Node::Value(
@@ -856,6 +906,7 @@ impl<'a> Context<'a> {
 
     fn erased_value(&self, value: &Symbol) -> bool {
         match value.ty() {
+            Ty::Union(members) => members.iter().all(|ty| self.proof_storage(ty)),
             Ty::Plane(_) => false,
             Ty::Record(name) => erased_type(&Type::Named(name), self.declarations.structs),
             Ty::Array(element, _) => self.erased_ty(&element),
@@ -866,6 +917,8 @@ impl<'a> Context<'a> {
 
     fn proof_storage(&self, ty: &Ty) -> bool {
         match ty {
+            Ty::Union(members) => members.iter().all(|ty| self.proof_storage(ty)),
+            Ty::Shape(inner) => self.proof_storage(inner),
             Ty::Nat | Ty::Int => true,
             Ty::Record(name) => self.declarations.structs[name].ideal,
             Ty::Array(element, _) => self.proof_storage(element),
@@ -876,6 +929,7 @@ impl<'a> Context<'a> {
 
     fn erased_ty(&self, ty: &Ty) -> bool {
         match ty {
+            Ty::Union(members) => members.iter().all(|ty| self.proof_storage(ty)),
             Ty::Plane(_) => false,
             Ty::Record(name) => erased_type(&Type::Named(name.clone()), self.declarations.structs),
             Ty::Array(element, _) => self.erased_ty(element),
@@ -1329,7 +1383,12 @@ impl<'a> Context<'a> {
 
     fn resolve(&mut self, t: &Type) -> Result<Ty> {
         match t {
-            Type::Union(_) | Type::Shape(_) => Err("raw union and shape storage types are being bootstrapped; active-member verification is not implemented yet".into()),
+            Type::Union(members) => self.resolve_union(members),
+            Type::Shape(inner) => {
+                let inner = self.resolve(inner)?;
+                if matches!(inner, Ty::Shape(_)) { return Err("shape(shape(T)) is not a distinct storage state".into()); }
+                Ok(Ty::Shape(Box::new(inner)))
+            }
             Type::Int | Type::Nat if self.execution.phase == Phase::Runtime => Err("integer and nat are proof-only; use a machine integer for runtime storage or declare ideal code".into()),
             Type::Int => Ok(Ty::Int), Type::Nat => Ok(Ty::Nat),
             Type::Bool => Ok(Ty::Bool),
@@ -1379,6 +1438,9 @@ impl<'a> Context<'a> {
 
     fn compatible(&mut self, got: &Ty, expected: &Ty, line: usize) -> Result<()> {
         match (got, expected) {
+            (Ty::Union(a), Ty::Union(b)) if a == b => Ok(()),
+            (Ty::Shape(a), Ty::Shape(b)) => self.compatible(a, b, line),
+            (Ty::Type, Ty::Type) => Ok(()),
             (Ty::Int, Ty::Int)
             | (Ty::Nat, Ty::Nat)
             | (Ty::Bool, Ty::Bool)
@@ -1404,6 +1466,9 @@ impl<'a> Context<'a> {
         }
         let name = self.fresh_name();
         match t {
+            Ty::Union(members) => self.arbitrary_union(members),
+            Ty::Shape(inner) => Ok(Symbol::Shape(inner.clone())),
+            Ty::Type => Err("type observations have no arbitrary runtime values".into()),
             Ty::Machine(t) => {
                 let n = Linear::variable(name);
                 let (lo, hi) = t.bounds();
@@ -1947,6 +2012,8 @@ impl<'a> Context<'a> {
 
     fn same_layout(&mut self, a: &Symbol, b: &Symbol) -> Result<bool> {
         match (a, b) {
+            (Symbol::Union { members: a, .. }, Symbol::Union { members: b, .. }) => Ok(a == b),
+            (Symbol::Shape(a), Symbol::Shape(b)) => Ok(a == b),
             (Symbol::Record(an, a), Symbol::Record(bn, b)) => {
                 if an != bn || a.len() != b.len() {
                     return Ok(false);
@@ -2131,7 +2198,19 @@ impl<'a> Context<'a> {
             Type::Named(n) => Some(Ty::Record(n.clone())),
             Type::Ref(t) => Self::declared_hint(t).map(|t| Ty::Ref(Box::new(t))),
             Type::Plane(t) => Self::declared_hint(t).map(|t| Ty::Plane(Box::new(t))),
-            Type::Array(..) | Type::Union(_) | Type::Shape(_) => None,
+            Type::Array(element, count) => Some(Ty::Array(
+                Box::new(Self::declared_hint(element)?),
+                Linear::number(crate::compiler::layout::array_length(count).ok()? as i128),
+            )),
+            Type::Union(members) => {
+                let mut members = members
+                    .iter()
+                    .map(Self::declared_hint)
+                    .collect::<Option<Vec<_>>>()?;
+                members.sort();
+                Some(Ty::Union(members))
+            }
+            Type::Shape(inner) => Self::declared_hint(inner).map(|ty| Ty::Shape(Box::new(ty))),
         }
     }
 
@@ -2182,6 +2261,10 @@ impl<'a> Context<'a> {
             return Some(value.ty());
         }
         match &e.kind {
+            Kind::Call(name, _) if name == "typeof" => Some(Ty::Type),
+            Kind::Call(name, args) if name == "shape" && args.len() == 1 => self
+                .type_literal(&args[0])
+                .map(|ty| Ty::Shape(Box::new(ty))),
             Kind::Bool(_) => Some(Ty::Bool),
             Kind::Call(name, args) if name == "old" && args.len() == 1 => Self::old_key(&args[0])
                 .and_then(|key| self.entry.values.get(&key).map(Symbol::ty))
@@ -2283,13 +2366,26 @@ impl<'a> Context<'a> {
     }
 
     fn eval_checked(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
-        let value = self.eval_inner(e, expected).map_err(|s| {
+        let array_member = match (&e.kind, expected) {
+            (Kind::Array(items), Some(Ty::Union(members))) => {
+                let mut arrays = members.iter().filter(|ty| matches!(ty, Ty::Array(_, length) if length.terms.is_empty() && length.constant == items.len() as i128));
+                let first = arrays.next();
+                if arrays.next().is_none() {
+                    first
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        let value = self.eval_inner(e, array_member.or(expected)).map_err(|s| {
             if s.starts_with("line ") {
                 s
             } else {
                 format!("line {}: {s}", e.line)
             }
         })?;
+        let value = self.union_coercion(value, expected, e.line, Some(e))?;
         self.charge_value_work(symbol_weight(&value)?)
             .map_err(|error| format!("line {}: {error}", e.line))?;
         let projecting_owner = matches!(&e.kind, Kind::Field(..) | Kind::Index(..))
@@ -2324,6 +2420,7 @@ impl<'a> Context<'a> {
 
     fn symbol_is_move_only(&self, value: &Symbol) -> bool {
         match value {
+            Symbol::Union { .. } | Symbol::Shape(_) => true,
             Symbol::Plane(..) => true,
             Symbol::Record(n, _) => is_move_only(
                 &Type::Named(n.clone()),
@@ -2341,6 +2438,7 @@ impl<'a> Context<'a> {
 
     fn ty_is_move_only(&self, t: &Ty) -> bool {
         match t {
+            Ty::Union(_) | Ty::Shape(_) => true,
             Ty::Plane(_) => true,
             Ty::Record(n) => is_move_only(
                 &Type::Named(n.clone()),
@@ -2379,6 +2477,7 @@ impl<'a> Context<'a> {
             }
         }
         match t {
+            Ty::Union(_) | Ty::Shape(_) | Ty::Type => false,
             Ty::Record(name) => fields(&Type::Named(name.clone()), self.declarations.structs),
             Ty::Ref(_) | Ty::Plane(_) | Ty::Array(..) => false,
             _ => true,
@@ -2665,12 +2764,21 @@ impl<'a> Context<'a> {
     }
 
     fn eval_inner(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
+        let shadowed = matches!(&e.kind, Kind::Name(name) if self.locals.values.contains_key(name) || self.proof.facts.contains_key(name) || self.proof.witnesses.contains_key(name));
+        if expected == Some(&Ty::Type) && self.execution.phase != Phase::Runtime && !shadowed {
+            if let Some(ty) = self.type_literal(e) {
+                return Ok(Symbol::Type {
+                    members: vec![ty],
+                    active: Linear::number(0),
+                });
+            }
+        }
         match &e.kind {
             Kind::FactAt(place, name) => Ok(Symbol::Bool(self.fact_at(place, name, e.line)?)),
             Kind::Unit => Ok(Symbol::Unit),
             Kind::Constant(t, n) => Ok(Symbol::Number(Ty::Machine(*t), Linear::number(*n))),
             Kind::Number(n) => Ok(Symbol::Number(
-                match expected {
+                match Self::union_literal_hint(expected).as_ref() {
                     Some(Ty::Nat) => Ty::Nat,
                     Some(Ty::Machine(t)) => Ty::Machine(*t),
                     _ => self.number_type(),
@@ -2698,6 +2806,14 @@ impl<'a> Context<'a> {
                     if self.proof.witnesses.contains_key(n) {
                         return Err(format!("{n} is a proof witness; reference it with exact"));
                     }
+                    if self.execution.phase != Phase::Runtime {
+                        if let Some(ty) = self.type_literal(e) {
+                            return Ok(Symbol::Type {
+                                members: vec![ty],
+                                active: Linear::number(0),
+                            });
+                        }
+                    }
                 }
 
                 let value = if let Some(id) = self.locals.places.get(n) {
@@ -2709,9 +2825,14 @@ impl<'a> Context<'a> {
                         .cloned()
                         .ok_or_else(|| format!("unknown value {n}"))
                 }?;
+                let selected = self.union_coercion(value.clone(), expected, e.line, Some(e))?;
                 if self.execution.phase != Phase::Specification && self.symbol_is_move_only(&value)
                 {
-                    if self.execution.phase == Phase::Ideal && !self.erased_value(&value) {
+                    if self.execution.phase == Phase::Ideal
+                        && !self.execution.ideal_execution
+                        && !self.locals.ideal_bindings.contains(n)
+                        && !self.erased_value(&value)
+                    {
                         return Err("ideal execution cannot consume runtime ownership; use a read-only proof view".into());
                     }
                     if self.execution.phase == Phase::Runtime
@@ -2731,7 +2852,7 @@ impl<'a> Context<'a> {
                     let id = self.storage.memory.plane(r)?;
                     self.take_symbol(id)?;
                 }
-                Ok(value)
+                Ok(selected)
             }
             Kind::Field(base, name) => {
                 let Symbol::Record(typename, fields) = self.storage(base)? else {
@@ -2783,7 +2904,7 @@ impl<'a> Context<'a> {
                         Type::Int => Some(Ty::Int),
                         Type::Bool => Some(Ty::Bool),
                         Type::Machine(t) => Some(Ty::Machine(*t)),
-                        _ => None,
+                        _ => Self::declared_hint(ty),
                     };
                     let saved_phase = self.execution.phase;
                     if def.ideal_fields.contains(n) && self.execution.phase == Phase::Runtime {
@@ -2797,7 +2918,7 @@ impl<'a> Context<'a> {
                             value,
                             Some(&Ty::Array(Box::new(element), Linear::number(0))),
                         )?
-                    } else if matches!(ty, Type::Plane(_)) {
+                    } else if matches!(ty, Type::Plane(_) | Type::Union(_) | Type::Shape(_)) {
                         // Dependent field types refer to preceding record fields,
                         // while initializer expressions still use the caller's scope.
                         let caller = self.clone_env()?;
@@ -2860,7 +2981,11 @@ impl<'a> Context<'a> {
                 }))
             }
             Kind::Binary(op, a, b) => {
-                let ty = if matches!(op.as_str(), "+" | "-" | "*") {
+                let ty = if matches!(op.as_str(), "==" | "!=")
+                    && (self.hint(a) == Some(Ty::Type) || self.hint(b) == Some(Ty::Type))
+                {
+                    Some(Ty::Type)
+                } else if matches!(op.as_str(), "+" | "-" | "*") {
                     expected.cloned()
                 } else {
                     None
@@ -2879,6 +3004,12 @@ impl<'a> Context<'a> {
                     let b = self.eval(b, Some(&Ty::Bool))?;
                     let equal = self.symbol_equal(&a, &b)?;
                     return Ok(Symbol::Bool(if op == "==" { equal } else { equal.not() }));
+                }
+                if ty == Ty::Type && matches!(op.as_str(), "==" | "!=") {
+                    let a = self.eval(a, Some(&Ty::Type))?;
+                    let b = self.eval(b, Some(&Ty::Type))?;
+                    let same = unions::observations_equal(&a, &b)?;
+                    return Ok(Symbol::Bool(if op == "==" { same } else { same.not() }));
                 }
                 if !matches!(ty, Ty::Int | Ty::Nat | Ty::Machine(_)) {
                     return Err("arithmetic and comparisons require integer operands".into());

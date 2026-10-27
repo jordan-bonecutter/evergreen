@@ -141,6 +141,7 @@ impl Context<'_> {
 
     fn cleanup_effects_type(&self, ty: &Type) -> bool {
         match ty {
+            Type::Union(_) => true,
             Type::Plane(_) => true,
             Type::Named(name) => {
                 self.declarations
@@ -159,6 +160,7 @@ impl Context<'_> {
 
     fn cleanup_effects(&self, ty: &Ty) -> bool {
         match ty {
+            Ty::Union(_) => true,
             Ty::Plane(_) => true,
             Ty::Record(name) => self.cleanup_effects_type(&Type::Named(name.clone())),
             Ty::Array(element, _) => self.cleanup_effects(element),
@@ -168,6 +170,7 @@ impl Context<'_> {
 
     pub(super) fn has_runtime_cleanup(&self, ty: &Ty) -> bool {
         match ty {
+            Ty::Union(_) => true,
             Ty::Array(inner, _) => self.has_runtime_cleanup(inner),
             Ty::Plane(_) => true,
             Ty::Record(name) => crate::shared::ownership::needs_drop(
@@ -180,6 +183,9 @@ impl Context<'_> {
     }
 
     pub(super) fn cleanup_value(&mut self, value: Symbol, line: usize) -> Result<()> {
+        if matches!(value, Symbol::Union { .. }) {
+            return Err(format!("line {line}: raw unions cannot be dropped implicitly; prove the active member and consume it"));
+        }
         if self.execution.phase != Phase::Runtime {
             return Ok(());
         }

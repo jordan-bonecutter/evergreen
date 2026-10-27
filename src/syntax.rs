@@ -10,7 +10,7 @@ pub use representation::{Endianness, IntegralEncoding, Representation, ScalarDef
 mod functions;
 mod statements;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MachineInt {
     pub signed: bool,
     pub bits: u8,
@@ -67,6 +67,19 @@ pub enum Type {
     Shape(Box<Type>),
 }
 
+impl Type {
+    pub(crate) fn literal_numeric_member(&self) -> Option<&Type> {
+        let Self::Union(members) = self else {
+            return Some(self);
+        };
+        let mut numeric = members
+            .iter()
+            .filter(|ty| matches!(ty, Type::Machine(_) | Type::Int | Type::Nat));
+        let first = numeric.next()?;
+        numeric.next().is_none().then_some(first)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Expr {
     pub kind: Kind,
@@ -74,6 +87,32 @@ pub struct Expr {
 }
 
 impl Expr {
+    /// The syntax of a type used as an ideal value. Resolving names and proving
+    /// dependent extents remain the verifier's responsibility.
+    pub(crate) fn literal_type(&self) -> Option<Type> {
+        match &self.kind {
+            Kind::Unit => Some(Type::Unit),
+            Kind::Name(name) => Some(MachineInt::parse(name).map(Type::Machine).unwrap_or_else(
+                || match name.as_str() {
+                    "bool" => Type::Bool,
+                    "unit" => Type::Unit,
+                    "integer" => Type::Int,
+                    "nat" => Type::Nat,
+                    _ => Type::Named(name.clone()),
+                },
+            )),
+            Kind::Unary(op, inner) if op == "&" => {
+                inner.literal_type().map(|ty| Type::Ref(Box::new(ty)))
+            }
+            Kind::Call(name, args) if name == "shape" && args.len() == 1 => {
+                args[0].literal_type().map(|ty| Type::Shape(Box::new(ty)))
+            }
+            Kind::Call(name, args) if name == "plane" && args.len() == 1 => {
+                args[0].literal_type().map(|ty| Type::Plane(Box::new(ty)))
+            }
+            _ => None,
+        }
+    }
     pub(crate) fn indirect_place(&self) -> bool {
         match &self.kind {
             Kind::Index(..) => true,

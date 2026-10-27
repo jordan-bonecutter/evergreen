@@ -34,6 +34,17 @@ pub fn aggregate(ty: &Type) -> bool {
     )
 }
 
+pub(crate) fn literal_array_member(ty: &Type, length: usize) -> Option<&Type> {
+    let Type::Union(members) = ty else {
+        return Some(ty);
+    };
+    let mut matches = members.iter().filter(
+        |ty| matches!(ty, Type::Array(_, count) if array_length(count).ok() == Some(length)),
+    );
+    let first = matches.next()?;
+    matches.next().is_none().then_some(first)
+}
+
 pub fn array_length(expression: &Expr) -> Result<usize> {
     fn machine_hint(expression: &Expr) -> bool {
         match &expression.kind {

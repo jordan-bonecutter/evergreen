@@ -174,6 +174,58 @@ impl Context<'_> {
             return Ok((a.clone(), Formula::True, Formula::True));
         }
         match (a, b) {
+            (
+                Symbol::Union {
+                    members: am,
+                    active: ai,
+                    payloads: av,
+                },
+                Symbol::Union {
+                    members: bm,
+                    active: bi,
+                    payloads: bv,
+                },
+            ) if am == bm => {
+                let members = am.clone();
+                let active = self.fresh_union_tag(members.len())?;
+                let mut left = equal(&active, ai)?;
+                let mut right = equal(&active, bi)?;
+                let mut payloads = Vec::with_capacity(members.len());
+                for index in 0..members.len() {
+                    match (&av[index], &bv[index]) {
+                        (Some(a), Some(b)) => {
+                            let (joined, a_relation, b_relation) = self.join_value(a, b, views)?;
+                            left = left.and(
+                                equal(ai, &Linear::number(index as i128))?
+                                    .not()
+                                    .or(a_relation),
+                            );
+                            right = right.and(
+                                equal(bi, &Linear::number(index as i128))?
+                                    .not()
+                                    .or(b_relation),
+                            );
+                            payloads.push(Some(joined));
+                        }
+                        (Some(value), None) | (None, Some(value)) => {
+                            payloads.push(Some(value.clone()))
+                        }
+                        (None, None) => payloads.push(None),
+                    }
+                }
+                Ok((
+                    Symbol::Union {
+                        members,
+                        active,
+                        payloads,
+                    },
+                    left,
+                    right,
+                ))
+            }
+            (Symbol::Shape(a), Symbol::Shape(b)) if a == b => {
+                Ok((Symbol::Shape(a.clone()), Formula::True, Formula::True))
+            }
             (Symbol::Number(at, _), Symbol::Number(bt, _)) if at == bt => {
                 let value = self.arbitrary(at)?;
                 Ok((
@@ -389,7 +441,19 @@ impl Context<'_> {
     }
 
     pub(super) fn symbol_equal(&self, a: &Symbol, b: &Symbol) -> Result<Formula> {
+        if a == b {
+            return Ok(Formula::True);
+        }
         match (a, b) {
+            (Symbol::Shape(a), Symbol::Shape(b)) => unions::type_equal(a, b),
+            (Symbol::Type { .. }, Symbol::Type { .. }) => unions::observations_equal(a, b),
+            (Symbol::Union { members: am, active: ai, payloads: av }, Symbol::Union { members: bm, active: bi, payloads: bv }) if am == bm => {
+                let mut relation = equal(ai, bi)?;
+                for (index, (a, b)) in av.iter().zip(bv).enumerate() {
+                    if let (Some(a), Some(b)) = (a, b) { relation = relation.and(equal(ai, &Linear::number(index as i128))?.not().or(self.symbol_equal(a, b)?)); }
+                }
+                Ok(relation)
+            }
             (Symbol::Number(_, a), Symbol::Number(_, b)) => equal(a, b),
             (Symbol::Bool(a), Symbol::Bool(b)) => Ok(a
                 .clone()

@@ -14,6 +14,8 @@ type Result<T> = std::result::Result<T, String>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
+    Union(Vec<Type>, Box<Value>),
+    Shape(Box<Type>),
     Int(i128),
     Nat(i128),
     Bool(bool),
@@ -36,6 +38,7 @@ fn charge_value(value: &Value, fuel: &mut usize) -> Result<()> {
             return Err("execution value-work limit reached (100000 steps and nodes)".into());
         }
         match value {
+            Value::Union(_, value) => pending.push(value),
             Value::Array(items) => pending.extend(items),
             Value::Record(_, fields) => pending.extend(fields.values()),
             _ => {}
@@ -53,6 +56,8 @@ fn copy_value(value: &Value, fuel: &mut usize) -> Result<Value> {
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Union(_, value) => value.fmt(f),
+            Self::Shape(_) => write!(f, "<shape>"),
             Self::Int(n) | Self::Nat(n) | Self::Machine(_, n) => write!(f, "{n}"),
             Self::Bool(b) => write!(f, "{b}"),
             Self::Array(items) => {
@@ -74,6 +79,20 @@ impl std::fmt::Display for Value {
 }
 
 impl Value {
+    fn matches_type(&self, expected: &Type) -> Result<bool> {
+        match (self, expected) {
+            (Self::Array(items), Type::Array(element, count)) => {
+                let length = crate::compiler::layout::array_length(count)?;
+                if items.len() != length {
+                    return Ok(false);
+                }
+                items
+                    .iter()
+                    .try_fold(true, |same, value| Ok(same && value.matches_type(element)?))
+            }
+            _ => Ok(self.hint().as_ref() == Some(expected)),
+        }
+    }
     fn number(&self) -> Result<i128> {
         match self {
             Self::Int(n) | Self::Nat(n) | Self::Machine(_, n) => Ok(*n),
@@ -91,6 +110,8 @@ impl Value {
 
     fn hint(&self) -> Option<Type> {
         match self {
+            Self::Union(members, _) => Some(Type::Union(members.clone())),
+            Self::Shape(inner) => Some(Type::Shape(inner.clone())),
             Self::Int(_) => Some(Type::Int),
             Self::Nat(_) => Some(Type::Nat),
             Self::Bool(_) => Some(Type::Bool),
@@ -161,6 +182,9 @@ impl Evaluator<'_> {
             Kind::Unary(_, x) => self.hint(x, env),
             Kind::Call(name, _) if MachineInt::parse(name).is_some() => {
                 MachineInt::parse(name).map(Type::Machine)
+            }
+            Kind::Call(name, args) if name == "shape" && args.len() == 1 => {
+                args[0].literal_type().map(|ty| Type::Shape(Box::new(ty)))
             }
             Kind::Call(name, args) if name == "alloc" && args.len() == 1 => {
                 self.hint(&args[0], env).map(|t| Type::Plane(Box::new(t)))
@@ -387,6 +411,7 @@ impl Evaluator<'_> {
 
     fn value_is_move_only(&self, value: &Value) -> bool {
         match value {
+            Value::Union(_, _) | Value::Shape(_) => true,
             Value::Plane(..) => true,
             Value::Record(n, _) => crate::shared::ownership::is_move_only(
                 &Type::Named(n.clone()),
@@ -404,6 +429,9 @@ impl Evaluator<'_> {
     }
 
     fn drop_value(&mut self, value: Value) -> Result<()> {
+        if matches!(value, Value::Union(_, _)) {
+            return Err("uneliminated raw union reached runtime cleanup".into());
+        }
         self.fuel = self
             .fuel
             .checked_sub(1)
@@ -568,6 +596,20 @@ impl Evaluator<'_> {
         self.fuel -= 1;
         self.expression_depth += 1;
         let result = self.inner(e, env, expected).and_then(|value| {
+            let value = match (value, expected) {
+                (Value::Union(_, value), Some(expected)) if !matches!(expected, Type::Union(_)) => {
+                    if !value.matches_type(expected)? {
+                        return Err(
+                            "inactive raw union member: compiler/runtime disagreement".into()
+                        );
+                    }
+                    *value
+                }
+                (value, Some(Type::Union(members))) if !matches!(value, Value::Union(_, _)) => {
+                    Value::Union(members.clone(), Box::new(value))
+                }
+                (value, _) => value,
+            };
             charge_value(&value, &mut self.fuel)?;
             Ok(value)
         });
@@ -591,7 +633,7 @@ impl Evaluator<'_> {
             Kind::FactAt(..) => Err("type facts are erased propositions".into()),
             Kind::Unit => Ok(Value::Unit),
             Kind::Constant(t, n) => Ok(Value::Machine(*t, *n)),
-            Kind::Number(n) => Ok(match expected {
+            Kind::Number(n) => Ok(match expected.and_then(Type::literal_numeric_member) {
                 Some(Type::Nat) => Value::Nat(*n),
                 Some(Type::Machine(t)) => Value::Machine(*t, *n),
                 _ => Value::Machine(MachineInt::parse("isize").expect("isize type"), *n),
@@ -740,6 +782,8 @@ impl Evaluator<'_> {
                 })
             }
             Kind::Array(items) => {
+                let expected = expected
+                    .and_then(|ty| crate::compiler::layout::literal_array_member(ty, items.len()));
                 let element = if let Some(Type::Array(t, _)) = expected {
                     Some((**t).clone())
                 } else {
@@ -768,6 +812,10 @@ impl Evaluator<'_> {
                 })
             }
             Kind::Call(name, args) => {
+                if name == "shape" {
+                    let ty = args[0].literal_type().ok_or("shape requires a type")?;
+                    return Ok(Value::Shape(Box::new(ty)));
+                }
                 if let Some(target) = MachineInt::parse(name) {
                     let [argument] = args.as_slice() else {
                         return Err("integer conversion requires one argument".into());

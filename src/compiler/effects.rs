@@ -10,7 +10,7 @@ fn scalar(t: &Type) -> bool {
 }
 
 fn leaf(t: &Type) -> bool {
-    scalar(t) || matches!(t, Type::Ref(_))
+    scalar(t) || matches!(t, Type::Ref(_) | Type::Shape(_))
 }
 
 fn hint(

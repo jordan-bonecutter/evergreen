@@ -94,6 +94,14 @@ pub(super) fn function_uses_planes(
 
 pub(super) fn syntax_type(ty: &Ty, line: usize) -> Result<Type> {
     Ok(match ty {
+        Ty::Union(members) => Type::Union(
+            members
+                .iter()
+                .map(|ty| syntax_type(ty, line))
+                .collect::<Result<_>>()?,
+        ),
+        Ty::Shape(inner) => Type::Shape(Box::new(syntax_type(inner, line)?)),
+        Ty::Type => return Err("ideal type observations have no runtime storage".into()),
         Ty::Int => Type::Int,
         Ty::Nat => Type::Nat,
         Ty::Bool => Type::Bool,

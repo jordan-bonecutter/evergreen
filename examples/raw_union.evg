@@ -1,0 +1,30 @@
+// The flag is ordinary source data. The payload has no hidden runtime tag.
+type MaybeWord struct {
+    data: usize | shape(usize),
+    present: bool,
+} where (present == (typeof(data) == usize));
+
+fn use_word(value: usize) -> usize { value }
+fn use_empty(storage: shape(usize), fallback: usize) -> usize { fallback }
+
+impl MaybeWord {
+    fn some(value: usize) -> Self {
+        Self {data: value, present: true}
+    }
+
+    fn none() -> Self {
+        Self {data: shape(usize), present: false}
+    }
+
+    method value_or(fallback: usize) -> usize {
+        let MaybeWord {data, present} = self;
+        if present {use_word(data)} else {use_empty(data, fallback)}
+    }
+}
+
+fn main() -> usize {
+    let some = MaybeWord::some(42);
+    let none = MaybeWord::none();
+    let fallback = none.value_or(0);
+    some.value_or(fallback)
+}

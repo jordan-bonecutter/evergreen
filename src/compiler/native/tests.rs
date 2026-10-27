@@ -127,6 +127,14 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        include_str!("../../../examples/raw_union.evg"),
+        include_str!("../../../examples/raw_union_drop.evg"),
+        "fn view(value: &(usize | bool)) -> usize where typeof(*value) == usize {*value} fn main() -> usize {let value: usize | bool = 42; let n = view(&value); let consumed: usize = value; n}",
+        "fn first(value: [u8; 2]) -> u8 {value[0]} fn main() -> u8 {let payload: [u8; 2] | bool = [42, 7]; first(payload)}",
+        "fn extract(value: i8 | usize) -> i8 where typeof(value) == i8 {let n: i8 = value; n} fn main() -> usize {if extract(i8(-42)) == -42 {42} else {1}}",
+        "type NonZero struct {data: usize} where data != 0; fn read(value: NonZero | usize) -> usize where (typeof(value) == NonZero) {let n: NonZero = value; n.data - 1} fn main() -> usize {read(NonZero {data: 43})}",
+        "fn extract(value: usize | bool) -> usize where typeof(value) == usize {let n: usize = value; n} fn main() -> usize {extract(42)}",
+        "fn word(n: usize) -> usize {n} fn flag(b: bool) -> usize {if b {42} else {1}} fn choose(small: bool) -> usize {let value: usize | bool = if small {true} else {42}; if small {flag(value)} else {word(value)}} fn main() -> usize {choose(false)}",
         include_str!("../../../examples/while.evg"),
         "fn main() -> usize {let i: usize = 0; while i < 1024 invariant(i <= 1024) modifies(&i) {i = i + 1;} i - 982}",
         "fn main() -> usize {let i: usize = 0; let sum: usize = 0; while i < 3 invariant(i <= 3 && integer(sum) == 14 * integer(i)) modifies(&i, &sum) {let j: usize = 0; while j < 14 invariant(j <= 14) modifies(&j) {j = j + 1;} sum = sum + j; i = i + 1;} sum}",

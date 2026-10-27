@@ -30,7 +30,7 @@ impl Context<'_> {
                 if let Some(fact) = self.proof.facts.get(name).cloned() {
                     return self.collect_subjects(&fact, snapshot, depth + 1);
                 }
-                None
+                self.type_literal(expression).map(ClaimKey::Type)
             }
             Kind::Name(_) | Kind::Field(..) | Kind::Index(..) => {
                 return self.collect_place_subject(expression, snapshot, depth + 1);
@@ -101,11 +101,14 @@ impl Context<'_> {
             }
             Kind::Call(name, arguments)
                 if arguments.len() == 1
-                    && (matches!(name.as_str(), "integer" | "nat")
+                    && (matches!(name.as_str(), "integer" | "nat" | "typeof")
                         || MachineInt::parse(name).is_some()) =>
             {
                 self.collect_subjects(&arguments[0], snapshot, depth + 1)?
                     .map(|key| ClaimKey::Unary(name.clone(), Box::new(key)))
+            }
+            Kind::Call(name, _) if name == "shape" => {
+                self.type_literal(expression).map(ClaimKey::Type)
             }
             Kind::Call(_, arguments) => {
                 // Call-result subjects need value-flow provenance through

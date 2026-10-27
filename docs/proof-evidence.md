@@ -4,6 +4,15 @@ This records the requested proof model and the partial implementation below.
 It is not a completed trust boundary: complete value provenance and independent
 checking of frontend state/contract imports remain work in progress.
 
+Raw unions use ideal active-type selectors in the frontend. A selected member's
+refinements hold under its selector case; layout equality alone establishes no
+type equality or read permission. `typeof` claims carry plane/revision subjects,
+including when an explicit admission authorizes an interpretation. The native
+backend erases selectors and copies the proved member at offset zero. This
+extends the frontend and backend trust boundary; it is not an independent kernel
+proof of type elaboration or machine-code preservation. Pointer member authority
+remains unsupported until conditional footprints are checked.
+
 Runtime loops use a finite initialization/preservation/exit rule in the frontend.
 Their invariant imports have the same explicit unresolved context as checked
 function-contract imports. The proof graph remains acyclic: an arbitrary head

@@ -51,6 +51,26 @@ impl Context<'_> {
     ) -> Result<()> {
         self.charge_value_work(1)?;
         match value {
+            Symbol::Union {
+                active, payloads, ..
+            } => {
+                let paths = self.proof.paths.clone();
+                for (index, value) in payloads.iter().enumerate() {
+                    if let Some(value) = value {
+                        self.proof.paths = extend(
+                            &paths,
+                            &equal(active, &Linear::number(index as i128))?,
+                            false,
+                            self.session,
+                            &mut self.work.value_work,
+                        )?;
+                        let checked = self.validate_value(value, line, &BTreeSet::new(), mode);
+                        self.proof.paths = paths.clone();
+                        checked?;
+                    }
+                }
+                Ok(())
+            }
             Symbol::Plane(_, reference) => {
                 let selected = if mode == Validation::Retained {
                     self.storage

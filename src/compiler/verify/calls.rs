@@ -21,6 +21,9 @@ impl<'a> Context<'a> {
         expected: Option<&Ty>,
         line: usize,
     ) -> Result<Symbol> {
+        if name == "typeof" || name == "shape" {
+            return self.eval_type_operation(name, args, expected, line);
+        }
         if let Some(target) = MachineInt::parse(name) {
             return self.convert_integer(target, args, line);
         }
@@ -202,8 +205,9 @@ impl<'a> Context<'a> {
                 Type::Int => Some(Ty::Int),
                 Type::Bool => Some(Ty::Bool),
                 Type::Machine(t) => Some(Ty::Machine(*t)),
+                Type::Union(_) | Type::Shape(_) => Self::declared_hint(t),
                 Type::Plane(_) => self.literal_element_hint(t)?,
-                _ => None,
+                _ => Self::declared_hint(t),
             };
             if f.pre.is_some()
                 || !self.proof.claims.is_empty()
@@ -282,7 +286,13 @@ impl<'a> Context<'a> {
         for (parameter, origin) in origins {
             let scalar = matches!(
                 self.locals.values.get(parameter),
-                Some(Symbol::Number(..) | Symbol::Bool(_) | Symbol::Unit)
+                Some(
+                    Symbol::Number(..)
+                        | Symbol::Bool(_)
+                        | Symbol::Unit
+                        | Symbol::Union { .. }
+                        | Symbol::Shape(_)
+                )
             );
             let available = if scalar {
                 self.proof

@@ -16,6 +16,7 @@ mod elf;
 mod program;
 mod storage;
 mod syscall;
+mod unions;
 
 const STACK: usize = 65536;
 const MAX_CODE: usize = 8 * 1024 * 1024;
@@ -157,6 +158,7 @@ impl Emitter<'_> {
 
     fn has_drop(&self, ty: &Type) -> bool {
         match ty {
+            Type::Union(_) => true,
             Type::Plane(_) => true,
             Type::Named(name) => {
                 self.drops.contains(name)
@@ -231,6 +233,7 @@ impl Emitter<'_> {
 
     fn drop_fields(&mut self, ty: &Type, offset: i32) -> Result<()> {
         match ty {
+            Type::Union(_) => return Err("uneliminated raw union reached native cleanup".into()),
             Type::Named(name) => {
                 let fields = self
                     .structs
@@ -386,6 +389,15 @@ impl Emitter<'_> {
             return Ok(true);
         }
         match (a, b) {
+            (Type::Shape(a), Type::Shape(b)) => Self::compatible(a, b),
+            (Type::Union(a), Type::Union(b)) if a.len() == b.len() => {
+                a.iter().try_fold(true, |same, a| {
+                    Ok(same
+                        && b.iter().try_fold(false, |found, b| {
+                            Ok::<_, String>(found || Self::compatible(a, b)?)
+                        })?)
+                })
+            }
             // Source verification already checked pointee compatibility. The
             // native reference ABI is one address even for dependent pointees.
             (Type::Ref(_), Type::Ref(_)) | (Type::Plane(_), Type::Plane(_)) => Ok(true),
@@ -476,6 +488,9 @@ impl Emitter<'_> {
             Kind::Call(n, _) if MachineInt::parse(n).is_some() => {
                 MachineInt::parse(n).map(Type::Machine)
             }
+            Kind::Call(name, args) if name == "shape" && args.len() == 1 => {
+                args[0].literal_type().map(|ty| Type::Shape(Box::new(ty)))
+            }
             Kind::Call(n, args) if n == "alloc" && args.len() == 1 => {
                 self.hint(&args[0]).map(|t| Type::Plane(Box::new(t)))
             }
@@ -523,7 +538,10 @@ impl Emitter<'_> {
         let ty = match &e.kind {
             Kind::Number(n) => {
                 self.immediate(*n as u64);
-                expected.cloned().unwrap_or_else(machine)
+                expected
+                    .and_then(Type::literal_numeric_member)
+                    .cloned()
+                    .unwrap_or_else(machine)
             }
             Kind::Constant(t, n) => {
                 self.immediate(*n as u64);
@@ -564,6 +582,8 @@ impl Emitter<'_> {
             }
             Kind::Field(..) => self.storage_value(e)?,
             Kind::Array(items) => {
+                let expected =
+                    expected.and_then(|ty| layout::literal_array_member(ty, items.len()));
                 let ty = if let Some(Type::Array(..)) = expected {
                     expected.unwrap().clone()
                 } else {
@@ -781,6 +801,15 @@ impl Emitter<'_> {
                 self.code.extend([0x48, 0x8b, 0x00]);
                 Type::Plane(Box::new(payload))
             }
+            Kind::Call(name, args) if name == "shape" => {
+                let ty = Type::Shape(Box::new(
+                    args[0].literal_type().ok_or("shape requires a type")?,
+                ));
+                let home = self.allocate(&ty)?;
+                self.zero_storage(home, layout::of(&ty, self.structs)?.size);
+                self.frame_address(home);
+                ty
+            }
             Kind::Call(name, args) => {
                 let function = self.functions.get(name).ok_or("unknown native callee")?;
                 let supplied = function.supplied_parameters(args.len())?;
@@ -807,6 +836,7 @@ impl Emitter<'_> {
                 ))
             }
         };
+        let ty = self.union_value(ty, expected)?;
         layout::of(&ty, self.structs)?;
         if let Some(expected) = expected {
             if !Self::compatible(expected, &ty)? {

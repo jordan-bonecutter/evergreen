@@ -22,15 +22,44 @@ The initial implementation layer supplies shared syntax and layout:
   and expansion limits traverse the member types. Duplicate members and invalid
   layouts are rejected.
 
-This layer is not executable raw-union support. Verification still rejects union
-and shape values until active-member evidence, initialization transitions, and
-explicit elimination are connected to both execution backends. In particular,
-layout compatibility must never authorize reading an inactive member, and union
-injection must never synthesize ownership for an inactive pointer member.
+The next layer now executes reference-free union values in the interpreter and
+native backend. This includes scalar members, arrays, nominal records, and
+records with destructors whose representation contains no references or heap
+owners. `typeof(value)` is an ideal active-type observation. It has no runtime
+tag and cannot be evaluated by runtime code. A function can require
+`where (typeof(value) == usize)`; using that value as a `usize` then proves the
+active-member obligation and consumes the original union binding. References to
+union storage can copy an active Copy member without consuming the union.
 
-The next layer needs ideal type observations (`typeof`), guarded member
-interpretation, invalidation when a member changes, and consumption of the
-active member without implicit raw-union drop. Ownership and borrowed-reference
-leaves must follow the actual member; inactive alternatives carry no owner or
-borrow authority. `Option`, Vec, Rc, and Arc remain ordinary library code built
-on those generic rules.
+An explicitly typed binding injects a member into shared storage. A source flag
+and a refinement such as `present == (typeof(data) == usize)` can distinguish an
+optional payload. Boolean equality expresses the equivalence here. Both branches
+must eliminate their raw union; neither unused unions nor enclosing records
+without a suitable destructor can silently discard them. Native injection clears
+the shared storage before copying the member at offset zero.
+
+Member refinements are assumed under their selector case. An impossible inactive
+member cannot erase an overflow obligation for another member. Type observations
+participate in the plane/revision evidence model, and admitted member evidence
+expires on storage replacement. The interpreter additionally detects an admitted
+inactive-member interpretation rather than interpreting its payload as a
+different runtime type.
+
+Ideal execution cannot consume a runtime union or an array of runtime unions
+and erase the required runtime elimination. Pure ideal code can construct and
+eliminate its own unions; proof-only sum values remain erased.
+
+`examples/raw_union.evg` implements a source-defined optional word using
+`usize | shape(usize)`. `examples/raw_union_drop.evg` demonstrates that only the
+selected nominal member runs its destructor, and that an enclosing Drop method
+eliminates its raw payload by ordinary source-level branches. Both execute natively; no built-in
+Option representation or destructor dispatch is involved.
+
+Pointer members are still rejected. Conditional ownership and borrowed-reference
+footprints must follow the active member before that restriction can be removed;
+inactive alternatives must carry no owner or borrow authority. General member
+replacement through a borrowed union, partial initialization of enclosing
+records, dynamic array member interpretation, and generic Option remain work in
+progress. Member cases are bounded and currently elaborated eagerly; deferred
+member constraints are also pending. `Option`, Vec, Rc, and Arc remain ordinary
+library code built on the eventual generic rules.

@@ -1,0 +1,39 @@
+// Only the selected member owns a Resource and runs its destructor.
+type Resource struct {tag: usize} where tag == 7;
+
+impl Drop for Resource {
+    fn drop(self) {
+        proof valid: self.tag == 7;
+    }
+}
+
+fn consume(resource: Resource) -> usize {resource.tag}
+fn word(value: usize) -> usize {value}
+
+fn choose(flag: bool) -> usize {
+    let value: Resource | usize = if flag {Resource {tag: 7}} else {42};
+    if flag {consume(value)} else {word(value)}
+}
+
+type Holder struct {
+    data: usize | shape(usize),
+    present: bool,
+} where present == (typeof(data) == usize);
+
+fn discard_word(value: usize) {}
+fn discard_storage(value: shape(usize)) {}
+
+impl Drop for Holder {
+    fn drop(self) {
+        let Holder {data, present} = self;
+        if present {discard_word(data)} else {discard_storage(data)}
+    }
+}
+
+fn main() -> usize {
+    let empty = Holder {data: shape(usize), present: false};
+    let full = Holder {data: 42, present: true};
+    let resource = choose(true);
+    let plain = choose(false);
+    if resource == 7 && plain == 42 {42} else {1}
+}

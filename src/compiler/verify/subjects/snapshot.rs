@@ -4,6 +4,7 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::compiler::verify) enum ClaimKey {
+    Type(Ty),
     Unit,
     Number(i128),
     Bool(bool),
@@ -110,6 +111,10 @@ impl Snapshot {
         while let Some(key) = pending.pop() {
             weight = weight.saturating_add(1);
             match key {
+                ClaimKey::Type(ty) => {
+                    weight =
+                        weight.saturating_add(symbol_weight(&Symbol::Shape(Box::new(ty.clone())))?)
+                }
                 ClaimKey::Unary(_, key) => pending.push(key),
                 ClaimKey::Binary(_, a, b) => {
                     pending.push(a);
