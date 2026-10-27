@@ -5,7 +5,7 @@ impl NonZero {
         Self {data: x}
     }
     method& add(other: NonZero) -> Self
-    where(int(self.data) + int(other.data) <= int(usize::MAX))
+    where(integer(self.data) + integer(other.data) <= integer(usize::MAX))
     ensures(result.data == self.data + other.data) {
         Self {data: self.data + other.data}
     }

@@ -4,36 +4,7 @@ use std::{fs, process::Command};
 
 #[test]
 #[ignore = "requires the pinned Lean toolchain"]
-fn proof_kernel_accepts_and_rejects() {
-    let cli = env!("CARGO_BIN_EXE_evg");
-    for file in [
-        "examples/lean_reference.evg",
-        "examples/lean_implication.evg",
-        "examples/lean_propositional.evg",
-        "examples/lean_proof_cases.evg",
-    ] {
-        let output = Command::new(cli).args(["lean-run", file]).output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
-    }
-    for file in [
-        "examples/reject_bounds.evg",
-        "examples/reject_contract.evg",
-        "examples/reject_proof_scope.evg",
-        "examples/reject_case_scope.evg",
-    ] {
-        let output = Command::new(cli)
-            .args(["lean-check", file])
-            .output()
-            .unwrap();
-        assert!(!output.status.success(), "accepted {file}");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("Lean rejected"));
-        assert!(output.stdout.is_empty());
-    }
+fn independent_mathematical_specifications() {
     let lean = std::env::var_os("EVG_LEAN").unwrap_or_else(|| "lean".into());
     for specification in [
         "proofs/Planes.lean",
@@ -54,28 +25,19 @@ fn proof_kernel_accepts_and_rejects() {
 }
 
 #[test]
-fn missing_backend_never_reports_verified() {
+fn cli_exposes_only_internal_verification_and_execution() {
     let output = Command::new(env!("CARGO_BIN_EXE_evg"))
-        .env("EVG_LEAN", "/nonexistent/evergreen/lean")
-        .args(["lean-check", "examples/lean_reference.evg"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot execute"));
-}
-
-#[test]
-fn emission_is_inspectable_without_backend() {
-    let output = Command::new(env!("CARGO_BIN_EXE_evg"))
-        .args(["emit", "examples/lean_reference.evg"])
+        .arg("--help")
         .output()
         .unwrap();
     assert!(output.status.success());
-    let text = String::from_utf8(output.stdout).unwrap();
-    assert!(text.contains("Vector (Int) (n)"));
-    assert!(!text.contains("#eval"));
-    assert!(fs::metadata("lean-toolchain").is_ok());
+    let help = String::from_utf8(output.stdout).unwrap();
+    for command in ["check", "prove", "build", "run"] {
+        assert!(help.contains(command));
+    }
+    for command in ["lean-check", "lean-run", "Emit Lean"] {
+        assert!(!help.contains(command));
+    }
 }
 
 #[test]

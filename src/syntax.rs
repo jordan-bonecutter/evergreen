@@ -470,7 +470,7 @@ impl Parser {
                     self.pos += 1;
                     Ok(Type::Machine(t))
                 }
-                "int" => {
+                "integer" => {
                     self.pos += 1;
                     Ok(Type::Int)
                 }
@@ -837,7 +837,8 @@ fn parse_unit(source: &str) -> Result<Program, String> {
                 return Err(p.err("nested modules are not supported yet"));
             }
             let name = p.name()?;
-            if MachineInt::parse(&name).is_some() || matches!(name.as_str(), "int" | "nat" | "bool")
+            if MachineInt::parse(&name).is_some()
+                || matches!(name.as_str(), "integer" | "nat" | "bool")
             {
                 return Err(p.err("module names cannot shadow builtin types"));
             }

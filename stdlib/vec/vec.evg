@@ -10,7 +10,7 @@ opaque type Vec struct {
 );
 
 fn new(capacity: usize) -> Vec
-where(int(capacity) * 8 <= int(isize::MAX))
+where(integer(capacity) * 8 <= integer(isize::MAX))
 ensures(result.len == 0 && result.cap == capacity) {
     let data: plane(usize, capacity) = alloc(capacity, 0);
     Vec {cap: capacity, len: 0, data: data}
@@ -74,7 +74,7 @@ decreases(count - index) {
 // Return a fresh allocation. Assigning this result over the old Vec releases
 // its old allocation and invalidates outstanding references into that buffer.
 fn reallocate(value: &Vec, new_capacity: usize) -> Vec
-where(value.len <= new_capacity && int(new_capacity) * 8 <= int(isize::MAX))
+where(value.len <= new_capacity && integer(new_capacity) * 8 <= integer(isize::MAX))
 ensures(result.len == value.len && result.cap == new_capacity) {
     let data: plane(usize, new_capacity) = alloc(new_capacity, 0);
     copy_prefix(value.cap, &*value.data, new_capacity, &*data,
@@ -85,7 +85,7 @@ ensures(result.len == value.len && result.cap == new_capacity) {
 // Inherent methods use the same checked operations as the function interface.
 impl Vec {
     fn new(capacity: usize) -> Self
-    where(int(capacity) * 8 <= int(isize::MAX))
+    where(integer(capacity) * 8 <= integer(isize::MAX))
     ensures(result.len == 0 && result.cap == capacity) {
         new(capacity)
     }
@@ -117,7 +117,7 @@ impl Vec {
     }
 
     method& reallocate(new_capacity: usize) -> Self
-    where(self.len <= new_capacity && int(new_capacity) * 8 <= int(isize::MAX))
+    where(self.len <= new_capacity && integer(new_capacity) * 8 <= integer(isize::MAX))
     ensures(result.len == self.len && result.cap == new_capacity) {
         reallocate(self, new_capacity)
     }

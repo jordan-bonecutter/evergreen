@@ -465,7 +465,8 @@ fn place_index_expression(e: &Expr) -> bool {
                 && place_index_expression(no)
         }
         Kind::Call(name, args)
-            if (matches!(name.as_str(), "int" | "nat") || MachineInt::parse(name).is_some())
+            if (matches!(name.as_str(), "integer" | "nat")
+                || MachineInt::parse(name).is_some())
                 && args.len() == 1 =>
         {
             place_index_expression(&args[0])
@@ -961,7 +962,7 @@ impl<'a> Context<'a> {
                 _ => false,
             };
             if !supported_region {
-                return Err("modifies targets require machine scalars, Booleans, proof-only int/nat slots, copyable scalar-field records, or supported arrays".into());
+                return Err("modifies targets require machine scalars, Booleans, proof-only integer/nat slots, copyable scalar-field records, or supported arrays".into());
             }
             // Permissions form a union for one structural input origin. Pointer
             // equality cannot merge independently modeled reference fields.
@@ -1355,7 +1356,7 @@ impl<'a> Context<'a> {
         match &expression.kind {
             Kind::Call(name, args) => {
                 let scalar_call = MachineInt::parse(name).is_some()
-                    || matches!(name.as_str(), "int" | "nat")
+                    || matches!(name.as_str(), "integer" | "nat")
                     || self.functions.get(name).is_some_and(|function| {
                         !function.partial
                             && function.modifies.is_empty()
@@ -1492,7 +1493,7 @@ impl<'a> Context<'a> {
 
     fn resolve(&mut self, t: &Type) -> Result<Ty> {
         match t {
-            Type::Int | Type::Nat if self.phase == Phase::Runtime => Err("int and nat are proof-only; use a machine integer for runtime storage or declare ideal code".into()),
+            Type::Int | Type::Nat if self.phase == Phase::Runtime => Err("integer and nat are proof-only; use a machine integer for runtime storage or declare ideal code".into()),
             Type::Int => Ok(Ty::Int), Type::Nat => Ok(Ty::Nat),
             Type::Bool => Ok(Ty::Bool),
             Type::Machine(t) => Ok(Ty::Machine(*t)),
@@ -2264,7 +2265,7 @@ impl<'a> Context<'a> {
                 MachineInt::parse(name).map(Ty::Machine)
             }
             Kind::Call(name, _) if name == "nat" => Some(Ty::Nat),
-            Kind::Call(name, _) if name == "int" => Some(Ty::Int),
+            Kind::Call(name, _) if name == "integer" => Some(Ty::Int),
             Kind::Call(name, args) if name == "alloc" && args.len() == 1 => {
                 self.hint(&args[0]).map(|t| Ty::Plane(Box::new(t)))
             }
@@ -3050,7 +3051,7 @@ impl<'a> Context<'a> {
                     }
                     return Ok(value);
                 }
-                if name == "int" || name == "nat" {
+                if name == "integer" || name == "nat" {
                     if self.phase == Phase::Runtime {
                         return Err("mathematical views are proof-only".into());
                     }
@@ -4004,12 +4005,12 @@ fn verify_inner(mut parsed: syntax::Program, session: &mut Session) -> Result<Ve
                     .iter()
                     .any(|(n, t)| !f.ideal_params.contains(n) && !runtime_type(t, &structs)))
         {
-            return Err(format!("line {}: runtime signatures require fixed-layout types; int/nat and ideal records are proof-only", f.line));
+            return Err(format!("line {}: runtime signatures require fixed-layout types; integer/nat and ideal records are proof-only", f.line));
         }
         if MachineInt::parse(f.name.rsplit("::").next().unwrap_or(&f.name)).is_some()
             || matches!(
                 f.name.rsplit("::").next().unwrap_or(&f.name),
-                "move" | "drop" | "alloc" | "int" | "nat" | "old"
+                "move" | "drop" | "alloc" | "integer" | "nat" | "old"
             )
         {
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));

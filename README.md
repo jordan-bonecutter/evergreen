@@ -26,7 +26,6 @@ Bundled stdlib dependencies load automatically. For byte output, try
 | Function compilation and executable packaging | [program.rs](src/compiler/native/program.rs), [elf.rs](src/compiler/native/elf.rs) |
 | Executing a verified program | [interpreter](src/interpreter/mod.rs) |
 | Shared plane model and ownership rules | [shared](src/shared/mod.rs) |
-| Optional Lean reference translation | [compiler/lean.rs](src/compiler/lean.rs) |
 
 The interpreter accepts a `VerifiedProgram` produced by the compiler. The
 compiler does not execute the interpreter. Shared code contains the generic
@@ -35,7 +34,7 @@ keeps its own values and execution/checking logic.
 
 Verifier and native regression tests live in their subsystem directories.
 [tests/verification.rs](tests/verification.rs) exercises the CLI and optional
-Lean backend.
+independent mathematical specifications.
 
 Evergreen is a systems programming language, aimed to finally be a successor to
 C and C++. Why have we failed so many times? Let's look at Rust for an example:

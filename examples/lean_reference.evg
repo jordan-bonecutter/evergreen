@@ -5,7 +5,7 @@ ensures (result > n) {
     n + 1
 } proof { omega }
 
-ideal fn bounded_index(n: nat, data: [int; n], index: nat) -> int
+ideal fn bounded_index(n: nat, data: [integer; n], index: nat) -> integer
 where (index < n) {
     data[index]
 }

@@ -1402,7 +1402,7 @@ fn computed_place_contracts_capture_checked_entry_expressions() {
     assert_eq!(replayed.run().unwrap().to_string(), "42");
     let cursor = "fn insert(data: &[usize; 3], cursor: &usize) -> &usize where(*cursor < 2) modifies(cursor, &(*data)[*cursor + 1]) borrows(&(*data)[*cursor + 1]) ensures(*result == 42 && *cursor == old(*cursor) + 1) {let selected = &(*data)[*cursor + 1]; *selected = 42; *cursor = *cursor + 1; selected} fn main() -> usize ensures(result == 42) {let data: [usize; 3] = [7, 8, 9]; let cursor: usize = 1; let selected = insert(&data, &cursor); proof cursor_changed: cursor == 2; *selected}";
     assert_eq!(verify(cursor).unwrap().run().unwrap().to_string(), "42");
-    let math = "fn next(data: &[usize; 3], i: usize) -> &usize where(i < 2) borrows(&(*data)[int(i) + 1]) {&(*data)[i + 1]} fn main() -> usize {let a: [usize; 3] = [7, 8, 42]; *next(&a, 1)}";
+    let math = "fn next(data: &[usize; 3], i: usize) -> &usize where(i < 2) borrows(&(*data)[integer(i) + 1]) {&(*data)[i + 1]} fn main() -> usize {let a: [usize; 3] = [7, 8, 42]; *next(&a, 1)}";
     assert_eq!(verify(math).unwrap().run().unwrap().to_string(), "42");
 }
 
@@ -2562,8 +2562,10 @@ fn composes_calls_and_checks_preconditions() {
 
 #[test]
 fn verifies_both_branches_and_natural_subtraction() {
-    verify("ideal fn abs(n: int) -> int ensures (result >= 0) { if n >= 0 { n } else { -n } }")
-        .unwrap();
+    verify(
+        "ideal fn abs(n: integer) -> integer ensures (result >= 0) { if n >= 0 { n } else { -n } }",
+    )
+    .unwrap();
     verify("ideal fn sub(n: nat) -> nat ensures (result <= n) { n - 1 }").unwrap();
     assert!(verify(
         "fn bad(n: isize) -> isize ensures (result >= 0) { if n >= 0 { n } else { n } }"
@@ -3127,7 +3129,7 @@ fn mathematical_values_and_ideal_records_cannot_leak_into_runtime_storage() {
     for source in [
         "fn main() -> nat {0}",
         "fn main() -> usize {let n: nat = 0; 0}",
-        "type Bad struct {n: int} fn main() -> usize {0}",
+        "type Bad struct {n: integer} fn main() -> usize {0}",
         "ideal type Model struct {n: nat} fn main() -> usize {let m = Model {n: 0}; 0}",
         "ideal fn answer() -> usize {42} fn main() -> usize {answer()}",
         "fn main() -> usize {let n = nat(42); 0}",
@@ -3656,4 +3658,14 @@ fn nonzero_addition_uses_mathematical_bounds_for_machine_arithmetic() {
     let source = include_str!("../../../examples/nonzero.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     assert!(verify(&source.replace("new(10)", "new(0)")).is_err());
+}
+
+#[test]
+fn ideal_integer_spelling_and_named_constructor_proofs() {
+    let source = include_str!("../../../examples/nonzero_proof.evg");
+    assert!(verify(source).is_ok());
+    assert!(verify("ideal fn identity(n: integer) -> integer {n}").is_ok());
+    assert!(verify("ideal fn identity(n: int) -> int {n}").is_err());
+    assert!(verify("fn main() -> integer {0}").is_err());
+    assert!(verify("fn main() -> usize {integer(0)}").is_err());
 }

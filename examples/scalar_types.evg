@@ -11,13 +11,13 @@ type SignedOctet = make_type(
 );
 
 fn add(left: Octet, right: Octet) -> Octet
-where(int(left) + int(right) <= int(Octet::MAX))
-ensures(int(result) == int(left) + int(right)) {
+where(integer(left) + integer(right) <= integer(Octet::MAX))
+ensures(integer(result) == integer(left) + integer(right)) {
     left + right
 }
 
 fn main() -> Octet ensures(result == 42) {
     let negative: SignedOctet = -42;
-    proof signed_meaning: int(negative) == -42;
+    proof signed_meaning: integer(negative) == -42;
     add(Octet(40), Octet(2))
 }

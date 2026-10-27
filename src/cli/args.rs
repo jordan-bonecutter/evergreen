@@ -52,16 +52,6 @@ pub(super) enum Action {
         #[arg(required = true)]
         files: Vec<PathBuf>,
     },
-    /// Emit Lean source for the reference backend (does not verify).
-    Emit {
-        file: PathBuf,
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-    },
-    /// Verify with the optional pinned Lean toolchain.
-    LeanCheck { file: PathBuf },
-    /// Evaluate the ideal reference model using the optional Lean toolchain.
-    LeanRun { file: PathBuf },
 }
 
 impl Action {
@@ -71,9 +61,6 @@ impl Action {
             | Self::Prove { files, .. }
             | Self::Run { files }
             | Self::Build { files, .. } => files,
-            Self::Emit { file, .. } | Self::LeanCheck { file } | Self::LeanRun { file } => {
-                std::slice::from_ref(file)
-            }
         }
     }
 }

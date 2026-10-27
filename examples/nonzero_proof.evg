@@ -1,0 +1,22 @@
+type NonZero struct {data: usize} where self.data != 0;
+impl NonZero {
+    fn new(x: usize) -> Self
+    where x != 0
+    ensures result.data == x {
+        Self {data: x}
+    }
+    method& add(other: NonZero) -> Self
+    where integer(self.data) + integer(other.data) < integer(usize::MAX)
+    ensures result.data == self.data + other.data {
+        Self {data: self.data + other.data}
+    }
+}
+fn main() -> usize {
+    let x = NonZero::new(10);
+    let y = NonZero::new(20);
+    proof fits: integer(x.data) + integer(y.data) < integer(usize::MAX) by {omega};
+    let z = x.add(y);
+    proof sum_is_thirty: z.data == 30 by {omega};
+    proof result_is_nonzero: z.data != 0 by {omega};
+    0
+}

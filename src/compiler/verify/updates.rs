@@ -197,7 +197,7 @@ impl Context<'_> {
     fn update_expression(&self, e: &Expr) -> bool {
         match &e.kind {
             Kind::Call(name, args) => {
-                if matches!(name.as_str(), "int" | "nat") {
+                if matches!(name.as_str(), "integer" | "nat") {
                     return args.len() == 1 && self.update_expression(&args[0]);
                 }
                 self.functions.get(name).is_some_and(|f| {

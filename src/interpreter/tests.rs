@@ -113,7 +113,7 @@ fn false_entry_precondition_cannot_execute() {
 #[test]
 fn ideal_math_is_never_executed_by_the_runtime() {
     let source = format!(
-        "ideal fn double(n: int) -> int {{ n + n }} ideal fn main() -> int {{ double({}) }}",
+        "ideal fn double(n: integer) -> integer {{ n + n }} ideal fn main() -> integer {{ double({}) }}",
         i128::MAX
     );
     assert!(verify(&source).unwrap().run().is_err());

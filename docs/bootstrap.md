@@ -6,18 +6,16 @@ kernel and evaluator use the Rust standard library. `evg --help` describes
 available commands.
 
 ```sh
-cargo run -- emit examples/lean_reference.evg
 cargo run -- check examples/contracts.evg
 cargo run -- run examples/contracts.evg
 ```
 
 `check` and `run` use the internal certificate checker and need no external
 tools or downloads. `run` checks every declaration before evaluating `main`.
-The optional `lean-check` and `lean-run` commands use the Lean version in
-`lean-toolchain`; set `EVG_LEAN` to its executable if necessary. `emit` prints
-Lean source without claiming verification. The Lean frontend currently covers
-nonrecursive mathematical ideal functions and vectors. `lean-run` evaluates a
-ideal reference model inside Lean; it is not Evergreen runtime execution.
+The compiler has no Lean backend or external proof-engine dependency. `build`,
+`check`, `prove`, and `run` all use the internal verifier and certificate kernel.
+Independent mathematical specifications under `proofs/*.lean` remain as design
+and review artifacts; they are not called by the compiler.
 
 The supported language contains typed functions, local `let` bindings,
 named `fact` declarations, preconditions (`where`), postconditions (`ensures`),
@@ -106,21 +104,18 @@ The default is `omega`. The automation names `omega`, `rfl`, `simp_all`, and
 internal backend; they do not implement Lean's individual automation strategies.
 Scripts must finish every generated goal and consume every supplied step.
 Unknown steps, escaped hypotheses, raw facts passed to `apply`, and incomplete
-scripts are rejected. `examples/reject_proof_scope.evg` fails in both backends
+scripts are rejected. `examples/reject_proof_scope.evg` fails in the internal verifier
 because an introduced hypothesis leaves scope before the next conjunct.
-Scripts have at most 1024 steps in either backend. The internal verifier also
+Scripts have at most 1024 steps in the internal verifier. The internal verifier also
 bounds goal nesting to depth 64 and charges saved branch contexts against its
 symbolic work limit. `examples/propositional_proofs.evg`
 checks implication composition and logical introduction rules, runs, replays,
-and builds natively. `examples/lean_propositional.evg` checks the corresponding
-scripts with Lean's own tactics through the optional reference backend.
-`examples/proof_cases.evg` exercises conjunction and disjunction elimination,
-including repeated names in separate branches; it runs, replays, and builds.
-`examples/lean_proof_cases.evg` checks these scripts in Lean. The invalid
-`examples/reject_case_scope.evg` is rejected by both backends for using one
-case's hypothesis in the other case.
-Arbitrary Lean source and unproven axioms are not accepted. Lean warnings are
-errors; `sorry` is unavailable. Explicit audited `trustme` is described below. A fact name denotes its
+and builds natively. `examples/proof_cases.evg` exercises conjunction and
+disjunction elimination, including repeated names in separate branches; it runs,
+replays, and builds. The invalid `examples/reject_case_scope.evg` is rejected
+for using one case's hypothesis in the other case.
+Arbitrary external proof source is not accepted. Explicit audited `trustme` is
+described below. A fact name denotes its
 proposition in proof code, never a runtime boolean. Local fact definitions are
 re-evaluated against the current places; an old witness cannot certify a changed
 state. `examples/named_facts.evg` includes an unused false fact and actual proof
@@ -136,18 +131,17 @@ For example, `fn increment(n: usize) -> usize { n + 1 }` is rejected; adding
 `where (n < usize::MAX)` supplies the required proof assumption. Negating a
 signed minimum is rejected as well.
 
-`int` and `nat` are proof-only mathematical integers and naturals. They may occur
+`integer` and `nat` are proof-only mathematical integers and naturals. They may occur
 in `ideal fn` and `ideal type` definitions and proof expressions, but cannot be
 stored in executable variables, structs, or function interfaces. Ideal functions
 cannot be called by runtime expressions; all fact/proof declarations and
-contracts are erased. `nat(value)` and `int(value)` provide mathematical views
+contracts are erased. `nat(value)` and `integer(value)` provide mathematical views
 in proof code; the natural view requires nonnegativity. Entry conditions of
 `main` are proved before execution, so ideal predicates are never run by the
 runtime. Unannotated runtime integer literals default to `isize`.
 Natural subtraction saturates at zero. Logical operators in propositions
 are `&&`, `||`, and `!`. Array indices and lengths must be proved nonnegative,
-including when a signed index is used. The optional Lean frontend supports
-`int` and `nat` but does not yet lower machine arithmetic.
+including when a signed index is used.
 
 References use `&place`, dereference uses `*reference`, and reference types use
 `&T`. Multiple mutable aliases are allowed. Scalar writes preserve identity and
@@ -343,9 +337,9 @@ EVG_LEAN=/path/to/lean cargo test --test verification -- --ignored
 cargo test --lib symbolic_array_entries_each_reject_a_wrong_contract -- --ignored
 ```
 
-The external integration suite checks valid programs, false contracts,
-unproven array accesses, and the plane specification. Missing Lean is an error,
-never a successful verification.
+The CLI integration suite checks valid programs, false contracts, and unproven
+array accesses without external tools. The optional ignored specification test
+checks the independent mathematical models with the pinned Lean toolchain.
 
 An independent two-cell Rust array model checks 64 combinations of writes,
 conditional updates, early or late borrows, and overlapping helper arguments.
@@ -384,9 +378,8 @@ limit, and a combined
 expression-depth limit of 256. It uses one worker with a bounded 16 MiB stack
 so these diagnostics do not depend on the calling thread’s stack size.
 
-Lean remains an optional reference backend and specification tool. The intent
-is to grow the internal proof language toward dependent types and explicit
-derivations while keeping search outside the kernel.
+The internal proof language is growing toward dependent types and explicit
+derivations while keeping proof search outside the kernel.
 
 ## RC proof experiment
 
@@ -427,8 +420,6 @@ no assumptions.
 The checker reports each `trustme` location and labels the result as checked
 with trusted assumptions instead of verified. `--deny-trust` rejects the whole
 source unit if any such assumption occurs, including in a called helper.
-The optional Lean reference emitter rejects `trustme` rather than emitting
-an implicit admission.
 
 ## Replayable proof artifacts
 
@@ -801,7 +792,7 @@ resources are consumed and runtime effects cannot be skipped by erasure. Their e
 including calls to ideal functions. Runtime arguments retain their source order.
 `examples/ideal_parameters.evg` also uses an erased natural recursion measure.
 
-This accepts `nat`, `int`, Boolean, machine and unit values, and ideal
+This accepts `nat`, `integer`, Boolean, machine and unit values, and ideal
 records and arrays, including affine resources with borrowed references.
 References may observe runtime storage, including runtime owners, without
 transferring its ownership. Proof expressions are
@@ -907,8 +898,7 @@ alias, and portable proofs bind the declaration source.
 Arithmetic instructions and their proof rules remain generic compiler
 primitives. User-defined operator implementations/dispatch and arbitrary
 compile-time type generators are not implemented by this constructor. The
-optional Lean reference translator rejects these declarations explicitly;
-the internal verifier, interpreter, and native backend support them.
+internal verifier, interpreter, and native backend support these declarations.
 
 Native machine integers occupy their declared width (one, two, four, or eight
 bytes), aligned to that width. Booleans occupy one byte; references and plane
@@ -1223,8 +1213,7 @@ than `||` and associates to the right: `a => b => c` means `a => (b => c)`.
 Like the other Boolean operators, both operands must be well-defined; it is
 not a short-circuit guard around an otherwise invalid operation. The internal
 verifier retains its structure for proof steps and normalizes it to
-`!premise || consequence` before generating arithmetic certificates. The optional
-Lean proposition emitter uses logical implication.
+`!premise || consequence` before generating arithmetic certificates.
 
 `examples/weak_invariant.evg` demonstrates the proposed selective-lifting rule
 with a numeric ledger: exact accounting is lifted, while
@@ -1243,7 +1232,7 @@ Place contracts also accept checked linear arithmetic, scalar field/dereference
 reads, and array lookups in indices. For example,
 `borrows(&(*data)[index + 1])` and `modifies(&(*data)[index + 1])` capture the
 entry value of that expression. Ordinary machine overflow and index bounds
-must be proved, including for the contract itself. Proof-only `int`/`nat`
+must be proved, including for the contract itself. Proof-only `integer`/`nat`
 conversions can express mathematical indices; the body must still prove that
 its runtime index selects the same cell. User function calls and statement
 blocks are not place expressions in this bootstrap.
@@ -1301,8 +1290,7 @@ a physical allocation, `owners(plane)`, or atomic operations.
 
 `examples/opaque_values.evg` demonstrates runtime opaque values, public facts,
 and checked accessors; it runs and builds natively. Module-qualified programs
-use the internal verifier; the optional Lean expression emitter remains limited
-to its existing non-modular reference subset.
+use the internal verifier.
 
 The abstraction tests also run through the CLI: checking
 `stdlib/credits/credits.evg proofs/opaque_credits.evg` succeeds, while checking
@@ -1381,7 +1369,7 @@ Erased expressions cannot construct, consume, or destroy runtime owners.
 Existing ideal bindings can be replaced with `ideal name = expression;`, including
 their structural fields and array cells. The target must be proof storage:
 an ideal binding, an ideal function's local storage, or a declared ideal field.
-Dereferencing a borrow resets that classification. A mathematical `int`/`nat`
+Dereferencing a borrow resets that classification. A mathematical `integer`/`nat`
 or ideal record pointee is proof storage, while an erased `&usize` can still
 point to runtime data and cannot authorize an erased write. Borrowed writes
 need a matching effect contract unless the caller owns their target plane.
@@ -1408,9 +1396,8 @@ example, with no allocation, deallocation, or actual owner-set authority.
 `examples/ideal_bindings.evg` runs and builds to exit status 42. Check
 `stdlib/credits/credits.evg proofs/ideal_credit_bindings.evg` for a runtime function that
 splits an existing ideal budget and consumes each part once through erased
-parameters. The shipped library still has no mint operation. The optional Lean
-backend evaluates these local bindings as mathematical data in its ideal
-reference model, while Evergreen's runtime backends erase them.
+parameters. The shipped library still has no mint operation. Runtime backends
+erase these local proof bindings.
 
 Runtime records can carry proof fields with `ideal field: Type`:
 
@@ -1447,7 +1434,7 @@ proof state are forbidden inside propositions and specification expressions.
 Erasure follows the target slot, not the pointer value: an ideal record can
 contain `target: &usize`, but an ideal function cannot declare
 `modifies((*record).target)` to mutate that runtime pointee. Entering a nested
-reference resets the proof-storage classification. Mathematical `int` and `nat`
+reference resets the proof-storage classification. Mathematical `integer` and `nat`
 slots can be modified. Whole affine ideal records are supported when their
 representation is an erased tree of scalar fields with no references or arrays.
 This allows a client to declare `modifies(credit)` for opaque credits and forward
@@ -1714,8 +1701,7 @@ Loading is demand-driven: an arithmetic-only program does not acquire the IO or
 atomic trusted contracts. Referenced external declarations remain audited, and
 `--deny-trust` still rejects them. Certificates bind the bytes of automatically
 loaded dependencies as well as the input source. User expression line numbers
-are preserved instead of shifting when a stdlib file is added. The optional
-legacy Lean translator retains its existing supported subset.
+are preserved instead of shifting when a stdlib file is added.
 
 Unknown-function diagnostics now report that error alone; the decreases-clause
 hint is emitted specifically for an undeclared self-call in an ideal function,
@@ -1785,7 +1771,7 @@ cargo run -- build examples/vec.evg -o /tmp/vec
 spare capacity, `pop(&value)` requires a nonempty vector, and `get(&value, index)`
 returns a checked reference to an element below length. `length` and `capacity`
 expose those quantities without exposing the representation. Capacity is bounded
-by addressability: `int(capacity) * 8 <= int(isize::MAX)` for machine-word elements.
+by addressability: `integer(capacity) * 8 <= integer(isize::MAX)` for machine-word elements.
 Native allocation can still fail at runtime; the interpreter has a separate work
 budget. Neither imposes a 8192-element language limit.
 
@@ -2009,3 +1995,10 @@ Simple `where`, `ensures`, and `decreases` clauses accept expressions with or
 without surrounding parentheses. Struct clauses containing named facts retain
 the existing parenthesized form. `examples/nonzero.evg` shows checked nonzero
 construction and addition with an ideal integer view for the overflow bound.
+
+### Ideal integer spelling
+
+`integer` is the source-level mathematical integer type, and `integer(value)`
+is its proof-only view conversion. The former `int` spelling has been removed;
+machine integer types such as `i64` and `usize` retain their existing meaning.
+`nat` remains the ideal nonnegative integer type.

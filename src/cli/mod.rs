@@ -1,7 +1,6 @@
 //! CLI orchestration: load sources once and dispatch one command handler.
 
 mod args;
-mod lean;
 mod output;
 mod sources;
 
@@ -25,9 +24,6 @@ pub fn run() -> Result<(), String> {
         Action::Check { proof, .. } => check(&source, &files, proof.as_deref(), cli.deny_trust),
         Action::Prove { output, .. } => prove(&source, &files, output, cli.deny_trust),
         Action::Run { .. } => run_program(&source, cli.deny_trust),
-        Action::Emit { output, .. } => emit(&source, &files, output.as_deref()),
-        Action::LeanCheck { file } => lean::check(&source, file),
-        Action::LeanRun { .. } => lean::run(&source),
     }
 }
 
@@ -116,16 +112,6 @@ fn run_program(source: &str, deny_trust: bool) -> Result<(), String> {
     let program = checked_program(source, None, deny_trust)?;
     println!("{}", evergreen::interpreter::run(&program)?);
     report_trust(&program);
-    Ok(())
-}
-
-fn emit(source: &str, files: &[PathBuf], destination: Option<&Path>) -> Result<(), String> {
-    let lean = evergreen::compiler::lean::emit(source, false)?;
-    if let Some(path) = destination {
-        output::write_text(path, &lean, files)?;
-    } else {
-        print!("{lean}");
-    }
     Ok(())
 }
 

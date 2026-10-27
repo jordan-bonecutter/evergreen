@@ -1,5 +1,5 @@
 fn at(ideal n: nat, data: &[usize; n], index: usize) -> &usize
-where (int(index) < int(n))
+where (integer(index) < integer(n))
 borrows(&(*data)[index])
 ensures (*result == (*data)[index]) {
     &(*data)[index]

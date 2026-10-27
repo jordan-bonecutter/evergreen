@@ -283,7 +283,7 @@ pub fn solve(assumptions: &[Linear]) -> ArithmeticResult<Certificate> {
         }
         rows = next;
     }
-    Err("cannot prove obligation with bounded linear arithmetic; supply stronger facts or use the Lean backend".into())
+    Err("cannot prove obligation with bounded linear arithmetic; supply stronger facts or an explicit proof".into())
 }
 
 #[cfg(test)]

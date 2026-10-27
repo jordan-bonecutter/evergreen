@@ -33,7 +33,7 @@ fn check_result_anchor(
             Kind::Field(base, _) | Kind::Unary(_, base) => result_only(base),
             Kind::Binary(_, a, b) | Kind::Index(a, b) => result_only(a) && result_only(b),
             Kind::If(c, a, b) => result_only(c) && result_only(a) && result_only(b),
-            Kind::Call(name, args) if matches!(name.as_str(), "int" | "nat") => {
+            Kind::Call(name, args) if matches!(name.as_str(), "integer" | "nat") => {
                 args.iter().all(result_only)
             }
             _ => false,

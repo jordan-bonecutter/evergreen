@@ -325,7 +325,7 @@ impl Shapes {
                 }
                 match name.as_str() {
                     "old" | "move" => first,
-                    "int" => Some(Type::Int),
+                    "integer" => Some(Type::Int),
                     "nat" => Some(Type::Nat),
                     "alloc" => expected.cloned().or_else(|| {
                         let payload = if args.len() == 2 {

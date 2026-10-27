@@ -1,7 +1,7 @@
 module arithmetic;
 
 fn add(left: usize, right: usize) -> usize
-where(int(left) + int(right) <= int(usize::MAX))
+where(integer(left) + integer(right) <= integer(usize::MAX))
 ensures(result == left + right) {
     left + right
 }

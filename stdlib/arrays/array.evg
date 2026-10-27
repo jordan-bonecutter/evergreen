@@ -1,14 +1,14 @@
 // Sequential machine-word array operations, implemented and checked in Evergreen.
 module arrays;
 fn set(ideal n: nat, data: &[usize; n], index: usize, value: usize)
-where (int(index) < int(n))
+where (integer(index) < integer(n))
 modifies(&(*data)[index])
 ensures ((*data)[index] == value) {
     (*data)[index] = value;
 }
 
 fn set_get(ideal n: nat, data: &[usize; n], index: usize, value: usize) -> &usize
-where (int(index) < int(n))
+where (integer(index) < integer(n))
 modifies(&(*data)[index])
 borrows(&(*data)[index])
 ensures (*result == value) {
@@ -19,7 +19,7 @@ ensures (*result == value) {
 // One incoming array describes aliases between the two indexed places.
 // In particular, swapping a cell with itself is valid.
 fn swap(ideal n: nat, data: &[usize; n], left: usize, right: usize)
-where (int(left) < int(n) && int(right) < int(n))
+where (integer(left) < integer(n) && integer(right) < integer(n))
 modifies(&(*data)[left], &(*data)[right])
 ensures (
     (*data)[left] == old(*data)[right] &&
