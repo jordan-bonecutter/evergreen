@@ -1,0 +1,37 @@
+fn word(value: usize) -> usize {value}
+fn flag(value: bool) -> usize {if value {42} else {1}}
+
+fn choose(which: bool) -> usize {
+    let value: usize | bool = if which {true} else {42};
+    // The source flag proves which raw-union member is active.
+    match which {
+        true => flag(value),
+        false => word(value),
+    }
+}
+
+fn tick(calls: &usize) -> bool
+where *calls == 0
+modifies(calls)
+ensures *calls == 1 && result {
+    *calls = 1;
+    true
+}
+
+fn store(target: &usize, value: usize)
+modifies(target)
+ensures *target == value {
+    *target = value;
+}
+
+fn main() -> usize {
+    let calls: usize = 0;
+    let selected: usize = 0;
+    match tick(&calls) {
+        false => {store(&selected, 1)},
+        true => {store(&selected, 42)},
+    }
+    proof called_once: calls == 1;
+    proof selected_true_arm: selected == 42;
+    choose(false)
+}

@@ -538,16 +538,42 @@ cleanup. Missing fields, repeated fields, repeated binding names, and using the
 consumed parent are rejected. Pattern bindings clean up in reverse binding order.
 This supports transferring owned fields without partially initialized records.
 
-Destructuring a type with its own `Drop` implementation is rejected outside its
-own destructor because it would bypass that destructor. Inside that destructor,
-`let Resource {data, child} = self;` is allowed when it binds every field once.
-The parent method is already running; consuming `self` prevents a second parent
-cleanup, and its fields become ordinary locals with their own cleanup. References
+Complete destructuring also consumes a type with its own `Drop` implementation:
+the parent Drop does not run, and its fields become ordinary locals with their
+own cleanup. Opaque field access still requires the defining module. Inside a
+destructor, `let Resource {data, child} = self;` consumes the already-running
+receiver and prevents a second parent cleanup. References
 into an owned allocation survive the pointer move; references to receiver slots
 become invalid. Tests check child cleanup once and retained effect obligations.
 Fields with their own destructors are also supported when the parent has none. Patterns inside
-open invariant updates, nested patterns, and wildcard patterns remain unsupported.
+open invariant updates, nested record patterns, and record wildcard patterns remain unsupported.
 See `examples/destructure.evg`.
+
+### Boolean match
+
+`match` accepts exhaustive Boolean cases and a final `_` fallback:
+
+```evg
+match condition {
+    true => on_true(),
+    false => on_false(),
+}
+```
+
+It works as an expression, including a function's tail value, or as a statement.
+A statement before another statement needs no trailing semicolon. The scrutinee
+executes once. Arms are expressions, optionally enclosed in braces; `{}` is a
+unit arm. Braced arms currently take one value expression without a trailing
+semicolon. Missing cases, duplicate cases,
+unreachable arms after `_`, incompatible result types, and inconsistent ownership
+transfers are rejected. The parser lowers this form to the ordinary conditional,
+sharing its proof, cleanup, effect, and native rules.
+
+Source flags can select raw-union payloads when a refinement establishes their
+active types. The ideal type selector remains erased; matching adds no runtime
+tag. Named data patterns, payload bindings, guards, and statement sequences
+inside arms remain future work. `examples/match.evg` checks a side-effecting
+scrutinee once, selects a raw-union member, and runs in both backends.
 
 `proofs/move_only_credits.evg` combines the rules: split a weighted move-only credit,
 destructure the result, join it again, and prove conservation. Checking it with

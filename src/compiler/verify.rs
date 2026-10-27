@@ -34,6 +34,8 @@ mod heap;
 mod ideal;
 mod literals;
 mod loops;
+#[cfg(test)]
+mod match_tests;
 mod ownership;
 mod parameters;
 mod paths;

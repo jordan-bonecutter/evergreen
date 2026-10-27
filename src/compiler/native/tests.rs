@@ -146,6 +146,7 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/buffer_copy.evg"),
         include_str!("../../../examples/while_termination.evg"),
         include_str!("../../../examples/loop.evg"),
+        include_str!("../../../examples/match.evg"),
         include_str!("../../../examples/sparse_arrays.evg"),
         include_str!("../../../examples/owning_references.evg"),
         "type Resource struct {value: usize} where value == 42; impl Drop for Resource {fn drop(self) {proof valid: self.value == 42;}} fn main() -> usize {let unique: plane(Resource) = alloc(Resource {value: 42}); let first = share_owner(unique); let second = duplicate_owner(&first); release_owner(first); second.value}",
@@ -336,6 +337,12 @@ fn native_execution_agrees_with_the_interpreter() {
         "fn add(a: usize, b: usize) -> usize where (a <= 10 && b <= 10) ensures (result == a + b) {a + b} fn main() -> usize {add(1, add(2, 3))}",
         "fn sum(a: usize,b: usize,c: usize,d: usize,e: usize,f: usize,g: usize,h: usize) -> usize where (a <= 10 && b <= 10 && c <= 10 && d <= 10 && e <= 10 && f <= 10 && g <= 10 && h <= 10) {a+b+c+d+e+f+g+h} fn main() -> usize {sum(1,2,3,4,5,6,7,8)}",
     ].map(str::to_owned).to_vec();
+    cases.push(
+        include_str!("../../../examples/raw_union_owner_drop.evg").replace(
+            "if present {discard_owner(data)} else {discard_empty(data)}",
+            "match present {true => discard_owner(data), false => discard_empty(data)}",
+        ),
+    );
     cases.push(
         include_str!("../../../examples/drop_receiver_pattern.evg").replace(
             "drop(resource);",

@@ -9,6 +9,7 @@ mod strings;
 pub use representation::{Endianness, IntegralEncoding, Representation, ScalarDefinition};
 
 mod functions;
+mod matches;
 mod statements;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -435,6 +436,7 @@ impl Parser {
                     | "opaque"
                     | "ideal"
                     | "if"
+                    | "match"
                     | "else"
                     | "while"
                     | "invariant"
@@ -708,6 +710,8 @@ impl Parser {
                 kind: Kind::Unary(op, Box::new(self.expr(7)?)),
                 line,
             }
+        } else if self.eat("match") {
+            self.boolean_match(line)?
         } else if self.eat("if") {
             let cond = self.expr(0)?;
             self.expect("{")?;

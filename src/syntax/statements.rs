@@ -36,12 +36,17 @@ impl Parser {
                 self.eat(";");
                 break value;
             }
+            let matching = self.peek() == "match";
             let value = self.expr(0)?;
             if self.eat("=") {
                 body.push(self.assignment(value)?);
                 continue;
             }
             if self.eat(";") {
+                body.push(Statement::Effect(value));
+                continue;
+            }
+            if matching && self.peek() != "}" {
                 body.push(Statement::Effect(value));
                 continue;
             }
