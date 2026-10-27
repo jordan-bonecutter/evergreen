@@ -361,7 +361,7 @@ fn native_cli_builds_without_external_tools_and_preserves_failed_outputs() {
     assert!(output.stderr.is_empty());
     let previous = fs::read(&binary).unwrap();
     for source in [
-        "proofs/affine_credits.evg",
+        "proofs/move_only_credits.evg",
         "examples/reject_overflow.evg",
         "examples/trustme.evg",
     ] {

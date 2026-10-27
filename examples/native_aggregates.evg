@@ -1,4 +1,4 @@
-affine type Permit struct {tag: usize}
+type Permit struct {tag: usize}
 type Pair struct {left: Permit, right: Permit}
 type Data struct {values: [usize; 2], marker: bool}
 

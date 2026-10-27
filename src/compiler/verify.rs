@@ -1,6 +1,6 @@
 //! Internal elaboration and verification-condition generation.
 
-use crate::shared::ownership::is_affine;
+use crate::shared::ownership::is_move_only;
 use crate::{
     compiler::certificate::{ProofBundle, Session},
     compiler::kernel::Linear,
@@ -527,7 +527,7 @@ fn destructor_body(body: &[Statement]) -> bool {
 }
 
 /// Specifications inspect values without consuming ownership. Ideal code is
-/// erased computation, but its affine values still move. Runtime code cannot
+/// erased computation, but its move-only values still move. Runtime code cannot
 /// inspect erased bindings. Keep these modes distinct at every phase boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
@@ -1635,7 +1635,7 @@ impl<'a> Context<'a> {
                 return Err(format!("line {}: writes through reference parameters need an effect contract; unsupported", place.line));
             }
             let old = project(self.storage.memory.read(reference)?, &fields)?.clone();
-            if self.symbol_is_affine(&old)
+            if self.symbol_is_move_only(&old)
                 && self.has_runtime_cleanup(&old.ty())
                 && !(self.execution.phase == Phase::Ideal && self.erased_value(&old))
             {
@@ -1714,7 +1714,7 @@ impl<'a> Context<'a> {
             self.storage(place)?
         };
         let mut new = self.eval(value, Some(&old.ty()))?;
-        if self.execution.dropping && self.symbol_is_affine(&old) {
+        if self.execution.dropping && self.symbol_is_move_only(&old) {
             return Err(
                 "destructors cannot replace owning fields without cleanup/effect proofs".into(),
             );
@@ -1731,7 +1731,7 @@ impl<'a> Context<'a> {
         if !fields.is_empty() && !old_live {
             return Err(format!("line {}: field assignment cannot restore shape(T); replace consumed owner {name} as a whole", place.line));
         }
-        if old_live && self.symbol_is_affine(&old) {
+        if old_live && self.symbol_is_move_only(&old) {
             self.validate_argument(&old, place.line)?;
             self.cleanup_value(old, place.line)?;
         }
@@ -1913,7 +1913,7 @@ impl<'a> Context<'a> {
             Statement::Assign { target, value } => self.assign(target, value),
             Statement::Effect(e) => {
                 let value = self.eval(e, None)?;
-                if self.symbol_is_affine(&value) {
+                if self.symbol_is_move_only(&value) {
                     self.validate_argument(&value, e.line)?;
                 }
                 self.cleanup_value(value, e.line)
@@ -2339,7 +2339,7 @@ impl<'a> Context<'a> {
         let projecting_owner = matches!(&e.kind, Kind::Field(..) | Kind::Index(..))
             || matches!(&e.kind, Kind::Unary(op, _) if op == "*");
         if self.execution.phase != Phase::Specification
-            && self.symbol_is_affine(&value)
+            && self.symbol_is_move_only(&value)
             && projecting_owner
         {
             return Err(format!("line {}: moving owning fields or borrowed values needs partial-initialization tracking; unsupported", e.line));
@@ -2366,28 +2366,42 @@ impl<'a> Context<'a> {
         Ok(value)
     }
 
-    fn symbol_is_affine(&self, value: &Symbol) -> bool {
+    fn symbol_is_move_only(&self, value: &Symbol) -> bool {
         match value {
             Symbol::Plane(..) => true,
-            Symbol::Record(n, _) => is_affine(
+            Symbol::Record(n, _) => is_move_only(
                 &Type::Named(n.clone()),
                 self.declarations.structs,
                 self.declarations.drops,
             ),
-            Symbol::Array { element, .. } => self.ty_is_affine(element),
+            Symbol::Array { element, .. } => self.ty_is_move_only(element),
+            Symbol::Number(Ty::Machine(integer), _) => self.ty_is_move_only(&Ty::Machine(*integer)),
+            Symbol::Bool(_) => self.ty_is_move_only(&Ty::Bool),
+            Symbol::Unit => self.ty_is_move_only(&Ty::Unit),
+            Symbol::Ref(inner, _, _) => self.ty_is_move_only(&Ty::Ref(inner.clone())),
             _ => false,
         }
     }
 
-    fn ty_is_affine(&self, t: &Ty) -> bool {
+    fn ty_is_move_only(&self, t: &Ty) -> bool {
         match t {
             Ty::Plane(_) => true,
-            Ty::Record(n) => is_affine(
+            Ty::Record(n) => is_move_only(
                 &Type::Named(n.clone()),
                 self.declarations.structs,
                 self.declarations.drops,
             ),
-            Ty::Array(t, _) => self.ty_is_affine(t),
+            Ty::Array(t, _) => self.ty_is_move_only(t),
+            Ty::Machine(integer) => !crate::shared::target::native()
+                .is_ok_and(|target| target.is_copy(&Type::Machine(*integer))),
+            Ty::Bool => {
+                !crate::shared::target::native().is_ok_and(|target| target.is_copy(&Type::Bool))
+            }
+            Ty::Unit => {
+                !crate::shared::target::native().is_ok_and(|target| target.is_copy(&Type::Unit))
+            }
+            Ty::Ref(_) => !crate::shared::target::native()
+                .is_ok_and(|target| target.is_copy(&Type::Ref(Box::new(Type::Unit)))),
             _ => false,
         }
     }
@@ -2395,7 +2409,7 @@ impl<'a> Context<'a> {
     // Extensional array histories can compare these values structurally.
     // Reference identity, nested arrays, and owning values need their own rules.
     // Reference-free scalar trees can be havoced without changing storage
-    // identity, layouts, or hidden reference provenance. Affinity is a separate
+    // identity, layouts, or hidden reference provenance. Copy permission is a separate
     // condition: history views do not copy source values or grant moves. Only
     // reference-free trees without runtime cleanup can use structural histories.
     fn scalar_field_value(&self, t: &Ty) -> bool {
@@ -2494,7 +2508,7 @@ impl<'a> Context<'a> {
                     continue;
                 }
                 let before = self.storage.memory.get(id)?.clone();
-                if self.symbol_is_affine(&before) {
+                if self.symbol_is_move_only(&before) {
                     self.validate_argument(&before, f.result.line)?;
                 }
                 self.storage.memory.take(id)?
@@ -2504,7 +2518,7 @@ impl<'a> Context<'a> {
                     .values
                     .remove(&name)
                     .ok_or("unknown cleanup binding")?;
-                if self.symbol_is_affine(&value) {
+                if self.symbol_is_move_only(&value) {
                     self.validate_argument(&value, f.result.line)?;
                 }
                 value
@@ -2687,7 +2701,8 @@ impl<'a> Context<'a> {
             }
             _ => {
                 let value = self.eval(e, None)?;
-                if self.execution.phase != Phase::Specification && self.symbol_is_affine(&value) {
+                if self.execution.phase != Phase::Specification && self.symbol_is_move_only(&value)
+                {
                     self.storage.temporaries.push((value.clone(), e.line));
                 }
                 Ok(value)
@@ -2778,7 +2793,8 @@ impl<'a> Context<'a> {
                         .cloned()
                         .ok_or_else(|| format!("unknown value {n}"))
                 }?;
-                if self.execution.phase != Phase::Specification && self.symbol_is_affine(&value) {
+                if self.execution.phase != Phase::Specification && self.symbol_is_move_only(&value)
+                {
                     if self.execution.phase == Phase::Ideal && !self.erased_value(&value) {
                         return Err("ideal execution cannot consume runtime ownership; use a read-only proof view".into());
                     }
@@ -2814,7 +2830,7 @@ impl<'a> Context<'a> {
             Kind::Record(name, entries) => {
                 self.representation_access(name, e.line)?;
                 if self.execution.phase == Phase::Ideal
-                    && is_affine(
+                    && is_move_only(
                         &Type::Named(name.clone()),
                         self.declarations.structs,
                         self.declarations.drops,

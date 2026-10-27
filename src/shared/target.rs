@@ -2,7 +2,10 @@
 //! The instruction backend still validates the widths it can implement.
 
 use crate::syntax::{self, Endianness, MachineInt, Representation, Type};
-use std::{collections::BTreeMap, sync::OnceLock};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::OnceLock,
+};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -16,6 +19,7 @@ pub(crate) struct ScalarLayout {
 
 pub(crate) struct Target {
     layouts: BTreeMap<String, ScalarLayout>,
+    copy_types: BTreeSet<String>,
 }
 
 pub(crate) fn native() -> Result<&'static Target> {
@@ -34,7 +38,10 @@ impl Target {
             || !program.structs.is_empty()
             || !program.destructors.is_empty()
         {
-            return Err("target profiles contain only make_type declarations".into());
+            return Err(
+                "target profiles contain only make_type declarations and Copy implementations"
+                    .into(),
+            );
         }
         for definition in program.scalar_types {
             if definition.module.as_deref() != Some("x86_64") {
@@ -93,7 +100,50 @@ impl Target {
                 return Err(format!("{alias} must share the {base} layout on x86-64"));
             }
         }
-        Ok(Self { layouts })
+        let mut copy_types = BTreeSet::new();
+        for implementation in program.copy_impls {
+            if implementation.module.as_deref() != Some("x86_64") {
+                return Err("target Copy implementations require module x86_64".into());
+            }
+            let name = implementation
+                .target
+                .strip_prefix("x86_64::")
+                .ok_or("Copy requires a declared target primitive")?;
+            if !layouts.contains_key(name) {
+                return Err(format!(
+                    "unknown target primitive in Copy implementation: {name}"
+                ));
+            }
+            if !copy_types.insert(name.to_owned()) {
+                return Err(format!("duplicate target Copy implementation for {name}"));
+            }
+        }
+        for (alias, base) in [("usize", "u64"), ("isize", "i64")] {
+            if copy_types.contains(alias) != copy_types.contains(base) {
+                return Err(format!(
+                    "{alias} must share the {base} Copy implementation on x86-64"
+                ));
+            }
+        }
+        Ok(Self {
+            layouts,
+            copy_types,
+        })
+    }
+
+    /// Layout aliases share a primitive identity; owned planes remain move-only
+    /// even when the raw pointer representation implements Copy.
+    pub(crate) fn is_copy(&self, ty: &Type) -> bool {
+        let name = match ty {
+            Type::Machine(integer) => {
+                format!("{}{}", if integer.signed { 'i' } else { 'u' }, integer.bits)
+            }
+            Type::Bool => "bool".into(),
+            Type::Unit => "unit".into(),
+            Type::Ref(_) => "pointer".into(),
+            _ => return false,
+        };
+        self.copy_types.contains(&name)
     }
 
     pub(crate) fn scalar(&self, ty: &Type) -> Result<ScalarLayout> {
@@ -113,7 +163,7 @@ impl Target {
     }
 }
 
-pub(super) fn representation_type(representation: &Representation) -> Result<Option<Type>> {
+pub(crate) fn representation_type(representation: &Representation) -> Result<Option<Type>> {
     match *representation {
         Representation::Integral {
             signed,
@@ -193,5 +243,42 @@ mod tests {
                 bits: 7
             }))
             .is_err());
+    }
+}
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+
+    fn machine(name: &str) -> Type {
+        Type::Machine(MachineInt::parse(name).unwrap())
+    }
+
+    #[test]
+    fn copying_requires_an_explicit_primitive_trait_implementation() {
+        let source = X86_64.replace("impl Copy for u8 {}", "");
+        let target = Target::decode(&source).unwrap();
+        assert!(!target.is_copy(&machine("u8")));
+        assert!(target.is_copy(&machine("u16")));
+        let source = X86_64.replace("impl Copy for pointer {}", "");
+        let target = Target::decode(&source).unwrap();
+        assert!(!target.is_copy(&Type::Ref(Box::new(Type::Unit))));
+        let target = Target::decode(X86_64).unwrap();
+        assert!(target.is_copy(&Type::Ref(Box::new(Type::Unit))));
+        assert!(!target.is_copy(&Type::Plane(Box::new(Type::Unit))));
+        let source = X86_64.replace("impl Copy for bool {}", "");
+        assert!(!Target::decode(&source).unwrap().is_copy(&Type::Bool));
+    }
+
+    #[test]
+    fn invalid_primitive_copy_declarations_are_rejected() {
+        for source in [
+            format!("{X86_64} impl Copy for u8 {{}}"),
+            format!("{X86_64} impl Copy for Unknown {{}}"),
+            X86_64.replace("impl Copy for usize {}", ""),
+            X86_64.replace("impl Copy for isize {}", ""),
+        ] {
+            assert!(Target::decode(&source).is_err());
+        }
     }
 }

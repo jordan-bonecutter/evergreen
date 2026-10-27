@@ -131,7 +131,7 @@ impl Context<'_> {
         if !requires_drop {
             return Ok(());
         }
-        if self.symbol_is_affine(&value) {
+        if self.symbol_is_move_only(&value) {
             self.validate_argument(&value, line)?;
         }
         // Effect-free methods are checked universally at their declarations.

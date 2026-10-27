@@ -12,7 +12,7 @@ mod methods;
 pub mod native;
 mod scalar_types;
 mod sources;
-mod target;
+pub(crate) use crate::shared::target;
 pub mod verify;
 
 /// Whether this bootstrap embeds a standard-library package with this name.

@@ -172,7 +172,7 @@ impl Context<'_> {
         let initial = self.eval(&args[1], hint)?;
         let element = initial.ty();
         let syntax = syntax_type(&element, line)?;
-        if self.symbol_is_affine(&initial)
+        if self.symbol_is_move_only(&initial)
             || !payload_type(&syntax, self.declarations.structs)
             || !self.history_element(&element)
             || !runtime_type(&syntax, self.declarations.structs)

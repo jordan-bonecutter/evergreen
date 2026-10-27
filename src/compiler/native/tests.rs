@@ -249,7 +249,7 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/native_aggregates.evg"),
         include_str!("../../../examples/array_contracts.evg"),
         include_str!("../../../examples/destructure.evg"),
-        include_str!("../../../examples/affine_values.evg"),
+        include_str!("../../../examples/move_values.evg"),
         include_str!("../../../examples/structs.evg"),
         include_str!("../../../examples/conditional_records.evg"),
         "fn identity(a: [usize; 2]) -> [usize; 1 + 1] {a} fn main() -> usize {let input: [usize; 2] = [7, 42]; let a: [usize; 2] = identity(input); a[1]}",

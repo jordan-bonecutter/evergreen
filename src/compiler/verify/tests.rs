@@ -252,9 +252,7 @@ fn opaque_ideal_effect_regions_forward_and_recheck_aliases() {
     assert!(verify(&hidden_reference)
         .unwrap_err()
         .contains("modifies targets require"));
-    assert!(
-        verify("affine type Value struct {n: usize} fn observe(r: &Value) modifies(r) {}").is_ok()
-    );
+    assert!(verify("type Value struct {n: usize} fn observe(r: &Value) modifies(r) {}").is_ok());
     let runtime_owner = "type Owner struct {n: plane(usize)} fn bad(r: &Owner) modifies(r) {}";
     assert!(verify(runtime_owner)
         .unwrap_err()
@@ -481,16 +479,16 @@ fn ideal_assignments_cannot_write_runtime_storage_or_revive_owners() {
         "fn main() -> usize {let data: [usize; 1] = [7]; ideal data[0] = 42; data[0]}",
         "type Cell struct {value: usize} fn main() {let cell = Cell {value: 7}; ideal cell.value = 42;}",
         "fn main() {let value: usize = 7; ideal let view = &value; ideal *view = 42;}",
-        "ideal affine type Ticket struct {units: nat} ideal fn consume(ticket: Ticket) {} fn main() {ideal let ticket = Ticket {units: 1}; ideal let gone = consume(ticket); ideal ticket = old(ticket);}",
+        "ideal type Ticket struct {units: nat} ideal fn consume(ticket: Ticket) {} fn main() {ideal let ticket = Ticket {units: 1}; ideal let gone = consume(ticket); ideal ticket = old(ticket);}",
         "fn main() {ideal let value: nat = 1; proof original: value == 1; ideal value = 2; proof wrong: value == 1 by {exact original};}",
-        "affine type Owner struct {value: usize} type Pair struct {a: usize, b: usize} where(fact same = a == b; same); fn main() {let owner = Owner {value: 7}; let pair = Pair {a: 1, b: 1}; update(pair) lifts same {ideal let Owner {value} = owner;}}",
+        "type Owner struct {value: usize} type Pair struct {a: usize, b: usize} where(fact same = a == b; same); fn main() {let owner = Owner {value: 7}; let pair = Pair {a: 1, b: 1}; update(pair) lifts same {ideal let Owner {value} = owner;}}",
         "fn change(value: &usize) -> usize modifies(value) ensures(*value == 42) {*value = 42; 0} fn main() {let value: usize = 7; ideal let data: [usize; 1] = [0]; ideal data[change(&value)] = 42;}",
         "type Pair struct {a: usize, b: usize} where(fact same = a == b; same); fn main() {let pair = Pair {a: 1, b: 1}; ideal let original: nat = 0; ideal let view = &original; update(pair) lifts same {ideal let local: nat = 1; ideal view = &local;} proof stale: *view == 1;}",
     ] {assert!(verify(bad).is_err(), "accepted {bad}");}
 }
 
 #[test]
-fn affine_credit_bookkeeping_can_be_replaced_inside_updates() {
+fn move_only_credit_bookkeeping_can_be_replaced_inside_updates() {
     let library = format!(
         "{} {}",
         concat!(
@@ -585,7 +583,7 @@ fn erased_borrows_cannot_supply_runtime_values_or_mutations() {
         "ideal fn local(r: &usize) -> &usize borrows(r) {let n: usize = 42; &n}",
         "ideal fn swap(r: &usize, other: &usize) -> &usize borrows(r) {other}",
         "ideal fn forward(r: &usize) -> &usize {r}",
-        "type Resource struct {} impl Drop for Resource {fn drop(self){}} ideal affine type Bad struct {owned: Resource} fn take(ideal bad: Bad) {}",
+        "type Resource struct {} impl Drop for Resource {fn drop(self){}} ideal type Bad struct {owned: Resource} fn take(ideal bad: Bad) {}",
         "type Resource struct {} impl Drop for Resource {fn drop(self){}} ideal fn steal(r: &Resource) {drop(*r);}",
         "fn separate(ideal view: &usize, r: &usize) -> usize ensures(view != r) {*r} fn main() -> usize {let data: usize = 42; separate(&data, &data)}",
         "type Positive struct {value: usize} where(value > 0); fn overwrite(ideal view: &Positive, value: &usize) modifies(value) ensures(*value == 0 && (*view).value > 0) {*value = 0;} fn main() {let positive = Positive {value: 1}; overwrite(&positive, &positive.value);}",
@@ -821,8 +819,8 @@ fn conditional_record_array_borrows_preserve_fields_and_storage_identity() {
     }
     let different_planes = "type Cell struct {value: usize} fn bad(flag: bool) {let a = Cell {value: 7}; let b = Cell {value: 9}; let selected = if flag {&a} else {&b};}";
     assert!(verify(different_planes).is_err());
-    let owners = "affine type Cell struct {value: usize} fn bad(flag: bool) {let data: [Cell; 2] = [Cell {value: 7}, Cell {value: 9}]; let selected = if flag {&data[0]} else {&data[1]};}";
-    assert!(verify(owners).is_ok()); // Borrowing never copies the affine element.
+    let owners = "type Cell struct {value: usize} fn bad(flag: bool) {let data: [Cell; 2] = [Cell {value: 7}, Cell {value: 9}]; let selected = if flag {&data[0]} else {&data[1]};}";
+    assert!(verify(owners).is_ok()); // Borrowing never copies the move-only element.
     let dropping = owners.replace("fn bad", "impl Drop for Cell {fn drop(self) {}} fn bad");
     assert!(verify(&dropping).is_err());
     let refined = "type Positive struct {value: usize} where(value > 0); fn choose(data: &[Positive; 2], flag: bool) -> &Positive borrows(&(*data)[if flag {0} else {1}]) {if flag {&(*data)[0]} else {&(*data)[1]}} fn read(flag: bool) -> usize ensures(result == 42) {let data: [Positive; 2] = [Positive {value: 7}, Positive {value: 9}]; let selected = choose(&data, flag); data[0].value = 42; data[1].value = 42; proof typed: (*selected).value > 0; (*selected).value} fn main() -> usize {read(false)}";
@@ -1745,8 +1743,8 @@ fn ideal_parameters_are_checked_and_erased_without_runtime_access() {
     assert_eq!(verify(interleaved).unwrap().run().unwrap().to_string(), "3");
     let only_ideal = "fn answer(ideal expected: nat) -> usize where (expected == 42) ensures (nat(result) == expected) {42} fn main() -> usize {answer(42)}";
     assert_eq!(verify(only_ideal).unwrap().run().unwrap().to_string(), "42");
-    let affine = "ideal affine type Ticket struct {tag: nat} fn bad(ideal t: Ticket) -> usize {0}";
-    assert!(verify(affine).is_ok());
+    let move_only = "ideal type Ticket struct {tag: nat} fn bad(ideal t: Ticket) -> usize {0}";
+    assert!(verify(move_only).is_ok());
     let effect = "fn write(r: &usize) -> usize modifies(r) ensures (result == 1) {*r = 1; 1} fn metadata(ideal n: nat) -> usize {0} fn main() -> usize {let x: usize = 0; metadata(nat(write(&x)))}";
     assert!(verify(effect).unwrap_err().contains("modifying calls"));
     let declarations = source.split("fn main()").next().unwrap();
@@ -1872,7 +1870,7 @@ fn conditional_stores_join_effects_without_leaking_branch_assumptions() {
 
 #[test]
 fn branches_must_agree_on_consumed_ownership() {
-    let declarations = "affine type Token struct {tag: usize} fn consume(t: Token) -> usize ensures (result == t.tag) {t.tag}";
+    let declarations = "type Token struct {tag: usize} fn consume(t: Token) -> usize ensures (result == t.tag) {t.tag}";
     let valid = "fn main() -> usize ensures (result == 7) {let t = Token {tag: 7}; if true {consume(t)} else {consume(t)}}";
     assert_eq!(
         verify(&format!("{declarations}\n{valid}"))
@@ -1893,7 +1891,7 @@ fn branches_must_agree_on_consumed_ownership() {
 }
 
 #[test]
-fn ideal_bindings_are_erased_and_keep_affine_ownership() {
+fn ideal_bindings_are_erased_and_keep_move_only_ownership() {
     let source = include_str!("../../../examples/ideal_bindings.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     for body in [
@@ -1939,7 +1937,7 @@ fn ideal_bindings_are_erased_and_keep_affine_ownership() {
 }
 
 #[test]
-fn erased_affine_resources_move_without_runtime_values_or_effects() {
+fn erased_move_only_resources_move_without_runtime_values_or_effects() {
     let source = include_str!("../../../examples/erased_resources.evg");
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     let declarations = source.split("fn main").next().unwrap();
@@ -1962,7 +1960,8 @@ fn erased_affine_resources_move_without_runtime_values_or_effects() {
     );
     let bridge = "fn spend(ideal credit: credits::Credit, value: usize) -> usize ensures(result == value) {value} fn forward(ideal credit: credits::Credit, value: usize) -> usize ensures(result == value) {spend(credit, value)}";
     assert!(verify(&format!("{library} {bridge}")).is_ok());
-    let borrow = "ideal affine type WithRef struct {r: &usize} fn ignore(ideal resource: WithRef) -> usize {0}";
+    let borrow =
+        "ideal type WithRef struct {r: &usize} fn ignore(ideal resource: WithRef) -> usize {0}";
     assert!(verify(borrow).is_ok());
     let resource = "type Resource struct {} impl Drop for Resource {fn drop(self){}}";
     for bad in [
@@ -2020,7 +2019,7 @@ fn opaque_module_representations_are_checked_without_client_privileges() {
 }
 
 #[test]
-fn opaque_affine_credits_can_be_rearranged_but_not_forged_or_duplicated() {
+fn opaque_move_only_credits_can_be_rearranged_but_not_forged_or_duplicated() {
     let library = concat!(
         include_str!("../../../stdlib/credits/credits.evg"),
         "\u{1e}"
@@ -2431,7 +2430,7 @@ fn entry_snapshot_work_includes_consumed_plane_slots() {
 
 #[test]
 fn compound_old_snapshots_do_not_capture_locals_effects_or_new_ownership() {
-    let ownership = "ideal affine type Token struct {units: nat} ideal affine type Bundle struct {token: Token} ideal fn consume(t: Token) -> nat {t.units} fn bad(ideal bundle: Bundle) {ideal let Bundle {token} = bundle; ideal let used = consume(token); ideal let again = consume(old(bundle.token));}";
+    let ownership = "ideal type Token struct {units: nat} ideal type Bundle struct {token: Token} ideal fn consume(t: Token) -> nat {t.units} fn bad(ideal bundle: Bundle) {ideal let Bundle {token} = bundle; ideal let used = consume(token); ideal let again = consume(old(bundle.token));}";
     assert!(verify(ownership)
         .unwrap_err()
         .contains("old ownership snapshots"));
@@ -2476,9 +2475,9 @@ fn complete_patterns_transfer_each_field_without_partial_moves() {
     );
     let destructor = "type Guard struct {tag: usize} impl Drop for Guard {fn drop(self) {}} fn main() -> usize {let g = Guard {tag: 7}; let Guard {tag} = g; tag}";
     assert!(verify(destructor).unwrap_err().contains("bypass"));
-    let ideal = "ideal affine type Ticket struct {tag: nat} ideal type Pair struct {left: Ticket, right: Ticket} ideal fn split() -> nat {let pair = Pair {left: Ticket {tag: 2}, right: Ticket {tag: 3}}; let Pair {left, right} = pair; left.tag + right.tag}";
+    let ideal = "ideal type Ticket struct {tag: nat} ideal type Pair struct {left: Ticket, right: Ticket} ideal fn split() -> nat {let pair = Pair {left: Ticket {tag: 2}, right: Ticket {tag: 3}}; let Pair {left, right} = pair; left.tag + right.tag}";
     assert!(verify(ideal).is_ok());
-    let credits = include_str!("../../../proofs/affine_credits.evg");
+    let credits = include_str!("../../../proofs/move_only_credits.evg");
     assert!(verify(credits).is_ok());
     let duplicate = format!(
         "{credits}\n{}",
@@ -2488,8 +2487,8 @@ fn complete_patterns_transfer_each_field_without_partial_moves() {
 }
 
 #[test]
-fn affine_values_move_without_requiring_a_destructor() {
-    let source = include_str!("../../../examples/affine_values.evg");
+fn move_only_values_move_without_requiring_a_destructor() {
+    let source = include_str!("../../../examples/move_values.evg");
     let program = verify(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.drops.is_empty());
@@ -2506,7 +2505,7 @@ fn affine_values_move_without_requiring_a_destructor() {
             "{body}"
         );
     }
-    let duplicate = "ideal affine type Ticket struct {tag: nat} ideal fn forward(t: Ticket) -> Ticket {t} ideal fn duplicate() -> nat {let t = Ticket {tag: 7}; let u = forward(t); let v = forward(t); 0}";
+    let duplicate = "ideal type Ticket struct {tag: nat} ideal fn forward(t: Ticket) -> Ticket {t} ideal fn duplicate() -> nat {let t = Ticket {tag: 7}; let u = forward(t); let v = forward(t); 0}";
     assert!(verify(duplicate).is_err());
     assert!(verify("affine fn main() -> usize {0}").is_err());
     assert!(verify("ideal affine fn main() -> nat {0}").is_err());
@@ -3463,7 +3462,6 @@ fn records_move_by_default_and_copy_requires_a_checked_explicit_impl() {
     assert_eq!(verify(borrowed).unwrap().run().unwrap().to_string(), "42");
     for bad in [
         "type Owner struct {data: plane(usize)} impl Copy for Owner {} fn main() {}",
-        "affine type Resource struct {value: usize} impl Copy for Resource {} fn main() {}",
         "type Resource struct {value: usize} impl Copy for Resource {} impl Drop for Resource {fn drop(self) {}} fn main() {}",
         "type Inner struct {value: usize} type Outer struct {inner: Inner} impl Copy for Outer {} fn main() {}",
         "type Item struct {value: usize} impl Copy for Item {} impl Copy for Item {} fn main() {}",

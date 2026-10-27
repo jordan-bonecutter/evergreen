@@ -3,22 +3,26 @@
 use crate::syntax::{Struct, Type};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) fn is_affine(
+pub(crate) fn is_move_only(
     t: &Type,
     structs: &BTreeMap<String, Struct>,
     drops: &BTreeSet<String>,
 ) -> bool {
     match t {
         Type::Plane(_) => true,
+        Type::Machine(_) | Type::Bool | Type::Unit | Type::Ref(_) => {
+            !super::target::native().is_ok_and(|target| target.is_copy(t))
+        }
         Type::Named(n) => {
             drops.contains(n)
                 || structs.get(n).is_none_or(|s| {
                     !s.copy
-                        || s.affine
-                        || s.fields.iter().any(|(_, t)| is_affine(t, structs, drops))
+                        || s.fields
+                            .iter()
+                            .any(|(_, t)| is_move_only(t, structs, drops))
                 })
         }
-        Type::Array(t, _) => is_affine(t, structs, drops),
+        Type::Array(t, _) => is_move_only(t, structs, drops),
         _ => false,
     }
 }

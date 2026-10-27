@@ -182,7 +182,7 @@ impl Context<'_> {
                 self.locals.values.remove(&name)
             };
             if let Some(value) = value {
-                if self.symbol_is_affine(&value) {
+                if self.symbol_is_move_only(&value) {
                     self.validate_argument(&value, line)?;
                 }
             }

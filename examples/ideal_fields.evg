@@ -1,5 +1,5 @@
 module packets {
-    ideal opaque affine type Witness struct {expected: nat}
+    ideal opaque type Witness struct {expected: nat}
     type Packet struct {value: usize, ideal witness: Witness}
     where(witness.expected == nat(value));
 

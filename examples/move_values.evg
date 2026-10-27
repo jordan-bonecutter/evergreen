@@ -1,12 +1,12 @@
 // Move-only values do not need a destructor.
-affine type Permit struct {tag: usize}
+type Permit struct {tag: usize}
 type Envelope struct {permit: Permit}
 
 fn transfer(p: Permit) -> Permit ensures (result.tag == p.tag) {p}
 fn consume(p: Permit) -> usize ensures (result == p.tag) {p.tag}
 
 // Proof-only values obey the same move rules.
-ideal affine type Ticket struct {tag: nat}
+ideal type Ticket struct {tag: nat}
 ideal fn forward(t: Ticket) -> Ticket ensures (result.tag == t.tag) {t}
 ideal fn use_ticket() -> nat ensures (result == 7) {
     let t = Ticket {tag: 7};

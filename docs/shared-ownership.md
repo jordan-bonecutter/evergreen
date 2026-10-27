@@ -47,11 +47,11 @@ For Rc, a checked thread-local region can exclude concurrent counter accesses.
 A local update can then realize a reserve/decrement transition using ordinary
 loads and stores. A lifted representation fact must be restored before an
 operation exposes the record to code that relies on it. Ownership of tokens
-must remain affine during that update.
+must remain move-only during that update.
 
 The intended generic mechanism is a reference model with an ownership role.
 `&T` borrows access without taking responsibility for the allocation's lifetime;
-an owning pointer carries that responsibility and is affine. Both can have the
+an owning pointer carries that responsibility and is move-only. Both can have the
 same address representation. An allocator may own the backing memory while a
 library owns responsibility for one allocated plane inside it.
 

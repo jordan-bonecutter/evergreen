@@ -65,3 +65,18 @@ type bool = make_type(size: 1, align: 1, represents: repr::Boolean {});
 type unit = make_type(size: 1, align: 1, represents: repr::Unit {});
 type pointer = make_type(size: 8, align: 8,
     represents: repr::Pointer {bits: 64, endian: repr::Little});
+
+// Copy is a checked trait implementation, not an implicit property of width.
+impl Copy for u8 {}
+impl Copy for i8 {}
+impl Copy for u16 {}
+impl Copy for i16 {}
+impl Copy for u32 {}
+impl Copy for i32 {}
+impl Copy for u64 {}
+impl Copy for i64 {}
+impl Copy for usize {}
+impl Copy for isize {}
+impl Copy for bool {}
+impl Copy for unit {}
+impl Copy for pointer {}

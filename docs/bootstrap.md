@@ -254,7 +254,7 @@ Not yet supported: non-record patterns, shared heap ownership, general C FFI, fo
 layouts. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
 
-Unique heap ownership uses `plane(T)` and `alloc(value)`. An owner is affine and
+Unique heap ownership uses `plane(T)` and `alloc(value)`. An owner is move-only and
 owns a separately allocated, stable data plane. Moving the owner invalidates its
 old binding but preserves borrows of the data. `*owner` reads its payload;
 `&*owner` borrows it. Dropping an owner or replacing it runs payload cleanup and
@@ -303,7 +303,7 @@ each owner an eight-byte home. Inline layouts retain a 64 KiB compiler limit;
 filled heap arrays instead prove that their byte size fits `isize::MAX`. These allocator/backend rules remain trusted
 implementation code. The Lean owner-slot model separately proves that an owner
 move preserves payload references and a free invalidates them; it does not prove
-affine enforcement, the allocator, or compilation correctness.
+move-only enforcement, the allocator, or compilation correctness.
 
 `examples/owned_planes.evg` runs, builds, and replays with stable data borrows,
 borrowed write contracts, entry payload snapshots via `old(*owner)`, owner-slot
@@ -442,22 +442,20 @@ not separate compilation of library interfaces, a zero-knowledge proof, or a
 proof of generated machine code. Avoiding repeated frontend work for standard
 libraries will require checked module interfaces and their dependency manifests.
 
-## Affine values without destructors
+## Move-only values without destructors
 
-All records, including ideal records, are move-only unless they explicitly
-implement Copy. `affine type Permit struct {tag: usize}` additionally declares
-that Copy must not be implemented, without requiring `impl Drop`.
-`ideal affine type Ticket struct {tag: nat}` applies that restriction to proof data. Passing or assigning such a value
-moves it and leaves the old binding as `shape(T)`. Enclosing records and arrays
-are affine too. Scalar field inspection borrows the existing storage; moving
-individual owned fields still requires partial-initialization support.
-Values may be discarded, so this is affine rather than linear ownership.
+All records, including ideal records, move by default unless they explicitly
+implement Copy. Passing or assigning a move-only value transfers it and leaves
+the old binding as `shape(T)`. Records and arrays containing move-only fields
+cannot implement Copy. Scalar field inspection borrows the existing storage;
+moving individual owned fields still requires partial-initialization support.
+Values may also be dropped or discarded. There is no separate ownership modifier.
 Types with destructors are non-Copy automatically. Move-only classification
 is independent of runtime destruction: a non-Copy record of scalars or borrowed
 references can have no destructor work at all. Its fields may still be borrowed
 and inspected without copying or moving the containing record.
 
-See `examples/affine_values.evg`. This supplies a general prerequisite for
+See `examples/move_values.evg`. This supplies a general prerequisite for
 reservation witnesses without RC-specific compiler rules. It does not make
 constructors private or establish that every ticket represents a real atomic
 reservation: anyone in the current compilation unit can construct a ticket.
@@ -467,7 +465,7 @@ physical transitions and ideal witnesses remain necessary.
 ## Complete record patterns
 
 `let Pair {left: first, right: second} = pair;` binds every field, with shorthand
-`let Pair {left, right} = pair;` when names match. An affine source is consumed
+`let Pair {left, right} = pair;` when names match. A move-only source is consumed
 as a whole and becomes `shape(Pair)`; each field then has its own binding and
 cleanup. Missing fields, repeated fields, repeated binding names, and using the
 consumed parent are rejected. Pattern bindings clean up in reverse binding order.
@@ -484,7 +482,7 @@ Fields with their own destructors are also supported when the parent has none. P
 open invariant updates, nested patterns, and wildcard patterns remain unsupported.
 See `examples/destructure.evg`.
 
-`proofs/affine_credits.evg` combines the rules: split a weighted affine credit,
+`proofs/move_only_credits.evg` combines the rules: split a weighted move-only credit,
 destructure the result, join it again, and prove conservation. Checking it with
 `proofs/reject_duplicate_credit.evg` rejects a second use of the consumed input.
 The example proves conservation through its functions and prevents copying their
@@ -703,14 +701,14 @@ violates the retained zero-count requirement, before a later restoration.
 Scalar modifying calls also work inside conditional expressions. Verification
 forks the symbolic store, checks each branch, and joins changed values with
 relations guarded by the condition. Storage layout and live bindings must agree
-on both exits. Consuming the same affine input in both branches works; consuming
+on both exits. Consuming the same move-only input in both branches works; consuming
 it on only one branch is rejected until conditional shapes are implemented.
 `examples/conditional_writes.evg` checks nested effects, aliases, and framed
 sibling fields. These proof snapshots do not introduce runtime transactions.
 
 Arrays of scalars and copyable scalar-field records record immutable store and
 conditional-join histories. Nested record fields are supported; elements that
-contain arrays, references, affine fields, or destructors need further rules.
+contain arrays, references, move-only fields, or destructors need further rules.
 A cell first observed after a write still obeys the store rule: it has the stored
 value at the written index and the predecessor's value elsewhere. Reads after a
 join inspect each predecessor under its own guard, preserving branch-local
@@ -787,16 +785,16 @@ bounded instead of being raised to accommodate counter branches.
 `fn checked(value: usize, ideal expected: nat)` accepts scalar proof metadata
 which is checked at calls and erased from execution. Contracts and proof terms
 can inspect `expected`; runtime expressions, branches, assignments, and borrows
-cannot. Actual ideal arguments use checked ideal execution, so affine proof
+cannot. Actual ideal arguments use checked ideal execution, so move-only proof
 resources are consumed and runtime effects cannot be skipped by erasure. Their expressions are skipped by the evaluator,
 including calls to ideal functions. Runtime arguments retain their source order.
 `examples/ideal_parameters.evg` also uses an erased natural recursion measure.
 
 This accepts `nat`, `integer`, Boolean, machine and unit values, and ideal
-records and arrays, including affine resources with borrowed references.
+records and arrays, including move-only resources with borrowed references.
 References may observe runtime storage, including runtime owners, without
 transferring its ownership. Proof expressions are
-non-consuming views; passing an affine resource as an erased execution argument
+non-consuming views; passing a move-only resource as an erased execution argument
 consumes it, preventing duplicate witnesses.
 
 The physical count refinement wrappers now use erased owner/credit parameters:
@@ -932,7 +930,7 @@ value copy. Native tests cover this ordering and nested arrays. Destructor clean
 
 Fixed aggregates can also be passed and returned by value. Arguments are copied
 before later arguments are evaluated; returned values are copied into storage
-owned by the caller. Native tests cover nested records, affine transfers,
+owned by the caller. Native tests cover nested records, move-only transfers,
 constant-size array returns, empty arrays, equivalent constant length expressions,
 and mutations in later arguments. The private stack bound includes argument
 blocks, return buffers, callee frames, and expression temporaries. `main` itself
@@ -1258,7 +1256,7 @@ Modules provide a closed lexical namespace:
 
 ```evergreen
 module permits {
-    opaque affine type Permit struct {tag: usize}
+    opaque type Permit struct {tag: usize}
     fn issue() -> Permit {Permit {tag: 42}}
 }
 fn main() -> usize {let permit = permits::issue(); 42}
@@ -1272,15 +1270,15 @@ exported. Explicit call dependencies are checked before their callers regardless
 of source order.
 
 `opaque` hides construction, field reads/writes, field borrows, and destructuring
-from other modules. It requires a defining module. `affine` separately prevents
-implicit duplication. Values can still be passed, moved, borrowed as a whole,
+from other modules. It requires a defining module. Copy is controlled separately
+by explicit trait implementations. Values can still be passed, moved, borrowed as a whole,
 and used through checked functions. Public named type facts remain available.
 Function contracts are checked and instantiated in their defining scope; a
 callee's representation access never grants that access to caller expressions.
 Drop implementations must belong to the type's defining module. Identifiers
 have a 256-byte bootstrap limit.
 
-`stdlib/credits/credits.evg` is an opaque affine quantity library with no public mint
+`stdlib/credits/credits.evg` is an opaque move-only quantity library with no public mint
 operation. Its checked API observes units by reference and splits/joins existing
 credits while conserving their total quantity. The client proof in
 `proofs/opaque_credits.evg` uses only that API and the public split-result record.
@@ -1298,7 +1296,7 @@ The abstraction tests also run through the CLI: checking
 Verification and entry-precondition checking use a bounded 16 MiB worker stack,
 independent of the caller's stack; existing depth and work limits still apply.
 
-Affine ideal values can now be passed through runtime signatures, for example
+Move-only ideal values can now be passed through runtime signatures, for example
 `fn consume(ideal ticket: tickets::Ticket, value: usize) -> usize`. Evaluating
 an erased actual is ideal execution, so passing a move-only ideal ticket
 consumes it. The interpreter and native backend omit its storage and the whole
@@ -1323,7 +1321,7 @@ or branch conditions. They still participate in alias and typed-view checks,
 including body rechecks when erased and runtime inputs overlap. Dropping and
 restoring the target does not make an old erased borrow valid again.
 
-`examples/ideal_borrow_resources.evg` attaches an opaque affine proof view to a
+`examples/ideal_borrow_resources.evg` attaches an opaque move-only proof view to a
 resource field, passes it through an erased parameter, and reads through a
 separate runtime argument whose identity is proved equal. The resource still
 runs its ordinary Drop exactly once. The example runs, builds, and replays
@@ -1331,7 +1329,7 @@ internally; `examples/reject_ideal_borrow_escape.evg` rejects runtime use of an
 erased pointer.
 
 `stdlib/borrow_credits/borrow_credits.evg` binds existing credits to a live reference. Its opaque
-affine tokens split and join while conserving quantity and preserving the exact
+move-only tokens split and join while conserving quantity and preserving the exact
 target. Joining requires equal target identities. Check the client with:
 
 ```sh
@@ -1343,7 +1341,7 @@ borrowed views; they do not authorize allocation or deallocation, count actual
 owners, or implement Rc. The Lean plane model separately proves that changing
 bookkeeping while preserving a handle preserves its validity test and cannot
 revive that handle after drop and restoration. This is not a proof of Rust
-erasure or affine checking.
+erasure or move-only checking.
 
 Proof artifacts bind the regenerated verification conditions as well as the
 source. Strengthening the checker can invalidate a cache even when source text
@@ -1359,7 +1357,7 @@ ideal let credits::Split {left, right} = parts;
 proof conserved: credits::units(&left) + credits::units(&right) == original;
 ```
 
-The bindings are checked with ideal execution and ordinary affine ownership
+The bindings are checked with ideal execution and ordinary move-only ownership
 rules, then erased from runtime storage, evaluation, and cleanup. Their values
 can be used in proofs and erased arguments, but cannot drive runtime returns,
 branches, assignments, or borrows. Opaque representations stay private in ideal
@@ -1377,7 +1375,7 @@ Updating an ideal copy of a runtime array changes only the proof copy.
 Runtime code still cannot read the resulting ideal value or address.
 
 Selective updates also accept `ideal let` bindings, complete ideal patterns,
-and ideal assignments. Affine proof resources move normally; replacing a consumed
+and ideal assignments. Move-only proof resources move normally; replacing a consumed
 outer ideal binding restores its value with the ordinary generation rules.
 Update-local proof bindings and their phase markers are removed on exit, and
 remaining typed views are rechecked after local cleanup. `examples/ideal_update_state.evg`
@@ -1407,10 +1405,10 @@ where(expected == nat(value));
 ```
 
 These fields remain in verification, nominal invariants, alias contracts, and
-affine ownership. They are omitted from interpreter values and native layouts,
+move-only ownership. They are omitted from interpreter values and native layouts,
 construction, pattern storage, and runtime cleanup. Their initializer expressions
-run in checked ideal execution and are erased completely. An affine ideal field
-makes the containing runtime value affine: moving the value transfers its proof
+run in checked ideal execution and are erased completely. A move-only ideal field
+makes the containing runtime value move-only: moving the value transfers its proof
 resource, and reusing the old value is rejected. Erased fields may own ideal data
 and borrowed views, but cannot hide a runtime owner by value.
 
@@ -1435,12 +1433,12 @@ Erasure follows the target slot, not the pointer value: an ideal record can
 contain `target: &usize`, but an ideal function cannot declare
 `modifies((*record).target)` to mutate that runtime pointee. Entering a nested
 reference resets the proof-storage classification. Mathematical `integer` and `nat`
-slots can be modified. Whole affine ideal records are supported when their
+slots can be modified. Whole move-only ideal records are supported when their
 representation is an erased tree of scalar fields with no references or arrays.
 This allows a client to declare `modifies(credit)` for opaque credits and forward
 an authorized library write without exposing private fields. It grants neither
-permission to access the representation nor permission to copy the affine value.
-Whole runtime affine records, reference-bearing ideal regions, and reference-slot
+permission to access the representation nor permission to copy the move-only value.
+Whole runtime move-only records, reference-bearing ideal regions, and reference-slot
 replacement remain unsupported effect regions. Copyable scalar-field records
 retain the ordinary aggregate effect support. Every write during an open update, including
 nested ideal calls, checks all retained invariants against actual shared memory.
@@ -1448,7 +1446,7 @@ nested ideal calls, checks all retained invariants against actual shared memory.
 transactional invariant restoration, erasure, and certificate replay.
 
 The opaque credit library uses this mechanism in `credits::take(&credit,
-amount)`: it decreases the borrowed credit and returns a new affine credit of
+amount)`: it decreases the borrowed credit and returns a new move-only credit of
 exactly `amount`. Its checked postcondition conserves the sum against the entry
 quantity using `old`. Sequential calls see the updated balance; overdrafts fail
 at the next precondition. `proofs/borrowed_credit_transfer.evg` checks taking and
@@ -1463,7 +1461,7 @@ for taking and rejoining an existing token while preserving its target identity.
 Overlapping input regions recheck the body on actual shared storage; two aliases
 cannot independently withdraw the same last credit.
 
-`examples/ideal_fields.evg` checks affine witnesses carried through runtime
+`examples/ideal_fields.evg` checks move-only witnesses carried through runtime
 records, complete patterns, selective proof-field updates, and parent/child Drop
 order. It also checks distinct identities for records containing only ideal
 fields; native storage reserves one byte for each empty value's identity.
@@ -1732,7 +1730,7 @@ runtime-sized plane and initializes each element with the given copyable value;
 `alloc(value)` retains its original single-payload meaning. Count is evaluated
 before the initial value, and the initial expression executes once. The current
 filled allocator supports scalar values and flat scalar records without
-references or affine ownership. Repeating an owner or destructor-bearing value
+references or move-only ownership. Repeating an owner or destructor-bearing value
 is rejected instead of silently duplicating it.
 
 The checker proves nonnegative extents, index bounds, and that the allocation's
@@ -1894,7 +1892,7 @@ type Person struct {age: usize}
 consumes `person`. The same distinction applies to arguments, assignments, and
 returns. `examples/copy_and_move.evg` demonstrates both behaviors. Copy must be
 implemented in the type's defining module and may not conceal a non-Copy field,
-a runtime owner, an affine proof resource, or a destructor. Duplicate and foreign
+a runtime owner, a move-only proof resource, or a destructor. Duplicate and foreign
 Copy implementations are rejected. Copy does not execute arbitrary user code;
 cloning a resource needs an explicit operation instead.
 
@@ -2002,3 +2000,18 @@ construction and addition with an ideal integer view for the overflow bound.
 is its proof-only view conversion. The former `int` spelling has been removed;
 machine integer types such as `i64` and `usize` retain their existing meaning.
 `nat` remains the ideal nonnegative integer type.
+
+### Primitive Copy implementations
+
+Target primitives declare Copy using the same `impl Copy for u8 {}` syntax as
+records. `targets/x86_64.evg` explicitly implements Copy for each numeric type,
+Boolean, unit, and the borrowed-pointer representation. Missing implementations
+do not grant copying. Pointer-sized aliases must agree with their underlying
+primitive. An owning plane remains move-only: copying address bits does not
+copy ownership authority.
+
+The shared target decoder supplies both layout and primitive trait information
+to checking and execution. A primitive implementation must name a declaration in
+its defining module; unknown, foreign, and duplicate implementations are rejected.
+Transparent scalar aliases inherit their underlying primitive's capabilities.
+Opaque types retain their representation boundary independently of Copy.

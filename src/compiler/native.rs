@@ -539,7 +539,7 @@ impl Emitter<'_> {
             }
             Kind::Name(n) => {
                 let ty = self.load(n)?;
-                if crate::shared::ownership::is_affine(&ty, self.structs, self.drops) {
+                if crate::shared::ownership::is_move_only(&ty, self.structs, self.drops) {
                     self.alive.remove(n);
                 }
                 ty

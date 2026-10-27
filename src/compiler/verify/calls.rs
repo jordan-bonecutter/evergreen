@@ -24,7 +24,7 @@ impl<'a> Context<'a> {
                 );
             }
             let value = self.old_expression(&args[0], expected)?;
-            if self.execution.phase == Phase::Ideal && self.symbol_is_affine(&value) {
+            if self.execution.phase == Phase::Ideal && self.symbol_is_move_only(&value) {
                 return Err(
                     "old ownership snapshots are proof views, not new ideal resources".into(),
                 );

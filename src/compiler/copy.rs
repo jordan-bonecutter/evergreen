@@ -1,5 +1,5 @@
 //! Explicit Copy declarations. Copy is structural permission to duplicate a
-//! value; it cannot hide ownership, affine proof resources, or destructor work.
+//! value; it cannot hide ownership, move-only proof resources, or destructor work.
 
 use crate::syntax::{Program, Struct};
 use std::collections::{BTreeMap, BTreeSet};
@@ -7,14 +7,36 @@ use std::collections::{BTreeMap, BTreeSet};
 type Result<T> = std::result::Result<T, String>;
 
 pub(super) fn configure(program: &mut Program) -> Result<()> {
+    let mut primitive_copies = BTreeSet::new();
     for implementation in &program.copy_impls {
+        if let Some(primitive) = program.scalar_types.iter().find(|primitive| {
+            primitive.module.as_ref().map_or_else(
+                || primitive.name.clone(),
+                |module| format!("{module}::{}", primitive.name),
+            ) == implementation.target
+        }) {
+            primitive.validate()?;
+            if primitive.module != implementation.module {
+                return Err(format!(
+                    "line {}: Copy must be implemented in the type's defining module",
+                    implementation.line
+                ));
+            }
+            if !primitive_copies.insert(implementation.target.clone()) {
+                return Err(format!(
+                    "line {}: duplicate Copy implementation for {}",
+                    implementation.line, implementation.target
+                ));
+            }
+            continue;
+        }
         let record = program
             .structs
             .iter_mut()
             .find(|record| record.name == implementation.target)
             .ok_or_else(|| {
                 format!(
-                    "line {}: Copy requires a declared record type {}",
+                    "line {}: Copy requires a declared record or primitive type {}",
                     implementation.line, implementation.target
                 )
             })?;
@@ -43,14 +65,14 @@ pub(super) fn validate(
     if !record.copy {
         return Ok(());
     }
-    if record.affine || drops.contains(&record.name) {
+    if drops.contains(&record.name) {
         return Err(format!(
-            "line {}: Copy cannot be implemented for affine or Drop type {}",
+            "line {}: Copy cannot be implemented for Drop type {}",
             record.line, record.name
         ));
     }
     for (field, ty) in &record.fields {
-        if crate::shared::ownership::is_affine(ty, prior, drops) {
+        if crate::shared::ownership::is_move_only(ty, prior, drops) {
             return Err(format!(
                 "line {}: Copy requires Copy field {}.{field}",
                 record.line, record.name

@@ -1,4 +1,4 @@
-affine type Permit struct {tag: usize}
+type Permit struct {tag: usize}
 type Pair struct {left: Permit, right: Permit}
 fn consume(p: Permit) -> usize ensures (result == p.tag) {p.tag}
 

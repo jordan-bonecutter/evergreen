@@ -351,15 +351,20 @@ impl Evaluator<'_> {
         Ok(value)
     }
 
-    fn value_is_affine(&self, value: &Value) -> bool {
+    fn value_is_move_only(&self, value: &Value) -> bool {
         match value {
             Value::Plane(..) => true,
-            Value::Record(n, _) => crate::shared::ownership::is_affine(
+            Value::Record(n, _) => crate::shared::ownership::is_move_only(
                 &Type::Named(n.clone()),
                 self.structs,
                 self.drops,
             ),
-            Value::Array(xs) => xs.iter().any(|v| self.value_is_affine(v)),
+            Value::Array(xs) => xs.iter().any(|v| self.value_is_move_only(v)),
+            Value::Machine(_, _) | Value::Bool(_) | Value::Unit | Value::Ref(..) => {
+                value.hint().is_some_and(|ty| {
+                    crate::shared::ownership::is_move_only(&ty, self.structs, self.drops)
+                })
+            }
             _ => false,
         }
     }
@@ -477,7 +482,7 @@ impl Evaluator<'_> {
             .roots
             .get(&root_name(target)?)
             .is_none_or(|id| self.memory.get(*id).is_ok());
-        if old_live && self.value_is_affine(&old) {
+        if old_live && self.value_is_move_only(&old) {
             let old_copy = copy_value(&old, &mut self.fuel)?;
             self.drop_value(old_copy)?;
         }
@@ -566,7 +571,7 @@ impl Evaluator<'_> {
                         .cloned()
                         .ok_or_else(|| format!("unknown value {n}"))
                 }?;
-                if self.value_is_affine(&value) {
+                if self.value_is_move_only(&value) {
                     let (r, _) = self.location(e, env)?;
                     let id = self.memory.plane(r)?;
                     self.memory.take(id)?;
@@ -936,7 +941,7 @@ impl Evaluator<'_> {
             }
             _ => {
                 let value = self.expr(e, env, None)?;
-                if self.value_is_affine(&value) {
+                if self.value_is_move_only(&value) {
                     self.temporaries.push(copy_value(&value, &mut self.fuel)?);
                 }
                 Ok(value)

@@ -1,6 +1,6 @@
 // A borrowed proof view, not allocation or reference-count ownership authority.
 module views {
-    ideal opaque affine type View struct {target: &usize}
+    ideal opaque type View struct {target: &usize}
 
     ideal fn observe(target: &usize) -> View
     borrows(target: target) {View {target: target}}

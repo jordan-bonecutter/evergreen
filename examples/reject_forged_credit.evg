@@ -1,4 +1,4 @@
-// Check after stdlib/credits/credits.evg. A number is not an existing affine credit.
+// Check after stdlib/credits/credits.evg. A number is not an existing move-only credit.
 ideal fn forge() -> credits::Credit {
     credits::Credit {units: 1}
 }

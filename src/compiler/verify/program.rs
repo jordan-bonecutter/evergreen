@@ -29,6 +29,7 @@ pub(super) fn verify(
 }
 
 fn prepare(parsed: &mut syntax::Program) -> Result<()> {
+    crate::shared::target::native()?;
     crate::compiler::methods::validate(parsed)?;
     crate::compiler::copy::configure(parsed)?;
     crate::compiler::scalar_types::lower(parsed)?;
@@ -182,7 +183,7 @@ impl Verification {
                 return Err(format!("line {}: ideal parameters may own only proof data; runtime owners must be borrowed", f.line));
             }
             if f.ideal
-                && is_affine(ty, &self.structs, &self.drops)
+                && is_move_only(ty, &self.structs, &self.drops)
                 && !erased_type(ty, &self.structs)
             {
                 return Err(format!(
@@ -192,7 +193,7 @@ impl Verification {
             }
         }
         if f.ideal
-            && is_affine(&f.ret, &self.structs, &self.drops)
+            && is_move_only(&f.ret, &self.structs, &self.drops)
             && !erased_type(&f.ret, &self.structs)
         {
             return Err(format!(

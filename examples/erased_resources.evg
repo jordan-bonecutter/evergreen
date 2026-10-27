@@ -1,6 +1,6 @@
 // A test factory for ideal tickets, not an allocation authority.
 module tickets {
-    ideal opaque affine type Ticket struct {tag: nat} where (tag == 1);
+    ideal opaque type Ticket struct {tag: nat} where (tag == 1);
     ideal fn issue() -> Ticket {Ticket {tag: 1}}
 }
 

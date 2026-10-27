@@ -190,7 +190,6 @@ pub struct Struct {
     pub invariant: Option<Expr>,
     pub line: usize,
     pub ideal: bool,
-    pub affine: bool,
     pub opaque: bool,
     pub module: Option<String>,
     pub facts: Vec<(String, Expr)>,
@@ -736,7 +735,7 @@ impl Parser {
         Ok((target, function))
     }
 
-    fn structure(&mut self, ideal: bool, affine: bool) -> Result<Struct, String> {
+    fn structure(&mut self, ideal: bool) -> Result<Struct, String> {
         let line = self.line();
         self.expect("type")?;
         let name = self.name()?;
@@ -794,7 +793,6 @@ impl Parser {
             invariant,
             line,
             ideal,
-            affine,
             facts,
             opaque: false,
             module: None,
@@ -892,22 +890,22 @@ fn parse_unit(source: &str) -> Result<Program, String> {
         }
         let ideal = p.eat("ideal");
         let opaque = p.eat("opaque");
-        let affine = p.eat("affine");
+        if p.peek() == "affine" {
+            return Err(p.err("the affine modifier is not supported; values move by default unless they implement Copy"));
+        }
         if p.peek() == "type"
             && p.tokens
                 .get(p.pos + 2)
                 .is_some_and(|token| token.text == "=")
         {
-            if ideal || opaque || affine {
-                return Err(p.err(
-                    "make_type declarations do not accept ideal, opaque, or affine modifiers",
-                ));
+            if ideal || opaque {
+                return Err(p.err("make_type declarations do not accept ideal or opaque modifiers"));
             }
             let mut definition = p.scalar_definition()?;
             definition.module = module.clone();
             scalar_types.push(definition);
         } else if p.peek() == "type" {
-            let mut structure = p.structure(ideal, affine)?;
+            let mut structure = p.structure(ideal)?;
             if opaque && module.is_none() {
                 return Err(p.err("opaque representations require a defining module"));
             }
@@ -915,8 +913,8 @@ fn parse_unit(source: &str) -> Result<Program, String> {
             structure.module = module.clone();
             structs.push(structure);
         } else if p.peek() == "impl" {
-            if affine || opaque {
-                return Err(p.err("affine and opaque modify type declarations"));
+            if opaque {
+                return Err(p.err("opaque modifies type declarations"));
             }
             if ideal {
                 return Err(p.err("ideal data has no runtime destructor"));
@@ -965,8 +963,8 @@ fn parse_unit(source: &str) -> Result<Program, String> {
             function.module = module.clone();
             destructors.push((target, function));
         } else {
-            if affine || opaque {
-                return Err(p.err("affine and opaque modify type declarations"));
+            if opaque {
+                return Err(p.err("opaque modifies type declarations"));
             }
             let mut function = p.function(None, ideal)?;
             function.module = module.clone();

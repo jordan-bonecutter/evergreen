@@ -1,5 +1,5 @@
 module permits {
-    opaque affine type Permit struct {tag: usize} where (
+    opaque type Permit struct {tag: usize} where (
         fact valid = tag == 42;
         valid
     );

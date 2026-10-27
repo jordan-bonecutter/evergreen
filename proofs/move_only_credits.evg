@@ -1,6 +1,6 @@
-// Arithmetic conservation plus affine use. Constructors are still public;
+// Arithmetic conservation plus move-only use. Constructors are still public;
 // this is not yet an unforgeable authority or an RC implementation.
-ideal affine type Credit struct {units: nat}
+ideal type Credit struct {units: nat}
 ideal type Split struct {left: Credit, right: Credit}
 
 ideal fn split_credit(c: Credit, first: nat) -> Split

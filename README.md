@@ -23,7 +23,7 @@ Bundled stdlib dependencies load automatically. For byte output, try
 | Declaration and body verification passes | [verification orchestration](src/compiler/verify/program.rs) |
 | State while checking a body | [verification context](src/compiler/verify/context.rs) |
 | Small proof kernel and certificate replay | [compiler/kernel.rs](src/compiler/kernel.rs), [compiler/certificate.rs](src/compiler/certificate.rs) |
-| Target scalar layout data | [targets/x86_64.evg](targets/x86_64.evg), [target decoder](src/compiler/target.rs), [aggregate layout](src/compiler/layout.rs) |
+| Target scalar layout data | [targets/x86_64.evg](targets/x86_64.evg), [target decoder](src/shared/target.rs), [aggregate layout](src/compiler/layout.rs) |
 | Native expression and statement emission | [compiler/native.rs](src/compiler/native.rs) |
 | Function compilation and executable packaging | [program.rs](src/compiler/native/program.rs), [elf.rs](src/compiler/native/elf.rs) |
 | Executing a verified program | [interpreter](src/interpreter/mod.rs) |

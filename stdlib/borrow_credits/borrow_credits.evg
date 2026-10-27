@@ -1,7 +1,7 @@
 // Check after credits.evg. Conserved proof quantities attached to live borrows.
 // This grants no allocation, deallocation, or reference-count ownership authority.
 module borrow_credits;
-ideal opaque affine type Token struct {budget: credits::Credit, target: &usize}
+ideal opaque type Token struct {budget: credits::Credit, target: &usize}
 ideal type Split struct {left: Token, right: Token}
 
 ideal fn units(token: &Token) -> nat
