@@ -46,11 +46,15 @@ Large case trees can therefore reach the work limit. Sharing persistent worlds
 and continuations would reduce repeated prefix work; this optimization is not
 implemented. Normal compatible branches keep the ordinary joined pass.
 
-The interpreter executes the original source branches. Native Rc drop works
-because both arms consume the same local handle even though allocation lifetime
-differs. Native generation still rejects other programs with different live
-local bindings across arms: it needs runtime drop flags for their later cleanup.
-The rejection happens before an executable is emitted.
+The interpreter executes the original source branches. Native generation keeps
+a private drop flag for each local requiring cleanup. Moving the binding clears
+its flag; initialization and replacement set it. Conditional branches join the
+set of possibly live bindings, while their runtime flags retain which path
+actually consumed each one. Scope cleanup checks the flags before invoking
+destructors. This supports both different allocation lifetimes and different
+live local bindings across arms without changing type layouts or the call ABI.
+[`conditional_rc_drop.evg`](../examples/conditional_rc_drop.evg) exercises an early
+drop followed by a borrow read only on the path that retained its owner.
 
 Case coverage, source typing, and frontend resource transitions remain trusted
 compiler boundaries. Arithmetic leaves replay through the internal certificate

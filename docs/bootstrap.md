@@ -568,8 +568,9 @@ Arm locals are cleaned up in reverse binding order before the result escapes.
 A moved result transfers ownership; references into expired arm-local storage
 become unusable. Local fact and proof names are scoped to the arm.
 Missing cases, duplicate cases,
-unreachable arms after `_`, incompatible result types, and inconsistent ownership
-transfers are rejected. The parser lowers this form to the ordinary conditional,
+unreachable arms after `_`, incompatible result types, and invalid ownership
+uses are rejected. Different resource states are checked with the continuation
+in each case. The parser lowers this form to the ordinary conditional,
 sharing its proof, cleanup, effect, and native rules.
 
 Source flags can select raw-union payloads when a refinement establishes their
@@ -582,7 +583,8 @@ storage with a `modifies` contract.
 
 The same expression scopes work in `if` arms and standalone `{ ... }` values.
 An `if` without `else` has an implicit unit alternative; both branches must
-still agree in result type and ownership state. Statement blocks are runtime
+still agree in result type. Different ownership states require checked case
+continuations. Statement blocks are runtime
 expressions: specifications and ideal computations use pure expressions.
 Early `return` from nested blocks remains rejected until checked exit and
 cleanup paths are implemented.
@@ -1101,6 +1103,17 @@ reverse binding order. A move transfers cleanup responsibility. Replacement
 cleans up the old live value, and borrowed owned temporaries survive until the
 end of their expression or statement scope. Return values are saved across
 cleanup calls. The emitted code uses no external runtime for these operations.
+
+Native locals requiring cleanup have private byte drop flags. Moves clear them;
+initialization and replacement set them. Branch joins retain possibly live
+bindings, and cleanup checks the runtime flag before calling a destructor.
+Function, block, and iteration scopes use the same cleanup implementation.
+Replacement checks the flag after evaluating its right-hand side, which may
+have moved the previous value. Flags are frame metadata and do not change type
+sizes, field offsets, heap layouts, or the argument ABI. They count toward the
+private stack budget. `examples/conditional_rc_drop.evg` exercises early and late
+cleanup through a source Rc helper. Native tests compare destructor counts and
+order for conditional moves, replacement, records, arrays, and loop locals.
 
 Compiler work limits also apply before proof search: parsed expression trees
 have depth at most 128, unfolded named type graphs have at most 2048 nodes and

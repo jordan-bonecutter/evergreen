@@ -11,9 +11,11 @@ use std::collections::{BTreeMap, BTreeSet};
 type Result<T> = std::result::Result<T, String>;
 
 mod allocation;
+mod assignments;
 mod atomic;
 mod blocks;
 mod elf;
+mod liveness;
 mod order;
 mod ownership;
 mod program;
@@ -92,11 +94,18 @@ enum TraceMode {
     Order,
 }
 
+#[derive(Clone)]
+struct Local {
+    offset: i32,
+    ty: Type,
+    drop_flag: Option<i32>,
+}
+
 struct Emitter<'a> {
     code: &'a mut Vec<u8>,
     known: &'a BTreeMap<String, Compiled>,
     functions: &'a BTreeMap<String, &'a Function>,
-    slots: BTreeMap<String, (i32, Type)>,
+    slots: BTreeMap<String, Local>,
     frame: usize,
     structs: &'a BTreeMap<String, Struct>,
     temporary: usize,
@@ -141,15 +150,31 @@ impl Emitter<'_> {
     fn slot(&mut self, name: &str, ty: Type) -> Result<()> {
         let offset = self.allocate(&ty)?;
         self.copy_frame(offset, &ty)?;
-        self.alive.insert(name.into());
-        if self.slots.insert(name.into(), (offset, ty)).is_some() {
+        let drop_flag = if self.has_drop(&ty) {
+            Some(self.allocate(&Type::Bool)?)
+        } else {
+            None
+        };
+        if self
+            .slots
+            .insert(
+                name.into(),
+                Local {
+                    offset,
+                    ty,
+                    drop_flag,
+                },
+            )
+            .is_some()
+        {
             return Err("duplicate native binding".into());
         }
+        self.mark_live(name);
         Ok(())
     }
 
     fn load(&mut self, name: &str) -> Result<Type> {
-        let (offset, ty) = self
+        let Local { offset, ty, .. } = self
             .slots
             .get(name)
             .cloned()
@@ -470,7 +495,7 @@ impl Emitter<'_> {
     fn hint(&self, e: &Expr) -> Option<Type> {
         match &e.kind {
             Kind::Bytes(bytes) => Some(Type::bytes(bytes.len(), e.line)),
-            Kind::Name(n) => self.slots.get(n).map(|(_, t)| t.clone()),
+            Kind::Name(n) => self.slots.get(n).map(|local| local.ty.clone()),
             Kind::Record(name, _) => Some(Type::Named(name.clone())),
             Kind::Field(base, name) => self.field(&self.hint(base)?, name).ok().map(|f| f.ty),
             Kind::Index(base, _) => match self.hint(base)? {
@@ -527,7 +552,8 @@ impl Emitter<'_> {
             }
             Kind::Index(base, index) => self.index_address(base, index, ReadMode::Place),
             Kind::Name(name) => {
-                let (offset, ty) = self.slots.get(name).ok_or("unknown native place")?;
+                let Local { offset, ty, .. } =
+                    self.slots.get(name).ok_or("unknown native place")?;
                 self.code.extend([0x48, 0x8d, 0x85]);
                 self.code.extend(offset.to_le_bytes());
                 Ok(ty.clone())
@@ -579,7 +605,7 @@ impl Emitter<'_> {
             Kind::Name(n) => {
                 let ty = self.load(n)?;
                 if crate::shared::ownership::is_move_only(&ty, self.structs, self.drops) {
-                    self.alive.remove(n);
+                    self.mark_moved(n);
                 }
                 ty
             }
@@ -762,9 +788,7 @@ impl Emitter<'_> {
                 patch(self.code, alternative, target)?;
                 self.alive = base_alive;
                 self.scoped_expr(no, Some(&ty))?;
-                if self.alive != yes_alive {
-                    return Err("native conditional ownership states differ".into());
-                }
+                self.alive.extend(yes_alive);
                 let target = self.code.len();
                 patch(self.code, end, target)?;
                 ty
@@ -787,7 +811,7 @@ impl Emitter<'_> {
                 }
                 let ty = self.expr(&args[0], None)?;
                 if let Kind::Name(binding) = &args[0].kind {
-                    self.alive.remove(binding);
+                    self.mark_moved(binding);
                 }
                 if name == "drop" {
                     self.drop_value(&ty)?;
@@ -895,53 +919,7 @@ impl Emitter<'_> {
                 let ty = self.expr(value, ty.as_ref())?;
                 self.slot(name, ty)
             }
-            Statement::Assign { target, value } => {
-                fn root(e: &Expr) -> Option<&str> {
-                    match &e.kind {
-                        Kind::Name(n) => Some(n),
-                        Kind::Field(base, _) | Kind::Index(base, _) => root(base),
-                        _ => None,
-                    }
-                }
-                let owner = root(target).map(str::to_owned);
-                let ty = self.address(target)?;
-                let pointer_ty = Type::Ref(Box::new(ty.clone()));
-                let pointer = self.allocate(&pointer_ty)?;
-                self.copy_frame(pointer, &pointer_ty)?;
-                let old = if self.has_drop(&ty)
-                    && owner.as_ref().is_some_and(|n| self.alive.contains(n))
-                {
-                    let home = self.allocate(&ty)?;
-                    if !layout::aggregate(&ty) {
-                        self.load_scalar(&ty)?;
-                    }
-                    self.copy_frame(home, &ty)?;
-                    Some(home)
-                } else {
-                    None
-                };
-                self.expr(value, Some(&ty))?;
-                if self.has_drop(&ty) {
-                    let new_value = self.allocate(&ty)?;
-                    self.copy_frame(new_value, &ty)?;
-                    if let Some(old) = old {
-                        if owner.as_ref().is_some_and(|n| self.alive.contains(n)) {
-                            self.drop_frame(&ty, old)?;
-                        }
-                    }
-                    self.frame_address(new_value);
-                    if !layout::aggregate(&ty) {
-                        self.load_scalar(&ty)?;
-                    }
-                }
-                self.code.extend([0x48, 0x8b, 0x8d]);
-                self.code.extend(pointer.to_le_bytes());
-                self.copy_address(&ty)?;
-                if let Kind::Name(name) = &target.kind {
-                    self.alive.insert(name.clone());
-                }
-                Ok(())
-            }
+            Statement::Assign { target, value } => self.assign(target, value),
             Statement::Destructure {
                 record,
                 fields,
@@ -998,10 +976,7 @@ impl Emitter<'_> {
             .map(str::to_owned)
             .collect::<Vec<_>>();
         for name in names.into_iter().rev() {
-            if self.alive.remove(&name) {
-                let (offset, ty) = self.slots.get(&name).cloned().ok_or("missing loop local")?;
-                self.drop_frame(&ty, offset)?;
-            }
+            self.cleanup_binding(&name, false)?;
         }
         if self.alive != alive {
             return Err("loop body changes surrounding native ownership".into());

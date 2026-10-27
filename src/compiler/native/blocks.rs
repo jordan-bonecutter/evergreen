@@ -23,14 +23,7 @@ impl Emitter<'_> {
             .map(str::to_owned)
             .collect::<Vec<_>>();
         for name in names.into_iter().rev() {
-            if self.alive.remove(&name) {
-                let (offset, ty) = self
-                    .slots
-                    .get(&name)
-                    .cloned()
-                    .ok_or("missing block local")?;
-                self.drop_frame(&ty, offset)?;
-            }
+            self.cleanup_binding(&name, false)?;
         }
         self.slots = slots;
         self.frame_address(result);

@@ -33,13 +33,11 @@ fn native_rejects_unsupported_layouts_and_entry_assumptions() {
 }
 
 #[test]
-fn native_rejects_path_dependent_local_cleanup_until_it_has_drop_flags() {
+fn native_emits_path_dependent_local_cleanup() {
     let source = "fn consume(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {drop(value);} else {}} fn main() -> usize {let unique: plane(usize) = alloc(7); consume(share_owner(unique), false); 42}";
     let program = verify(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
-    assert!(emit(&program)
-        .unwrap_err()
-        .contains("conditional ownership states differ"));
+    assert!(emit(&program).is_ok());
 }
 
 #[test]
@@ -172,6 +170,10 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/allocation_credits.evg"),
         include_str!("../../../examples/rc.evg"),
         include_str!("../../../examples/rc_drop.evg"),
+        include_str!("../../../examples/conditional_rc_drop.evg"),
+        "fn consume(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {drop(value);} else {}} fn main() -> usize {let unique: plane(usize) = alloc(7); consume(share_owner(unique), false); 42}",
+        "fn consume(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {drop(value);} else {}} fn main() -> usize {let unique: plane(usize) = alloc(7); consume(share_owner(unique), true); 42}",
+        "fn consume(value: owner(usize), flag: bool) -> usize where owners(value) == 1 {let view = &*value; if flag {drop(value);} else {} if flag {42} else {*view}} fn main() -> usize {let unique: plane(usize) = alloc(42); consume(share_owner(unique), false)}",
         "fn main() -> usize {let first = rc::new(42); let group = [first.clone(), first.clone()]; drop(group); if first.strong_count() == 1 {*first.value()} else {1}}",
         "fn replace(value: rc::Rc) -> rc::Rc where value.strong_count() < usize::MAX {let next = value.clone(); next} fn main() -> usize {let first = rc::new(42); let view = first.value(); let second = replace(first); if second.strong_count() == 1 {*view} else {1}}",
         "fn duplicate(value: &owner(usize), flag: bool) -> owner(usize) {if flag {duplicate_owner(value)} else {duplicate_owner(value)}} fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate(&first, false); release_owner(second); *first}",
@@ -543,6 +545,22 @@ fn native_execution_agrees_with_the_interpreter() {
     cases.push("fn signed(data: &[usize; 2], index: isize) -> &usize where(index >= 0 && index < 2) borrows(&(*data)[index]) {&(*data)[index]} fn main() -> usize {let a: [usize; 2] = [7, 42]; *signed(&a, 1)}".into());
     cases.push("fn change(data: [bool; 2], i: usize, j: usize) -> bool where(i < 2 && j < 2) ensures(i == j => result) {let a = &data[i]; let b = &data[j]; *a = true; *b} fn main() -> bool {change([false, false], 0, 0)}".into());
     let declarations = "type Resource struct {tag: usize} where (tag == 7); impl Drop for Resource {fn drop(self){}} fn make() -> Resource {Resource {tag: 7}} fn consume(r: Resource) -> usize {r.tag}";
+    for choice in ["false", "true"] {
+        for body in [
+            "if flag {drop(r);} else {} 42",
+            "if flag {consume(r);} else {} 42",
+            "if flag {drop(r);} else {} r = make(); r.tag",
+            "r = if flag {r} else {make()}; r.tag",
+            "r = if flag {let moved = r; moved} else {let fresh = make(); fresh}; r.tag",
+            "{let local = make(); if flag {drop(local);} else {}}; {let local = make(); if flag {} else {drop(local);}}; 42",
+        ] {
+            cases.push(format!("{declarations} fn act(r: Resource, flag: bool) -> usize {{{body}}} fn main() -> usize {{act(make(), {choice})}}"));
+        }
+        cases.push(format!("{declarations} fn act(r: plane(Resource), flag: bool) -> usize {{if flag {{drop(r);}} else {{}} 42}} fn main() -> usize {{act(alloc(make()), {choice})}}"));
+        cases.push(format!("{declarations} fn act(r: [Resource; 2], flag: bool) -> usize {{if flag {{drop(r);}} else {{}} 42}} fn main() -> usize {{act([make(), make()], {choice})}}"));
+        cases.push(format!("type Left struct {{}} impl Drop for Left {{fn drop(self) {{}}}} type Right struct {{}} impl Drop for Right {{fn drop(self) {{}}}} fn act(left: Left, right: Right, flag: bool) {{if flag {{drop(left);}} else {{drop(right);}}}} fn main() -> usize {{act(Left {{}}, Right {{}}, {choice}); 42}}"));
+    }
+    cases.push(format!("{declarations} fn main() -> usize {{let i: usize = 0; while i < 3 invariant i <= 3 modifies(&i) decreases(3 - i) {{let local = make(); if i == 1 {{drop(local);}} else {{}} i = i + 1;}} 42}}"));
     for body in [
         "let r = make(); let s = r; s.tag",
         "let r = make(); r = make(); r.tag",

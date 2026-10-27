@@ -1,0 +1,19 @@
+// Each path consumes value once. The borrowed payload is read only on the path
+// that kept value alive until the return expression.
+fn finish(value: rc::Rc, early: bool) -> usize
+where *value.value() == 42
+ensures result == 42 {
+    let view = value.value();
+    if early {drop(value);} else {}
+    if early {42} else {*view}
+}
+
+fn main() -> usize {
+    let first = rc::new(42);
+    let second = first.clone();
+    let early = finish(second, true);
+    proof unique: first.strong_count() == 1;
+    let correct_count = first.strong_count() == 1;
+    let late = finish(first, false);
+    if correct_count && early == 42 && late == 42 {42} else {1}
+}

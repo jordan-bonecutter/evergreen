@@ -226,18 +226,7 @@ impl Emitter<'_> {
             )
             .collect::<Vec<_>>();
         for name in names.into_iter().rev() {
-            if self.alive.remove(name) {
-                let (offset, ty) = self
-                    .slots
-                    .get(name)
-                    .cloned()
-                    .ok_or("missing native cleanup binding")?;
-                if name == "self" && function.drop_target.is_some() {
-                    self.drop_fields(&ty, offset)?;
-                } else {
-                    self.drop_frame(&ty, offset)?;
-                }
-            }
+            self.cleanup_binding(name, name == "self" && function.drop_target.is_some())?;
         }
         if let Some(home) = saved_result {
             self.frame_address(home);
