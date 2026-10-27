@@ -207,12 +207,17 @@ impl Parser {
     fn binding(&mut self, kind: BindingKind) -> Result<Statement, String> {
         let fact = matches!(kind, BindingKind::Fact);
         let mut name = self.name()?;
-        if !fact && self.eat("::") {
+        let mut arguments = Vec::new();
+        while !fact && self.eat("::") {
+            if self.peek() == "<" {
+                arguments = self.generic_arguments()?;
+                break;
+            }
             name.push_str("::");
             name.push_str(&self.name()?);
-            if self.peek() != "{" {
-                return Err(self.err("qualified let names require a record pattern"));
-            }
+        }
+        if (name.contains("::") || !arguments.is_empty()) && self.peek() != "{" {
+            return Err(self.err("qualified let names require a record pattern"));
         }
         if !fact && self.eat("{") {
             let mut fields = Vec::new();
@@ -239,6 +244,7 @@ impl Parser {
             self.expect(";")?;
             return Ok(Statement::Destructure {
                 record: name,
+                arguments,
                 fields,
                 value,
             });

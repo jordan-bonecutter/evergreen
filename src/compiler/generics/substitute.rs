@@ -26,6 +26,15 @@ impl Visitor for Substitution<'_> {
 
     fn expr(&mut self, expression: &mut Expr) -> Result<()> {
         charge(self.work)?;
+        if let Some(GenericArgument::Type(Type::Named(target))) = self.bindings.get("Self") {
+            match &mut expression.kind {
+                Kind::Record(name, _) if name == "Self" => *name = target.clone(),
+                Kind::Call(name, _) if name.starts_with("Self::") => {
+                    *name = format!("{target}::{}", &name[6..])
+                }
+                _ => {}
+            }
+        }
         if let Kind::Name(name) = &expression.kind {
             if let Some(argument) = self.bindings.get(name) {
                 if let GenericArgument::Type(ty) = argument {
@@ -42,6 +51,21 @@ impl Visitor for Substitution<'_> {
     }
 
     fn statement(&mut self, statement: &mut Statement) -> Result<()> {
+        if let Some(GenericArgument::Type(Type::Named(target))) = self.bindings.get("Self") {
+            match statement {
+                Statement::Destructure { record, .. } if record == "Self" => {
+                    *record = target.clone()
+                }
+                Statement::Update { lifts, .. } => {
+                    for lifted in lifts {
+                        if let Some(fact) = lifted.strip_prefix("Self::") {
+                            *lifted = format!("{target}::{fact}");
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
         let named = match statement {
             Statement::Fact { name, .. } | Statement::Proof { name, .. } => Some(name.as_str()),
             _ => None,

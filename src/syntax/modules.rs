@@ -87,6 +87,12 @@ impl Scope<'_> {
                 self.expr(value);
             }
             Kind::Record(name, fields) => {
+                if self.bound.contains(name) {
+                    for (_, value) in fields {
+                        self.expr(value);
+                    }
+                    return;
+                }
                 if name == "Self" {
                     if let Some(target) = self.self_type {
                         *name = target.to_owned();
@@ -202,7 +208,13 @@ impl Scope<'_> {
                 }
                 self.expr(value);
             }
-            Statement::Destructure { record, value, .. } => {
+            Statement::Destructure {
+                record,
+                arguments,
+                value,
+                ..
+            } => {
+                self.arguments(arguments);
                 let mut ty = Type::Named(record.clone());
                 self.ty(&mut ty);
                 if let Type::Named(name) = ty {
@@ -403,6 +415,27 @@ pub(crate) fn qualify(program: &mut Program) {
     }
     for declaration in &mut program.generics {
         match declaration {
+            GenericDeclaration::Implementation(implementation) => {
+                let module = implementation.module.clone();
+                let mut bound: BTreeSet<_> = implementation
+                    .parameters
+                    .iter()
+                    .map(|parameter| parameter.name().to_owned())
+                    .collect();
+                bound.insert("Self".into());
+                let scope = Scope {
+                    bound,
+                    self_type: Some("Self"),
+                    module: module.as_deref(),
+                    types: &types,
+                    functions: &functions,
+                };
+                scope.parameters(&mut implementation.parameters);
+                scope.ty(&mut implementation.target);
+                for function in &mut implementation.functions {
+                    scope.function(function);
+                }
+            }
             GenericDeclaration::Record {
                 parameters,
                 definition,

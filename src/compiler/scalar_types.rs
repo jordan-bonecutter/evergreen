@@ -84,14 +84,18 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
         aliases.function(function);
     }
     for declaration in &mut program.generics {
-        let parameters = match declaration {
-            crate::syntax::GenericDeclaration::Record { parameters, .. }
-            | crate::syntax::GenericDeclaration::Function { parameters, .. } => parameters,
-        };
-        let scope = Aliases {
+        let placeholder_self = matches!(
+            declaration,
+            crate::syntax::GenericDeclaration::Implementation(_)
+        );
+        let parameters = declaration.parameters_mut();
+        let mut scope = Aliases {
             values: aliases.values,
             bound: parameters.iter().map(|p| p.name().to_owned()).collect(),
         };
+        if placeholder_self {
+            scope.bound.insert("Self".into());
+        }
         for parameter in parameters {
             match parameter {
                 crate::syntax::GenericParameter::Type { default, .. } => {
@@ -108,6 +112,12 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
             }
         }
         match declaration {
+            crate::syntax::GenericDeclaration::Implementation(implementation) => {
+                scope.ty(&mut implementation.target, implementation.module.as_deref());
+                for function in &mut implementation.functions {
+                    scope.function(function);
+                }
+            }
             crate::syntax::GenericDeclaration::Record { definition, .. } => {
                 scope.record(definition)
             }
@@ -275,9 +285,13 @@ impl Aliases<'_> {
                 }
                 self.expr(value, module);
             }
-            Statement::Destructure { value, .. }
-            | Statement::Fact { value, .. }
-            | Statement::Effect(value) => self.expr(value, module),
+            Statement::Destructure {
+                arguments, value, ..
+            } => {
+                self.arguments(arguments, module);
+                self.expr(value, module);
+            }
+            Statement::Fact { value, .. } | Statement::Effect(value) => self.expr(value, module),
             Statement::Proof { proposition, .. } => self.expr(proposition, module),
             Statement::Assign { target, value } => {
                 self.expr(target, module);

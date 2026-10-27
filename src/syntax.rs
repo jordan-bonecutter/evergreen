@@ -11,7 +11,10 @@ pub use representation::{Endianness, IntegralEncoding, Representation, ScalarDef
 mod functions;
 mod generics;
 pub(crate) mod visit;
-pub use generics::{GenericArgument, GenericDeclaration, GenericParameter};
+pub use generics::{
+    GenericArgument, GenericDeclaration, GenericImplementation, GenericImplementationKind,
+    GenericParameter,
+};
 mod matches;
 mod statements;
 
@@ -260,6 +263,7 @@ pub enum Statement {
     Ideal(Box<Statement>),
     Destructure {
         record: String,
+        arguments: Vec<GenericArgument>,
         fields: Vec<(String, String)>,
         value: Expr,
     },
@@ -1221,6 +1225,15 @@ fn parse_unit(source: &str) -> Result<Program, String> {
             }
             if ideal {
                 return Err(p.err("ideal data has no runtime destructor"));
+            }
+            if p.tokens
+                .get(p.pos + 1)
+                .is_some_and(|token| token.text == "<")
+            {
+                generics.push(GenericDeclaration::Implementation(Box::new(
+                    p.generic_implementation(module.clone())?,
+                )));
+                continue;
             }
             if p.tokens
                 .get(p.pos + 1)

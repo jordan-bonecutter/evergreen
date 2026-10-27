@@ -1515,9 +1515,13 @@ impl<'a> Context<'a> {
             }
             Statement::Destructure {
                 record,
+                arguments,
                 fields,
                 value,
             } => {
+                if !arguments.is_empty() {
+                    return Err("generic record pattern requires specialization".into());
+                }
                 self.representation_access(record, value.line)?;
                 let def = self
                     .declarations

@@ -135,9 +135,15 @@ pub(crate) fn walk_statement(v: &mut impl Visitor, statement: &mut Statement) ->
             }
             v.expr(value)?;
         }
-        Statement::Destructure { value, .. }
-        | Statement::Fact { value, .. }
-        | Statement::Effect(value) => v.expr(value)?,
+        Statement::Destructure {
+            arguments, value, ..
+        } => {
+            for argument in arguments {
+                v.argument(argument)?;
+            }
+            v.expr(value)?;
+        }
+        Statement::Fact { value, .. } | Statement::Effect(value) => v.expr(value)?,
         Statement::Proof { proposition, .. } => v.expr(proposition)?,
         Statement::Assign { target, value } => {
             v.expr(target)?;

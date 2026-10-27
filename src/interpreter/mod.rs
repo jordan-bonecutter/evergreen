@@ -294,9 +294,13 @@ impl Evaluator<'_> {
             }
             Statement::Destructure {
                 record,
+                arguments,
                 fields,
                 value,
             } => {
+                if !arguments.is_empty() {
+                    return Err("generic record pattern requires specialization".into());
+                }
                 let Value::Record(_, mut values) =
                     self.expr(value, env, Some(&Type::Named(record.clone())))?
                 else {

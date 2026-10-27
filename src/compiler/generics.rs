@@ -10,6 +10,8 @@ use crate::syntax::{
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 mod constants;
+mod discovery;
+mod implementations;
 mod substitute;
 mod templates;
 #[cfg(test)]
@@ -60,9 +62,11 @@ fn charge_type(work: &mut usize, ty: &Type) -> Result<()> {
 enum Concrete {
     Record(Box<Struct>),
     Function(Box<Function>),
+    Destructor(String, Box<Function>),
 }
 
 struct Engine {
+    implementations: implementations::Registry,
     known_types: BTreeSet<String>,
     templates: BTreeMap<String, Template>,
     instances: HashMap<(String, Vec<GenericArgument>), String>,
@@ -76,6 +80,7 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
         return Ok(());
     }
     let mut engine = Engine {
+        implementations: implementations::Registry::default(),
         known_types: program
             .structs
             .iter()
@@ -87,8 +92,16 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
         work: 0,
         depth: 0,
     };
+    let mut implementations = Vec::new();
     for declaration in std::mem::take(&mut program.generics) {
         let name = match &declaration {
+            GenericDeclaration::Implementation(_) => {
+                let GenericDeclaration::Implementation(implementation) = declaration else {
+                    return Err("invalid implementation declaration".into());
+                };
+                implementations.push(*implementation);
+                continue;
+            }
             GenericDeclaration::Record { definition, .. } => &definition.name,
             GenericDeclaration::Function { definition, .. } => &definition.name,
         };
@@ -114,6 +127,11 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
         )?;
         engine.templates.insert(name, template);
     }
+    for implementation in implementations {
+        engine
+            .implementations
+            .register(implementation, &engine.templates, &mut engine.work)?;
+    }
     for record in &mut program.structs {
         engine.record(record)?;
     }
@@ -124,19 +142,7 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
     {
         engine.function(function)?;
     }
-    while let Some(item) = engine.pending.pop_front() {
-        match item {
-            Concrete::Record(mut record) => {
-                engine.record(&mut record)?;
-                program.structs.push(*record);
-            }
-            Concrete::Function(mut function) => {
-                engine.function(&mut function)?;
-                program.functions.push(*function);
-            }
-        }
-    }
-    Ok(())
+    engine.finish(program)
 }
 
 impl Engine {
@@ -232,6 +238,12 @@ impl Engine {
             self.instances.len(),
             name.rsplit("::").next().unwrap_or(name)
         );
+        for argument in &key.1 {
+            if let GenericArgument::Type(ty) = argument {
+                charge_type(&mut self.work, ty)?;
+            }
+        }
+        let actual = key.1.clone();
         self.instances.insert(key, generated.clone());
         if record {
             self.known_types.insert(generated.clone());
@@ -241,6 +253,11 @@ impl Engine {
             work: &mut self.work,
         };
         let concrete = match template {
+            GenericDeclaration::Implementation(_) => {
+                return Err(
+                    "implementation cannot be specialized as a record or free function".into(),
+                )
+            }
             GenericDeclaration::Record { mut definition, .. } => {
                 if definition
                     .fields
@@ -253,6 +270,14 @@ impl Engine {
                 }
                 definition.name = generated.clone();
                 substitution.record(&mut definition)?;
+                self.implementations.install(
+                    name,
+                    &actual,
+                    &generated,
+                    &mut definition,
+                    &mut self.pending,
+                    &mut self.work,
+                )?;
                 Concrete::Record(definition)
             }
             GenericDeclaration::Function { mut definition, .. } => {
@@ -335,17 +360,17 @@ impl Visitor for Engine {
                 value,
             } = &mut expression.kind
             {
-                if member.is_some() {
-                    return Err(
-                        "generic associated functions and methods are not implemented yet".into(),
-                    );
-                }
                 for argument in arguments.iter_mut() {
                     self.argument(argument)?;
                 }
                 match &mut value.kind {
                     Kind::Call(name, _) => {
-                        *name = self.specialize(name, std::mem::take(arguments), false)?;
+                        *name = if let Some(member) = member.take() {
+                            let target = self.specialize(name, std::mem::take(arguments), true)?;
+                            format!("{target}::{member}")
+                        } else {
+                            self.specialize(name, std::mem::take(arguments), false)?
+                        };
                     }
                     Kind::Record(name, _) => {
                         *name = self.specialize(name, std::mem::take(arguments), true)?;
@@ -370,9 +395,32 @@ impl Visitor for Engine {
                     *name = self.specialize(name, Vec::new(), record)?;
                 }
             }
+            if let Kind::Call(name, _) = &mut expression.kind {
+                if let Some((base, member)) = name.rsplit_once("::") {
+                    if self.templates.get(base).is_some_and(|template| {
+                        matches!(template.declaration, GenericDeclaration::Record { .. })
+                    }) {
+                        let target = self.specialize(base, Vec::new(), true)?;
+                        *name = format!("{target}::{member}");
+                    }
+                }
+            }
             visit::walk_expr(self, expression)
         })();
         self.depth -= 1;
         result
+    }
+
+    fn statement(&mut self, statement: &mut Statement) -> Result<()> {
+        visit::walk_statement(self, statement)?;
+        if let Statement::Destructure {
+            record, arguments, ..
+        } = statement
+        {
+            if !arguments.is_empty() || self.templates.contains_key(record) {
+                *record = self.specialize(record, std::mem::take(arguments), true)?;
+            }
+        }
+        Ok(())
     }
 }

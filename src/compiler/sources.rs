@@ -186,10 +186,7 @@ impl Names {
     }
 
     fn generic(&mut self, declaration: &GenericDeclaration) {
-        let parameters = match declaration {
-            GenericDeclaration::Record { parameters, .. }
-            | GenericDeclaration::Function { parameters, .. } => parameters,
-        };
+        let parameters = declaration.parameters();
         for parameter in parameters {
             match parameter {
                 syntax::GenericParameter::Type { default, .. } => {
@@ -206,6 +203,12 @@ impl Names {
             }
         }
         match declaration {
+            GenericDeclaration::Implementation(implementation) => {
+                self.ty(&implementation.target);
+                for function in &implementation.functions {
+                    self.function(function);
+                }
+            }
             GenericDeclaration::Record { definition, .. } => self.structure(definition),
             GenericDeclaration::Function { definition, .. } => self.function(definition),
         }
@@ -220,7 +223,13 @@ impl Names {
                 }
                 self.expr(value);
             }
-            Statement::Destructure { record, value, .. } => {
+            Statement::Destructure {
+                record,
+                arguments,
+                value,
+                ..
+            } => {
+                self.arguments(arguments);
                 self.0.insert(record.clone());
                 self.expr(value);
             }

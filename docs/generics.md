@@ -38,11 +38,37 @@ Declaring a billion-element array does not create a billion specialization nodes
 Certificates bind the original source and loaded library sources; replay checks
 the same concrete obligations without repeating proof search.
 
-Generic methods, associated functions, Drop and Copy implementations, trait
-bounds, generic destructuring, and argument inference remain unfinished.
-Consequently Rc and Vec still specialize their payloads to `usize`. Arrays still
-use their existing layout rule; replacing that rule with a source const-generic
-definition using `make_type` also remains future work.
+Generic impl blocks provide associated functions, methods, Drop, and Copy.
+An implementation uses a complete parameter pattern:
+
+```evg
+impl<T, const N: usize> Buffer<T, N> {
+    fn new(data: array(T, N)) -> Self {Self {data: data}}
+
+    method& get(index: usize) -> &T
+    where index < N
+    borrows(&self.data[index]) {&self.data[index]}
+}
+```
+
+`Self` names the concrete instance. Call an associated function with
+`Buffer::<usize, 3>::new(...)`. A consuming method can use a complete `Self`
+pattern. A free generic function can use `let Buffer::<T, N> {data} = value;`.
+An impl must be in the type's defining module and bind each record parameter
+exactly once; parameter renaming and reordering are allowed.
+
+Method bodies instantiate only when called. An unused method with a growing
+generic return type does not recursively expand more instances. Frontend
+signature prototypes help resolve calls, then are discarded; they never provide
+proof assumptions. Drop is instantiated with the record and checked normally.
+An explicit generic Copy implementation still needs Copy fields and must
+preserve refinements under shared-pointer census changes.
+
+Method-level generic parameters, trait bounds, specialized impl patterns, and
+argument inference remain unfinished. Rc and Vec still specialize their
+payloads to `usize` while their source definitions are migrated. Arrays still
+use their existing layout rule; replacing it with a source const-generic
+definition using `make_type` remains future work.
 
 The example runs with:
 

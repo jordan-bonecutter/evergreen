@@ -12,6 +12,28 @@ pub(super) struct Template {
 struct Counter {
     work: usize,
 }
+
+pub(super) fn function_work(function: &mut Function) -> Result<usize> {
+    let mut counter = Counter { work: 0 };
+    counter.function(function)?;
+    Ok(counter.work)
+}
+
+pub(super) fn charge_program(program: &mut Program, work: &mut usize) -> Result<()> {
+    let mut counter = Counter { work: *work };
+    for record in &mut program.structs {
+        counter.record(record)?;
+    }
+    for function in program
+        .functions
+        .iter_mut()
+        .chain(program.destructors.iter_mut().map(|(_, f)| f))
+    {
+        counter.function(function)?;
+    }
+    *work = counter.work;
+    Ok(())
+}
 impl Visitor for Counter {
     fn ty(&mut self, ty: &mut Type) -> Result<()> {
         charge(&mut self.work)?;
@@ -37,10 +59,7 @@ impl Template {
         // Parsed source is size/depth bounded. This one probe clone is bounded
         // by source size, before any substitution can enlarge a type tree.
         let mut probe = declaration.clone();
-        let parameters = match &mut probe {
-            GenericDeclaration::Record { parameters, .. }
-            | GenericDeclaration::Function { parameters, .. } => parameters,
-        };
+        let parameters = probe.parameters_mut();
         let mut count = Counter { work: 0 };
         for parameter in parameters {
             charge(&mut count.work)?;
@@ -61,6 +80,9 @@ impl Template {
         let parameter_work = count.work;
         count.work = 0;
         let module = match &probe {
+            GenericDeclaration::Implementation(_) => {
+                return Err("implementation metadata is not a function or record template".into())
+            }
             GenericDeclaration::Record { definition, .. } => &definition.module,
             GenericDeclaration::Function { definition, .. } => &definition.module,
         };
@@ -69,6 +91,9 @@ impl Template {
             module.as_ref().map_or(0, |name| name.len() / 32),
         )?;
         match &mut probe {
+            GenericDeclaration::Implementation(_) => {
+                return Err("implementation metadata is not a function or record template".into())
+            }
             GenericDeclaration::Record { definition, .. } => count.record(definition)?,
             GenericDeclaration::Function { definition, .. } => count.function(definition)?,
         }

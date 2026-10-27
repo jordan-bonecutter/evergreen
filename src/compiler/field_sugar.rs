@@ -207,6 +207,7 @@ impl Shapes {
                 record,
                 fields,
                 value,
+                ..
             } => {
                 self.expr(value, scope, Some(&Type::Named(record.clone())));
                 if let Some(record) = self.records.get(record) {

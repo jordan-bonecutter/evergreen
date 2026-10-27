@@ -32,6 +32,7 @@ impl GenericParameter {
 
 #[derive(Clone, Debug)]
 pub enum GenericDeclaration {
+    Implementation(Box<GenericImplementation>),
     Record {
         parameters: Vec<GenericParameter>,
         definition: Box<Struct>,
@@ -42,7 +43,110 @@ pub enum GenericDeclaration {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GenericImplementationKind {
+    Inherent,
+    Drop,
+    Copy,
+}
+
+#[derive(Clone, Debug)]
+pub struct GenericImplementation {
+    pub parameters: Vec<GenericParameter>,
+    pub target: Type,
+    pub kind: GenericImplementationKind,
+    pub functions: Vec<Function>,
+    pub module: Option<String>,
+    pub line: usize,
+}
+
+impl GenericDeclaration {
+    pub fn parameters(&self) -> &[GenericParameter] {
+        match self {
+            Self::Record { parameters, .. } | Self::Function { parameters, .. } => parameters,
+            Self::Implementation(implementation) => &implementation.parameters,
+        }
+    }
+    pub fn parameters_mut(&mut self) -> &mut [GenericParameter] {
+        match self {
+            Self::Record { parameters, .. } | Self::Function { parameters, .. } => parameters,
+            Self::Implementation(implementation) => &mut implementation.parameters,
+        }
+    }
+}
+
 impl Parser {
+    pub(super) fn generic_implementation(
+        &mut self,
+        module: Option<String>,
+    ) -> Result<GenericImplementation, String> {
+        let saved_consts = self.generic_consts.clone();
+        let saved_names = self.generic_names.clone();
+        let line = self.line();
+        self.expect("impl")?;
+        let parameters = self.generic_parameters()?;
+        let kind = if self.eat("Drop") {
+            self.expect("for")?;
+            GenericImplementationKind::Drop
+        } else if self.eat("Copy") {
+            self.expect("for")?;
+            GenericImplementationKind::Copy
+        } else {
+            GenericImplementationKind::Inherent
+        };
+        let target = self.ty()?;
+        self.expect("{")?;
+        let mut functions = Vec::new();
+        while !self.eat("}") {
+            if kind == GenericImplementationKind::Copy {
+                return Err(self.err("Copy implementations have no body"));
+            }
+            let ideal = self.eat("ideal");
+            let (own_parameters, mut function) = self.function(Some("Self"), ideal)?;
+            if !own_parameters.is_empty() {
+                return Err(self.err("method-level generic parameters are not implemented yet"));
+            }
+            if kind == GenericImplementationKind::Drop {
+                if ideal
+                    || !functions.is_empty()
+                    || function.name != "drop"
+                    || function.receiver.is_some()
+                    || function.params != vec![("self".into(), Type::Named("Self".into()))]
+                    || function.ret != Type::Unit
+                    || function.pre.is_some()
+                    || function.decreases.is_some()
+                    || !function.borrows.is_empty()
+                    || !function.ideal_params.is_empty()
+                    || function.external.is_some()
+                {
+                    return Err(self.err(
+                        "Drop requires fn drop(self) -> () without preconditions or recursion",
+                    ));
+                }
+            } else if function.receiver.is_none()
+                && function.params.iter().any(|(name, _)| name == "self")
+            {
+                return Err(self.err("use method or method& for an implicit self receiver"));
+            }
+            function.impl_target = Some("Self".into());
+            function.drop_target = None;
+            function.module = module.clone();
+            functions.push(function);
+        }
+        if kind == GenericImplementationKind::Drop && functions.len() != 1 {
+            return Err(self.err("Drop requires exactly one destructor"));
+        }
+        self.generic_consts = saved_consts;
+        self.generic_names = saved_names;
+        Ok(GenericImplementation {
+            parameters,
+            target,
+            kind,
+            functions,
+            module,
+            line,
+        })
+    }
     pub(super) fn generic_extent(&self, expression: &Expr) -> bool {
         match &expression.kind {
             Kind::Name(name) => self.generic_consts.contains(name),

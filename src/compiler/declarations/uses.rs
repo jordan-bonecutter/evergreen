@@ -149,6 +149,7 @@ impl Uses {
                     record,
                     fields,
                     value,
+                    ..
                 } => {
                     self.types.insert(record.clone());
                     if runtime {

@@ -908,9 +908,13 @@ impl Emitter<'_> {
             Statement::Assign { target, value } => self.assign(target, value),
             Statement::Destructure {
                 record,
+                arguments,
                 fields,
                 value,
             } => {
+                if !arguments.is_empty() {
+                    return Err("generic record pattern requires specialization".into());
+                }
                 let ty = Type::Named(record.clone());
                 self.expr(value, Some(&ty))?;
                 self.code.extend([0x48, 0x89, 0xc6]);
