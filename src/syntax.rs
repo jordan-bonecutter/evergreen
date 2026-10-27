@@ -245,6 +245,7 @@ pub enum Statement {
         condition: Expr,
         invariant: Expr,
         modifies: Vec<Expr>,
+        decreases: Option<Expr>,
         body: Vec<Statement>,
         line: usize,
     },

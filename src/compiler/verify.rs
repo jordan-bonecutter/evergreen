@@ -578,11 +578,13 @@ fn needs_old_memory(function: &Function) -> bool {
                 condition,
                 invariant,
                 modifies,
+                decreases,
                 body,
                 ..
             } => {
                 expression(condition)
                     || expression(invariant)
+                    || decreases.as_ref().is_some_and(expression)
                     || modifies.iter().any(expression)
                     || body.iter().any(statement)
             }
@@ -1644,9 +1646,17 @@ impl<'a> Context<'a> {
                 condition,
                 invariant,
                 modifies,
+                decreases,
                 body,
                 line,
-            } => self.check_while(condition, invariant, modifies, body, *line),
+            } => self.check_while(loops::Loop {
+                condition,
+                invariant,
+                modifies,
+                decreases: decreases.as_ref(),
+                body,
+                line: *line,
+            }),
             Statement::Ideal(binding) => {
                 if let Statement::Assign { target, .. } = binding.as_ref() {
                     fn erased(context: &Context<'_>, expression: &Expr) -> bool {

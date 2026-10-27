@@ -153,11 +153,15 @@ impl Scope<'_> {
                 condition,
                 invariant,
                 modifies,
+                decreases,
                 body,
                 ..
             } => {
                 self.expr(condition);
                 self.expr(invariant);
+                if let Some(measure) = decreases {
+                    self.expr(measure);
+                }
                 for effect in modifies {
                     self.expr(effect);
                 }

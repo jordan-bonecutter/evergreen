@@ -9,7 +9,19 @@ mod head;
 use head::Head;
 
 #[cfg(test)]
+mod termination_tests;
+#[cfg(test)]
 mod tests;
+
+#[derive(Clone, Copy)]
+pub(super) struct Loop<'a> {
+    pub(super) condition: &'a Expr,
+    pub(super) invariant: &'a Expr,
+    pub(super) modifies: &'a [Expr],
+    pub(super) decreases: Option<&'a Expr>,
+    pub(super) body: &'a [Statement],
+    pub(super) line: usize,
+}
 
 pub(super) struct Frame {
     protected: BTreeSet<PlaneId>,
@@ -71,16 +83,17 @@ impl Context<'_> {
         Ok(())
     }
 
-    pub(super) fn check_while(
-        &mut self,
-        condition: &Expr,
-        invariant: &Expr,
-        modifies: &[Expr],
-        body: &[Statement],
-        line: usize,
-    ) -> Result<()> {
+    pub(super) fn check_while(&mut self, source: Loop<'_>) -> Result<()> {
+        let Loop {
+            condition,
+            invariant,
+            modifies,
+            decreases,
+            line,
+            ..
+        } = source;
         if self.execution.phase != Phase::Runtime {
-            return Err(format!("line {line}: while currently supports runtime iteration; ideal loops need a checked termination rule"));
+            return Err(format!("line {line}: while currently supports runtime iteration; ideal loops need erased execution support; use a total recursive ideal function"));
         }
         if !self.storage.opened_planes.is_empty() {
             return Err(format!(
@@ -90,7 +103,7 @@ impl Context<'_> {
         if !pure_condition(condition) {
             return Err(format!("line {line}: loop conditions currently require scalar expressions without calls or ownership effects"));
         }
-        self.execution.partial_execution = true;
+        self.execution.partial_execution |= decreases.is_none();
 
         // Materialize surrounding bindings before protecting their storage.
         // Iteration-local planes may be created and cleaned up independently.
@@ -129,7 +142,7 @@ impl Context<'_> {
         let head = self.proposition(invariant)?;
         self.loop_assumption(&head, head_subjects.clone(), vec![entry])?;
         let mut parents = vec![entry];
-        parents.extend(self.loop_step(condition, invariant, &targets, body, &saved, line)?);
+        parents.extend(self.loop_step(source, &targets, &saved)?);
         saved.restore(self);
         self.loop_assumption(&head, head_subjects, parents)?;
         // Recheck guard well-formedness in the restored head; the source has
@@ -143,19 +156,37 @@ impl Context<'_> {
 
     fn loop_step(
         &mut self,
-        condition: &Expr,
-        invariant: &Expr,
+        source: Loop<'_>,
         targets: &[WritePlace],
-        body: &[Statement],
         saved: &Head,
-        line: usize,
     ) -> Result<Vec<evidence::NodeId>> {
+        let Loop {
+            condition,
+            invariant,
+            decreases,
+            body,
+            line,
+            ..
+        } = source;
         let first_use = self.proof.uses.len();
         let guard = self
             .scoped_eval(condition, Some(&Ty::Bool))?
             .proposition()?;
         self.assume_from(&guard, paths::Origin::Unresolved)?;
         self.proof.control = Some(saved.control.clone().unwrap_or(Formula::True).and(guard));
+        // The ranking expression is evaluated in the arbitrary active head,
+        // not the concrete entry or one previously executed iteration.
+        let before = if let Some(expression) = decreases {
+            let value = self.loop_measure(expression)?;
+            self.prove(
+                &Formula::Ge(value.clone()),
+                "nonnegative loop measure",
+                expression.line,
+            )?;
+            Some(value)
+        } else {
+            None
+        };
         let protected = saved
             .memory
             .states()
@@ -215,10 +246,34 @@ impl Context<'_> {
                 "loop invariant after iteration",
                 line,
             )?;
+            if let (Some(expression), Some(before)) = (decreases, before) {
+                let after = self.loop_measure(expression)?;
+                self.prove(
+                    &Formula::Ge(before.sub(&after)?.add(&Linear::number(-1))?),
+                    "strictly decreasing loop measure",
+                    expression.line,
+                )?;
+            }
             Ok(self.proof.uses[first_use..].to_vec())
         })();
         self.storage.loops.pop();
         checked
+    }
+
+    fn loop_measure(&mut self, expression: &Expr) -> Result<Linear> {
+        let ty = self.hint(expression).unwrap_or(Ty::Nat);
+        if !matches!(ty, Ty::Int | Ty::Nat | Ty::Machine(_)) {
+            return Err(format!(
+                "line {}: loop measure must be an integer",
+                expression.line
+            ));
+        }
+        let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
+        let value = self
+            .scoped_eval(expression, Some(&ty))
+            .and_then(|value| value.number());
+        self.execution.phase = phase;
+        value
     }
 
     fn loop_assumption(

@@ -57,6 +57,7 @@ modifies(target) {
     while cursor < count
         invariant(cursor <= count && count <= source_capacity && count <= target_capacity)
         modifies(target, &cursor)
+        decreases(count - cursor)
     {
         (*target)[cursor] = (*source)[cursor];
         cursor = cursor + 1;

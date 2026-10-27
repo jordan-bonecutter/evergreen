@@ -90,6 +90,11 @@ impl Parser {
         } else {
             Vec::new()
         };
+        let decreases = if self.eat("decreases") {
+            Some(self.expr(0)?)
+        } else {
+            None
+        };
         let (mut body, tail) = self.block(false)?;
         if tail.kind != Kind::Unit {
             body.push(Statement::Effect(tail));
@@ -99,6 +104,7 @@ impl Parser {
             condition,
             invariant,
             modifies,
+            decreases,
             body,
             line,
         })

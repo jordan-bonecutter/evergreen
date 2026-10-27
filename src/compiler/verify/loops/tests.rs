@@ -205,7 +205,7 @@ fn atomic_counter_retries_are_library_loops_without_recursive_calls() {
     ] {
         let function = program.functions.iter().find(|f| f.name == name).unwrap();
         assert!(!crate::compiler::effects::recursive(function));
-        assert!(crate::compiler::effects::looping(function));
+        assert!(crate::compiler::effects::unmeasured_loops(function));
         assert!(function.partial);
     }
     assert_eq!(

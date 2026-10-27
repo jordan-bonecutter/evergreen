@@ -1,0 +1,17 @@
+// The measure is proof-only; it adds no runtime arithmetic or recursion guard.
+fn count_to(limit: usize) -> usize ensures result == limit {
+    let count: usize = 0;
+    while count < limit
+        invariant(count <= limit)
+        modifies(&count)
+        decreases(limit - count)
+    {
+        count = count + 1;
+    }
+    count
+}
+
+fn main() -> usize {
+    proof total_contract: count_to(42) == 42;
+    count_to(42)
+}

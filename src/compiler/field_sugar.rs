@@ -229,11 +229,15 @@ impl Shapes {
                 condition,
                 invariant,
                 modifies,
+                decreases,
                 body,
                 ..
             } => {
                 self.expr(condition, scope, Some(&Type::Bool));
                 self.expr(invariant, scope, Some(&Type::Bool));
+                if let Some(measure) = decreases {
+                    self.expr(measure, scope, None);
+                }
                 for effect in modifies {
                     self.expr(effect, scope, None);
                 }

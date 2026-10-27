@@ -209,11 +209,15 @@ impl Aliases {
                 condition,
                 invariant,
                 modifies,
+                decreases,
                 body,
                 ..
             } => {
                 self.expr(condition, module);
                 self.expr(invariant, module);
+                if let Some(measure) = decreases {
+                    self.expr(measure, module);
+                }
                 for effect in modifies {
                     self.expr(effect, module);
                 }

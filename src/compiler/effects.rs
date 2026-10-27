@@ -355,10 +355,12 @@ pub(crate) fn recursive(function: &Function) -> bool {
         || expression(&function.result, &function.name)
 }
 
-pub(crate) fn looping(function: &Function) -> bool {
+pub(crate) fn unmeasured_loops(function: &Function) -> bool {
     fn contains(statement: &Statement) -> bool {
         match statement {
-            Statement::While { .. } => true,
+            Statement::While {
+                decreases, body, ..
+            } => decreases.is_none() || body.iter().any(contains),
             Statement::Ideal(inner) => contains(inner),
             Statement::Update { body, .. } => body.iter().any(contains),
             _ => false,

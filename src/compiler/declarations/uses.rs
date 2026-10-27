@@ -169,11 +169,15 @@ impl Uses {
                     condition,
                     invariant,
                     modifies,
+                    decreases,
                     body,
                     ..
                 } => {
                     self.expression(condition, bound, runtime, depth + 1)?;
                     self.expression(invariant, bound, false, depth + 1)?;
+                    if let Some(measure) = decreases {
+                        self.expression(measure, bound, false, depth + 1)?;
+                    }
                     for place in modifies {
                         self.expression(place, bound, false, depth + 1)?;
                     }

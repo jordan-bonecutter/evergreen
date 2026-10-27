@@ -3241,7 +3241,8 @@ fn owned_word_vectors_check_capacity_and_reference_lifetimes() {
         .find(|f| f.name == "vec::copy_prefix")
         .unwrap();
     assert!(!crate::compiler::effects::recursive(copy));
-    assert!(copy.partial); // Runtime loops do not yet carry termination evidence.
+    assert!(!copy.partial);
+    assert_eq!(program.potentially_diverging_functions().count(), 0);
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.trusted_assumptions().is_empty());
     assert_eq!(

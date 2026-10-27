@@ -59,6 +59,15 @@ obligations. This is not yet an independently kernel-checked state-transition or
 loop-induction certificate. Known admission sources used in the loop propagate
 through its exit invariant and function summaries.
 
+An optional loop `decreases(...)` expression supplies a ranking function. Its
+integer value must be nonnegative at an arbitrary invariant-bearing active head,
+and strictly decrease after the body and iteration-local cleanup. Calls in a
+measure use specification permissions and must be total and non-modifying. These
+obligations and their actual trust dependencies join the loop's finite evidence
+graph. A measure does not make a divergent body total. Ranking expressions are
+erased by both execution backends; this adds a frontend well-foundedness rule,
+not an independently kernel-checked loop-induction certificate.
+
 ## Claims and evidence
 
 A named fact stores a proposition expression. It does not establish truth.

@@ -4,6 +4,19 @@ use super::*;
 use crate::compiler::verify::verify;
 
 #[test]
+fn native_loop_termination_measures_are_erased() {
+    let source = include_str!("../../../examples/while_termination.evg");
+    let measured = verify(source).unwrap();
+    let unmeasured = verify(
+        &source
+            .replace("decreases(limit - count)", "")
+            .replace("proof total_contract: count_to(42) == 42;", ""),
+    )
+    .unwrap();
+    assert_eq!(emit(&measured).unwrap(), emit(&unmeasured).unwrap());
+}
+
+#[test]
 fn native_rejects_unsupported_layouts_and_entry_assumptions() {
     for source in [
         "fn read(n: usize, a: [usize; n]) -> usize {n} fn main() -> usize {0}",
@@ -131,6 +144,7 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/utf8_literal.evg"),
         include_str!("../../../examples/utf8_view.evg"),
         include_str!("../../../examples/buffer_copy.evg"),
+        include_str!("../../../examples/while_termination.evg"),
         r#"fn main() -> usize {let bytes = ""; let text = utf8::Text::from_bytes(&bytes); if text.len() == 0 {42} else {1}}"#,
         r#"fn main() -> usize {let bytes = "a"; let text = utf8::Text::from_bytes(&bytes); bytes[0] = 98; if text.byte(0) == 98 {42} else {1}}"#,
         "type Resource struct {value: usize} fn consume(value: Resource) -> usize {value.value} impl Drop for Resource {fn drop(self) {mark(self.value);}} fn mark(value: usize) {} fn main() -> usize {consume(Resource {value: 42})}",

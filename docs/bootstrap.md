@@ -281,9 +281,19 @@ The invariant must hold on entry and after an arbitrary iteration, including
 cleanup of iteration-local values. The checker replaces the declared mutable
 contents with fresh symbolic values, checks the body under the invariant and
 true guard, then exposes the invariant and false guard at exit. Neither checking
-cost nor generated code grows with the runtime iteration count. Runtime loops
-may diverge; functions containing them cannot be observed by specification or
-ideal code as total functions. The interpreter retains its execution fuel limit.
+cost nor generated code grows with the runtime iteration count. Without a
+termination measure, a runtime loop may diverge; its containing function cannot
+be observed as total by specification or ideal code. The interpreter retains its
+execution fuel limit.
+
+An optional `decreases(limit - count)` clause after `modifies(...)` proves
+termination. At an arbitrary head satisfying the invariant and true guard, the
+integer measure must be nonnegative. After an iteration, including local cleanup,
+its value must be strictly smaller. The measure is erased; it adds no runtime
+instructions. A divergent body or callee still makes the enclosing function
+potentially divergent. Without those effects, measured loops permit total
+function contracts in specifications. Direct ideal-loop execution remains
+unsupported. See `examples/while_termination.evg`.
 
 `modifies(...)` is the loop's storage frame. It accepts structural references to
 scalar contents, reference-free records without cleanup, or arrays of such
@@ -1834,9 +1844,9 @@ uninitialized slots and arbitrary element destructors need further work. The
 checker proves access bounds, ownership, and the length/capacity invariant. Prefix
 copying is implemented as an Evergreen `while` loop whose invariant proves the
 cursor stays within both buffer extents. Native copies no longer consume a
-recursive activation per element. Runtime loops currently provide partial
-correctness rather than termination evidence; interpreter execution remains
-fuel-bounded. `examples/buffer_copy.evg` exercises a nonzero starting index and
+recursive activation per element. Its `decreases(count - cursor)` clause proves
+termination after iteration cleanup; interpreter execution remains fuel-bounded.
+`examples/buffer_copy.evg` exercises a nonzero starting index and
 an untouched suffix. Interpreter/native comparisons exercise its behavior;
 its contract does not yet prove preservation
 of every copied element. No vector-specific compiler primitive or trusted proof
