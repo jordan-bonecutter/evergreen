@@ -1,0 +1,48 @@
+// Each credit owns one lifetime claim to the same allocation. This library
+// supplies allocation authority, not a runtime reference counter or Rc policy.
+// The usize payload is a bootstrap specialization until type generics exist.
+module allocation_credits;
+
+opaque type Credit struct {allocation: owner(usize)}
+
+fn attach(allocation: plane(usize)) -> Credit
+ensures outstanding(&result) == 1
+    && target(&result) == old(&*allocation)
+    && *target(&result) == old(*allocation) {
+    Credit {allocation: share_owner(allocation)}
+}
+
+ideal fn outstanding(credit: &Credit) -> nat {
+    owners(&credit.allocation)
+}
+
+fn target(credit: &Credit) -> &usize
+borrows(&*credit.allocation) {
+    &*credit.allocation
+}
+
+fn duplicate(credit: &Credit) -> Credit
+ensures outstanding(&result) == old(outstanding(credit)) + 1
+    && target(&result) == old(target(credit)) {
+    Credit {allocation: duplicate_owner(&credit.allocation)}
+}
+
+// Consume two claims to one allocation, return the surviving claim. A credit
+// to a different allocation cannot witness the release or recover uniqueness.
+fn merge(left: Credit, right: Credit) -> Credit
+where target(&left) == target(&right) && outstanding(&left) > 1
+ensures outstanding(&result) + 1 == old(outstanding(&left))
+    && target(&result) == old(target(&left)) {
+    let Credit {allocation: released} = left;
+    let Credit {allocation: retained} = right;
+    release_owner(released);
+    Credit {allocation: retained}
+}
+
+fn recover(credit: Credit) -> plane(usize)
+where outstanding(&credit) == 1
+ensures &*result == old(target(&credit))
+    && *result == old(*target(&credit)) {
+    let Credit {allocation} = credit;
+    recover_owner(allocation)
+}

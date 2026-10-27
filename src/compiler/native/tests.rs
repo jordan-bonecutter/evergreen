@@ -159,6 +159,7 @@ fn native_execution_agrees_with_the_interpreter() {
         "fn choose(flag: &bool, a: &usize, b: &usize) -> &usize modifies(flag) borrows(a) when *flag else borrows(b) ensures *flag == !old(*flag) {let selected = *flag; *flag = !*flag; if selected {a} else {b}} fn main() -> usize {let flag = true; let a: usize = 42; let b: usize = 7; *choose(&flag, &a, &b)}",
         include_str!("../../../examples/sparse_arrays.evg"),
         include_str!("../../../examples/owning_references.evg"),
+        include_str!("../../../examples/allocation_credits.evg"),
         "type Resource struct {value: usize} where value == 42; impl Drop for Resource {fn drop(self) {proof valid: self.value == 42;}} fn main() -> usize {let unique: plane(Resource) = alloc(Resource {value: 42}); let first = share_owner(unique); let second = duplicate_owner(&first); release_owner(first); second.value}",
         "fn duplicate(value: &owner(usize)) -> owner(usize) ensures owners(result) == old(owners(value)) + 1 {duplicate_owner(value)} fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate(&first); release_owner(first); *second}",
         r#"fn main() -> usize {let bytes = ""; let text = utf8::Text::from_bytes(&bytes); if text.len() == 0 {42} else {1}}"#,

@@ -282,7 +282,6 @@ fn old_scalar_accessors_use_entry_storage_and_require_pure_total_calls() {
     for source in [
         "fn write(r: &usize) -> usize modifies(r) {*r = 42; 42} fn bad(r: &usize) {proof wrong: old(write(r)) == 42;}",
         "fn endless() -> usize {endless()} fn bad() {proof wrong: old(endless()) == 42;}",
-        "fn identity(r: &usize) -> &usize borrows(r) {r} fn bad(r: &usize) {proof wrong: old(identity(r)) == r;}",
     ] {
         let error = verify(source).unwrap_err();
         assert!(error.contains("old snapshots require"), "{error}");
@@ -1101,7 +1100,6 @@ fn reference_identity_cannot_observe_stale_storage_or_compare_different_types() 
         "fn bad(a: &usize, b: &usize) -> bool {a < b}",
         "fn bad(a: &usize, b: &isize) -> bool {a == b}",
         "fn bad(a: &usize, b: usize) -> bool {a == b}",
-        "fn bad(a: &usize) {proof invalid: old(&a) == &a;}",
     ] {
         assert!(verify(source).is_err(), "accepted {source}");
     }

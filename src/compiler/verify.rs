@@ -945,6 +945,24 @@ impl<'a> Context<'a> {
     }
 
     fn capture_old(&mut self, function: &Function) -> Result<()> {
+        if function.entry_memory {
+            // An entry address must name the same parameter slot as the live
+            // execution. Creating its slot only in the frozen store would give
+            // old(&parameter) a fictional allocation identity.
+            for (name, _) in &function.params {
+                if !self.locals.places.contains_key(name) {
+                    let value = self
+                        .locals
+                        .values
+                        .get(name)
+                        .cloned()
+                        .ok_or("missing entry parameter")?;
+                    self.charge_value_work(symbol_weight(&value)?)?;
+                    let plane = self.allocate_symbol(value)?;
+                    self.locals.places.insert(name.clone(), plane);
+                }
+            }
+        }
         self.entry.world = self.proof.subjects.save_world()?;
         self.charge_value_work(values_weight(self.locals.values.values())?)?;
         let target_cost =
@@ -1008,7 +1026,7 @@ impl<'a> Context<'a> {
         }
         match &expression.kind {
             Kind::Call(name, args) => {
-                let scalar_call = MachineInt::parse(name).is_some()
+                let observed_call = MachineInt::parse(name).is_some()
                     || matches!(name.as_str(), "integer" | "nat" | "owners")
                     || self
                         .declarations
@@ -1017,17 +1035,21 @@ impl<'a> Context<'a> {
                         .is_some_and(|function| {
                             !function.partial
                                 && function.modifies.is_empty()
-                                && matches!(
+                                && (matches!(
                                     function.ret,
                                     Type::Int
                                         | Type::Nat
                                         | Type::Bool
                                         | Type::Machine(_)
                                         | Type::Unit
-                                )
+                                ) || matches!(function.ret, Type::Ref(_))
+                                    && !function.borrows.is_empty()
+                                    && (function.ideal
+                                        || self.declarations.cleanup_helpers.contains(name)))
                         });
-                scalar_call && args.iter().all(|arg| self.entry_observation(arg))
+                observed_call && args.iter().all(|arg| self.entry_observation(arg))
             }
+            Kind::Unary(op, place) if op == "&" => self.entry_address(place),
             Kind::Field(base, _) => self.entry_observation(base),
             Kind::Index(base, index) | Kind::Binary(_, base, index) => {
                 self.entry_observation(base) && self.entry_observation(index)
@@ -1044,6 +1066,16 @@ impl<'a> Context<'a> {
         }
     }
 
+    fn entry_address(&self, expression: &Expr) -> bool {
+        match &expression.kind {
+            Kind::Name(_) => true,
+            Kind::Field(base, _) => self.entry_address(base),
+            Kind::Index(base, index) => self.entry_address(base) && self.entry_observation(index),
+            Kind::Unary(op, pointer) if op == "*" => self.entry_observation(pointer),
+            _ => false,
+        }
+    }
+
     fn old_expression(&mut self, expression: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
         if let Some(key) = Self::old_key(expression) {
             return self
@@ -1055,7 +1087,7 @@ impl<'a> Context<'a> {
         }
         if !self.entry_observation(expression) {
             return Err(
-                "old snapshots require storage observations or total scalar calls without write effects".into(),
+                "old snapshots require entry storage or total scalar/reference observations without write or ownership effects".into(),
             );
         }
         let mut entry = self
@@ -1075,7 +1107,9 @@ impl<'a> Context<'a> {
         let claims = std::mem::take(&mut self.proof.claims);
         let value_claims = std::mem::take(&mut self.proof.value_claims);
         let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
+        let ownership_epoch = self.work.ownership_transitions;
         let value = self.eval(expression, expected);
+        let changed_claims = self.work.ownership_transitions != ownership_epoch;
         self.execution.phase = phase;
         self.proof.facts = facts;
         self.proof.witnesses = proofs;
@@ -1089,9 +1123,12 @@ impl<'a> Context<'a> {
         entry.facts = self.proof.subjects.snapshot();
         self.proof.subjects.restore(live_state);
         self.entry.memory = Some(entry);
-        // Pure entry expressions cannot construct addresses. Conditional
-        // selections may introduce a new symbolic cell path on an incoming
-        // handle. Materialize its LIVE view separately from the frozen read.
+        if changed_claims {
+            return Err("old observations cannot change allocation lifetime claims".into());
+        }
+        // Entry addresses refer to pre-existing slots or incoming storage.
+        // Conditional selections may introduce a new symbolic cell path on an
+        // incoming handle. Materialize its LIVE view separately from the read.
         if let Ok(value) = &value {
             self.materialize_input_planes()?;
             self.materialize_live_reference_views(value, expression.line)?;

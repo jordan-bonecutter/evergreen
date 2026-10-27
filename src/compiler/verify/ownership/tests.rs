@@ -1,6 +1,58 @@
 use super::*;
 
 #[test]
+fn source_allocation_credits_preserve_real_authority_and_plane_identity() {
+    let source = include_str!("../../../../examples/allocation_credits.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+}
+
+#[test]
+fn allocation_credits_cannot_be_copied_forged_or_recovered_while_shared() {
+    for source in [
+        "fn main() {let credit = allocation_credits::Credit {allocation: share_owner(alloc(42))};}",
+        "impl Copy for allocation_credits::Credit {} fn main() {}",
+        "fn main() {let credit = allocation_credits::attach(alloc(42)); let moved = credit; let again = credit;}",
+        "fn main() {let first = allocation_credits::attach(alloc(42)); let second = allocation_credits::duplicate(&first); let unique = allocation_credits::recover(first);}",
+        "fn main() {let first = allocation_credits::attach(alloc(42)); let second = allocation_credits::duplicate(&first); proof lie: allocation_credits::outstanding(&first) == 1 by {trustme}; let unique = allocation_credits::recover(first);}",
+        "fn main() {let first = allocation_credits::attach(alloc(42)); let second = allocation_credits::attach(alloc(7)); let wrong = allocation_credits::merge(first, second);}",
+        "fn main() -> usize {let credit = allocation_credits::attach(alloc(42)); let target = allocation_credits::target(&credit); drop(credit); *target}",
+        "fn main() {let first = allocation_credits::attach(alloc(42)); let second = allocation_credits::duplicate(&first);}",
+    ] {assert!(verify(source).is_err(), "accepted {source}");}
+}
+
+#[test]
+fn entry_reference_observations_preserve_identity_and_read_current_contents() {
+    for source in [
+        "fn identity(r: &usize) -> &usize borrows(r) {r} fn inspect(r: &usize) {proof original: old(identity(r)) == r;} fn main() -> usize {let value: usize = 42; inspect(&value); value}",
+        "fn inspect(a: &usize) {proof same_slot: old(&a) == &a;} fn main() -> usize {let value: usize = 42; inspect(&value); value}",
+        "fn identity(value: &usize) -> &usize borrows(value) {value} fn inspect(value: &usize, replacement: &usize) {ideal let saved = old(identity(value)); value = replacement; proof original: saved == old(value);} fn main() -> usize {let a: usize = 7; let b: usize = 42; inspect(&a, &b); b}",
+        "fn inspect(value: usize) -> usize {ideal let address = old(&value); value = 42; proof same_slot: address == &value; proof live_contents: *address == 42; value} fn main() -> usize {inspect(7)}",
+        "type Point struct {value: usize} fn project(point: &Point) -> &usize borrows(&point.value) {&point.value} fn inspect(point: Point) -> usize {ideal let saved = old(project(&point)); point.value = 42; proof live_contents: *saved == 42; point.value} fn main() -> usize {inspect(Point {value: 7})}",
+    ] {
+        let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
+    }
+    for source in [
+        "type Point struct {value: usize} fn wrong() {ideal let saved = old(&Point {value: 42});}",
+        "fn wrong() {let value: usize = 42; ideal let saved = old(&value);}",
+        "fn wrong(a: &usize, b: &usize) where a != b {ideal let saved = old(&a); a = b; proof changed: *saved == old(a);}",
+        "type Point struct {value: usize} fn wrong(point: Point) {ideal let address = old(&point); let moved = point; proof stale: address.value == 42;}",
+        "fn change(value: &usize) -> &usize modifies(value) borrows(value) {*value = 42; value} fn wrong(value: &usize) {ideal let saved = old(change(value));}",
+        "fn view(value: &owner(usize)) -> &usize borrows(&**value) {let temporary = duplicate_owner(value); release_owner(temporary); &**value} fn wrong(value: &owner(usize)) {ideal let saved = old(view(value));}",
+        "fn observe(value: &owner(usize)) -> usize {let temporary = duplicate_owner(value); release_owner(temporary); 42} fn wrong(value: &owner(usize)) {ideal let saved = old(observe(value));}",
+    ] {assert!(verify(source).is_err(), "accepted {source}");}
+}
+
+#[test]
 fn generic_owning_references_count_claims_and_recover_the_same_plane() {
     let source = include_str!("../../../../examples/owning_references.evg");
     let (program, bundle) = prove(source).unwrap();

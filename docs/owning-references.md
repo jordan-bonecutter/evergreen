@@ -55,10 +55,13 @@ implementation boundaries rather than independently checked kernel theorems.
 
 [`owning_references.evg`](../examples/owning_references.evg) runs in the interpreter
 and native backend without admissions. The selected Rc direction is
-allocation-backed, move-only credits. Existing credits libraries exercise erased
-resource arithmetic; they do not yet grant allocation or destruction authority.
-Connecting that authority to credits is required before claiming an implemented
-source Rc. Invariant lifting remains a separate general language facility.
+allocation-backed, move-only credits. `allocation_credits::Credit` now wraps real
+generic lifetime claims in an opaque source API for duplication, merging, payload
+borrowing, and unique recovery. The earlier arithmetic credit libraries still
+grant no allocation authority. Connecting runtime count/reservation accounting
+to these claims, including conditional final release, is required before claiming
+an implemented source Rc. See [allocation-backed credits](allocation-credits.md).
+Invariant lifting remains a separate general language facility.
 
 ## Reference contracts: intended direction
 

@@ -630,10 +630,19 @@ Total scalar functions without write effects can be called inside `old`, such
 as `old(credits::units(credit))` for an incoming reference to an opaque credit.
 Arguments and accessor preconditions are checked against entry storage, and
 the call retains the defining module's representation access. This permits
-public conservation contracts without revealing private fields. Calls returning
-references or aggregates, potentially divergent calls, and address construction
-inside entry expressions remain unsupported. `examples/old_accessors.evg`
-checks both numeric and Boolean accessors against a changed live pointee.
+public conservation contracts without revealing private fields.
+Total reference accessors with exact borrow contracts are also supported when
+they have checked ownership-free effects, or are ideal functions without write
+effects. `old(target(&credit))` can preserve the allocation pointer through an
+opaque accessor. Entry addresses such as `old(&parameter)` name the same physical
+slot as live execution; dereferencing the saved pointer reads its current
+contents and still checks its generation. Moving that slot makes the saved view
+unusable. Snapshot evaluation cannot perform allocation-claim transitions,
+including a duplicate/release round trip: the entry resource state stays frozen.
+Addresses of temporaries or post-entry locals, aggregate-producing
+calls, and potentially divergent calls remain rejected. `examples/old_accessors.evg`
+checks numeric and Boolean accessors; `examples/allocation_credits.evg` checks a
+reference accessor after consuming its old owning record.
 
 `old((*data)[index])` uses the entry index; an index outside `old`, as in
 `old(*data)[index]`, uses the surrounding proof's binding. References remain
@@ -1432,6 +1441,15 @@ credits while conserving their total quantity. The client proof in
 Check both files together. Clients cannot manufacture a new credit from a number
 or duplicate an existing credit. This abstract quantity is not yet connected to
 a physical allocation, `owners(plane)`, or atomic operations.
+
+`allocation_credits::Credit` instead carries a real allocation-backed lifetime
+claim, using an opaque source wrapper around the generic ownership primitives.
+Its source API attaches a unique allocation, duplicates claims, merges two
+claims to one allocation, borrows the payload, and recovers unique ownership.
+Outstanding counts include hidden caller claims. This is not a runtime Rc
+counter or a conversion from arithmetic budgets into allocation authority.
+See [allocation-backed credits](allocation-credits.md) for the contracts,
+runtime erasure, and the remaining Rc work.
 
 `examples/opaque_values.evg` demonstrates runtime opaque values, public facts,
 and checked accessors; it runs and builds natively. Module-qualified programs
