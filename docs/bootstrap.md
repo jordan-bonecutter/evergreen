@@ -154,12 +154,16 @@ elements are supported. Records move by default when used as values, including
 assignment, arguments, and return values. `impl Copy for T {}` explicitly enables
 implicit copying when every field is Copy and the type has no Drop implementation.
 Machine/mathematical scalars, Booleans, unit, ordinary borrowed references, and
-arrays of Copy elements are Copy. Owning planes are not. A moved source slot
+arrays of Copy elements are Copy when their target/type definitions grant that
+permission. Unique owners are not Copy. Shared-pointer Copy permission comes
+from the target. A moved source slot
 becomes `shape(T)` and cannot be read.
 Assignments restore that slot. Overwriting a live owner runs its destructor;
 scope cleanup runs in reverse binding order, with owned fields cleaned after
-the parent destructor. Partial moves and overwriting owners through borrowed
-references remain rejected when runtime cleanup/ownership effects are required.
+the parent destructor. A declared `T | shape(T)` slot supports proved member
+extraction and initialization through an authorized write footprint. Other
+partial moves and overwriting live owners through borrowed references remain
+rejected when runtime cleanup/ownership effects are required.
 
 ```evg
 impl Drop for Resource {
@@ -241,7 +245,11 @@ a detached result snapshot and destructor trace.
 
 The initial implementation conservatively treats an aggregate's storage as one
 plane, so replacing a nested aggregate may invalidate unrelated references in
-the same root. Partial moves remain unsupported. Scalar array references support proved
+the same root. A union place with both `T` and `shape(T)` now supports extracting
+a proved-active T while leaving its shape in the same storage. Ordinary partial
+moves without that declared shape alternative remain unsupported. See
+`examples/slot_extraction.evg` and [raw-unions.md](raw-unions.md).
+Scalar array references support proved
 symbolic indices, including aliasing as described below.
 Reference returns require the exact alias contracts described below. Scalar writes
 require the explicit contracts described below.
@@ -2154,10 +2162,11 @@ without attempting to read its self-referential fields afterward.
 
 This is the checked Copy marker and ownership behavior, not a complete general
 trait implementation. Generic traits/bounds, associated items, and default trait
-methods remain subsequent work. Partial field moves, moving out of borrowed
-places, and branches with different remaining live owners are still rejected
-where the bootstrap lacks partial/conditional shape support. Complete record
-patterns remain the supported way to extract non-Copy owned fields.
+methods remain subsequent work. Partial field moves and moving out of borrowed
+places require a matching declared shape alternative. Resource branches use
+checked continuation cases as described in [resource-cases.md](resource-cases.md).
+Complete record patterns remain the way to extract non-Copy owned fields outside
+declared shape unions.
 
 ### Methods and implicit self
 

@@ -72,14 +72,20 @@ impl<'a> Context<'a> {
             return Err("recursive calls are forbidden in specifications".into());
         }
         if matches!(name, "move" | "drop" | "leak") {
-            return self.eval_ownership_call(name, args, line);
+            return self.eval_ownership_call(name, args, expected, line);
         }
         let function = self.function_for_call(name, line)?;
         let actuals = self.evaluate_arguments(function, args, line)?;
         self.apply_call(name, function, actuals, line)
     }
 
-    fn eval_ownership_call(&mut self, name: &str, args: &[Expr], line: usize) -> Result<Symbol> {
+    fn eval_ownership_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        expected: Option<&Ty>,
+        line: usize,
+    ) -> Result<Symbol> {
         if self.execution.phase == Phase::Runtime && !self.storage.opened_planes.is_empty() {
             return Err("moves and drops are forbidden while invariants are open".into());
         }
@@ -96,6 +102,12 @@ impl<'a> Context<'a> {
         }
         if args.len() != 1 {
             return Err(format!("{name} expects one place"));
+        }
+        if name == "move" {
+            if let Some(target) = expected.filter(|target| self.union_move_place(&args[0], target))
+            {
+                return self.move_union_member(&args[0], target);
+            }
         }
         if self.execution.phase == Phase::Ideal
             && !self.execution.ideal_execution

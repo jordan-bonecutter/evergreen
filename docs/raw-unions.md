@@ -103,13 +103,38 @@ authorize a second initialization. Union-write calls recheck their actual bodies
 so a summary cannot replace the slot with an unrelated invented payload.
 
 This is initialization without old-payload cleanup, not arbitrary replacement
-of an initialized union. Moving a member out and leaving its shape in the slot
-remains the next storage transition to implement.
+of an initialized union.
+
+`examples/slot_extraction.evg` now supplies the reverse source operation. In a
+context expecting `T`, an ordinary rvalue read from a `T | shape(T)` place moves
+a move-only T out and replaces that member with `shape(T)`. `move(*slot)` also
+consumes a Copy member; an ordinary Copy read leaves the slot initialized. The
+active T must be proved and the write must be authorized. Typed assignments,
+function arguments, and return types provide the member context.
+
+Extraction preserves the union's plane and storage layout. Slot aliases observe
+the shape, proofs about its old active member expire, and references into an
+allocation owned by the moved payload remain valid while its new owner lives.
+Unchanged sibling projections retain their proofs. Address expressions execute
+once. Conditional references update only the selected target, with ordinary
+resource-continuation checking retaining each case's ownership state.
+
+The remaining union must still be eliminated explicitly, for example with
+`let retired: shape(T) = slot;`. Native extraction transfers bytes without an
+extra tag or payload cleanup. The reference evaluator independently checks the
+active member and updates its type state. Source destructors on the extracted
+resource run once at its eventual cleanup.
+
+Copy permission also applies before union injection and after selecting a
+borrowed Copy member. Shared pointers and Copy records containing them create
+their ordinary census claims; putting them into an untagged union cannot hide
+copies from the ownership model. Converting a plain unique field to a shared
+result cannot bypass the existing restriction on moving ordinary owning fields.
 
 Borrowed-reference members remain rejected until return-plane contracts and
 conditional borrow footprints describe their provenance. Joining two different
 allocations in the same member, initialized-member replacement through a borrowed
-union, partial initialization of enclosing records, dynamic array member
+union, partial moves without a matching shape alternative, dynamic array member
 interpretation, and generic Option remain work in progress. Member cases are
 bounded and currently elaborated eagerly; deferred member constraints are also
 pending. `Option`, Vec, Rc, and Arc remain ordinary library code built on the

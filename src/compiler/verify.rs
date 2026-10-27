@@ -58,6 +58,7 @@ mod state;
 mod storage_layout;
 mod subjects;
 mod summaries;
+mod union_moves;
 mod unions;
 mod updates;
 mod validation;
@@ -1977,25 +1978,33 @@ impl<'a> Context<'a> {
             }
             _ => None,
         };
-        let value = self.eval_inner(e, array_member.or(expected)).map_err(|s| {
+        let moving_member = self.execution.phase == Phase::Runtime
+            && expected.is_some_and(|ty| self.ty_is_move_only(ty) && self.union_move_place(e, ty));
+        let evaluated = if moving_member {
+            self.move_union_member(e, expected.unwrap())
+        } else {
+            self.eval_inner(e, array_member.or(expected))
+        };
+        let value = evaluated.map_err(|s| {
             if s.starts_with("line ") {
                 s
             } else {
                 format!("line {}: {s}", e.line)
             }
         })?;
-        let value = self.coerce_pointer(value, expected, e.line)?;
-        let value = self.union_coercion(value, expected, e.line, Some(e))?;
-        self.charge_value_work(symbol_weight(&value)?)
-            .map_err(|error| format!("line {}: {error}", e.line))?;
         let projecting_owner = matches!(&e.kind, Kind::Field(..) | Kind::Index(..))
             || matches!(&e.kind, Kind::Unary(op, _) if op == "*");
         if self.execution.phase != Phase::Specification
             && self.symbol_is_move_only(&value)
             && projecting_owner
+            && !moving_member
         {
             return Err(format!("line {}: moving owning fields or borrowed values needs partial-initialization tracking; unsupported", e.line));
         }
+        let value = self.coerce_pointer(value, expected, e.line)?;
+        let value = self.union_coercion(value, expected, e.line, Some(e))?;
+        self.charge_value_work(symbol_weight(&value)?)
+            .map_err(|error| format!("line {}: {error}", e.line))?;
         if let Some(t) = expected {
             self.compatible(&value.ty(), t, e.line)?;
         }
@@ -2457,7 +2466,15 @@ impl<'a> Context<'a> {
                         .cloned()
                         .ok_or_else(|| format!("unknown value {n}"))
                 }?;
-                let selected = self.union_coercion(value.clone(), expected, e.line, Some(e))?;
+                let moving = self.symbol_is_move_only(&value);
+                let selected = if moving {
+                    self.union_coercion(value.clone(), expected, e.line, Some(e))?
+                } else {
+                    // Copy before injecting into a move-only union. Injection
+                    // must not suppress the source value's pointer claims.
+                    let value = self.copy_pointer_read(value.clone(), e.line)?;
+                    self.union_coercion(value, expected, e.line, Some(e))?
+                };
                 if self.execution.phase != Phase::Specification && self.symbol_is_move_only(&value)
                 {
                     if self.execution.phase == Phase::Ideal
@@ -2484,14 +2501,11 @@ impl<'a> Context<'a> {
                     let id = self.storage.memory.plane(r)?;
                     self.take_symbol(id)?;
                 }
-                if self.symbol_is_move_only(&value) {
-                    Ok(selected)
-                } else {
-                    self.copy_pointer_read(selected, e.line)
-                }
+                Ok(selected)
             }
             Kind::Field(..) | Kind::Index(..) => {
                 let value = self.storage(e)?;
+                let value = self.select_projected_member(value, expected, e)?;
                 self.copy_pointer_read(value, e.line)
             }
             Kind::Record(name, entries) => {
@@ -2576,6 +2590,7 @@ impl<'a> Context<'a> {
             }
             Kind::Unary(op, pointer) if op == "*" => {
                 let value = self.dereference(pointer, e.line)?;
+                let value = self.select_projected_member(value, expected, e)?;
                 self.copy_pointer_read(value, e.line)
             }
             Kind::Unary(op, x) if op == "!" => Ok(Symbol::Bool(

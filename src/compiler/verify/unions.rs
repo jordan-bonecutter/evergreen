@@ -64,6 +64,22 @@ pub(super) fn observations_equal(a: &Symbol, b: &Symbol) -> Result<Formula> {
 }
 
 impl Context<'_> {
+    // A borrowed Copy member is selected before copying, so copying shared
+    // pointers or Copy records still creates their required lifetime claims.
+    pub(super) fn select_projected_member(
+        &mut self,
+        value: Symbol,
+        expected: Option<&Ty>,
+        expression: &Expr,
+    ) -> Result<Symbol> {
+        if matches!(value, Symbol::Union { .. })
+            && expected.is_some_and(|ty| !matches!(ty, Ty::Union(_)))
+        {
+            self.union_coercion(value, expected, expression.line, Some(expression))
+        } else {
+            Ok(value)
+        }
+    }
     // A declared union can reserve storage without containing a live payload.
     // Unlike replacing an initialized member, this transition has no cleanup.
     pub(super) fn uninitialized_union(&mut self, value: &Symbol, line: usize) -> Result<bool> {

@@ -160,6 +160,25 @@ impl Context<'_> {
         &mut self,
         reference: Reference,
         path: &[Projection<Linear>],
+        value: Symbol,
+        line: usize,
+    ) -> Result<()> {
+        let old = project(self.storage.memory.read(reference)?, path)?.clone();
+        if self.has_runtime_cleanup(&old.ty())
+            && !(self.execution.phase == Phase::Ideal && self.erased_value(&old))
+            && !self.uninitialized_union(&old, line)?
+        {
+            return Err("overwriting owned fields through references requires ownership effect proofs; unsupported".into());
+        }
+        self.replace_reference_contents(reference, path, value, line)
+    }
+
+    // Callers must first discharge old cleanup or transfer its live payload.
+    // This common store still enforces write authority, revisions, and types.
+    pub(super) fn replace_reference_contents(
+        &mut self,
+        reference: Reference,
+        path: &[Projection<Linear>],
         mut value: Symbol,
         line: usize,
     ) -> Result<()> {
@@ -170,12 +189,6 @@ impl Context<'_> {
         }
         let old = project(self.storage.memory.read(reference)?, path)?.clone();
         self.compatible(&value.ty(), &old.ty(), line)?;
-        if self.has_runtime_cleanup(&old.ty())
-            && !(self.execution.phase == Phase::Ideal && self.erased_value(&old))
-            && !self.uninitialized_union(&old, line)?
-        {
-            return Err("overwriting owned fields through references requires ownership effect proofs; unsupported".into());
-        }
         let replace_plane = !self.same_layout(&old, &value)?;
         if !replace_plane {
             self.preserve_views(&old, &mut value)?;

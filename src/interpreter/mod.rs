@@ -15,6 +15,7 @@ mod blocks;
 mod compat;
 mod ownership;
 mod type_match;
+mod union_moves;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -650,7 +651,17 @@ impl Evaluator<'_> {
         }
         self.fuel -= 1;
         self.expression_depth += 1;
-        let result = self.inner(e, env, expected).and_then(|value| {
+        let evaluated = (|| {
+            if let Some(target) = expected {
+                if crate::shared::ownership::is_move_only(target, self.structs, self.drops)
+                    && self.union_move_place(e, env, target)?
+                {
+                    return self.move_union_member(e, env, target);
+                }
+            }
+            self.inner(e, env, expected)
+        })();
+        let result = evaluated.and_then(|value| {
             let value = self.coerce_pointer(value, expected)?;
             let value = match (value, expected) {
                 (Value::Union(_, value), Some(expected)) if !matches!(expected, Type::Union(_)) => {
@@ -738,6 +749,7 @@ impl Evaluator<'_> {
                     .get(field)
                     .cloned()
                     .ok_or_else(|| format!("unknown field {field}"))?;
+                let value = self.select_projected_member(value, expected)?;
                 self.copy_pointer_read(value)
             }
             Kind::Record(name, entries) => {
@@ -767,6 +779,7 @@ impl Evaluator<'_> {
                 } else if op == "*" {
                     let (r, path) = self.location(e, env)?;
                     let value = project(self.memory.read(r)?, &path)?.clone();
+                    let value = self.select_projected_member(value, expected)?;
                     self.copy_pointer_read(value)
                 } else if op == "!" {
                     Ok(Value::Bool(
@@ -880,6 +893,7 @@ impl Evaluator<'_> {
             }
             Kind::Index(..) => {
                 let value = self.storage(e, env)?;
+                let value = self.select_projected_member(value, expected)?;
                 self.copy_pointer_read(value)
             }
             Kind::Call(name, args) => {
@@ -967,6 +981,13 @@ impl Evaluator<'_> {
                     return Ok(Value::Unique(Box::new(ty), self.memory.borrow(plane)?));
                 }
                 if matches!(name.as_str(), "move" | "drop" | "leak") {
+                    if name == "move" {
+                        if let Some(target) = expected {
+                            if self.union_move_place(&args[0], env, target)? {
+                                return self.move_union_member(&args[0], env, target);
+                            }
+                        }
+                    }
                     let (r, path) = self.location(&args[0], env)?;
                     if !path.is_empty() {
                         return Err("cannot move partial plane".into());
@@ -1147,6 +1168,8 @@ fn check_union_initialization(value: &Value) -> Result<bool> {
 
 fn same_layout(a: &Value, b: &Value) -> bool {
     match (a, b) {
+        (Value::Union(a, _), Value::Union(b, _)) => type_match::same_union_storage(a, b),
+        (Value::Shape(a), Value::Shape(b)) => type_match::same_storage_type(a, b),
         (Value::Record(an, a), Value::Record(bn, b)) => {
             an == bn
                 && a.len() == b.len()

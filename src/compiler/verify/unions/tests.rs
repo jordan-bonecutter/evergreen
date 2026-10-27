@@ -1,6 +1,72 @@
 use super::*;
 
 #[test]
+fn raw_union_member_moves_leave_a_shape_in_existing_storage() {
+    for source in [
+        include_str!("../../../../examples/slot_extraction.evg"),
+        "fn main() -> usize {let slot: unique(usize) | shape(unique(usize)) = alloc(42); let view = &slot; let value: unique(usize) = move(*view); proof empty: typeof(*view) == shape(unique(usize)); let retired: shape(unique(usize)) = slot; *value}",
+        "type Slot struct {data: unique(usize) | shape(unique(usize)), tag: usize} fn main() -> usize {let slot = Slot {data: alloc(42), tag: 7}; let value: unique(usize) = slot.data; proof still_here: slot.tag == 7 && typeof(slot.data) == shape(unique(usize)); let Slot {data, tag} = slot; let retired: shape(unique(usize)) = data; *value}",
+        "fn take<T>(slot: &(T | shape(T))) -> T where typeof(*slot) == T modifies(slot) ensures typeof(*slot) == shape(T) {move(*slot)} fn main() -> usize {let slot: usize | shape(usize) = 42; let view = &slot; let value = take::<usize>(view); proof empty: typeof(*view) == shape(usize); let retired: shape(usize) = slot; value}",
+        "fn main() -> usize {let slot: usize | shape(usize) = 42; let view = &slot; let copied: usize = *view; proof still_initialized: typeof(*view) == usize; let value: usize = slot; copied + value - 42}",
+        "fn main() -> usize {let owner: shared(usize) = alloc(42); let slot: shared(usize) | shape(shared(usize)) = owner; proof copied: owner_count(owner) == 2; let view = &slot; let value: shared(usize) = move(*view); let retired: shape(shared(usize)) = slot; leak(value); let final: unique(usize) = move(owner); *final}",
+        "fn main() -> usize {let values = vec::Vec::<u8>::new(1); let header = &values; values = values.reallocate(2); if header.capacity() == 2 {42} else {1}}",
+        "fn main() -> usize {let slot: unique(usize) | shape(unique(usize)) = alloc(42); let view = &slot; let payload = &**view; proof before: *payload == 42; let value: unique(usize) = *view; proof retained: *payload == 42 by {exact before}; let retired: shape(unique(usize)) = slot; *payload}",
+        "type Slot struct {data: unique(usize) | shape(unique(usize)), tag: usize} fn main() -> usize {let slot = Slot {data: alloc(42), tag: 7}; proof before: slot.tag == 7; let value: unique(usize) = slot.data; proof retained: slot.tag == 7 by {exact before}; let Slot {data, tag} = slot; let retired: shape(unique(usize)) = data; *value}",
+        "type Item struct {data: unique(usize)} impl Drop for Item {fn drop(self) {}} fn main() -> usize {let slot: Item | shape(Item) = Item {data: alloc(42)}; let view = &slot; let value: Item = *view; let retired: shape(Item) = slot; *value.data}",
+        "fn select(slot: &(unique(usize) | shape(unique(usize))), count: &usize) -> &(unique(usize) | shape(unique(usize))) where *count == 0 modifies(count) borrows(slot) ensures *count == 1 {*count = 1; slot} fn main() -> usize {let slot: unique(usize) | shape(unique(usize)) = alloc(42); let count: usize = 0; let value: unique(usize) = *select(&slot, &count); let retired: shape(unique(usize)) = slot; if count == 1 {*value} else {1}}",
+        "fn main() -> usize {let owner: shared(usize) = alloc(42); let slot: shared(usize) | shape(shared(usize)) = owner; let view = &slot; let copied: shared(usize) = *view; proof copies: owner_count(owner) == 3; leak(copied); let final_member: shared(usize) = slot; leak(final_member); let final: unique(usize) = move(owner); *final}",
+        "type Handle struct {data: shared(usize)} impl Copy for Handle {} fn main() -> usize {let owner: shared(usize) = alloc(42); let handle = Handle {data: owner}; let slot: Handle | shape(Handle) = handle; let view = &slot; let copied: Handle = *view; proof copies: owner_count(owner) == 4; leak(copied); let taken: Handle = move(*view); let retired: shape(Handle) = slot; leak(taken); leak(handle); let final: unique(usize) = move(owner); *final}",
+    ] {
+        let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
+    }
+}
+
+#[test]
+fn raw_union_extraction_requires_live_member_and_write_authority() {
+    for (source, diagnostic) in [
+        ("fn take(slot: &(unique(usize) | shape(unique(usize)))) -> unique(usize) where typeof(*slot) == unique(usize) {*slot} fn main() {}", "effect contract"),
+        ("fn main() {let slot: unique(usize) | shape(unique(usize)) = alloc(42); let view = &slot; let first: unique(usize) = *view; let second: unique(usize) = *view; let retired: shape(unique(usize)) = slot;}", "active raw union member"),
+        ("fn main() {let slot: unique(usize) | shape(unique(usize)) = alloc(42); let view = &slot; proof assumed: typeof(*view) == unique(usize) by {trustme}; let first: unique(usize) = *view; let second: unique(usize) = *view; let retired: shape(unique(usize)) = slot;}", "active raw union member"),
+        ("fn main() -> usize {let slot: unique(usize) | shape(unique(usize)) = alloc(42); let view = &slot; let payload = &**view; let value: unique(usize) = *view; let retired: shape(unique(usize)) = slot; drop(value); *payload}", "type never"),
+        ("type Holder struct {data: unique(usize)} fn main() {let holder = Holder {data: alloc(42)}; let alias: shared(usize) = holder.data;}", "partial-initialization tracking"),
+    ] {
+        let error = verify(source).unwrap_err();
+        assert!(error.contains(diagnostic), "{error}\n{source}");
+    }
+    let dependent = "type Slot struct {present: bool, data: unique(usize) | shape(unique(usize))} where present == (typeof(data) == unique(usize)); fn main() {let slot = Slot {present: true, data: alloc(42)}; let value: unique(usize) = slot.data; let Slot {present, data} = slot; let retired: shape(unique(usize)) = data;}";
+    assert!(
+        verify(dependent).is_err(),
+        "extraction forgot its enclosing invariant"
+    );
+}
+
+#[test]
+fn moving_a_union_resource_runs_its_destructor_once() {
+    let source = "type Item struct {data: unique(usize)} impl Drop for Item {fn drop(self) {}} fn main() -> usize {let slot: Item | shape(Item) = Item {data: alloc(42)}; let view = &slot; let value: Item = *view; let retired: shape(Item) = slot; *value.data}";
+    let program = verify(source).unwrap();
+    let (value, events) = program.run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert_eq!(events, ["drop Item"]);
+}
+
+#[test]
+fn conditional_union_extraction_consumes_only_the_selected_member() {
+    let source = "fn choose(flag: bool) -> usize {let left: unique(usize) | shape(unique(usize)) = alloc(42); let right: unique(usize) | shape(unique(usize)) = alloc(7); let selected = if flag {&left} else {&right}; let value: unique(usize) = *selected; if flag {let empty: shape(unique(usize)) = left; let remaining: unique(usize) = right;} else {let remaining: unique(usize) = left; let empty: shape(unique(usize)) = right;}; *value} fn main() -> usize {choose(true) + choose(false) - 7}";
+    let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+}
+
+#[test]
 fn raw_union_shape_storage_can_be_initialized_without_cleanup() {
     for source in [
         include_str!("../../../../examples/slot_initialization.evg"),

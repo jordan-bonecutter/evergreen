@@ -1,0 +1,26 @@
+fn take<T>(slot: &(T | shape(T))) -> T
+where typeof(*slot) == T
+modifies(slot)
+ensures typeof(*slot) == shape(T) {
+    // Explicit move also consumes a Copy member. Its shape stays in the slot.
+    move(*slot)
+}
+
+fn initialize<T>(slot: &(T | shape(T)), value: T)
+where typeof(*slot) == shape(T)
+modifies(slot)
+ensures typeof(*slot) == T {
+    *slot = value;
+}
+
+fn main() -> usize {
+    let slot: unique(usize) | shape(unique(usize)) = alloc(7);
+    let view = &slot;
+    let first = take::<unique(usize)>(view);
+    proof empty: typeof(*view) == shape(unique(usize));
+    initialize::<unique(usize)>(view, alloc(42));
+    let second = take::<unique(usize)>(view);
+    // Explicitly eliminate the remaining raw union as its active shape.
+    let retired: shape(unique(usize)) = slot;
+    *second
+}
