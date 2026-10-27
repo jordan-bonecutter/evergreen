@@ -145,6 +145,7 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/utf8_view.evg"),
         include_str!("../../../examples/buffer_copy.evg"),
         include_str!("../../../examples/while_termination.evg"),
+        include_str!("../../../examples/loop.evg"),
         include_str!("../../../examples/owning_references.evg"),
         "type Resource struct {value: usize} where value == 42; impl Drop for Resource {fn drop(self) {proof valid: self.value == 42;}} fn main() -> usize {let unique: plane(Resource) = alloc(Resource {value: 42}); let first = share_owner(unique); let second = duplicate_owner(&first); release_owner(first); second.value}",
         "fn duplicate(value: &owner(usize)) -> owner(usize) ensures owners(result) == old(owners(value)) + 1 {duplicate_owner(value)} fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate(&first); release_owner(first); *second}",
