@@ -5,6 +5,13 @@ fn consume(value: plane(usize)) -> usize {
     n
 }
 fn empty(value: shape(plane(usize))) -> usize {0}
+
+fn read(value: &(plane(usize) | shape(plane(usize)))) -> usize
+    where typeof(*value) == plane(usize)
+{
+    **value
+}
+
 fn take(value: plane(usize) | shape(plane(usize)), full: bool) -> usize
     where full == (typeof(value) == plane(usize))
 {
@@ -18,5 +25,8 @@ fn choose(full: bool) -> plane(usize) | shape(plane(usize))
 }
 fn main() -> usize {
     take(choose(false), false);
-    take(choose(true), true)
+    let value = choose(true);
+    let n = read(&value);
+    take(value, true);
+    n
 }

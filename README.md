@@ -16,8 +16,10 @@ Bundled stdlib dependencies load automatically. For byte output, try
 `cargo run -- build examples/hello.evg -o /tmp/hello` and run `/tmp/hello`.
 
 `cargo run -- run examples/raw_union.evg` exercises a source-defined optional
-payload. [Raw-union notes](docs/raw-unions.md) describe active-type proofs and
-the remaining conditional-ownership work for pointer alternatives.
+payload. `examples/raw_union_owner.evg` adds conditional owning pointers, and
+`examples/raw_union_borrow.evg` demonstrates borrowed access and an exchange
+contract using `old()`. [Raw-union notes](docs/raw-unions.md) describe active-type
+proofs and the remaining limitations.
 
 ### Neovim support
 

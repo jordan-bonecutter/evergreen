@@ -471,8 +471,8 @@ impl Emitter<'_> {
             Kind::Constant(t, _) => Some(Type::Machine(*t)),
             Kind::Unary(op, _) if op == "!" => Some(Type::Bool),
             Kind::Unary(op, x) if op == "&" => self.hint(x).map(|t| Type::Ref(Box::new(t))),
-            Kind::Unary(op, x) if op == "*" => match self.hint(x)? {
-                Type::Ref(inner) | Type::Plane(inner) => Some(*inner),
+            Kind::Unary(op, x) if op == "*" => match self.hint(x)?.pointer_member()? {
+                Type::Ref(inner) | Type::Plane(inner) => Some(*inner.clone()),
                 _ => None,
             },
             Kind::Unary(_, x) => self.hint(x),
@@ -515,7 +515,7 @@ impl Emitter<'_> {
                 self.code.extend(offset.to_le_bytes());
                 Ok(ty.clone())
             }
-            Kind::Unary(op, x) if op == "*" => match self.storage_value(x)? {
+            Kind::Unary(op, x) if op == "*" => match self.pointer_operand(x)? {
                 Type::Ref(inner) | Type::Plane(inner) => Ok(*inner),
                 _ => Err("native place dereference requires a reference".into()),
             },
@@ -635,7 +635,7 @@ impl Emitter<'_> {
             }
             Kind::Unary(op, x) if op == "&" => Type::Ref(Box::new(self.address(x)?)),
             Kind::Unary(op, x) if op == "*" => {
-                let inner = match self.storage_value(x)? {
+                let inner = match self.pointer_operand(x)? {
                     Type::Ref(inner) | Type::Plane(inner) => inner,
                     _ => {
                         return Err("native dereference requires a reference or owned plane".into())

@@ -1,0 +1,28 @@
+// Borrow contracts name the active allocation; the union keeps its owner.
+fn view(value: &(plane(usize) | shape(plane(usize)))) -> &usize
+    where typeof(*value) == plane(usize)
+    borrows(&**value)
+{
+    &**value
+}
+fn exchange(value: &(plane(usize) | shape(plane(usize))), n: usize) -> usize
+    where typeof(*value) == plane(usize)
+    modifies(&**value)
+    ensures result == old(**value) && **value == n
+{
+    let previous = **value;
+    **value = n;
+    previous
+}
+fn dispose(value: plane(usize)) {drop(value);}
+fn main() -> usize {
+    let owner: plane(usize) = alloc(7);
+    let data: plane(usize) | shape(plane(usize)) = owner;
+    let before = view(&data);
+    let previous = exchange(&data, 42);
+    proof before_write: previous == 7;
+    let n = *before;
+    proof after_write: n == 42;
+    dispose(data);
+    n
+}

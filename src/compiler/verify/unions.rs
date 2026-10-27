@@ -22,6 +22,22 @@ pub(super) fn type_equal(a: &Ty, b: &Ty) -> Result<Formula> {
     })
 }
 
+impl Ty {
+    pub(super) fn pointer_member(&self) -> Option<&Ty> {
+        match self {
+            Self::Ref(_) | Self::Plane(_) => Some(self),
+            Self::Union(members) => {
+                let mut pointers = members
+                    .iter()
+                    .filter(|ty| matches!(ty, Self::Ref(_) | Self::Plane(_)));
+                let pointer = pointers.next()?;
+                pointers.next().is_none().then_some(pointer)
+            }
+            _ => None,
+        }
+    }
+}
+
 pub(super) fn observations_equal(a: &Symbol, b: &Symbol) -> Result<Formula> {
     let (
         Symbol::Type {
@@ -48,6 +64,16 @@ pub(super) fn observations_equal(a: &Symbol, b: &Symbol) -> Result<Formula> {
 }
 
 impl Context<'_> {
+    // Observing a pointer header to follow it does not move the owner. The
+    // resulting place names its existing allocation, never the union's bytes.
+    pub(super) fn pointer_operand(&mut self, expression: &Expr) -> Result<Symbol> {
+        let value = self.storage(expression)?;
+        let pointer = value.ty().pointer_member().cloned().ok_or_else(|| {
+            format!("line {}: dereference requires a reference, owned plane, or one proved active pointer member", expression.line)
+        })?;
+        self.union_coercion(value, Some(&pointer), expression.line, Some(expression))
+    }
+
     pub(super) fn type_literal(&self, expression: &Expr) -> Option<Ty> {
         match &expression.kind {
             Kind::Unary(op, inner) if op == "&" => {

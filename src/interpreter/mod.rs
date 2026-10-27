@@ -172,13 +172,10 @@ impl Evaluator<'_> {
             Kind::Name(n) => env.get(n).and_then(Value::hint),
             Kind::Record(n, _) => Some(Type::Named(n.clone())),
             Kind::Unary(op, x) if op == "&" => self.hint(x, env).map(|t| Type::Ref(Box::new(t))),
-            Kind::Unary(op, x) if op == "*" => {
-                if let Some(Type::Ref(t) | Type::Plane(t)) = self.hint(x, env) {
-                    Some(*t)
-                } else {
-                    None
-                }
-            }
+            Kind::Unary(op, x) if op == "*" => match self.hint(x, env)?.pointer_member()? {
+                Type::Ref(t) | Type::Plane(t) => Some(*t.clone()),
+                _ => None,
+            },
             Kind::Unary(_, x) => self.hint(x, env),
             Kind::Call(name, _) if MachineInt::parse(name).is_some() => {
                 MachineInt::parse(name).map(Type::Machine)
@@ -959,7 +956,11 @@ impl Evaluator<'_> {
                 Ok((r, p))
             }
             Kind::Unary(op, x) if op == "*" => {
-                let (r, p) = match self.storage(x, env)? {
+                let pointer = match self.storage(x, env)? {
+                    Value::Union(_, payload) => *payload,
+                    value => value,
+                };
+                let (r, p) = match pointer {
                     Value::Ref(_, r, p) => (r, p),
                     Value::Plane(_, r) => (r, Vec::new()),
                     _ => return Err("expected reference or owned plane".into()),

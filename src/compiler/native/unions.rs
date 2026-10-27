@@ -4,6 +4,15 @@
 use super::*;
 
 impl Emitter<'_> {
+    pub(super) fn pointer_operand(&mut self, expression: &Expr) -> Result<Type> {
+        let ty = self.storage_value(expression)?;
+        let pointer = ty
+            .pointer_member()
+            .cloned()
+            .ok_or("native dereference requires an unambiguous pointer member")?;
+        self.union_value(ty, Some(&pointer))
+    }
+
     pub(super) fn zero_storage(&mut self, home: i32, size: usize) {
         self.frame_address(home);
         self.code.extend([0x48, 0x89, 0xc7]); // rdi = destination

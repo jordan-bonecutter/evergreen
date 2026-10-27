@@ -229,13 +229,26 @@ impl Context<'_> {
                 let Some((reference, path)) = self.subject_place(base, depth + 1)? else {
                     return Ok(None);
                 };
-                match self
+                let value = self
                     .storage
                     .memory
                     .read(reference)
                     .ok()
-                    .and_then(|value| project(value, &path).ok())
-                {
+                    .and_then(|value| project(value, &path).ok());
+                // Resolve identity without elaborating a second read. The
+                // operational dereference separately proves this member active.
+                let pointer = match value {
+                    Some(Symbol::Union {
+                        members, payloads, ..
+                    }) => {
+                        let ty = Ty::Union(members.clone());
+                        ty.pointer_member()
+                            .and_then(|pointer| members.iter().position(|ty| ty == pointer))
+                            .and_then(|index| payloads[index].as_ref())
+                    }
+                    other => other,
+                };
+                match pointer {
                     Some(Symbol::Ref(_, reference, path)) => Ok(Some((*reference, path.clone()))),
                     Some(Symbol::Plane(_, reference)) => Ok(Some((*reference, vec![]))),
                     _ => Ok(None),

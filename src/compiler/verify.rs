@@ -660,152 +660,6 @@ impl<'a> Context<'a> {
         Ok(false)
     }
 
-    fn incoming_references(
-        &mut self,
-        function: &Function,
-        strict: bool,
-    ) -> Result<Vec<InputReference>> {
-        fn visit(
-            ctx: &Context<'_>,
-            value: &Symbol,
-            origin: String,
-            mode: (bool, bool),
-            inputs: &mut Vec<InputReference>,
-            work: &mut usize,
-            limit: usize,
-        ) -> Result<()> {
-            let (strict, borrowed) = mode;
-            *work = work.saturating_add(1 + origin.len() / 32);
-            if *work > limit {
-                return Err(
-                    "symbolic value work limit reached while checking incoming references".into(),
-                );
-            }
-            match value {
-                Symbol::Ref(pointee, reference, path) => {
-                    if inputs.len() >= 8192 {
-                        return Err("incoming reference graph limit reached (8192)".into());
-                    }
-                    for step in path {
-                        *work = work.saturating_add(
-                            1 + match step {
-                                Projection::Field(name) => name.len() / 32,
-                                Projection::Index(index) => index.terms.len(),
-                            },
-                        );
-                    }
-                    if *work > limit {
-                        return Err(
-                            "symbolic value work limit reached while checking incoming references"
-                                .into(),
-                        );
-                    }
-                    inputs.push(InputReference {
-                        origin: origin.clone(),
-                        reference: *reference,
-                        path: path.clone(),
-                        pointee: pointee.clone(),
-                    });
-                    let target = project(ctx.storage.memory.read(*reference)?, path)?;
-                    visit(
-                        ctx,
-                        target,
-                        format!("(*{origin})"),
-                        (strict, true),
-                        inputs,
-                        work,
-                        limit,
-                    )?;
-                }
-                Symbol::Plane(pointee, reference) => {
-                    if borrowed {
-                        if inputs.len() >= 8192 {
-                            return Err("incoming reference graph limit reached (8192)".into());
-                        }
-                        inputs.push(InputReference {
-                            origin: origin.clone(),
-                            reference: *reference,
-                            path: Vec::new(),
-                            pointee: pointee.clone(),
-                        });
-                    }
-                    visit(
-                        ctx,
-                        ctx.storage.memory.read(*reference)?,
-                        format!("(*{origin})"),
-                        mode,
-                        inputs,
-                        work,
-                        limit,
-                    )?;
-                }
-                Symbol::Record(_, fields) => {
-                    for (name, value) in fields {
-                        visit(
-                            ctx,
-                            value,
-                            format!("{origin}.{name}"),
-                            mode,
-                            inputs,
-                            work,
-                            limit,
-                        )?;
-                    }
-                }
-                Symbol::Array {
-                    element,
-                    len,
-                    items,
-                    ..
-                } if ctx.ty_has_reference(element) => {
-                    if let Some(items) = items {
-                        for (index, value) in items.iter().enumerate() {
-                            visit(
-                                ctx,
-                                value,
-                                format!("{origin}[{index}]"),
-                                mode,
-                                inputs,
-                                work,
-                                limit,
-                            )?;
-                        }
-                    } else if strict && *len != Linear::number(0) {
-                        return Err(
-                            "write contracts cannot summarize opaque arrays containing references"
-                                .into(),
-                        );
-                    }
-                }
-                _ => {}
-            }
-            Ok(())
-        }
-        let mut inputs = Vec::new();
-        let mut work = 0usize;
-        let remaining = MAX_VALUE_WORK.saturating_sub(self.work.value_work);
-        for (name, _) in &function.params {
-            let value = self
-                .locals
-                .values
-                .get(name)
-                .ok_or("missing input parameter")?;
-            if self.ty_has_reference(&value.ty()) {
-                visit(
-                    self,
-                    value,
-                    name.clone(),
-                    (strict, false),
-                    &mut inputs,
-                    &mut work,
-                    remaining,
-                )?;
-            }
-        }
-        self.charge_value_work(work)?;
-        Ok(inputs)
-    }
-
     fn incoming_place(
         &mut self,
         expression: &Expr,
@@ -2177,7 +2031,7 @@ impl<'a> Context<'a> {
                 Ok((r, path))
             }
             Kind::Unary(op, x) if op == "*" => {
-                let (r, path) = match self.storage(x)? {
+                let (r, path) = match self.pointer_operand(x)? {
                     Symbol::Ref(_, r, path) => (r, path),
                     Symbol::Plane(_, r) => (r, Vec::new()),
                     _ => return Err("dereference requires a reference or owned plane".into()),
@@ -2300,10 +2154,10 @@ impl<'a> Context<'a> {
             Kind::Record(n, _) => Some(Ty::Record(n.clone())),
             Kind::Unary(op, x) if op == "&" => self.hint(x).map(|t| Ty::Ref(Box::new(t))),
             Kind::Unary(op, x) if op == "*" => {
-                if let Some(Ty::Ref(t) | Ty::Plane(t)) = self.hint(x) {
-                    Some(*t)
-                } else {
-                    None
+                let pointer = self.hint(x)?;
+                match pointer.pointer_member()? {
+                    Ty::Ref(t) | Ty::Plane(t) => Some(*t.clone()),
+                    _ => None,
                 }
             }
             Kind::Unary(_, x) => self.hint(x),

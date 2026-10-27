@@ -31,6 +31,74 @@ fn union_members_cannot_duplicate_owners_or_revive_freed_planes() {
 }
 
 #[test]
+fn borrowed_union_dereferences_observe_the_existing_allocation_without_moving_it() {
+    let source = "fn read(value: &(plane(usize) | shape(plane(usize)))) -> usize where typeof(*value) == plane(usize) {**value} fn consume(value: plane(usize)) {drop(value);} fn main() -> usize {let owner: plane(usize) = alloc(42); let data: plane(usize) | shape(plane(usize)) = owner; let n = read(&data); consume(data); n}";
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    assert!(
+        verify(&source.replace("where typeof(*value) == plane(usize)", ""))
+            .unwrap_err()
+            .contains("active raw union member")
+    );
+    let bad_write = "fn bad(value: &(plane(usize) | bool)) where typeof(*value) == plane(usize) {**value = 42;}";
+    assert!(verify(bad_write).unwrap_err().contains("effect contract"));
+    let stale = source
+        .replace("let n = read(&data);", "let view = &**(&data);")
+        .replace("consume(data); n", "consume(data); *view");
+    assert!(verify(&stale).unwrap_err().contains("never"));
+}
+
+#[test]
+fn union_pointer_reads_track_the_pointee_revision_for_admitted_proofs() {
+    let prefix = "fn require42(n: usize) where n == 42 {} fn dispose(value: plane(usize)) {drop(value);} fn main() -> usize {let owner: plane(usize) = alloc(43); let data: plane(usize) | shape(plane(usize)) = owner; let view = &data; proof assumed: **view == 42 by {trustme}; require42(**view);";
+    let good = format!("{prefix} dispose(data); 42}}");
+    let (program, bundle) = prove(&good).unwrap();
+    assert_eq!(
+        program.function_safety_assumptions("main").unwrap().count(),
+        1
+    );
+    assert_eq!(
+        verify_with_certificate(&good, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let bad = format!("{prefix} **view = 44; require42(**view); dispose(data); 42}}");
+    assert!(verify(&bad)
+        .unwrap_err()
+        .contains("precondition of require42"));
+}
+
+#[test]
+fn active_union_borrow_ports_check_reference_results_and_write_permissions() {
+    let source = include_str!("../../../../examples/raw_union_borrow.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    for invalid in [
+        source.replace("modifies(&**value)", ""),
+        source.replace("borrows(&**value)", "borrows(value)"),
+        source.replace("let n = *before;", "dispose(data); let n = *before;"),
+        "fn leak(value: plane(usize) | bool) -> &usize where typeof(value) == plane(usize) borrows(&*value) {&*value}".into(),
+    ] {
+        assert!(verify(&invalid).is_err(), "accepted {invalid}");
+    }
+}
+
+#[test]
 fn checked_union_injection_and_extraction_use_active_member_evidence() {
     let source = "fn extract(value: usize | bool) -> usize where typeof(value) == usize {let number: usize = value; number} fn main() -> usize {extract(42)}";
     let (program, bundle) = prove(source).unwrap();
@@ -227,4 +295,23 @@ fn enclosing_drop_eliminates_its_raw_union_with_source_code() {
     assert!(verify(&incomplete)
         .unwrap_err()
         .contains("cannot be dropped implicitly"));
+}
+
+#[test]
+fn exclusive_members_can_carry_the_same_owner_without_duplicating_it() {
+    let source = include_str!("../../../../examples/raw_union_owner_paths.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let stale = source.replace(
+        "*view = 42;",
+        "let n = if flag {consume_left(data)} else {consume_right(data)}; *view = 42;",
+    );
+    assert!(verify(&stale).unwrap_err().contains("never"));
 }

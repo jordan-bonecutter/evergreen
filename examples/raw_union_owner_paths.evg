@@ -1,0 +1,13 @@
+// Both alternatives retain the same unique owner. Their footprints are exclusive.
+type Left struct {owner: plane(usize)};
+type Right struct {owner: plane(usize)};
+fn consume_left(value: Left) -> usize {*value.owner}
+fn consume_right(value: Right) -> usize {*value.owner}
+fn choose(flag: bool) -> usize {
+    let owner: plane(usize) = alloc(7);
+    let view = &*owner;
+    let data: Left | Right = if flag {Left {owner: owner}} else {Right {owner: owner}};
+    *view = 42;
+    if flag {consume_left(data)} else {consume_right(data)}
+}
+fn main() -> usize {if choose(true) == 42 {choose(false)} else {1}}

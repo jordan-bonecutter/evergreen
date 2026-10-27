@@ -64,11 +64,27 @@ justify discarding their counterfactual storage at a branch join. Actual moves
 and releases still invalidate handles through the generation-checked plane store.
 Allocation identities remain distinct across branch snapshots.
 
+References to an owning union cannot move its owner out. If a union has exactly
+one pointer member,
+a dereference can follow it after proving that member active. This observes
+the existing pointer header without transferring ownership or inventing a plane.
+`examples/raw_union_borrow.evg` returns a view into the active allocation and
+updates it through a declared write footprint. Its exchange contract uses
+`old(**value)` to describe the pre-write value; existing aliases observe the
+new value. Borrow and write ports are collected only for checked active members.
+Proof subjects follow the existing pointee plane, so writes invalidate proofs
+about that data while preserving independent active-type facts.
+
+`examples/raw_union_owner_paths.evg` moves one unique owner into either of two
+record members. Its combined footprint permits writes through an existing view
+because both exclusive alternatives own the same allocation. Eliminating the
+union releases that allocation once and invalidates the view.
+
 Borrowed-reference members remain rejected until return-plane contracts and
-conditional borrow footprints describe their provenance. References to an owning
-union cannot move its owner out. Joining two different allocations in the same
-member, general member replacement through a borrowed union, partial initialization
-of enclosing records, dynamic array member interpretation, and generic Option
-remain work in progress. Member cases are bounded and currently elaborated eagerly; deferred
-member constraints are also pending. `Option`, Vec, Rc, and Arc remain ordinary
-library code built on the eventual generic rules.
+conditional borrow footprints describe their provenance. Joining two different
+allocations in the same member, general member replacement through a borrowed
+union, partial initialization of enclosing records, dynamic array member
+interpretation, and generic Option remain work in progress. Member cases are
+bounded and currently elaborated eagerly; deferred member constraints are also
+pending. `Option`, Vec, Rc, and Arc remain ordinary library code built on the
+eventual generic rules.

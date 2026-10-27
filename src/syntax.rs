@@ -68,6 +68,22 @@ pub enum Type {
 }
 
 impl Type {
+    /// A pointer-shaped union is unambiguous only with one pointer member.
+    /// This selects a type for elaboration; the checker must prove it active.
+    pub(crate) fn pointer_member(&self) -> Option<&Type> {
+        match self {
+            Self::Ref(_) | Self::Plane(_) => Some(self),
+            Self::Union(members) => {
+                let mut pointers = members
+                    .iter()
+                    .filter(|ty| matches!(ty, Self::Ref(_) | Self::Plane(_)));
+                let pointer = pointers.next()?;
+                pointers.next().is_none().then_some(pointer)
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn literal_numeric_member(&self) -> Option<&Type> {
         let Self::Union(members) = self else {
             return Some(self);

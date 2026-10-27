@@ -138,3 +138,178 @@ impl Context<'_> {
         Ok(())
     }
 }
+
+impl Context<'_> {
+    pub(super) fn incoming_references(
+        &mut self,
+        function: &Function,
+        strict: bool,
+    ) -> Result<Vec<InputReference>> {
+        fn visit(
+            ctx: &mut Context<'_>,
+            value: &Symbol,
+            origin: String,
+            mode: (bool, bool),
+            inputs: &mut Vec<InputReference>,
+            work: &mut usize,
+            limit: usize,
+        ) -> Result<()> {
+            let (strict, borrowed) = mode;
+            *work = work.saturating_add(1 + origin.len() / 32);
+            if *work > limit {
+                return Err(
+                    "symbolic value work limit reached while checking incoming references".into(),
+                );
+            }
+            match value {
+                Symbol::Ref(pointee, reference, path) => {
+                    if inputs.len() >= 8192 {
+                        return Err("incoming reference graph limit reached (8192)".into());
+                    }
+                    for step in path {
+                        *work = work.saturating_add(
+                            1 + match step {
+                                Projection::Field(name) => name.len() / 32,
+                                Projection::Index(index) => index.terms.len(),
+                            },
+                        );
+                    }
+                    if *work > limit {
+                        return Err(
+                            "symbolic value work limit reached while checking incoming references"
+                                .into(),
+                        );
+                    }
+                    inputs.push(InputReference {
+                        origin: origin.clone(),
+                        reference: *reference,
+                        path: path.clone(),
+                        pointee: pointee.clone(),
+                    });
+                    let target = project(ctx.storage.memory.read(*reference)?, path)?;
+                    *work = work.saturating_add(symbol_weight(target)?);
+                    let target = target.clone();
+                    visit(
+                        ctx,
+                        &target,
+                        format!("(*{origin})"),
+                        (strict, true),
+                        inputs,
+                        work,
+                        limit,
+                    )?;
+                }
+                Symbol::Plane(pointee, reference) => {
+                    if borrowed {
+                        if inputs.len() >= 8192 {
+                            return Err("incoming reference graph limit reached (8192)".into());
+                        }
+                        inputs.push(InputReference {
+                            origin: origin.clone(),
+                            reference: *reference,
+                            path: Vec::new(),
+                            pointee: pointee.clone(),
+                        });
+                    }
+                    let target = ctx.storage.memory.read(*reference)?;
+                    *work = work.saturating_add(symbol_weight(target)?);
+                    let target = target.clone();
+                    visit(
+                        ctx,
+                        &target,
+                        format!("(*{origin})"),
+                        mode,
+                        inputs,
+                        work,
+                        limit,
+                    )?;
+                }
+                Symbol::Union {
+                    active, payloads, ..
+                } if borrowed => {
+                    for (index, payload) in payloads.iter().enumerate() {
+                        let Some(payload) = payload else {
+                            continue;
+                        };
+                        if !ctx.ty_has_reference(&payload.ty()) {
+                            continue;
+                        }
+                        let guard = equal(active, &Linear::number(index as i128))?;
+                        // A pointer port exists only in its checked active case.
+                        // An undecided union is still rechecked with actual storage
+                        // at calls; it cannot grant a conditional write contract.
+                        if ctx.checked_entails(&guard)? {
+                            visit(ctx, payload, origin.clone(), mode, inputs, work, limit)?;
+                        }
+                    }
+                }
+                Symbol::Record(_, fields) => {
+                    for (name, value) in fields {
+                        visit(
+                            ctx,
+                            value,
+                            format!("{origin}.{name}"),
+                            mode,
+                            inputs,
+                            work,
+                            limit,
+                        )?;
+                    }
+                }
+                Symbol::Array {
+                    element,
+                    len,
+                    items,
+                    ..
+                } if ctx.ty_has_reference(element) => {
+                    if let Some(items) = items {
+                        for (index, value) in items.iter().enumerate() {
+                            visit(
+                                ctx,
+                                value,
+                                format!("{origin}[{index}]"),
+                                mode,
+                                inputs,
+                                work,
+                                limit,
+                            )?;
+                        }
+                    } else if strict && *len != Linear::number(0) {
+                        return Err(
+                            "write contracts cannot summarize opaque arrays containing references"
+                                .into(),
+                        );
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        let mut inputs = Vec::new();
+        let mut work = 0usize;
+        let remaining = MAX_VALUE_WORK.saturating_sub(self.work.value_work);
+        for (name, _) in &function.params {
+            let value = self
+                .locals
+                .values
+                .get(name)
+                .ok_or("missing input parameter")?;
+            let weight = symbol_weight(value)?;
+            let value = value.clone();
+            work = work.saturating_add(weight);
+            if self.ty_has_reference(&value.ty()) {
+                visit(
+                    self,
+                    &value,
+                    name.clone(),
+                    (strict, false),
+                    &mut inputs,
+                    &mut work,
+                    remaining,
+                )?;
+            }
+        }
+        self.charge_value_work(work)?;
+        Ok(inputs)
+    }
+}
