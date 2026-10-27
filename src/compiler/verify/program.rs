@@ -273,17 +273,7 @@ impl Verification {
         if f.decreases.is_some() || f.partial {
             self.functions.insert(f.name.clone(), f.clone());
         }
-        let (obligations, partial, summary) = {
-            let mut ctx = Context::new(self.declarations(), session);
-            ctx.enter_function(f)?;
-            ctx.check_declaration_body(f)?;
-            let summary = ctx.declaration_summary()?;
-            (
-                ctx.work.obligations,
-                ctx.execution.partial_execution,
-                summary,
-            )
-        };
+        let (obligations, partial, summary) = cases::check(f, self.declarations(), session)?;
         self.summaries.insert(f.name.clone(), summary);
         self.obligations += obligations;
         f.partial = partial;
@@ -321,7 +311,7 @@ impl Verification {
 }
 
 impl Context<'_> {
-    fn enter_function(&mut self, f: &Function) -> Result<()> {
+    pub(super) fn enter_function(&mut self, f: &Function) -> Result<()> {
         self.locals.module = f.module.clone();
         self.execution.ideal_execution = f.ideal;
         self.execution.partial_execution = f.partial;
@@ -345,7 +335,7 @@ impl Context<'_> {
         Ok(())
     }
 
-    fn check_declaration_body(&mut self, f: &Function) -> Result<()> {
+    pub(super) fn check_declaration_body(&mut self, f: &Function) -> Result<()> {
         let inputs = if f.modifies.is_empty() && f.borrows.is_empty() {
             Vec::new()
         } else {

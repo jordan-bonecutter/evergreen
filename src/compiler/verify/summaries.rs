@@ -35,9 +35,30 @@ impl Context<'_> {
         Ok(out)
     }
 
-    pub(super) fn declaration_summary(&mut self) -> Result<Summary> {
-        let safety = self.roots_dependencies(&self.proof.uses.clone())?;
-        let contract = self.roots_dependencies(&self.proof.contract_uses.clone())?;
+    pub(super) fn declaration_requirements(&mut self) -> Result<Requirements> {
+        Ok(Requirements {
+            safety: self.roots_dependencies(&self.proof.uses.clone())?,
+            contract: self.roots_dependencies(&self.proof.contract_uses.clone())?,
+        })
+    }
+}
+
+#[derive(Default)]
+pub(super) struct Requirements {
+    safety: Dependencies,
+    contract: Dependencies,
+}
+
+impl Requirements {
+    pub(super) fn extend(&mut self, other: Self) {
+        self.safety.trusts.extend(other.safety.trusts);
+        self.safety.recursive.extend(other.safety.recursive);
+        self.contract.trusts.extend(other.contract.trusts);
+        self.contract.recursive.extend(other.contract.recursive);
+    }
+
+    pub(super) fn summary(self) -> Summary {
+        let Self { safety, contract } = self;
         let mut summary = Summary {
             safety: safety.trusts,
             contract: contract.trusts,
@@ -55,9 +76,11 @@ impl Context<'_> {
                 break;
             }
         }
-        Ok(summary)
+        summary
     }
+}
 
+impl Context<'_> {
     pub(super) fn import_summary(
         &mut self,
         name: &str,

@@ -20,6 +20,7 @@ pub(crate) mod array_model;
 mod blocks;
 mod bodies;
 mod calls;
+mod cases;
 mod cleanup;
 mod cleanup_summaries;
 mod conditionals;
@@ -61,7 +62,7 @@ mod validation;
 mod value_evidence;
 mod write_contracts;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum Ty {
     Int,
     Nat,
@@ -2843,9 +2844,7 @@ impl<'a> Context<'a> {
                 self.read_array(&element, &identity, &index, items.as_deref(), &cells)
             }
             Kind::Call(name, args) => self.eval_call(name, args, expected, e.line),
-            Kind::If(condition, yes, no) => {
-                self.eval_conditional(condition, yes, no, expected, e.line)
-            }
+            Kind::If(condition, yes, no) => self.eval_conditional(e, condition, yes, no, expected),
             Kind::Block(body, tail) => self.eval_block(body, tail, expected, e.line),
         }
     }

@@ -1456,16 +1456,20 @@ ordinary allocation-backed claims. `clone` increments the source counter and
 returns a checked unpublished credit before publishing another handle.
 `release_nonfinal` decrements the counter and releases one claim; `release_last`
 recovers and frees the unique plane. The compiler recognizes no Rc algorithm.
-`examples/rc.evg` runs and builds without admissions. Release is explicit when
-shared; automatic conditional final release, generic payloads, and Arc remain
-unfinished. See [source Rc](rc.md) for the proof boundary and limitations.
+The source `Drop` implementation automatically selects final or nonfinal release
+on scope exit, including in helpers with an unknown number of caller handles.
+Its conditional postcondition proves the surviving counter and claim total each
+decreased by one. `examples/rc_drop.evg` runs and builds without admissions.
+Generic payloads and Arc remain unfinished. See [source Rc](rc.md) for the proof
+boundary and limitations.
 
 Ownership effects in `if`/Boolean `match` can reconverge when both arms leave the
 same live tokens and symbolic owner totals. Census revisions remain fresh after
 count-preserving round trips. Equal counts never substitute for matching token
-identities. Different live tokens or allocation lifetimes still need guarded
-resource-state joins and are rejected. `examples/conditional_ownership.evg`
-demonstrates a source Rc release in both match arms.
+identities. Different tokens or allocation lifetimes use separate
+[resource case proofs](resource-cases.md) for the complete remaining continuation.
+`examples/conditional_ownership.evg` demonstrates a source Rc release in both
+match arms.
 
 `examples/opaque_values.evg` demonstrates runtime opaque values, public facts,
 and checked accessors; it runs and builds natively. Module-qualified programs

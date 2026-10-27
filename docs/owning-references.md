@@ -44,10 +44,9 @@ recovery move pointer words; duplication reads the borrowed pointer; releasing a
 nonfinal claim emits no counter update. Any runtime counter and its proof belong
 in an Evergreen library. The interpreter independently checks live token IDs.
 
-This is the initial sequential capability layer. Conditional changes that need
-guarded token joins, ownership transitions in loops, and transitions while
-representation facts are lifted remain unsupported. They are rejected rather
-than approximated by a count of local bindings. These capabilities are an
+This is the initial sequential capability layer. Ownership transitions in loops
+and transitions while representation facts are lifted remain unsupported.
+They are rejected rather than approximated by a count of local bindings. These capabilities are an
 experimental ownership layer. Arc additionally needs atomic resource
 transitions and interference rules. No concurrent shared-ownership claim is made.
 The frontend's resource transitions and machine-code erasure remain trusted
@@ -58,9 +57,10 @@ live token set and symbolic total for each preexisting allocation. For example,
 both arms may release the same nonfinal claim, or both may recover and destroy
 the same unique allocation. A temporary duplication/release on just one arm can
 also reconverge, but its old census evidence expires at the join. Equal counts
-with different live tokens still fail; no token identity is invented. Different
-allocation lifetimes, such as final release on one arm and nonfinal release on
-the other, remain unsupported. See
+with different live tokens cannot be merged. Different tokens or allocation
+lifetimes instead use [resource case proofs](resource-cases.md), checking the
+complete remaining continuation separately in each state. No token identity or
+live allocation is invented. See
 [`conditional_ownership.evg`](../examples/conditional_ownership.evg).
 
 [`owning_references.evg`](../examples/owning_references.evg) runs in the interpreter
@@ -69,9 +69,9 @@ allocation-backed, move-only credits. `allocation_credits::Credit` now wraps rea
 generic lifetime claims in an opaque source API for duplication, merging, payload
 borrowing, and unique recovery. The earlier arithmetic credit libraries still
 grant no allocation authority. The [source Rc](rc.md) now couples these claims
-to a checked runtime counter, with explicit final/nonfinal release and a `usize`
-payload. General automatic release still requires conditional resource-state
-joins. See [allocation-backed credits](allocation-credits.md).
+to a checked runtime counter, an automatic source destructor, and a `usize`
+payload. General payload types and concurrent ownership still need work.
+See [allocation-backed credits](allocation-credits.md).
 Invariant lifting remains a separate general language facility.
 
 ## Reference contracts: intended direction

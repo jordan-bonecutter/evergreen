@@ -43,9 +43,10 @@ it does not implement fractional splitting of those arithmetic budgets.
 
 This library is a lifetime-capability layer without a runtime counter.
 The separate [source Rc](rc.md) now combines allocation-backed credits with
-checked runtime count updates and explicit final/nonfinal release. Automatic
-release, conditional resource-state joins, and general payload types still need
-work. Arc additionally requires atomic transitions and interference rules.
+checked runtime count updates and a source destructor that automatically selects
+final or nonfinal release. General payload types and fractional credit splitting
+still need work. Arc additionally requires atomic transitions and interference
+rules.
 
 Run the complete example with:
 

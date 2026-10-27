@@ -26,9 +26,7 @@ fn conditional_owner_transitions_do_not_preserve_admissions_or_invent_tokens() {
         assert!(error.contains("unique owner recovery"), "{error}");
     }
     for source in [
-        "fn bad(value: &owner(usize), flag: bool) -> owner(usize) {if flag {duplicate_owner(value)} else {duplicate_owner(value)}}",
         "fn bad(first: owner(usize), second: owner(usize), flag: bool) where owners(first) > 1 && owners(second) > 1 {if flag {release_owner(first);} else {release_owner(second);}}",
-        "fn bad(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {drop(value);} else {}}",
         "fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate_owner(&first); if true {release_owner(second);} else {release_owner(second);} *second}",
         "fn main() -> usize {let unique: plane(usize) = alloc(42); let value = share_owner(unique); let view = &*value; if true {drop(value);} else {drop(value);} *view}",
     ] {
@@ -120,7 +118,6 @@ fn source_rc_lifetimes_keep_payload_and_handle_planes_distinct() {
     for source in [
         "fn main() {let first = rc::new(42); let second = first.clone(); first.release_last();}",
         "fn main() {let first = rc::new(42); first.release_nonfinal();}",
-        "fn main() {let first = rc::new(42); let second = first.clone();}",
         "fn main() -> usize {let first = rc::new(42); let view = first.value(); first.release_last(); *view}",
         "fn main() -> usize {let first = rc::new(42); let second = first.clone(); let handle = &first; first.release_nonfinal(); handle.strong_count()}",
         "fn main() {let first = rc::new(42); let moved = first; first.strong_count();}",

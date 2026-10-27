@@ -1,6 +1,6 @@
 // Sequential counted ownership for a usize payload. Counter operations and
 // the clone/release protocol are source code, not compiler-recognized behavior.
-// Final/nonfinal release are explicit until conditional resource joins exist.
+// Final/nonfinal release is selected by the checked source destructor.
 module rc;
 
 opaque type Data struct {count: usize, value: usize}
@@ -37,6 +37,24 @@ ensures owners(result.data) == old(owners(allocation)) + 1
 fn publish(credit: Credit) -> Rc {
     let Credit {data} = credit;
     Rc {data: data}
+}
+
+impl Drop for Rc {
+    fn drop(self)
+    ensures if old(self.data.count) > 1 {
+        nat((*old(self.data)).count) + 1 == nat(old(self.data.count))
+            && owners(old(self.data)) + 1 == old(owners(self.data))
+            && (*old(self.data)).value == old(self.data.value)
+    } else {true} {
+        let Self {data} = self;
+        if data.count == 1 {
+            let allocation = recover_owner(data);
+            drop(allocation);
+        } else {
+            data.count = data.count - 1;
+            release_owner(data);
+        }
+    }
 }
 
 impl Rc {

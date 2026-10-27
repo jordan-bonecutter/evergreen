@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 pub type ArithmeticResult<T> = Result<T, String>;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Linear {
     pub constant: i128,
     pub terms: BTreeMap<String, i128>,

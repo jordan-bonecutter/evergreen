@@ -34,22 +34,27 @@ fn array_join_path(a: &[Projection<Linear>], b: &[Projection<Linear>]) -> bool {
 impl Context<'_> {
     pub(super) fn eval_conditional(
         &mut self,
+        expression: &Expr,
         condition: &Expr,
         yes: &Expr,
         no: &Expr,
         expected: Option<&Ty>,
-        line: usize,
     ) -> Result<Symbol> {
+        let separate = self.separate_cases();
         let p = self
             .scoped_eval(condition, Some(&Ty::Bool))?
             .proposition()?;
-        self.eval_guarded(
+        let value = self.eval_guarded(
             p,
             expected,
-            line,
+            expression.line,
             |context, hint| context.scoped_eval(yes, hint),
             |context, hint| context.scoped_eval(no, hint),
-        )
+        )?;
+        if separate {
+            self.record_source_case_result(expression, expected, &value)?;
+        }
+        Ok(value)
     }
 
     // Source branches and guarded memory operations use the same state fork,
@@ -67,10 +72,24 @@ impl Context<'_> {
         Yes: FnOnce(&mut Self, Option<&Ty>) -> Result<Symbol>,
         No: FnOnce(&mut Self, Option<&Ty>) -> Result<Symbol>,
     {
+        if self.separate_cases() {
+            let key = self.case_key();
+            let selected = self.select_case(&p, line)?;
+            let value = if selected {
+                yes(self, expected)?
+            } else {
+                no(self, expected)?
+            };
+            self.record_case_result(key, &value)?;
+            return Ok(value);
+        }
         // The declaration already checked both branches. A body recheck can
         // follow an actual, admission-free decision without manufacturing the
         // allocations or ownership states of an unreachable branch.
-        if self.execution.rechecking != 0 || self.execution.cleanup_depth != 0 {
+        if self.execution.rechecking != 0
+            || self.execution.cleanup_depth != 0
+            || self.specification_case()
+        {
             if self.checked_entails(&p)? {
                 return yes(self, expected);
             }
@@ -139,13 +158,17 @@ impl Context<'_> {
         self.locals.places = roots;
         self.restore_branch_view(&store)?;
         if a_store.censuses != b_store.censuses {
-            return Err(
+            return self.resource_join_error(
                 "conditional owner totals differ; guarded census joins are not implemented".into(),
             );
         }
-        self.storage
-            .memory
-            .join_ownership(&store.memory, &a_store.memory, &b_store.memory)?;
+        if let Err(error) =
+            self.storage
+                .memory
+                .join_ownership(&store.memory, &a_store.memory, &b_store.memory)
+        {
+            return self.resource_join_error(error);
+        }
         self.censuses = a_store.censuses.clone();
         self.proof
             .subjects
@@ -179,7 +202,9 @@ impl Context<'_> {
                 }
             }
             if ag != bg {
-                return Err("conditional branches have different ownership or storage generations; conditional shapes are not implemented".into());
+                return self.resource_join_error(
+                    "conditional branches have different ownership or storage generations".into(),
+                );
             }
             match (av, bv) {
                 (Some(av), Some(bv)) if *ag == generation => {
@@ -204,7 +229,7 @@ impl Context<'_> {
                     }
                 }
                 _ => {
-                    return Err(
+                    return self.resource_join_error(
                         "conditional branches must leave the same live bindings and storage layout"
                             .into(),
                     )
@@ -222,7 +247,16 @@ impl Context<'_> {
                 self.locals.values.insert(name.clone(), value.clone());
             }
         }
-        let (result, left, right) = self.join_value(&a, &b, &mut views, line)?;
+        let (result, left, right) = match self.join_value(&a, &b, &mut views, line) {
+            Ok(joined) => joined,
+            Err(error)
+                if a.ty() == b.ty()
+                    && (self.has_runtime_cleanup(&a.ty()) || self.ty_has_reference(&a.ty())) =>
+            {
+                return self.resource_join_error(error);
+            }
+            Err(error) => return Err(error),
+        };
         let relation_a = state_a.and(left);
         let relation_b = state_b.and(right);
         let mut paths = extend(

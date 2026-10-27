@@ -12,7 +12,7 @@ mod functions;
 mod matches;
 mod statements;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MachineInt {
     pub signed: bool,
     pub bits: u8,
@@ -54,7 +54,7 @@ impl MachineInt {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
     Int,
     Nat,
@@ -111,7 +111,7 @@ impl Type {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Expr {
     pub kind: Kind,
     pub line: usize,
@@ -197,7 +197,7 @@ impl Expr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Kind {
     Bytes(Vec<u8>),
     Number(i128),
@@ -217,7 +217,7 @@ pub enum Kind {
     FactAt(Box<Expr>, String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Statement {
     Ideal(Box<Statement>),
     Destructure {

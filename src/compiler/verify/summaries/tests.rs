@@ -2,6 +2,22 @@
 
 use super::*;
 
+#[test]
+fn recursive_contract_dependencies_close_after_all_cases_are_combined() {
+    let mut session = Session::recording();
+    let trust = session
+        .trust(&[], b"case contract", 1, "case contract")
+        .unwrap();
+    let mut recursive_case = Requirements::default();
+    recursive_case.safety.recursive.insert(Aspect::Contract);
+    let mut admitted_case = Requirements::default();
+    admitted_case.contract.trusts.insert(trust);
+    recursive_case.extend(admitted_case);
+    let summary = recursive_case.summary();
+    assert_eq!(summary.safety, BTreeSet::from([trust]));
+    assert_eq!(summary.contract, BTreeSet::from([trust]));
+}
+
 fn safety(program: &VerifiedProgram, name: &str) -> Vec<String> {
     program
         .function_safety_assumptions(name)

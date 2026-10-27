@@ -33,6 +33,16 @@ fn native_rejects_unsupported_layouts_and_entry_assumptions() {
 }
 
 #[test]
+fn native_rejects_path_dependent_local_cleanup_until_it_has_drop_flags() {
+    let source = "fn consume(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {drop(value);} else {}} fn main() -> usize {let unique: plane(usize) = alloc(7); consume(share_owner(unique), false); 42}";
+    let program = verify(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(emit(&program)
+        .unwrap_err()
+        .contains("conditional ownership states differ"));
+}
+
+#[test]
 fn native_stack_bound_includes_the_call_tree() {
     let mut source = String::new();
     for index in 0..34 {
@@ -161,6 +171,10 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/owning_references.evg"),
         include_str!("../../../examples/allocation_credits.evg"),
         include_str!("../../../examples/rc.evg"),
+        include_str!("../../../examples/rc_drop.evg"),
+        "fn main() -> usize {let first = rc::new(42); let group = [first.clone(), first.clone()]; drop(group); if first.strong_count() == 1 {*first.value()} else {1}}",
+        "fn replace(value: rc::Rc) -> rc::Rc where value.strong_count() < usize::MAX {let next = value.clone(); next} fn main() -> usize {let first = rc::new(42); let view = first.value(); let second = replace(first); if second.strong_count() == 1 {*view} else {1}}",
+        "fn duplicate(value: &owner(usize), flag: bool) -> owner(usize) {if flag {duplicate_owner(value)} else {duplicate_owner(value)}} fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate(&first, false); release_owner(second); *first}",
         include_str!("../../../examples/conditional_ownership.evg"),
         "fn release(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {let unique = recover_owner(value); drop(unique);} else {let unique = recover_owner(value); drop(unique);}} fn main() -> usize {let unique: plane(usize) = alloc(7); let value = share_owner(unique); release(value, false); 42}",
         "fn main() -> usize {let items = [rc::new(42)]; let view = items[0].value(); let second = items[0].clone(); second.release_nonfinal(); *view}",

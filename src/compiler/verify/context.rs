@@ -3,6 +3,7 @@
 
 use super::*;
 
+#[derive(Clone, Copy)]
 pub(super) struct Declarations<'a> {
     pub(super) summaries: &'a BTreeMap<String, summaries::Summary>,
     pub(super) functions: &'a BTreeMap<String, Function>,
@@ -123,6 +124,7 @@ pub(super) struct Context<'a> {
     pub(super) applications: ideal::Applications,
     pub(super) censuses: BTreeMap<Reference, Linear>,
     pub(super) work: Work,
+    pub(super) cases: cases::Trace,
     pub(super) session: &'a mut Session,
 }
 
@@ -142,6 +144,7 @@ impl<'a> Context<'a> {
             applications: ideal::Applications::default(),
             censuses: BTreeMap::new(),
             work: Work::default(),
+            cases: cases::Trace::default(),
             session,
         }
     }
