@@ -19,7 +19,20 @@ pub fn run() -> Result<(), String> {
     let source = loaded.source;
     match &cli.command {
         Action::Build { output, proof, .. } => {
-            build(&source, &files, output, proof.as_deref(), cli.deny_trust)
+            let destination = match output {
+                Some(path) => path.clone(),
+                None => files
+                    .last()
+                    .ok_or("no source file for default output")?
+                    .with_extension(""),
+            };
+            build(
+                &source,
+                &files,
+                &destination,
+                proof.as_deref(),
+                cli.deny_trust,
+            )
         }
         Action::Check { proof, .. } => check(&source, &files, proof.as_deref(), cli.deny_trust),
         Action::Prove { output, .. } => prove(&source, &files, output, cli.deny_trust),

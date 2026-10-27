@@ -8,7 +8,9 @@ the current trust boundary. The remainder of this README is the original
 language design sketch; not all of it is implemented yet.
 
 `cargo run -- --deny-trust build examples/native.evg -o /tmp/answer` builds a
-standalone Linux x86-64 executable for the supported verified subset.
+standalone Linux x86-64 executable for the supported verified subset. Without
+`-o`, the output uses the last source file's path without `.evg`, so
+`cargo run -- build examples/native.evg` produces `examples/native`.
 
 Bundled stdlib dependencies load automatically. For byte output, try
 `cargo run -- build examples/hello.evg -o /tmp/hello` and run `/tmp/hello`.

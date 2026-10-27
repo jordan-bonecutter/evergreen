@@ -26,8 +26,9 @@ pub(super) enum Action {
     Build {
         #[arg(required = true)]
         files: Vec<PathBuf>,
+        /// Output path (defaults to the last source path without its extension).
         #[arg(short, long)]
-        output: PathBuf,
+        output: Option<PathBuf>,
         /// Replay checked source certificates before native emission.
         #[arg(long)]
         proof: Option<PathBuf>,
