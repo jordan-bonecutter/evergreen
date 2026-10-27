@@ -13,6 +13,7 @@ type Result<T> = std::result::Result<T, String>;
 mod allocation;
 mod atomic;
 mod elf;
+mod order;
 mod program;
 mod storage;
 mod syscall;
@@ -992,66 +993,6 @@ impl Emitter<'_> {
             0xbf, 126, 0, 0, 0, 0xb8, 60, 0, 0, 0, 0x0f, 0x05, 0x0f, 0x0b,
         ]);
     }
-}
-
-fn compilation_order(program: &VerifiedProgram) -> Result<Vec<&Function>> {
-    fn visit<'a>(
-        ty: &Type,
-        program: &'a VerifiedProgram,
-        methods: &BTreeMap<&str, &'a Function>,
-        seen: &mut BTreeSet<String>,
-        output: &mut Vec<&'a Function>,
-    ) -> Result<()> {
-        match ty {
-            Type::Named(name) if seen.insert(name.clone()) => {
-                for (_, field) in program
-                    .structs
-                    .get(name)
-                    .ok_or("unknown native cleanup dependency")?
-                    .runtime_fields()
-                {
-                    visit(field, program, methods, seen, output)?;
-                }
-                if let Some(method) = methods.get(name.as_str()) {
-                    output.push(*method);
-                }
-            }
-            Type::Array(element, _) | Type::Plane(element) => {
-                visit(element, program, methods, seen, output)?
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-    let methods = program
-        .functions
-        .iter()
-        .filter_map(|f| f.drop_target.as_deref().map(|name| (name, f)))
-        .collect::<BTreeMap<_, _>>();
-    // Ownership-free helpers cannot depend on cleanup methods. Compile them
-    // first so destructors can call their checked scalar implementations.
-    let mut ordered = program
-        .functions
-        .iter()
-        .filter(|f| program.cleanup_helpers.contains(&f.name))
-        .collect::<Vec<_>>();
-    let mut seen = BTreeSet::new();
-    for name in &program.drops {
-        visit(
-            &Type::Named(name.clone()),
-            program,
-            &methods,
-            &mut seen,
-            &mut ordered,
-        )?;
-    }
-    ordered.extend(
-        program
-            .functions
-            .iter()
-            .filter(|f| f.drop_target.is_none() && !program.cleanup_helpers.contains(&f.name)),
-    );
-    Ok(ordered)
 }
 
 /// Emit a standalone Linux x86-64 executable. Its scalar main result is the

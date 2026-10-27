@@ -178,6 +178,14 @@ interface, and no creation, transfer, or cleanup of runtime ownership. It is not
 a programmer-supplied marker. These helpers may write through their explicit
 `modifies` contracts and are also usable in selective invariant updates.
 
+Destructors may also call a verified parameter-disposal helper: a runtime
+function returning unit with no runtime body or write contract. Its parameters
+undergo ordinary checked scope cleanup. This permits a source-defined container
+to select an owning union member and pass that owner to a small disposal function.
+It grants no allocation or mutation permission, and these ownership-consuming
+helpers are not admitted into invariant-update blocks. See
+[`raw_union_owner_drop.evg`](../examples/raw_union_owner_drop.evg).
+
 A destructor can pass its own scalar fields to modifying helpers, and can declare
 external writes with `modifies(self.target)` or another incoming reference path.
 Every explicit drop, discarded temporary, scope exit, and replacement checks

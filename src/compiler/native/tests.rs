@@ -132,6 +132,7 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/raw_union_owner.evg"),
         include_str!("../../../examples/raw_union_borrow.evg"),
         include_str!("../../../examples/raw_union_owner_paths.evg"),
+        include_str!("../../../examples/raw_union_owner_drop.evg"),
         "fn read(v: &(plane(u8) | bool)) -> u8 where typeof(*v) == plane(u8) {**v} fn dispose(v: plane(u8)) {} fn main() -> u8 {let p: plane(u8) = alloc(42); let v: plane(u8) | bool = p; let n = read(&v); dispose(v); n}",
         "fn view(value: &(usize | bool)) -> usize where typeof(*value) == usize {*value} fn main() -> usize {let value: usize | bool = 42; let n = view(&value); let consumed: usize = value; n}",
         "fn first(value: [u8; 2]) -> u8 {value[0]} fn main() -> u8 {let payload: [u8; 2] | bool = [42, 7]; first(payload)}",

@@ -1,0 +1,45 @@
+// Ownership, the discriminant invariant, and cleanup are ordinary source code.
+type Resource struct {value: usize, tag: usize} where tag == 7;
+
+impl Drop for Resource {
+    fn drop(self) {
+        proof valid: self.tag == 7;
+    }
+}
+
+type MaybeOwner struct {
+    data: plane(Resource) | shape(plane(Resource)),
+    present: bool,
+} where present == (typeof(data) == plane(Resource));
+
+// Empty unit functions dispose their parameters through checked scope cleanup.
+fn discard_owner(value: plane(Resource)) {}
+fn discard_empty(value: shape(plane(Resource))) {}
+
+impl MaybeOwner {
+    fn some(n: usize) -> Self ensures result.present {
+        Self {data: alloc(Resource {value: n, tag: 7}), present: true}
+    }
+
+    fn none() -> Self ensures !result.present {
+        Self {data: shape(plane(Resource)), present: false}
+    }
+
+    method& get() -> usize where self.present {
+        (*self.data).value
+    }
+}
+
+impl Drop for MaybeOwner {
+    fn drop(self) {
+        let MaybeOwner {data, present} = self;
+        if present {discard_owner(data)} else {discard_empty(data)}
+    }
+}
+
+fn main() -> usize {
+    let empty = MaybeOwner::none();
+    drop(empty);
+    let full = MaybeOwner::some(42);
+    full.get()
+}

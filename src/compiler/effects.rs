@@ -13,6 +13,25 @@ fn leaf(t: &Type) -> bool {
     scalar(t) || matches!(t, Type::Ref(_) | Type::Shape(_))
 }
 
+/// A verified unit function with no runtime body only disposes its parameters
+/// through their normal checked scope cleanup. This grants no permission to
+/// allocate, mutate caller storage, or run while invariants are suspended.
+pub(crate) fn disposes_parameters(function: &Function) -> bool {
+    !function.ideal
+        && !function.partial
+        && function.external.is_none()
+        && function.drop_target.is_none()
+        && function.modifies.is_empty()
+        && function.ret == Type::Unit
+        && matches!(function.result.kind, Kind::Unit)
+        && function.body.iter().all(|statement| {
+            matches!(
+                statement,
+                Statement::Fact { .. } | Statement::Proof { .. } | Statement::Ideal(_)
+            )
+        })
+}
+
 fn hint(
     e: &Expr,
     env: &BTreeMap<String, Type>,

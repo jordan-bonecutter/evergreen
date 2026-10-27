@@ -80,6 +80,14 @@ record members. Its combined footprint permits writes through an existing view
 because both exclusive alternatives own the same allocation. Eliminating the
 union releases that allocation once and invalidates the view.
 
+`examples/raw_union_owner_drop.evg` implements an owning optional container with
+constructors, a borrowed accessor, and Drop in Evergreen. Its destructor
+decomposes the receiver, selects the active member using the stored flag, and
+passes it to a parameter-disposal helper. The active allocation runs its payload's
+destructor once; an empty container has no payload cleanup. Native compilation
+orders ordinary calls together with implicit cleanup dependencies, including
+helpers that themselves release owned payloads.
+
 Borrowed-reference members remain rejected until return-plane contracts and
 conditional borrow footprints describe their provenance. Joining two different
 allocations in the same member, general member replacement through a borrowed

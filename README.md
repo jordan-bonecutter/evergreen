@@ -40,6 +40,7 @@ for custom install locations and removal.
 | Target scalar layout data | [targets/x86_64.evg](targets/x86_64.evg), [target decoder](src/shared/target.rs), [aggregate layout](src/compiler/layout.rs) |
 | Native expression and statement emission | [compiler/native.rs](src/compiler/native.rs) |
 | Function compilation and executable packaging | [program.rs](src/compiler/native/program.rs), [elf.rs](src/compiler/native/elf.rs) |
+| Native call and cleanup dependencies | [order.rs](src/compiler/native/order.rs) |
 | Executing a verified program | [interpreter](src/interpreter/mod.rs) |
 | Shared plane model and ownership rules | [shared](src/shared/mod.rs) |
 

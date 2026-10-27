@@ -21,7 +21,7 @@ pub(super) fn emit(program: &VerifiedProgram, trace: TraceMode) -> Result<Vec<u8
     program.check_entry()?;
     let mut emitter = ProgramEmitter::new(program, trace)?;
     let entry = emitter.entry();
-    for function in compilation_order(program)? {
+    for function in super::order::compilation_order(program)? {
         emitter.compile_function(function)?;
     }
     let main = emitter.known.get("main").ok_or("missing native main")?;

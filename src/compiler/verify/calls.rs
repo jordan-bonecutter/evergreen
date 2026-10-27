@@ -147,9 +147,10 @@ impl<'a> Context<'a> {
         if self.execution.dropping
             && self.execution.phase == Phase::Runtime
             && !self.declarations.cleanup_helpers.contains(name)
+            && !crate::compiler::effects::disposes_parameters(f)
         {
             return Err(
-                "destructor calls require a checked scalar ownership-free effect summary".into(),
+                "destructor calls require checked ownership-free effects or a parameter-disposal helper".into(),
             );
         }
         if f.partial {

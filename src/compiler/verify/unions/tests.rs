@@ -1,6 +1,47 @@
 use super::*;
 
 #[test]
+fn source_destructors_dispose_only_the_active_allocation_and_its_payload() {
+    let source = include_str!("../../../../examples/raw_union_owner_drop.evg");
+    let (program, bundle) = prove(source).unwrap();
+    let (value, events) = program.run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert_eq!(
+        events,
+        ["drop MaybeOwner", "drop MaybeOwner", "drop Resource"]
+    );
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let incomplete = source.replace(
+        "if present {discard_owner(data)} else {discard_empty(data)}",
+        "()",
+    );
+    assert!(verify(&incomplete)
+        .unwrap_err()
+        .contains("cannot be dropped implicitly"));
+    let allocating = source.replace(
+        "fn discard_owner(value: plane(Resource)) {}",
+        "fn discard_owner(value: plane(Resource)) {let extra: plane(usize) = alloc(0);}",
+    );
+    assert!(verify(&allocating)
+        .unwrap_err()
+        .contains("destructor calls require"));
+    let false_flag = source.replace("present: true", "present: false");
+    assert!(verify(&false_flag)
+        .unwrap_err()
+        .contains("invariant of MaybeOwner"));
+    let suspended = "type Pair struct {a: usize, b: usize} where (fact balanced = a == b; balanced); fn dispose(value: plane(usize)) {} fn main() {let pair = Pair {a: 0, b: 0}; let owner: plane(usize) = alloc(42); update(pair) lifts balanced {dispose(owner);}}";
+    assert!(verify(suspended)
+        .unwrap_err()
+        .contains("invariants are open"));
+}
+
+#[test]
 fn conditional_owners_survive_calls_and_only_the_active_owner_is_released() {
     let source = include_str!("../../../../examples/raw_union_owner.evg");
     let (program, bundle) = prove(source).unwrap();

@@ -2999,7 +2999,6 @@ pub struct VerifiedProgram {
     pub(crate) structs: BTreeMap<String, Struct>,
     pub obligations: usize,
     pub(crate) drops: BTreeSet<String>,
-    pub(crate) cleanup_helpers: BTreeSet<String>,
     trusted: Vec<crate::compiler::certificate::TrustedAssumption>,
     summaries: BTreeMap<String, summaries::Summary>,
     proof_searches: usize,

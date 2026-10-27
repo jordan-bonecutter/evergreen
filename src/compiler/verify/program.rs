@@ -304,7 +304,6 @@ impl Verification {
             structs: self.structs,
             obligations: self.obligations,
             drops: self.drops,
-            cleanup_helpers: self.cleanup_helpers,
             trusted: session.trusted_assumptions().to_vec(),
             proof_searches: session.search_count(),
         }
