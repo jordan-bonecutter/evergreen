@@ -25,44 +25,44 @@ struct Scope {
 impl Scope {
     fn enter(ctx: &mut Context<'_>, f: &Function, receiver: Symbol) -> Self {
         let saved = Self {
-            env: std::mem::take(&mut ctx.env),
-            roots: std::mem::take(&mut ctx.roots),
-            facts: std::mem::take(&mut ctx.facts),
-            proofs: std::mem::take(&mut ctx.proofs),
-            module: std::mem::replace(&mut ctx.module, f.module.clone()),
-            phase: std::mem::replace(&mut ctx.phase, Phase::Runtime),
-            current: ctx.current.replace(f.name.clone()),
-            measure: ctx.measure.take(),
-            opened_planes: std::mem::take(&mut ctx.opened_planes),
-            dropping: std::mem::replace(&mut ctx.dropping, true),
-            writable: std::mem::take(&mut ctx.writable),
-            inputs: std::mem::take(&mut ctx.input_references),
-            old_values: std::mem::take(&mut ctx.old_values),
-            old_memory: ctx.old_memory.take(),
-            ideal: std::mem::take(&mut ctx.ideal_bindings),
-            temporaries: std::mem::take(&mut ctx.temporaries),
+            env: std::mem::take(&mut ctx.locals.values),
+            roots: std::mem::take(&mut ctx.locals.places),
+            facts: std::mem::take(&mut ctx.proof.facts),
+            proofs: std::mem::take(&mut ctx.proof.witnesses),
+            module: std::mem::replace(&mut ctx.locals.module, f.module.clone()),
+            phase: std::mem::replace(&mut ctx.execution.phase, Phase::Runtime),
+            current: ctx.execution.current.replace(f.name.clone()),
+            measure: ctx.execution.measure.take(),
+            opened_planes: std::mem::take(&mut ctx.storage.opened_planes),
+            dropping: std::mem::replace(&mut ctx.execution.dropping, true),
+            writable: std::mem::take(&mut ctx.storage.writable),
+            inputs: std::mem::take(&mut ctx.storage.inputs),
+            old_values: std::mem::take(&mut ctx.entry.values),
+            old_memory: ctx.entry.memory.take(),
+            ideal: std::mem::take(&mut ctx.locals.ideal_bindings),
+            temporaries: std::mem::take(&mut ctx.storage.temporaries),
         };
-        ctx.env.insert("self".into(), receiver);
+        ctx.locals.values.insert("self".into(), receiver);
         saved
     }
 
     fn restore(self, ctx: &mut Context<'_>) {
-        ctx.env = self.env;
-        ctx.roots = self.roots;
-        ctx.facts = self.facts;
-        ctx.proofs = self.proofs;
-        ctx.module = self.module;
-        ctx.phase = self.phase;
-        ctx.current = self.current;
-        ctx.measure = self.measure;
-        ctx.opened_planes = self.opened_planes;
-        ctx.dropping = self.dropping;
-        ctx.writable = self.writable;
-        ctx.input_references = self.inputs;
-        ctx.old_values = self.old_values;
-        ctx.old_memory = self.old_memory;
-        ctx.ideal_bindings = self.ideal;
-        ctx.temporaries = self.temporaries;
+        ctx.locals.values = self.env;
+        ctx.locals.places = self.roots;
+        ctx.proof.facts = self.facts;
+        ctx.proof.witnesses = self.proofs;
+        ctx.locals.module = self.module;
+        ctx.execution.phase = self.phase;
+        ctx.execution.current = self.current;
+        ctx.execution.measure = self.measure;
+        ctx.storage.opened_planes = self.opened_planes;
+        ctx.execution.dropping = self.dropping;
+        ctx.storage.writable = self.writable;
+        ctx.storage.inputs = self.inputs;
+        ctx.entry.values = self.old_values;
+        ctx.entry.memory = self.old_memory;
+        ctx.locals.ideal_bindings = self.ideal;
+        ctx.storage.temporaries = self.temporaries;
     }
 }
 
@@ -77,18 +77,19 @@ impl Context<'_> {
         if !path.is_empty() {
             return Err("destructor receiver decomposition requires all of self".into());
         }
-        let plane = self.memory.plane(reference)?;
-        self.memory.take(plane)
+        let plane = self.storage.memory.plane(reference)?;
+        self.storage.memory.take(plane)
     }
 
     fn cleanup_effects_type(&self, ty: &Type) -> bool {
         match ty {
             Type::Plane(_) => true,
             Type::Named(name) => {
-                self.destructors
+                self.declarations
+                    .destructors
                     .get(name)
                     .is_some_and(|f| !f.modifies.is_empty())
-                    || self.structs.get(name).is_some_and(|s| {
+                    || self.declarations.structs.get(name).is_some_and(|s| {
                         s.runtime_fields()
                             .any(|(_, t)| self.cleanup_effects_type(t))
                     })
@@ -113,15 +114,15 @@ impl Context<'_> {
             Ty::Plane(_) => true,
             Ty::Record(name) => crate::shared::ownership::needs_drop(
                 &Type::Named(name.clone()),
-                self.structs,
-                self.drops,
+                self.declarations.structs,
+                self.declarations.drops,
             ),
             _ => false,
         }
     }
 
     pub(super) fn cleanup_value(&mut self, value: Symbol, line: usize) -> Result<()> {
-        if self.phase != Phase::Runtime {
+        if self.execution.phase != Phase::Runtime {
             return Ok(());
         }
         let requires_drop = self.has_runtime_cleanup(&value.ty());
@@ -140,7 +141,7 @@ impl Context<'_> {
             return Ok(());
         }
         if let Symbol::Record(name, _) = &value {
-            if let Some(method) = self.destructors.get(name).cloned() {
+            if let Some(method) = self.declarations.destructors.get(name).cloned() {
                 return self.cleanup_method(value, method, line);
             }
         }
@@ -148,18 +149,19 @@ impl Context<'_> {
     }
 
     pub(super) fn cleanup_fields(&mut self, value: Symbol, line: usize) -> Result<()> {
-        if self.phase != Phase::Runtime {
+        if self.execution.phase != Phase::Runtime {
             return Ok(());
         }
         self.charge_value_work(1)?;
         match value {
             Symbol::Plane(_, reference) => {
-                let plane = self.memory.plane(reference)?;
-                let payload = self.memory.take(plane)?;
+                let plane = self.storage.memory.plane(reference)?;
+                let payload = self.storage.memory.take(plane)?;
                 self.cleanup_value(payload, line)?;
             }
             Symbol::Record(name, mut fields) => {
                 let order = self
+                    .declarations
                     .structs
                     .get(&name)
                     .ok_or("unknown cleanup type")?
@@ -188,11 +190,11 @@ impl Context<'_> {
     }
 
     fn cleanup_method(&mut self, receiver: Symbol, method: Function, line: usize) -> Result<()> {
-        if self.cleanup_depth >= 64 {
+        if self.execution.cleanup_depth >= 64 {
             return Err("cleanup nesting limit reached (64)".into());
         }
         self.charge_value_work(1)?;
-        self.cleanup_depth += 1;
+        self.execution.cleanup_depth += 1;
         let name = method
             .drop_target
             .clone()
@@ -207,7 +209,7 @@ impl Context<'_> {
             // require the independent-input summary used by modular calls.
             let mut changed = BTreeSet::new();
             for write in &writes {
-                let id = self.memory.plane(write.reference)?;
+                let id = self.storage.memory.plane(write.reference)?;
                 let owned =
                     self.owns_plane_in(&saved.env, &saved.roots, id)? || self.owns_plane(id)?;
                 if !self.write_permitted_by(&saved.writable, write.reference, &write.path, owned)? {
@@ -218,8 +220,8 @@ impl Context<'_> {
                 }
                 changed.insert(id);
             }
-            self.writable = writes;
-            self.input_references = inputs;
+            self.storage.writable = writes;
+            self.storage.inputs = inputs;
             let entry = self.clone_env()?;
             for statement in &method.body {
                 self.statement(statement)?;
@@ -228,13 +230,13 @@ impl Context<'_> {
             self.validate_live(method.result.line)?;
             self.finish_scope(&method)?;
             if let Some(post) = &method.post {
-                self.phase = Phase::Specification;
-                self.env = entry;
-                self.roots.clear();
-                self.env.insert("result".into(), value);
-                let facts = std::mem::take(&mut self.facts);
+                self.execution.phase = Phase::Specification;
+                self.locals.values = entry;
+                self.locals.places.clear();
+                self.locals.values.insert("result".into(), value);
+                let facts = std::mem::take(&mut self.proof.facts);
                 let goal = self.proposition(post)?;
-                self.facts = facts;
+                self.proof.facts = facts;
                 self.prove_with(
                     &goal,
                     &format!("cleanup postcondition of {name}"),
@@ -245,21 +247,21 @@ impl Context<'_> {
             Ok(changed)
         })();
         saved.restore(self);
-        self.cleanup_depth -= 1;
+        self.execution.cleanup_depth -= 1;
         let changed =
             checked.map_err(|error| format!("line {line}: cleanup of {name}: {error}"))?;
         for id in changed {
             // A receiver may mutate its owned payload before child cleanup
             // releases it. Only surviving roots have post-state invariants.
-            let Ok(current) = self.memory.get(id) else {
+            let Ok(current) = self.storage.memory.get(id) else {
                 continue;
             };
             self.charge_value_work(symbol_weight(current)?)?;
-            let current = self.memory.get(id)?.clone();
+            let current = self.storage.memory.get(id)?.clone();
             self.record_valid(&current, line)?;
-            for (binding, root) in &self.roots {
+            for (binding, root) in &self.locals.places {
                 if *root == id {
-                    self.env.insert(binding.clone(), current.clone());
+                    self.locals.values.insert(binding.clone(), current.clone());
                 }
             }
         }

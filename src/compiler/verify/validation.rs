@@ -14,11 +14,16 @@ impl Context<'_> {
     }
 
     pub(super) fn validate_opened_planes(&mut self, line: usize) -> Result<()> {
-        let planes = self.opened_planes.keys().copied().collect::<Vec<_>>();
+        let planes = self
+            .storage
+            .opened_planes
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
         for plane in planes {
-            self.charge_value_work(symbol_weight(self.memory.get(plane)?)?)?;
-            let value = self.memory.get(plane)?.clone();
-            let lifted = self.opened_planes[&plane].clone();
+            self.charge_value_work(symbol_weight(self.storage.memory.get(plane)?)?)?;
+            let value = self.storage.memory.get(plane)?.clone();
+            let lifted = self.storage.opened_planes[&plane].clone();
             self.retained_valid_with(&value, line, &lifted)?;
         }
         Ok(())
@@ -48,15 +53,16 @@ impl Context<'_> {
         match value {
             Symbol::Plane(_, reference) => {
                 let selected = if mode == Validation::Retained {
-                    self.opened_planes
-                        .get(&self.memory.plane(*reference)?)
+                    self.storage
+                        .opened_planes
+                        .get(&self.storage.memory.plane(*reference)?)
                         .cloned()
                         .unwrap_or_default()
                 } else {
                     BTreeSet::new()
                 };
-                self.charge_value_work(symbol_weight(self.memory.read(*reference)?)?)?;
-                let stored = self.memory.read(*reference)?.clone();
+                self.charge_value_work(symbol_weight(self.storage.memory.read(*reference)?)?)?;
+                let stored = self.storage.memory.read(*reference)?.clone();
                 self.validate_value(&stored, line, &selected, mode)
             }
             Symbol::Array { .. } => self.validate_array(value, line, mode),
@@ -111,18 +117,22 @@ impl Context<'_> {
         let Symbol::Record(name, fields) = value else {
             return Ok(());
         };
-        let def = self.structs.get(name).ok_or("unknown struct")?;
+        let def = self
+            .declarations
+            .structs
+            .get(name)
+            .ok_or("unknown struct")?;
         if def.fields.len() != fields.len() {
             return Err(format!("line {line}: wrong fields for {name}"));
         }
-        let saved = std::mem::take(&mut self.env);
-        let saved_roots = std::mem::take(&mut self.roots);
-        let saved_facts = std::mem::take(&mut self.facts);
-        let saved_module = std::mem::replace(&mut self.module, def.module.clone());
-        let saved_phase = std::mem::replace(&mut self.phase, Phase::Specification);
-        self.facts = def.facts.iter().cloned().collect();
-        self.roots.clear();
-        self.env.clear();
+        let saved = std::mem::take(&mut self.locals.values);
+        let saved_roots = std::mem::take(&mut self.locals.places);
+        let saved_facts = std::mem::take(&mut self.proof.facts);
+        let saved_module = std::mem::replace(&mut self.locals.module, def.module.clone());
+        let saved_phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
+        self.proof.facts = def.facts.iter().cloned().collect();
+        self.locals.places.clear();
+        self.locals.values.clear();
         for (n, t) in &def.fields {
             let v = fields
                 .get(n)
@@ -130,9 +140,9 @@ impl Context<'_> {
             self.validate_argument_mode(v, line, mode)?;
             let t = self.resolve(t)?;
             self.compatible(&v.ty(), &t, line)?;
-            self.env.insert(n.clone(), v.clone());
+            self.locals.values.insert(n.clone(), v.clone());
         }
-        self.env.insert("self".into(), value.clone());
+        self.locals.values.insert("self".into(), value.clone());
         if let Some(p) = &def.invariant {
             let mut requirements = Vec::new();
             clauses(p, &mut requirements);
@@ -144,11 +154,11 @@ impl Context<'_> {
                 self.prove(&p, &format!("invariant of {name}"), line)?;
             }
         }
-        self.env = saved;
-        self.roots = saved_roots;
-        self.facts = saved_facts;
-        self.module = saved_module;
-        self.phase = saved_phase;
+        self.locals.values = saved;
+        self.locals.places = saved_roots;
+        self.proof.facts = saved_facts;
+        self.locals.module = saved_module;
+        self.execution.phase = saved_phase;
         Ok(())
     }
 
@@ -158,8 +168,11 @@ impl Context<'_> {
         path: &[Projection<Linear>],
         line: usize,
     ) -> Result<()> {
-        self.charge_value_work(symbol_weight(project(self.memory.read(reference)?, path)?)?)?;
-        let target = project(self.memory.read(reference)?, path)?.clone();
+        self.charge_value_work(symbol_weight(project(
+            self.storage.memory.read(reference)?,
+            path,
+        )?)?)?;
+        let target = project(self.storage.memory.read(reference)?, path)?.clone();
         self.validate_argument(&target, line)
     }
 
@@ -191,25 +204,31 @@ impl Context<'_> {
         line: usize,
     ) -> Result<()> {
         let selected = if path.is_empty() {
-            self.opened_planes
-                .get(&self.memory.plane(reference)?)
+            self.storage
+                .opened_planes
+                .get(&self.storage.memory.plane(reference)?)
                 .cloned()
                 .unwrap_or_default()
         } else {
             BTreeSet::new()
         };
-        self.charge_value_work(symbol_weight(project(self.memory.read(reference)?, path)?)?)?;
-        let target = project(self.memory.read(reference)?, path)?.clone();
+        self.charge_value_work(symbol_weight(project(
+            self.storage.memory.read(reference)?,
+            path,
+        )?)?)?;
+        let target = project(self.storage.memory.read(reference)?, path)?.clone();
         self.retained_valid_with(&target, line, &selected)
     }
 
     pub(super) fn validate_live(&mut self, line: usize) -> Result<()> {
         let values = self
-            .env
+            .locals
+            .values
             .iter()
             .filter_map(|(name, value)| {
-                if let Some(id) = self.roots.get(name) {
-                    self.memory
+                if let Some(id) = self.locals.places.get(name) {
+                    self.storage
+                        .memory
                         .get(*id)
                         .ok()
                         .cloned()
@@ -222,7 +241,7 @@ impl Context<'_> {
         for (plane, value) in values {
             if let Symbol::Ref(_, reference, path) = &value {
                 // A stale plain reference can remain as never until observed.
-                if self.memory.read(*reference).is_err() {
+                if self.storage.memory.read(*reference).is_err() {
                     continue;
                 }
                 // A dormant whole-object view cannot be observed while its
@@ -230,15 +249,16 @@ impl Context<'_> {
                 // complete target type; remaining requirements are checked here.
                 if path.is_empty()
                     && self
+                        .storage
                         .opened_planes
-                        .contains_key(&self.memory.plane(*reference)?)
+                        .contains_key(&self.storage.memory.plane(*reference)?)
                 {
                     continue;
                 }
                 self.validate_argument_mode(&value, line, Validation::Retained)?;
             } else {
                 let lifted = plane
-                    .and_then(|plane| self.opened_planes.get(&plane))
+                    .and_then(|plane| self.storage.opened_planes.get(&plane))
                     .cloned()
                     .unwrap_or_default();
                 self.retained_valid_with(&value, line, &lifted)?;
@@ -246,11 +266,11 @@ impl Context<'_> {
         }
         // Rebinding a parameter cannot discard the caller's original typed
         // view. Borrowed input storage must remain valid at this boundary.
-        let inputs = std::mem::take(&mut self.input_references);
+        let inputs = std::mem::take(&mut self.storage.inputs);
         let result = inputs.iter().try_for_each(|input| {
             self.validate_retained_reference(input.reference, &input.path, line)
         });
-        self.input_references = inputs;
+        self.storage.inputs = inputs;
         result?;
         self.validate_opened_planes(line)
     }

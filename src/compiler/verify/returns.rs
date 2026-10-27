@@ -160,7 +160,7 @@ impl Context<'_> {
         f: &Function,
         inputs: Option<&[InputReference]>,
     ) -> Result<Aliases> {
-        let phase = std::mem::replace(&mut self.phase, Phase::Specification);
+        let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
         let result = (|| {
             let mut aliases = BTreeMap::new();
             for alias in &f.borrows {
@@ -184,7 +184,7 @@ impl Context<'_> {
             }
             Ok(aliases)
         })();
-        self.phase = phase;
+        self.execution.phase = phase;
         result
     }
 
@@ -200,14 +200,14 @@ impl Context<'_> {
                 AliasTarget::Incoming(value) => value.clone(),
                 AliasTarget::Result(expression) => {
                     self.charge_value_work(symbol_weight(value)?)?;
-                    let env = std::mem::take(&mut self.env);
-                    let roots = std::mem::take(&mut self.roots);
-                    let phase = std::mem::replace(&mut self.phase, Phase::Specification);
-                    self.env.insert("result".into(), value.clone());
+                    let env = std::mem::take(&mut self.locals.values);
+                    let roots = std::mem::take(&mut self.locals.places);
+                    let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
+                    self.locals.values.insert("result".into(), value.clone());
                     let evaluated = self.eval(expression, None);
-                    self.env = env;
-                    self.roots = roots;
-                    self.phase = phase;
+                    self.locals.values = env;
+                    self.locals.places = roots;
+                    self.execution.phase = phase;
                     evaluated?
                 }
             };
@@ -269,30 +269,33 @@ impl Context<'_> {
             },
             Ty::Record(name) => {
                 let definition = self
+                    .declarations
                     .structs
                     .get(name)
                     .cloned()
                     .ok_or("unknown return record")?;
-                let env = std::mem::take(&mut self.env);
-                let roots = std::mem::take(&mut self.roots);
-                let module = std::mem::replace(&mut self.module, definition.module);
+                let env = std::mem::take(&mut self.locals.values);
+                let roots = std::mem::take(&mut self.locals.places);
+                let module = std::mem::replace(&mut self.locals.module, definition.module);
                 let mut fields = BTreeMap::new();
                 for (field, ty) in definition.fields {
-                    let phase = self.phase;
-                    if definition.ideal_fields.contains(&field) && self.phase == Phase::Runtime {
-                        self.phase = Phase::Ideal;
+                    let phase = self.execution.phase;
+                    if definition.ideal_fields.contains(&field)
+                        && self.execution.phase == Phase::Runtime
+                    {
+                        self.execution.phase = Phase::Ideal;
                     }
                     let ty = self.resolve(&ty)?;
                     path.push(ReturnProjection::Field(field.clone()));
                     let value = self.return_shape(&ty, path, aliases)?;
-                    self.phase = phase;
+                    self.execution.phase = phase;
                     path.pop();
-                    self.env.insert(field.clone(), value.clone());
+                    self.locals.values.insert(field.clone(), value.clone());
                     fields.insert(field, value);
                 }
-                self.env = env;
-                self.roots = roots;
-                self.module = module;
+                self.locals.values = env;
+                self.locals.places = roots;
+                self.locals.module = module;
                 Ok(Symbol::Record(name.clone(), fields))
             }
             Ty::Array(element, len) => {
@@ -344,25 +347,28 @@ impl Context<'_> {
         match (value, ty) {
             (Symbol::Ref(_, reference, path), Ty::Ref(target)) => {
                 self.charge_value_work(symbol_weight(project(
-                    self.memory.read(*reference)?,
+                    self.storage.memory.read(*reference)?,
                     path,
                 )?)?)?;
-                let value = project(self.memory.read(*reference)?, path)?.clone();
+                let value = project(self.storage.memory.read(*reference)?, path)?.clone();
                 self.assume_return_type(&value, target)?;
             }
             (Symbol::Record(name, fields), Ty::Record(_)) => {
                 let definition = self
+                    .declarations
                     .structs
                     .get(name)
                     .cloned()
                     .ok_or("unknown result type")?;
-                let env = std::mem::replace(&mut self.env, fields.clone());
-                let roots = std::mem::take(&mut self.roots);
-                let facts =
-                    std::mem::replace(&mut self.facts, definition.facts.into_iter().collect());
-                let module = std::mem::replace(&mut self.module, definition.module);
-                let phase = std::mem::replace(&mut self.phase, Phase::Specification);
-                self.env.insert("self".into(), value.clone());
+                let env = std::mem::replace(&mut self.locals.values, fields.clone());
+                let roots = std::mem::take(&mut self.locals.places);
+                let facts = std::mem::replace(
+                    &mut self.proof.facts,
+                    definition.facts.into_iter().collect(),
+                );
+                let module = std::mem::replace(&mut self.locals.module, definition.module);
+                let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
+                self.locals.values.insert("self".into(), value.clone());
                 for (name, ty) in definition.fields {
                     let ty = self.resolve(&ty)?;
                     self.assume_return_type(fields.get(&name).ok_or("missing result field")?, &ty)?;
@@ -371,11 +377,11 @@ impl Context<'_> {
                     let p = self.proposition(&invariant)?;
                     self.assume(&p)?;
                 }
-                self.env = env;
-                self.roots = roots;
-                self.facts = facts;
-                self.module = module;
-                self.phase = phase;
+                self.locals.values = env;
+                self.locals.places = roots;
+                self.proof.facts = facts;
+                self.locals.module = module;
+                self.execution.phase = phase;
             }
             (
                 Symbol::Array {

@@ -71,7 +71,7 @@ impl Context<'_> {
         lifts: &[String],
         line: usize,
     ) -> Result<Vec<Reference>> {
-        if !self.opened_planes.is_empty() {
+        if !self.storage.opened_planes.is_empty() {
             return Err("nested invariant updates are not supported yet".into());
         }
         if lifts.iter().collect::<BTreeSet<_>>().len() != lifts.len() {
@@ -90,25 +90,29 @@ impl Context<'_> {
             if !path.is_empty() {
                 return Err(format!("line {line}: updates currently open whole plane roots; nested record projections need subplane invariant tracking"));
             }
-            let plane = self.memory.plane(reference)?;
+            let plane = self.storage.memory.plane(reference)?;
             if opened.contains_key(&plane) {
                 return Err(format!(
                     "line {line}: duplicate update place; aliases name the same plane"
                 ));
             }
-            let value = self.memory.read(reference)?.clone();
+            let value = self.storage.memory.read(reference)?.clone();
             self.record_valid(&value, line)?;
             let Symbol::Record(type_name, _) = value else {
                 return Err(format!("line {line}: update requires a live struct plane"));
             };
-            let definition = self.structs.get(&type_name).ok_or("unknown update type")?;
+            let definition = self
+                .declarations
+                .structs
+                .get(&type_name)
+                .ok_or("unknown update type")?;
             opened.insert(plane, lifted_requirements(definition, lifts, &mut matched));
             targets.push(reference);
         }
         if matched.len() != lifts.len() {
             return Err(format!("line {line}: lifts must name declared facts used as independent where requirements of an opened place"));
         }
-        self.opened_planes = opened;
+        self.storage.opened_planes = opened;
         Ok(targets)
     }
 
@@ -130,7 +134,7 @@ impl Context<'_> {
             }
             Statement::Let {name, value, ..} if self.update_expression(value) => {
                 self.statement(statement)?;
-                let ty = self.env.get(name).ok_or("unknown update local")?.ty();
+                let ty = self.locals.values.get(name).ok_or("unknown update local")?.ty();
                 let allowed = scalar_value(&ty) || matches!(ty, Ty::Unit)
                     || matches!(&ty, Ty::Ref(inner) if scalar_value(inner));
                 if !allowed {
@@ -163,33 +167,33 @@ impl Context<'_> {
         line: usize,
     ) -> Result<()> {
         for reference in targets {
-            let value = self.memory.read(reference)?.clone();
+            let value = self.storage.memory.read(reference)?.clone();
             self.record_valid(&value, line)?;
         }
-        self.opened_planes.clear();
+        self.storage.opened_planes.clear();
         for name in scope.bindings.into_iter().rev() {
-            let value = if let Some(id) = self.roots.remove(&name) {
-                if self.memory.get(id).is_ok() {
-                    Some(self.memory.take(id)?)
+            let value = if let Some(id) = self.locals.places.remove(&name) {
+                if self.storage.memory.get(id).is_ok() {
+                    Some(self.storage.memory.take(id)?)
                 } else {
                     None
                 }
             } else {
-                self.env.remove(&name)
+                self.locals.values.remove(&name)
             };
             if let Some(value) = value {
                 if self.symbol_is_affine(&value) {
                     self.validate_argument(&value, line)?;
                 }
             }
-            self.env.remove(&name);
-            self.ideal_bindings.remove(&name);
+            self.locals.values.remove(&name);
+            self.locals.ideal_bindings.remove(&name);
         }
         for name in scope.facts {
-            self.facts.remove(&name);
+            self.proof.facts.remove(&name);
         }
         for name in scope.proofs {
-            self.proofs.remove(&name);
+            self.proof.witnesses.remove(&name);
         }
         self.validate_live(line)
     }
@@ -200,8 +204,8 @@ impl Context<'_> {
                 if matches!(name.as_str(), "integer" | "nat") {
                     return args.len() == 1 && self.update_expression(&args[0]);
                 }
-                self.functions.get(name).is_some_and(|f| {
-                    (f.ideal || self.cleanup_helpers.contains(name))
+                self.declarations.functions.get(name).is_some_and(|f| {
+                    (f.ideal || self.declarations.cleanup_helpers.contains(name))
                         && f.params.len() == args.len()
                         && f.params.iter().zip(args).all(|((parameter, _), e)| {
                             f.ideal_params.contains(parameter) || self.update_expression(e)

@@ -20,6 +20,8 @@ Bundled stdlib dependencies load automatically. For byte output, try
 | Entry point and command handlers | [main.rs](src/main.rs), [cli](src/cli/mod.rs) |
 | Shared syntax, parsing, and name resolution | [syntax.rs](src/syntax.rs), [syntax modules](src/syntax) |
 | Symbolic verification and language rules | [compiler/verify.rs](src/compiler/verify.rs), [verification modules](src/compiler/verify) |
+| Declaration and body verification passes | [verification orchestration](src/compiler/verify/program.rs) |
+| State while checking a body | [verification context](src/compiler/verify/context.rs) |
 | Small proof kernel and certificate replay | [compiler/kernel.rs](src/compiler/kernel.rs), [compiler/certificate.rs](src/compiler/certificate.rs) |
 | Target scalar layout data | [targets/x86_64.evg](targets/x86_64.evg), [target decoder](src/compiler/target.rs), [aggregate layout](src/compiler/layout.rs) |
 | Native expression and statement emission | [compiler/native.rs](src/compiler/native.rs) |

@@ -27,6 +27,7 @@ impl Context<'_> {
         };
         self.charge_value_work(1)?;
         let definition = self
+            .declarations
             .structs
             .get(name)
             .cloned()
@@ -44,8 +45,8 @@ impl Context<'_> {
         reference: Reference,
         path: &[Projection<Linear>],
     ) -> Result<Symbol> {
-        self.charge_value_work(symbol_weight(self.memory.read(reference)?)?)?;
-        let root = self.memory.read(reference)?;
+        self.charge_value_work(symbol_weight(self.storage.memory.read(reference)?)?)?;
+        let root = self.storage.memory.read(reference)?;
         let value = project(root, path)?.clone();
         for (offset, projection) in path.iter().enumerate() {
             let Projection::Index(index) = projection else {
@@ -81,7 +82,7 @@ impl Context<'_> {
         index: &Linear,
         value: &Symbol,
     ) -> Result<()> {
-        let Some(history) = self.array_history.get(identity) else {
+        let Some(history) = self.arrays.history.get(identity) else {
             return Ok(());
         };
         let cost = match history {
@@ -95,7 +96,8 @@ impl Context<'_> {
         };
         self.charge_value_work(cost)?;
         let history = self
-            .array_history
+            .arrays
+            .history
             .get(identity)
             .cloned()
             .ok_or("array history disappeared")?;
@@ -122,27 +124,39 @@ impl Context<'_> {
                 // Branch-born cache values are only meaningful in that branch.
                 // Read each predecessor under its guard, never unconditionally.
                 let cost = self
+                    .proof
                     .paths
                     .iter()
                     .flatten()
                     .fold(0usize, |sum, row| sum.saturating_add(row.terms.len() + 1));
                 self.charge_value_work(cost)?;
-                let base = self.paths.clone();
+                let base = self.proof.paths.clone();
                 let checked = (|| {
-                    self.paths =
-                        extend(&base, &condition, false, self.session, &mut self.value_work)?;
+                    self.proof.paths = extend(
+                        &base,
+                        &condition,
+                        false,
+                        self.session,
+                        &mut self.work.value_work,
+                    )?;
                     let a = self.array_read(element, &left, index)?;
                     self.assume(&self.symbol_equal(value, &a)?)?;
-                    let mut paths = std::mem::take(&mut self.paths);
-                    self.paths =
-                        extend(&base, &condition, true, self.session, &mut self.value_work)?;
+                    let mut paths = std::mem::take(&mut self.proof.paths);
+                    self.proof.paths = extend(
+                        &base,
+                        &condition,
+                        true,
+                        self.session,
+                        &mut self.work.value_work,
+                    )?;
                     let b = self.array_read(element, &right, index)?;
                     self.assume(&self.symbol_equal(value, &b)?)?;
-                    paths.append(&mut self.paths);
+                    paths.append(&mut self.proof.paths);
                     self.feasible_paths(paths)
                 })();
-                self.paths = base;
-                self.paths = paths::bounded(checked?, self.session, &mut self.value_work)?;
+                self.proof.paths = base;
+                self.proof.paths =
+                    paths::bounded(checked?, self.session, &mut self.work.value_work)?;
                 Ok(())
             }
         }

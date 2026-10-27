@@ -8,8 +8,8 @@ impl Context<'_> {
             return Err("reference equality requires reference operands".into());
         };
         // Identity comparisons do not make stale generations observable again.
-        project(self.memory.read(*a)?, a_path)?;
-        project(self.memory.read(*b)?, b_path)?;
+        project(self.storage.memory.read(*a)?, a_path)?;
+        project(self.storage.memory.read(*b)?, b_path)?;
         self.charge_value_work(a_path.len().saturating_add(b_path.len()))?;
         if a != b || a_path.len() != b_path.len() {
             return Ok(Formula::False);
@@ -32,7 +32,7 @@ impl Context<'_> {
         let mut planes: BTreeMap<PlaneId, Vec<usize>> = BTreeMap::new();
         for (index, input) in inputs.iter().enumerate() {
             self.charge_value_work(1)?;
-            let plane = self.memory.plane(input.reference)?;
+            let plane = self.storage.memory.plane(input.reference)?;
             let previous = planes.entry(plane).or_default();
             for other in previous.iter().map(|index| &inputs[*index]) {
                 self.charge_value_work(1)?;
@@ -66,8 +66,8 @@ impl Context<'_> {
         };
         let prefix = &path[..offset];
         let suffix = &path[offset + 1..];
-        self.charge_value_work(symbol_weight(self.memory.read(*reference)?)?)?;
-        let mut root = self.memory.read(*reference)?.clone();
+        self.charge_value_work(symbol_weight(self.storage.memory.read(*reference)?)?)?;
+        let mut root = self.storage.memory.read(*reference)?.clone();
         let Symbol::Array {
             element,
             len,
@@ -101,8 +101,8 @@ impl Context<'_> {
             return Err("invalid joined array storage".into());
         };
         cells.insert(index.clone(), value);
-        let plane = self.memory.plane(*reference)?;
-        self.memory.write(plane, root, false)
+        let plane = self.storage.memory.plane(*reference)?;
+        self.storage.memory.write(plane, root, false)
     }
 }
 
@@ -117,7 +117,7 @@ impl Context<'_> {
             Symbol::Ref(_, reference, path) => {
                 // An old stale handle stays stale; observing it later will
                 // fail. Never replace its generation or allocate new storage.
-                if let Ok(root) = self.memory.read(*reference) {
+                if let Ok(root) = self.storage.memory.read(*reference) {
                     if project(root, path).is_err() {
                         self.materialize_joined_reference(value, line)?;
                     }

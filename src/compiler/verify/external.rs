@@ -35,20 +35,20 @@ impl Context<'_> {
         // Check the contract's expressions normally, but make no claim to have
         // proved that the target implements it. Audit the entire
         // declaration even when no caller uses its postcondition.
-        self.phase = Phase::Specification;
+        self.execution.phase = Phase::Specification;
         // A postcondition describes the state after the declared writes, not
         // an accidental equality between entry and exit symbols.
-        for write in self.writable.clone() {
-            let id = self.memory.plane(write.reference)?;
+        for write in self.storage.writable.clone() {
+            let id = self.storage.memory.plane(write.reference)?;
             let mut value = self.arbitrary(&write.ty)?;
-            self.charge_value_work(symbol_weight(self.memory.read(write.reference)?)?)?;
-            let mut root = self.memory.read(write.reference)?.clone();
+            self.charge_value_work(symbol_weight(self.storage.memory.read(write.reference)?)?)?;
+            let mut root = self.storage.memory.read(write.reference)?.clone();
             self.preserve_views(project(&root, &write.path)?, &mut value)?;
             self.replace_projection(&mut root, &write.path, value)?;
-            self.memory.write(id, root, false)?;
+            self.storage.memory.write(id, root, false)?;
         }
         let value = self.arbitrary(result)?;
-        self.env.insert("result".into(), value);
+        self.locals.values.insert("result".into(), value);
         if let Some(post) = &function.post {
             self.proposition(post)?;
         }
@@ -58,7 +58,7 @@ impl Context<'_> {
             function.line,
             &format!("external contract for {}", function.name),
         )?;
-        self.obligations += 1;
+        self.work.obligations += 1;
         Ok(())
     }
 
@@ -76,13 +76,13 @@ impl Context<'_> {
         for (_, ty) in runtime {
             match ty {
                 Type::Machine(integer) if integer.bits == 64 => {}
-                Type::Ref(inner) if !type_has_reference(inner, self.structs)
-                    && !heap::owns_planes_type(inner, self.structs) => {
+                Type::Ref(inner) if !type_has_reference(inner, self.declarations.structs)
+                    && !heap::owns_planes_type(inner, self.declarations.structs) => {
                     let storage = match inner.as_ref() {
                         Type::Array(element, _) => element,
                         other => other,
                     };
-                    crate::compiler::layout::of(storage, self.structs)?;
+                    crate::compiler::layout::of(storage, self.declarations.structs)?;
                 }
                 _ => return Err("syscall arguments require 64-bit integers or borrows without embedded pointers or owners".into()),
             }

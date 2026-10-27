@@ -20,7 +20,7 @@ impl Context<'_> {
                 ));
             }
         }
-        let execution = self.phase;
+        let execution = self.execution.phase;
         // This permits `bytes: &[u8; count], count: usize`, preserving the
         // source argument order required by an external ABI.
         for scalars in [true, false] {
@@ -28,17 +28,17 @@ impl Context<'_> {
                 if scalar(ty) != scalars {
                     continue;
                 }
-                self.phase = if function.ideal_params.contains(name) {
+                self.execution.phase = if function.ideal_params.contains(name) {
                     Phase::Specification
                 } else {
                     execution
                 };
                 let ty = self.resolve(ty)?;
                 let value = self.arbitrary(&ty)?;
-                self.env.insert(name.clone(), value);
+                self.locals.values.insert(name.clone(), value);
             }
         }
-        self.phase = execution;
+        self.execution.phase = execution;
         Ok(())
     }
 
@@ -51,20 +51,25 @@ impl Context<'_> {
         // Actual expressions have already been evaluated in source order and
         // checked for liveness. Resolve dependent types in the full callee scope.
         for ((name, _), value) in function.params.iter().zip(values) {
-            self.env.insert(name.clone(), value);
+            self.locals.values.insert(name.clone(), value);
         }
-        let execution = self.phase;
+        let execution = self.execution.phase;
         for (name, ty) in &function.params {
-            self.phase = if function.ideal_params.contains(name) {
+            self.execution.phase = if function.ideal_params.contains(name) {
                 Phase::Specification
             } else {
                 execution
             };
             let expected = self.resolve(ty)?;
-            let actual = self.env.get(name).ok_or("missing call argument")?.ty();
+            let actual = self
+                .locals
+                .values
+                .get(name)
+                .ok_or("missing call argument")?
+                .ty();
             self.compatible(&actual, &expected, line)?;
         }
-        self.phase = execution;
+        self.execution.phase = execution;
         Ok(())
     }
 }

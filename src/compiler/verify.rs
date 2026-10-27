@@ -17,7 +17,9 @@ mod array_history;
 pub(crate) mod array_model;
 mod bodies;
 mod cleanup;
+mod context;
 mod conversions;
+use context::{Context, Declarations};
 mod external;
 mod heap;
 mod parameters;
@@ -671,46 +673,6 @@ enum ArrayHistory {
     },
 }
 
-struct Context<'a> {
-    functions: &'a BTreeMap<String, Function>,
-    module: Option<String>,
-    declaring: Option<String>,
-    ideal_execution: bool,
-    partial_execution: bool,
-    structs: &'a BTreeMap<String, Struct>,
-    env: BTreeMap<String, Symbol>,
-    facts: BTreeMap<String, Expr>,
-    proofs: BTreeMap<String, Formula>,
-    paths: Vec<Vec<Linear>>,
-    fresh: usize,
-    eval_depth: usize,
-    eval_steps: usize,
-    value_work: usize,
-    obligations: usize,
-    memory: Memory<Symbol>,
-    roots: BTreeMap<String, PlaneId>,
-    phase: Phase,
-    current: Option<String>,
-    measure: Option<Linear>,
-    opened_planes: BTreeMap<PlaneId, BTreeSet<String>>,
-    drops: &'a BTreeSet<String>,
-    destructors: &'a BTreeMap<String, Function>,
-    cleanup_depth: usize,
-    dropping: bool,
-    helpers: &'a BTreeSet<String>,
-    cleanup_helpers: &'a BTreeSet<String>,
-    session: &'a mut Session,
-    writable: Vec<WritePlace>,
-    input_references: Vec<InputReference>,
-    old_values: BTreeMap<String, Symbol>,
-    old_memory: Option<Box<EntryMemory>>,
-    ideal_bindings: BTreeSet<String>,
-    array_reads: BTreeMap<(String, Linear), Symbol>,
-    array_history: BTreeMap<String, ArrayHistory>,
-    array_read_depth: usize,
-    temporaries: Vec<(Symbol, usize)>,
-}
-
 impl<'a> Context<'a> {
     fn write_permitted(
         &mut self,
@@ -718,9 +680,9 @@ impl<'a> Context<'a> {
         path: &[Projection<Linear>],
         owned: bool,
     ) -> Result<bool> {
-        let grants = std::mem::take(&mut self.writable);
+        let grants = std::mem::take(&mut self.storage.writable);
         let result = self.write_permitted_by(&grants, reference, path, owned);
-        self.writable = grants;
+        self.storage.writable = grants;
         result
     }
 
@@ -734,11 +696,11 @@ impl<'a> Context<'a> {
         if owned {
             return Ok(true);
         }
-        let plane = self.memory.plane(reference)?;
+        let plane = self.storage.memory.plane(reference)?;
         let grants = grants
             .iter()
             .filter(|grant| {
-                self.memory.plane(grant.reference).ok() == Some(plane)
+                self.storage.memory.plane(grant.reference).ok() == Some(plane)
                     && grant.path.len() <= path.len()
             })
             .map(|grant| grant.path.clone())
@@ -797,7 +759,7 @@ impl<'a> Context<'a> {
                         path: path.clone(),
                         pointee: pointee.clone(),
                     });
-                    let target = project(ctx.memory.read(*reference)?, path)?;
+                    let target = project(ctx.storage.memory.read(*reference)?, path)?;
                     visit(
                         ctx,
                         target,
@@ -822,7 +784,7 @@ impl<'a> Context<'a> {
                     }
                     visit(
                         ctx,
-                        ctx.memory.read(*reference)?,
+                        ctx.storage.memory.read(*reference)?,
                         format!("(*{origin})"),
                         mode,
                         inputs,
@@ -874,9 +836,13 @@ impl<'a> Context<'a> {
         }
         let mut inputs = Vec::new();
         let mut work = 0usize;
-        let remaining = MAX_VALUE_WORK.saturating_sub(self.value_work);
+        let remaining = MAX_VALUE_WORK.saturating_sub(self.work.value_work);
         for (name, _) in &function.params {
-            let value = self.env.get(name).ok_or("missing input parameter")?;
+            let value = self
+                .locals
+                .values
+                .get(name)
+                .ok_or("missing input parameter")?;
             if self.ty_has_reference(&value.ty()) {
                 visit(
                     self,
@@ -907,7 +873,7 @@ impl<'a> Context<'a> {
         let Symbol::Ref(ty, reference, path) = self.eval(expression, expected)? else {
             return Err("effect and borrow entries must denote references".into());
         };
-        if self.memory.plane(input.reference)? != self.memory.plane(reference)?
+        if self.storage.memory.plane(input.reference)? != self.storage.memory.plane(reference)?
             || input.path.len() > path.len()
             || !self.paths_equal(&input.path, &path[..input.path.len()])?
         {
@@ -928,7 +894,7 @@ impl<'a> Context<'a> {
         function: &Function,
         inputs: &[InputReference],
     ) -> Result<Vec<WritePlace>> {
-        let phase = std::mem::replace(&mut self.phase, Phase::Specification);
+        let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
         let mut places: Vec<WritePlace> = Vec::new();
         for expression in &function.modifies {
             let place = self.incoming_place(expression, inputs, None)?;
@@ -939,10 +905,10 @@ impl<'a> Context<'a> {
                 .find(|input| input.origin == place.origin)
                 .ok_or("missing incoming reference for write footprint")?;
             let mut erased = self.proof_storage(&input.pointee);
-            let mut target = project(self.memory.read(input.reference)?, &input.path)?;
+            let mut target = project(self.storage.memory.read(input.reference)?, &input.path)?;
             for step in &place.path[input.path.len()..] {
                 if let (Symbol::Record(name, _), Projection::Field(field)) = (target, step) {
-                    erased |= self.structs[name].ideal_fields.contains(field);
+                    erased |= self.declarations.structs[name].ideal_fields.contains(field);
                 }
                 target = project(target, std::slice::from_ref(step))?;
             }
@@ -982,26 +948,26 @@ impl<'a> Context<'a> {
                 places.push(place);
             }
         }
-        self.phase = phase;
+        self.execution.phase = phase;
         Ok(places)
     }
 
     fn charge_value_work(&mut self, cost: usize) -> Result<()> {
-        self.value_work = self.value_work.saturating_add(cost);
-        if self.value_work > MAX_VALUE_WORK {
+        self.work.value_work = self.work.value_work.saturating_add(cost);
+        if self.work.value_work > MAX_VALUE_WORK {
             return Err("symbolic value work limit reached (262144 nodes)".into());
         }
         Ok(())
     }
 
     fn clone_env(&mut self) -> Result<BTreeMap<String, Symbol>> {
-        self.charge_value_work(values_weight(self.env.values())?)?;
-        Ok(self.env.clone())
+        self.charge_value_work(values_weight(self.locals.values.values())?)?;
+        Ok(self.locals.values.clone())
     }
 
     fn snapshot_memory(&mut self) -> Result<Memory<Symbol>> {
-        self.charge_value_work(store_weight(&self.memory)?)?;
-        Ok(self.memory.snapshot())
+        self.charge_value_work(store_weight(&self.storage.memory)?)?;
+        Ok(self.storage.memory.snapshot())
     }
 
     fn clone_store(&mut self, store: &Memory<Symbol>) -> Result<Memory<Symbol>> {
@@ -1012,7 +978,7 @@ impl<'a> Context<'a> {
     fn erased_value(&self, value: &Symbol) -> bool {
         match value.ty() {
             Ty::Plane(_) => false,
-            Ty::Record(name) => erased_type(&Type::Named(name), self.structs),
+            Ty::Record(name) => erased_type(&Type::Named(name), self.declarations.structs),
             Ty::Array(element, _) => self.erased_ty(&element),
             Ty::Ref(_) => true,
             _ => true,
@@ -1022,7 +988,7 @@ impl<'a> Context<'a> {
     fn proof_storage(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Nat | Ty::Int => true,
-            Ty::Record(name) => self.structs[name].ideal,
+            Ty::Record(name) => self.declarations.structs[name].ideal,
             Ty::Array(element, _) => self.proof_storage(element),
             // A reference is itself a runtime word, regardless of its target.
             _ => false,
@@ -1032,7 +998,7 @@ impl<'a> Context<'a> {
     fn erased_ty(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Plane(_) => false,
-            Ty::Record(name) => erased_type(&Type::Named(name.clone()), self.structs),
+            Ty::Record(name) => erased_type(&Type::Named(name.clone()), self.declarations.structs),
             Ty::Array(element, _) => self.erased_ty(element),
             Ty::Ref(_) => true,
             _ => true,
@@ -1040,14 +1006,15 @@ impl<'a> Context<'a> {
     }
 
     fn representation_access(&self, name: &str, line: usize) -> Result<()> {
-        if self.declaring.as_deref() == Some(name) {
+        if self.locals.declaring.as_deref() == Some(name) {
             return Ok(());
         }
         let def = self
+            .declarations
             .structs
             .get(name)
             .ok_or_else(|| format!("unknown struct {name}"))?;
-        if def.opaque && def.module != self.module {
+        if def.opaque && def.module != self.locals.module {
             return Err(format!(
                 "line {line}: {name} has an opaque representation outside its defining module"
             ));
@@ -1057,7 +1024,9 @@ impl<'a> Context<'a> {
 
     fn field_access(&self, name: &str, field: &str, line: usize) -> Result<()> {
         self.representation_access(name, line)?;
-        if self.phase == Phase::Runtime && self.structs[name].ideal_fields.contains(field) {
+        if self.execution.phase == Phase::Runtime
+            && self.declarations.structs[name].ideal_fields.contains(field)
+        {
             return Err(format!(
                 "line {line}: {name}.{field} is ideal data and cannot be accessed at runtime"
             ));
@@ -1067,11 +1036,11 @@ impl<'a> Context<'a> {
 
     fn follows(&mut self, proposition: &Formula) -> Result<bool> {
         for path in extend(
-            &self.paths,
+            &self.proof.paths,
             proposition,
             true,
             self.session,
-            &mut self.value_work,
+            &mut self.work.value_work,
         )? {
             if !self.session.probe(&path)? {
                 return Ok(false);
@@ -1188,7 +1157,7 @@ impl<'a> Context<'a> {
                         observed.insert(Linear::number(index as i128), value);
                     }
                 }
-                for ((contents, index), value) in &self.array_reads {
+                for ((contents, index), value) in &self.arrays.reads {
                     if contents == identity {
                         observed
                             .entry(index.clone())
@@ -1196,12 +1165,13 @@ impl<'a> Context<'a> {
                     }
                 }
                 for (index, previous) in &observed {
-                    self.array_reads
+                    self.arrays
+                        .reads
                         .entry((identity.clone(), index.clone()))
                         .or_insert_with(|| previous.clone());
                 }
                 let next = self.fresh_name();
-                self.array_history.insert(
+                self.arrays.history.insert(
                     next.clone(),
                     ArrayHistory::Store {
                         base: identity.clone(),
@@ -1243,63 +1213,13 @@ impl<'a> Context<'a> {
         self.replace_projection(child, &path[1..], new)
     }
 
-    fn new(
-        functions: &'a BTreeMap<String, Function>,
-        structs: &'a BTreeMap<String, Struct>,
-        drops: &'a BTreeSet<String>,
-        destructors: &'a BTreeMap<String, Function>,
-        helpers: &'a BTreeSet<String>,
-        cleanup_helpers: &'a BTreeSet<String>,
-        session: &'a mut Session,
-    ) -> Self {
-        Self {
-            functions,
-            module: None,
-            declaring: None,
-            ideal_execution: false,
-            partial_execution: false,
-            structs,
-            env: BTreeMap::new(),
-            facts: BTreeMap::new(),
-            proofs: BTreeMap::new(),
-            paths: vec![vec![]],
-            fresh: 0,
-            eval_depth: 0,
-            eval_steps: 0,
-            value_work: 0,
-            obligations: 0,
-            memory: Memory::default(),
-            roots: BTreeMap::new(),
-            phase: Phase::Runtime,
-            current: None,
-            measure: None,
-            opened_planes: BTreeMap::new(),
-            drops,
-            destructors,
-            cleanup_depth: 0,
-            dropping: false,
-            helpers,
-            cleanup_helpers,
-            session,
-            writable: Vec::new(),
-            input_references: Vec::new(),
-            old_values: BTreeMap::new(),
-            old_memory: None,
-            ideal_bindings: BTreeSet::new(),
-            array_reads: BTreeMap::new(),
-            array_history: BTreeMap::new(),
-            array_read_depth: 0,
-            temporaries: Vec::new(),
-        }
-    }
-
     fn fresh_name(&mut self) -> String {
-        self.fresh += 1;
-        format!("evg_{}", self.fresh)
+        self.work.fresh += 1;
+        format!("evg_{}", self.work.fresh)
     }
 
     fn runtime_name(&self, name: &str) -> Result<()> {
-        if self.ideal_bindings.contains(name) && self.phase == Phase::Runtime {
+        if self.locals.ideal_bindings.contains(name) && self.execution.phase == Phase::Runtime {
             return Err(format!(
                 "{name} is an ideal parameter and cannot be read by runtime code"
             ));
@@ -1308,25 +1228,26 @@ impl<'a> Context<'a> {
     }
 
     fn capture_old(&mut self, function: &Function) -> Result<()> {
-        self.charge_value_work(values_weight(self.env.values())?)?;
-        let target_cost = self
-            .env
-            .values()
-            .try_fold(0usize, |cost, value| -> Result<usize> {
-                let extra = if let Symbol::Ref(_, reference, fields) = value {
-                    symbol_weight(project(self.memory.read(*reference)?, fields)?)?
-                } else if let Symbol::Plane(_, reference) = value {
-                    symbol_weight(self.memory.read(*reference)?)?
-                } else {
-                    0
-                };
-                Ok(cost.saturating_add(extra))
-            })?;
+        self.charge_value_work(values_weight(self.locals.values.values())?)?;
+        let target_cost =
+            self.locals
+                .values
+                .values()
+                .try_fold(0usize, |cost, value| -> Result<usize> {
+                    let extra = if let Symbol::Ref(_, reference, fields) = value {
+                        symbol_weight(project(self.storage.memory.read(*reference)?, fields)?)?
+                    } else if let Symbol::Plane(_, reference) = value {
+                        symbol_weight(self.storage.memory.read(*reference)?)?
+                    } else {
+                        0
+                    };
+                    Ok(cost.saturating_add(extra))
+                })?;
         self.charge_value_work(target_cost)?;
-        self.old_values.clear();
+        self.entry.values.clear();
         let mut targets = Vec::new();
-        for (name, value) in &self.env {
-            self.old_values.insert(name.clone(), value.clone());
+        for (name, value) in &self.locals.values {
+            self.entry.values.insert(name.clone(), value.clone());
             if let Symbol::Ref(_, reference, fields) = value {
                 targets.push((name.clone(), *reference, fields.clone()));
             } else if let Symbol::Plane(_, reference) = value {
@@ -1335,14 +1256,14 @@ impl<'a> Context<'a> {
         }
         for (name, reference, fields) in targets {
             let target = self.read_projection_value(reference, &fields)?;
-            self.old_values.insert(format!("*{name}"), target);
+            self.entry.values.insert(format!("*{name}"), target);
         }
-        self.old_memory = if function.entry_memory {
+        self.entry.memory = if function.entry_memory {
             Some(Box::new(EntryMemory {
                 env: self.clone_env()?,
-                roots: self.roots.clone(),
+                roots: self.locals.places.clone(),
                 memory: self.snapshot_memory()?,
-                module: self.module.clone(),
+                module: self.locals.module.clone(),
             }))
         } else {
             None
@@ -1358,14 +1279,22 @@ impl<'a> Context<'a> {
             Kind::Call(name, args) => {
                 let scalar_call = MachineInt::parse(name).is_some()
                     || matches!(name.as_str(), "integer" | "nat")
-                    || self.functions.get(name).is_some_and(|function| {
-                        !function.partial
-                            && function.modifies.is_empty()
-                            && matches!(
-                                function.ret,
-                                Type::Int | Type::Nat | Type::Bool | Type::Machine(_) | Type::Unit
-                            )
-                    });
+                    || self
+                        .declarations
+                        .functions
+                        .get(name)
+                        .is_some_and(|function| {
+                            !function.partial
+                                && function.modifies.is_empty()
+                                && matches!(
+                                    function.ret,
+                                    Type::Int
+                                        | Type::Nat
+                                        | Type::Bool
+                                        | Type::Machine(_)
+                                        | Type::Unit
+                                )
+                        });
                 scalar_call && args.iter().all(|arg| self.entry_observation(arg))
             }
             Kind::Field(base, _) => self.entry_observation(base),
@@ -1387,7 +1316,8 @@ impl<'a> Context<'a> {
     fn old_expression(&mut self, expression: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
         if let Some(key) = Self::old_key(expression) {
             return self
-                .old_values
+                .entry
+                .values
                 .get(&key)
                 .cloned()
                 .ok_or_else(|| format!("{key} is not a function entry parameter"));
@@ -1398,25 +1328,26 @@ impl<'a> Context<'a> {
             );
         }
         let mut entry = self
-            .old_memory
+            .entry
+            .memory
             .take()
             .ok_or("old expression has no function entry memory")?;
-        std::mem::swap(&mut self.env, &mut entry.env);
-        std::mem::swap(&mut self.roots, &mut entry.roots);
-        std::mem::swap(&mut self.memory, &mut entry.memory);
-        std::mem::swap(&mut self.module, &mut entry.module);
-        let facts = std::mem::take(&mut self.facts);
-        let proofs = std::mem::take(&mut self.proofs);
-        let phase = std::mem::replace(&mut self.phase, Phase::Specification);
+        std::mem::swap(&mut self.locals.values, &mut entry.env);
+        std::mem::swap(&mut self.locals.places, &mut entry.roots);
+        std::mem::swap(&mut self.storage.memory, &mut entry.memory);
+        std::mem::swap(&mut self.locals.module, &mut entry.module);
+        let facts = std::mem::take(&mut self.proof.facts);
+        let proofs = std::mem::take(&mut self.proof.witnesses);
+        let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
         let value = self.eval(expression, expected);
-        self.phase = phase;
-        self.facts = facts;
-        self.proofs = proofs;
-        std::mem::swap(&mut self.env, &mut entry.env);
-        std::mem::swap(&mut self.roots, &mut entry.roots);
-        std::mem::swap(&mut self.memory, &mut entry.memory);
-        std::mem::swap(&mut self.module, &mut entry.module);
-        self.old_memory = Some(entry);
+        self.execution.phase = phase;
+        self.proof.facts = facts;
+        self.proof.witnesses = proofs;
+        std::mem::swap(&mut self.locals.values, &mut entry.env);
+        std::mem::swap(&mut self.locals.places, &mut entry.roots);
+        std::mem::swap(&mut self.storage.memory, &mut entry.memory);
+        std::mem::swap(&mut self.locals.module, &mut entry.module);
+        self.entry.memory = Some(entry);
         // Pure entry expressions cannot construct addresses. Conditional
         // selections may introduce a new symbolic cell path on an incoming
         // handle. Materialize its LIVE view separately from the frozen read.
@@ -1438,7 +1369,7 @@ impl<'a> Context<'a> {
     }
 
     fn number_type(&self) -> Ty {
-        if self.phase != Phase::Runtime {
+        if self.execution.phase != Phase::Runtime {
             Ty::Int
         } else {
             Ty::Machine(MachineInt::parse("isize").expect("isize type"))
@@ -1446,8 +1377,14 @@ impl<'a> Context<'a> {
     }
 
     fn assume(&mut self, p: &Formula) -> Result<()> {
-        let paths = extend(&self.paths, p, false, self.session, &mut self.value_work)?;
-        self.paths = self.feasible_paths(paths)?;
+        let paths = extend(
+            &self.proof.paths,
+            p,
+            false,
+            self.session,
+            &mut self.work.value_work,
+        )?;
+        self.proof.paths = self.feasible_paths(paths)?;
         Ok(())
     }
 
@@ -1465,10 +1402,10 @@ impl<'a> Context<'a> {
     }
 
     fn proposition(&mut self, e: &Expr) -> Result<Formula> {
-        let saved = self.phase;
-        self.phase = Phase::Specification;
+        let saved = self.execution.phase;
+        self.execution.phase = Phase::Specification;
         let result = self.eval(e, Some(&Ty::Bool)).and_then(|v| v.proposition());
-        self.phase = saved;
+        self.execution.phase = saved;
         result
     }
 
@@ -1483,8 +1420,14 @@ impl<'a> Context<'a> {
     }
 
     fn prove(&mut self, p: &Formula, label: &str, line: usize) -> Result<()> {
-        self.obligations += 1;
-        for path in extend(&self.paths, p, true, self.session, &mut self.value_work)? {
+        self.work.obligations += 1;
+        for path in extend(
+            &self.proof.paths,
+            p,
+            true,
+            self.session,
+            &mut self.work.value_work,
+        )? {
             self.session
                 .prove(&path)
                 .map_err(|e| format!("line {line}: cannot prove {label}: {e}"))?;
@@ -1494,34 +1437,34 @@ impl<'a> Context<'a> {
 
     fn resolve(&mut self, t: &Type) -> Result<Ty> {
         match t {
-            Type::Int | Type::Nat if self.phase == Phase::Runtime => Err("integer and nat are proof-only; use a machine integer for runtime storage or declare ideal code".into()),
+            Type::Int | Type::Nat if self.execution.phase == Phase::Runtime => Err("integer and nat are proof-only; use a machine integer for runtime storage or declare ideal code".into()),
             Type::Int => Ok(Ty::Int), Type::Nat => Ok(Ty::Nat),
             Type::Bool => Ok(Ty::Bool),
             Type::Machine(t) => Ok(Ty::Machine(*t)),
             Type::Unit => Ok(Ty::Unit),
             Type::Ref(t) => Ok(Ty::Ref(Box::new(self.resolve(t)?))),
             Type::Plane(t) => {
-                if !runtime_type(t, self.structs) || !heap::payload_type(t, self.structs) {
+                if !runtime_type(t, self.declarations.structs) || !heap::payload_type(t, self.declarations.structs) {
                     return Err("owned planes require runtime payloads without borrowed references".into());
                 }
-                heap::payload_layout(t, self.structs)?;
+                heap::payload_layout(t, self.declarations.structs)?;
                 Ok(Ty::Plane(Box::new(self.resolve(t)?)))
             }
             Type::Named(n) => {
-                if !self.structs.contains_key(n) {
+                if !self.declarations.structs.contains_key(n) {
                     return Err(format!(
                         "unknown struct {n}; recursive types are not supported yet"
                     ));
                 }
-                if self.structs.get(n).is_some_and(|s| s.ideal) && self.phase == Phase::Runtime {return Err(format!("{n} is ideal data and has no runtime layout"));}
+                if self.declarations.structs.get(n).is_some_and(|s| s.ideal) && self.execution.phase == Phase::Runtime {return Err(format!("{n} is ideal data and has no runtime layout"));}
                 Ok(Ty::Record(n.clone()))
             }
             Type::Array(element, len) => {
                 let element = self.resolve(element)?;
-                let saved_spec = self.phase;
-                self.phase = Phase::Specification;
+                let saved_spec = self.execution.phase;
+                self.execution.phase = Phase::Specification;
                 let n = self.nonnegative(len, "nonnegative array length")?;
-                self.phase = saved_spec;
+                self.execution.phase = saved_spec;
                 Ok(Ty::Array(Box::new(element), n))
             }
         }
@@ -1563,7 +1506,7 @@ impl<'a> Context<'a> {
 
     fn arbitrary(&mut self, t: &Ty) -> Result<Symbol> {
         self.charge_value_work(1)?;
-        if self.fresh >= 8192 {
+        if self.work.fresh >= 8192 {
             return Err("symbolic value expansion limit reached (8192)".into());
         }
         let name = self.fresh_name();
@@ -1579,7 +1522,8 @@ impl<'a> Context<'a> {
             Ty::Plane(t) => {
                 if let Ty::Array(element, length) = t.as_ref() {
                     let syntax = heap::syntax_type(element, 0)?;
-                    let stride = crate::compiler::layout::of(&syntax, self.structs)?.size;
+                    let stride =
+                        crate::compiler::layout::of(&syntax, self.declarations.structs)?.size;
                     self.assume(&Formula::Ge(
                         Linear::number(
                             (crate::compiler::layout::MAX_ALLOCATION_BYTES / stride as u64) as i128,
@@ -1588,13 +1532,17 @@ impl<'a> Context<'a> {
                     ))?;
                 }
                 let value = self.arbitrary(t)?;
-                let plane = self.memory.allocate(value)?;
-                Ok(Symbol::Plane(t.clone(), self.memory.borrow(plane)?))
+                let plane = self.storage.memory.allocate(value)?;
+                Ok(Symbol::Plane(t.clone(), self.storage.memory.borrow(plane)?))
             }
             Ty::Ref(t) => {
                 let v = self.arbitrary(t)?;
-                let id = self.memory.allocate(v)?;
-                Ok(Symbol::Ref(t.clone(), self.memory.borrow(id)?, vec![]))
+                let id = self.storage.memory.allocate(v)?;
+                Ok(Symbol::Ref(
+                    t.clone(),
+                    self.storage.memory.borrow(id)?,
+                    vec![],
+                ))
             }
             Ty::Int => Ok(Symbol::Number(Ty::Int, Linear::variable(name))),
             Ty::Nat => {
@@ -1637,36 +1585,40 @@ impl<'a> Context<'a> {
                 })
             }
             Ty::Record(name) => {
-                let def = self.structs.get(name).ok_or("unknown struct")?;
-                let saved = std::mem::take(&mut self.env);
-                let saved_roots = std::mem::take(&mut self.roots);
-                let saved_facts = std::mem::take(&mut self.facts);
-                let saved_module = std::mem::replace(&mut self.module, def.module.clone());
-                self.facts = def.facts.iter().cloned().collect();
-                self.roots.clear();
-                self.env.clear();
+                let def = self
+                    .declarations
+                    .structs
+                    .get(name)
+                    .ok_or("unknown struct")?;
+                let saved = std::mem::take(&mut self.locals.values);
+                let saved_roots = std::mem::take(&mut self.locals.places);
+                let saved_facts = std::mem::take(&mut self.proof.facts);
+                let saved_module = std::mem::replace(&mut self.locals.module, def.module.clone());
+                self.proof.facts = def.facts.iter().cloned().collect();
+                self.locals.places.clear();
+                self.locals.values.clear();
                 let mut fields = BTreeMap::new();
                 for (n, t) in &def.fields {
-                    let phase = self.phase;
-                    if def.ideal_fields.contains(n) && self.phase == Phase::Runtime {
-                        self.phase = Phase::Ideal;
+                    let phase = self.execution.phase;
+                    if def.ideal_fields.contains(n) && self.execution.phase == Phase::Runtime {
+                        self.execution.phase = Phase::Ideal;
                     }
                     let t = self.resolve(t)?;
                     let v = self.arbitrary(&t)?;
-                    self.phase = phase;
+                    self.execution.phase = phase;
                     fields.insert(n.clone(), v.clone());
-                    self.env.insert(n.clone(), v);
+                    self.locals.values.insert(n.clone(), v);
                 }
                 let value = Symbol::Record(name.clone(), fields);
-                self.env.insert("self".into(), value.clone());
+                self.locals.values.insert("self".into(), value.clone());
                 if let Some(p) = &def.invariant {
                     let p = self.proposition(p)?;
                     self.assume(&p)?;
                 }
-                self.env = saved;
-                self.roots = saved_roots;
-                self.facts = saved_facts;
-                self.module = saved_module;
+                self.locals.values = saved;
+                self.locals.places = saved_roots;
+                self.proof.facts = saved_facts;
+                self.locals.module = saved_module;
                 Ok(value)
             }
         }
@@ -1675,15 +1627,15 @@ impl<'a> Context<'a> {
     fn assign(&mut self, place: &Expr, value: &Expr) -> Result<()> {
         if place.indirect_place() {
             let (reference, fields) = self.location(place)?;
-            let id = self.memory.plane(reference)?;
+            let id = self.storage.memory.plane(reference)?;
             let owned = self.owns_plane(id)?;
             if !self.write_permitted(reference, &fields, owned)? {
                 return Err(format!("line {}: writes through reference parameters need an effect contract; unsupported", place.line));
             }
-            let old = project(self.memory.read(reference)?, &fields)?.clone();
+            let old = project(self.storage.memory.read(reference)?, &fields)?.clone();
             if self.symbol_is_affine(&old)
                 && self.has_runtime_cleanup(&old.ty())
-                && !(self.phase == Phase::Ideal && self.erased_value(&old))
+                && !(self.execution.phase == Phase::Ideal && self.erased_value(&old))
             {
                 return Err("overwriting owned fields through references requires ownership effect proofs; unsupported".into());
             }
@@ -1692,16 +1644,21 @@ impl<'a> Context<'a> {
             if !replace_plane {
                 self.preserve_views(&old, &mut new)?;
             }
-            let mut root = self.memory.read(reference)?.clone();
+            let mut root = self.storage.memory.read(reference)?.clone();
             self.replace_projection(&mut root, &fields, new)?;
-            let lifted = self.opened_planes.get(&id).cloned().unwrap_or_default();
+            let lifted = self
+                .storage
+                .opened_planes
+                .get(&id)
+                .cloned()
+                .unwrap_or_default();
             // Validate against the resulting store: a field reference may point
             // back into this very root. Failure rejects the whole verification.
-            self.memory.write(id, root.clone(), replace_plane)?;
+            self.storage.memory.write(id, root.clone(), replace_plane)?;
             self.retained_valid_with(&root, place.line, &lifted)?;
-            for (n, plane) in &self.roots {
+            for (n, plane) in &self.locals.places {
                 if *plane == id {
-                    self.env.insert(n.clone(), root.clone());
+                    self.locals.values.insert(n.clone(), root.clone());
                 }
             }
             return self.validate_opened_planes(place.line);
@@ -1737,10 +1694,16 @@ impl<'a> Context<'a> {
         let name = path(place, &mut fields)?;
         self.runtime_name(&name)?;
         let old = if let Kind::Name(n) = &place.kind {
-            if let Some(value) = self.roots.get(n).and_then(|id| self.memory.get(*id).ok()) {
+            if let Some(value) = self
+                .locals
+                .places
+                .get(n)
+                .and_then(|id| self.storage.memory.get(*id).ok())
+            {
                 value.clone()
             } else {
-                self.env
+                self.locals
+                    .values
                     .get(n)
                     .cloned()
                     .ok_or("unknown assignment target")?
@@ -1749,7 +1712,7 @@ impl<'a> Context<'a> {
             self.storage(place)?
         };
         let mut new = self.eval(value, Some(&old.ty()))?;
-        if self.dropping && self.symbol_is_affine(&old) {
+        if self.execution.dropping && self.symbol_is_affine(&old) {
             return Err(
                 "destructors cannot replace owning fields without cleanup/effect proofs".into(),
             );
@@ -1759,9 +1722,10 @@ impl<'a> Context<'a> {
             self.preserve_views(&old, &mut new)?;
         }
         let old_live = self
-            .roots
+            .locals
+            .places
             .get(&name)
-            .is_none_or(|id| self.memory.get(*id).is_ok());
+            .is_none_or(|id| self.storage.memory.get(*id).is_ok());
         if !fields.is_empty() && !old_live {
             return Err(format!("line {}: field assignment cannot restore shape(T); replace consumed owner {name} as a whole", place.line));
         }
@@ -1770,40 +1734,45 @@ impl<'a> Context<'a> {
             self.cleanup_value(old, place.line)?;
         }
         let mut root = if let Some(value) = self
-            .roots
+            .locals
+            .places
             .get(&name)
-            .and_then(|id| self.memory.get(*id).ok())
+            .and_then(|id| self.storage.memory.get(*id).ok())
         {
             value.clone()
         } else {
-            self.env
+            self.locals
+                .values
                 .get(&name)
                 .cloned()
                 .ok_or("unknown assignment target")?
         };
         replace(&mut root, &fields, new)?;
         let lifted = self
-            .roots
+            .locals
+            .places
             .get(&name)
-            .and_then(|plane| self.opened_planes.get(plane))
+            .and_then(|plane| self.storage.opened_planes.get(plane))
             .cloned()
             .unwrap_or_default();
-        if let Some(id) = self.roots.get(&name) {
-            self.memory.write(*id, root.clone(), replace_plane)?;
+        if let Some(id) = self.locals.places.get(&name) {
+            self.storage
+                .memory
+                .write(*id, root.clone(), replace_plane)?;
         }
         self.retained_valid_with(&root, place.line, &lifted)?;
-        self.env.insert(name, root);
+        self.locals.values.insert(name, root);
         self.validate_opened_planes(place.line)
     }
 
     fn statement(&mut self, s: &Statement) -> Result<()> {
-        let start = self.temporaries.len();
+        let start = self.storage.temporaries.len();
         self.statement_inner(s)?;
         self.finish_temporaries(start)
     }
 
     fn finish_temporaries(&mut self, start: usize) -> Result<()> {
-        for (value, line) in self.temporaries.split_off(start).into_iter().rev() {
+        for (value, line) in self.storage.temporaries.split_off(start).into_iter().rev() {
             self.validate_argument(&value, line)
                 .map_err(|e| format!("line {line}: implicit temporary cleanup: {e}"))?;
             self.cleanup_value(value, line)?;
@@ -1812,7 +1781,7 @@ impl<'a> Context<'a> {
     }
 
     fn scoped_eval(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
-        let start = self.temporaries.len();
+        let start = self.storage.temporaries.len();
         let value = self.eval(e, expected)?;
         self.finish_temporaries(start)?;
         Ok(value)
@@ -1825,7 +1794,8 @@ impl<'a> Context<'a> {
                     fn erased(context: &Context<'_>, expression: &Expr) -> bool {
                         match &expression.kind {
                             Kind::Name(name) => {
-                                context.ideal_execution || context.ideal_bindings.contains(name)
+                                context.execution.ideal_execution
+                                    || context.locals.ideal_bindings.contains(name)
                             }
                             Kind::Index(base, _) => erased(context, base),
                             Kind::Unary(op, _) if op == "*" => {
@@ -1837,7 +1807,7 @@ impl<'a> Context<'a> {
                             }
                             Kind::Field(base, field) => {
                                 erased(context, base)
-                                    || matches!(context.hint(base), Some(Ty::Record(name)) if context.structs[&name].ideal_fields.contains(field))
+                                    || matches!(context.hint(base), Some(Ty::Record(name)) if context.declarations.structs[&name].ideal_fields.contains(field))
                             }
                             _ => false,
                         }
@@ -1857,11 +1827,12 @@ impl<'a> Context<'a> {
                             .into(),
                     );
                 }
-                let phase = std::mem::replace(&mut self.phase, Phase::Ideal);
+                let phase = std::mem::replace(&mut self.execution.phase, Phase::Ideal);
                 let result = self.statement(binding);
-                self.phase = phase;
+                self.execution.phase = phase;
                 result?;
-                self.ideal_bindings
+                self.locals
+                    .ideal_bindings
                     .extend(binding.bindings().into_iter().map(str::to_owned));
                 Ok(())
             }
@@ -1872,17 +1843,21 @@ impl<'a> Context<'a> {
             } => {
                 self.representation_access(record, value.line)?;
                 let def = self
+                    .declarations
                     .structs
                     .get(record)
                     .ok_or_else(|| format!("line {}: unknown record {record}", value.line))?;
-                let drop_receiver = self.dropping
-                    && self.phase == Phase::Runtime
+                let drop_receiver = self.execution.dropping
+                    && self.execution.phase == Phase::Runtime
                     && matches!(&value.kind, Kind::Name(name) if name == "self")
                     && self
+                        .declarations
                         .destructors
                         .get(record)
-                        .is_some_and(|method| self.current.as_ref() == Some(&method.name));
-                if self.drops.contains(record) && !drop_receiver {
+                        .is_some_and(|method| {
+                            self.execution.current.as_ref() == Some(&method.name)
+                        });
+                if self.declarations.drops.contains(record) && !drop_receiver {
                     return Err(format!(
                         "line {}: destructuring {record} would bypass its Drop implementation",
                         value.line
@@ -1921,9 +1896,9 @@ impl<'a> Context<'a> {
                 for (field, name) in fields {
                     let v = values.remove(field).ok_or("missing pattern field")?;
                     if def.ideal_fields.contains(field) {
-                        self.ideal_bindings.insert(name.clone());
+                        self.locals.ideal_bindings.insert(name.clone());
                     }
-                    self.env.insert(name.clone(), v);
+                    self.locals.values.insert(name.clone(), v);
                 }
                 Ok(())
             }
@@ -1945,13 +1920,13 @@ impl<'a> Context<'a> {
                 self.fresh_binding(name, value.line)?;
                 let ty = ty.as_ref().map(|t| self.resolve(t)).transpose()?;
                 let v = self.eval(value, ty.as_ref())?;
-                self.env.insert(name.clone(), v);
+                self.locals.values.insert(name.clone(), v);
                 Ok(())
             }
             Statement::Fact { name, value } => {
                 self.fresh_binding(name, value.line)?;
                 self.proposition(value)?; // Well-formedness only; NOT a proof or an assumption.
-                self.facts.insert(name.clone(), value.clone());
+                self.proof.facts.insert(name.clone(), value.clone());
                 Ok(())
             }
             Statement::Proof {
@@ -1963,16 +1938,16 @@ impl<'a> Context<'a> {
                 let p = self.proposition(proposition)?;
                 self.prove_with(&p, &format!("proof {name}"), proposition.line, Some(steps))?;
                 self.assume(&p)?;
-                self.proofs.insert(name.clone(), p);
+                self.proof.witnesses.insert(name.clone(), p);
                 Ok(())
             }
         }
     }
 
     fn fresh_binding(&self, name: &str, line: usize) -> Result<()> {
-        if self.env.contains_key(name)
-            || self.facts.contains_key(name)
-            || self.proofs.contains_key(name)
+        if self.locals.values.contains_key(name)
+            || self.proof.facts.contains_key(name)
+            || self.proof.witnesses.contains_key(name)
         {
             return Err(format!("line {line}: duplicate binding {name}"));
         }
@@ -2059,13 +2034,13 @@ impl<'a> Context<'a> {
                     ..
                 },
             ) => {
-                self.obligations += 1;
+                self.work.obligations += 1;
                 for path in extend(
-                    &self.paths,
+                    &self.proof.paths,
                     &equal(a, b)?,
                     true,
                     self.session,
-                    &mut self.value_work,
+                    &mut self.work.value_work,
                 )? {
                     if !self.session.probe(&path)? {
                         return Ok(false);
@@ -2104,35 +2079,37 @@ impl<'a> Context<'a> {
         match &e.kind {
             Kind::Name(n) => {
                 self.runtime_name(n)?;
-                let id = if let Some(id) = self.roots.get(n) {
+                let id = if let Some(id) = self.locals.places.get(n) {
                     *id
                 } else {
                     let v = self
-                        .env
+                        .locals
+                        .values
                         .get(n)
                         .cloned()
                         .ok_or_else(|| format!("unknown place {n}"))?;
-                    let id = self.memory.allocate(v)?;
-                    self.roots.insert(n.clone(), id);
+                    let id = self.storage.memory.allocate(v)?;
+                    self.locals.places.insert(n.clone(), id);
                     id
                 };
-                Ok((self.memory.borrow(id)?, vec![]))
+                Ok((self.storage.memory.borrow(id)?, vec![]))
             }
             Kind::Field(base, n) => {
                 let (r, mut path) = self.location(base)?;
-                let Symbol::Record(typename, _) = project(self.memory.read(r)?, &path)? else {
+                let Symbol::Record(typename, _) = project(self.storage.memory.read(r)?, &path)?
+                else {
                     return Err("field reference requires a record".into());
                 };
                 self.field_access(typename, n, e.line)?;
                 path.push(Projection::Field(n.clone()));
-                project(self.memory.read(r)?, &path)?;
+                project(self.storage.memory.read(r)?, &path)?;
                 Ok((r, path))
             }
             Kind::Index(base, i) => {
                 let (r, mut path) = self.location(base)?;
                 let index = self.nonnegative(i, "nonnegative reference index")?;
-                self.charge_value_work(symbol_weight(self.memory.read(r)?)?)?;
-                let mut root = self.memory.read(r)?.clone();
+                self.charge_value_work(symbol_weight(self.storage.memory.read(r)?)?)?;
+                let mut root = self.storage.memory.read(r)?.clone();
                 let array = project(&root, &path)?.clone();
                 let Symbol::Array {
                     element,
@@ -2163,11 +2140,11 @@ impl<'a> Context<'a> {
                         return Err("invalid array storage".into());
                     };
                     cells.insert(index.clone(), value);
-                    let plane = self.memory.plane(r)?;
-                    self.memory.write(plane, root, false)?;
+                    let plane = self.storage.memory.plane(r)?;
+                    self.storage.memory.write(plane, root, false)?;
                 }
                 path.push(Projection::Index(index));
-                project(self.memory.read(r)?, &path)?;
+                project(self.storage.memory.read(r)?, &path)?;
                 Ok((r, path))
             }
             Kind::Unary(op, x) if op == "*" => {
@@ -2176,20 +2153,23 @@ impl<'a> Context<'a> {
                     Symbol::Plane(_, r) => (r, Vec::new()),
                     _ => return Err("dereference requires a reference or owned plane".into()),
                 };
-                self.memory.read(r)?;
+                self.storage.memory.read(r)?;
                 Ok((r, path))
             }
-            Kind::Record(..) | Kind::Call(..) | Kind::If(..) if self.phase == Phase::Runtime => {
+            Kind::Record(..) | Kind::Call(..) | Kind::If(..)
+                if self.execution.phase == Phase::Runtime =>
+            {
                 let value = self.eval(e, None)?;
                 if !matches!(value, Symbol::Record(..)) {
                     return Err("temporary borrows require a record value".into());
                 }
                 let ty = value.ty();
-                let plane = self.memory.allocate(value)?;
-                let reference = self.memory.borrow(plane)?;
+                let plane = self.storage.memory.allocate(value)?;
+                let reference = self.storage.memory.borrow(plane)?;
                 // Own the temporary slot until this statement finishes. Taking
                 // it during cleanup invalidates every loan into that slot.
-                self.temporaries
+                self.storage
+                    .temporaries
                     .push((Symbol::Plane(Box::new(ty), reference), e.line));
                 Ok((reference, Vec::new()))
             }
@@ -2217,10 +2197,10 @@ impl<'a> Context<'a> {
     fn stored_hint(&self, expression: &Expr) -> Option<&Symbol> {
         match &expression.kind {
             Kind::Name(name) => {
-                if let Some(plane) = self.roots.get(name) {
-                    self.memory.get(*plane).ok()
+                if let Some(plane) = self.locals.places.get(name) {
+                    self.storage.memory.get(*plane).ok()
                 } else {
-                    self.env.get(name)
+                    self.locals.values.get(name)
                 }
             }
             Kind::Field(base, field) => match self.stored_hint(base)? {
@@ -2229,9 +2209,9 @@ impl<'a> Context<'a> {
             },
             Kind::Unary(op, base) if op == "*" => match self.stored_hint(base)? {
                 Symbol::Ref(_, reference, path) => {
-                    project(self.memory.read(*reference).ok()?, path).ok()
+                    project(self.storage.memory.read(*reference).ok()?, path).ok()
                 }
-                Symbol::Plane(_, reference) => self.memory.read(*reference).ok(),
+                Symbol::Plane(_, reference) => self.storage.memory.read(*reference).ok(),
                 _ => None,
             },
             Kind::Index(base, index) => {
@@ -2260,7 +2240,7 @@ impl<'a> Context<'a> {
         match &e.kind {
             Kind::Bool(_) => Some(Ty::Bool),
             Kind::Call(name, args) if name == "old" && args.len() == 1 => Self::old_key(&args[0])
-                .and_then(|key| self.old_values.get(&key).map(Symbol::ty))
+                .and_then(|key| self.entry.values.get(&key).map(Symbol::ty))
                 .or_else(|| self.hint(&args[0])),
             Kind::Call(name, _) if MachineInt::parse(name).is_some() => {
                 MachineInt::parse(name).map(Ty::Machine)
@@ -2271,7 +2251,7 @@ impl<'a> Context<'a> {
                 self.hint(&args[0]).map(|t| Ty::Plane(Box::new(t)))
             }
             Kind::Constant(t, _) => Some(Ty::Machine(*t)),
-            Kind::Name(n) => self.env.get(n).map(Symbol::ty),
+            Kind::Name(n) => self.locals.values.get(n).map(Symbol::ty),
             Kind::Record(n, _) => Some(Ty::Record(n.clone())),
             Kind::Unary(op, x) if op == "&" => self.hint(x).map(|t| Ty::Ref(Box::new(t))),
             Kind::Unary(op, x) if op == "*" => {
@@ -2290,7 +2270,8 @@ impl<'a> Context<'a> {
                 let Ty::Record(name) = self.hint(base)? else {
                     return None;
                 };
-                self.structs
+                self.declarations
+                    .structs
                     .get(&name)?
                     .fields
                     .iter()
@@ -2308,6 +2289,7 @@ impl<'a> Context<'a> {
             Kind::Binary(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
             Kind::If(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
             Kind::Call(n, _) => self
+                .declarations
                 .functions
                 .get(n)
                 .and_then(|f| Self::declared_hint(&f.ret)),
@@ -2329,16 +2311,16 @@ impl<'a> Context<'a> {
     }
 
     fn eval(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
-        if self.eval_depth >= 32 || self.eval_steps >= 100_000 {
+        if self.work.eval_depth >= 32 || self.work.eval_steps >= 100_000 {
             return Err(format!(
                 "line {}: verification evaluation limit reached",
                 e.line
             ));
         }
-        self.eval_depth += 1;
-        self.eval_steps += 1;
+        self.work.eval_depth += 1;
+        self.work.eval_steps += 1;
         let result = self.eval_checked(e, expected);
-        self.eval_depth -= 1;
+        self.work.eval_depth -= 1;
         result
     }
 
@@ -2354,7 +2336,10 @@ impl<'a> Context<'a> {
             .map_err(|error| format!("line {}: {error}", e.line))?;
         let projecting_owner = matches!(&e.kind, Kind::Field(..) | Kind::Index(..))
             || matches!(&e.kind, Kind::Unary(op, _) if op == "*");
-        if self.phase != Phase::Specification && self.symbol_is_affine(&value) && projecting_owner {
+        if self.execution.phase != Phase::Specification
+            && self.symbol_is_affine(&value)
+            && projecting_owner
+        {
             return Err(format!("line {}: moving owning fields or borrowed values needs partial-initialization tracking; unsupported", e.line));
         }
         if let Some(t) = expected {
@@ -2382,7 +2367,11 @@ impl<'a> Context<'a> {
     fn symbol_is_affine(&self, value: &Symbol) -> bool {
         match value {
             Symbol::Plane(..) => true,
-            Symbol::Record(n, _) => is_affine(&Type::Named(n.clone()), self.structs, self.drops),
+            Symbol::Record(n, _) => is_affine(
+                &Type::Named(n.clone()),
+                self.declarations.structs,
+                self.declarations.drops,
+            ),
             Symbol::Array { element, .. } => self.ty_is_affine(element),
             _ => false,
         }
@@ -2391,7 +2380,11 @@ impl<'a> Context<'a> {
     fn ty_is_affine(&self, t: &Ty) -> bool {
         match t {
             Ty::Plane(_) => true,
-            Ty::Record(n) => is_affine(&Type::Named(n.clone()), self.structs, self.drops),
+            Ty::Record(n) => is_affine(
+                &Type::Named(n.clone()),
+                self.declarations.structs,
+                self.declarations.drops,
+            ),
             Ty::Array(t, _) => self.ty_is_affine(t),
             _ => false,
         }
@@ -2414,7 +2407,7 @@ impl<'a> Context<'a> {
             }
         }
         match t {
-            Ty::Record(name) => fields(&Type::Named(name.clone()), self.structs),
+            Ty::Record(name) => fields(&Type::Named(name.clone()), self.declarations.structs),
             Ty::Ref(_) | Ty::Plane(_) | Ty::Array(..) => false,
             _ => true,
         }
@@ -2428,7 +2421,9 @@ impl<'a> Context<'a> {
         match t {
             Ty::Ref(_) | Ty::Plane(_) => true,
             Ty::Array(element, _) => self.ty_has_reference(element),
-            Ty::Record(name) => type_has_reference(&Type::Named(name.clone()), self.structs),
+            Ty::Record(name) => {
+                type_has_reference(&Type::Named(name.clone()), self.declarations.structs)
+            }
             _ => false,
         }
     }
@@ -2444,7 +2439,7 @@ impl<'a> Context<'a> {
             _ => Vec::new(),
         };
         for bound in bounds {
-            if self.paths.iter().any(|path| !path.contains(&bound)) {
+            if self.proof.paths.iter().any(|path| !path.contains(&bound)) {
                 self.assume(&Formula::Ge(bound))?;
             }
         }
@@ -2458,23 +2453,27 @@ impl<'a> Context<'a> {
                 self.assume_element_type(value)?;
             }
             let definition = self
+                .declarations
                 .structs
                 .get(name)
                 .cloned()
                 .ok_or("unknown array element type")?;
             if let Some(invariant) = definition.invariant {
-                let saved_module = std::mem::replace(&mut self.module, definition.module.clone());
-                let env = std::mem::replace(&mut self.env, fields.clone());
-                let roots = std::mem::take(&mut self.roots);
-                let facts =
-                    std::mem::replace(&mut self.facts, definition.facts.into_iter().collect());
-                self.env.insert("self".into(), value.clone());
+                let saved_module =
+                    std::mem::replace(&mut self.locals.module, definition.module.clone());
+                let env = std::mem::replace(&mut self.locals.values, fields.clone());
+                let roots = std::mem::take(&mut self.locals.places);
+                let facts = std::mem::replace(
+                    &mut self.proof.facts,
+                    definition.facts.into_iter().collect(),
+                );
+                self.locals.values.insert("self".into(), value.clone());
                 let invariant = self.proposition(&invariant)?;
                 self.assume(&invariant)?;
-                self.env = env;
-                self.roots = roots;
-                self.facts = facts;
-                self.module = saved_module;
+                self.locals.values = env;
+                self.locals.places = roots;
+                self.proof.facts = facts;
+                self.locals.module = saved_module;
             }
         }
         Ok(())
@@ -2488,23 +2487,28 @@ impl<'a> Context<'a> {
                 .flat_map(|s| s.bindings().into_iter().map(str::to_owned)),
         );
         for name in names.into_iter().rev() {
-            let value = if let Some(id) = self.roots.get(&name).copied() {
-                if self.memory.get(id).is_err() {
+            let value = if let Some(id) = self.locals.places.get(&name).copied() {
+                if self.storage.memory.get(id).is_err() {
                     continue;
                 }
-                let before = self.memory.get(id)?.clone();
+                let before = self.storage.memory.get(id)?.clone();
                 if self.symbol_is_affine(&before) {
                     self.validate_argument(&before, f.result.line)?;
                 }
-                self.memory.take(id)?
+                self.storage.memory.take(id)?
             } else {
-                let value = self.env.remove(&name).ok_or("unknown cleanup binding")?;
+                let value = self
+                    .locals
+                    .values
+                    .remove(&name)
+                    .ok_or("unknown cleanup binding")?;
                 if self.symbol_is_affine(&value) {
                     self.validate_argument(&value, f.result.line)?;
                 }
                 value
             };
-            if self.phase == Phase::Runtime && !self.ideal_bindings.contains(&name) {
+            if self.execution.phase == Phase::Runtime && !self.locals.ideal_bindings.contains(&name)
+            {
                 if name == "self" && f.drop_target.is_some() {
                     self.cleanup_fields(value, f.result.line)?;
                 } else {
@@ -2540,12 +2544,12 @@ impl<'a> Context<'a> {
                 .collect::<Vec<_>>();
             for (index, value) in observed {
                 let key = (identity.to_owned(), index);
-                if let Some(existing) = self.array_reads.get(&key).cloned() {
+                if let Some(existing) = self.arrays.reads.get(&key).cloned() {
                     if existing != value {
                         self.assume(&self.symbol_equal(&existing, &value)?)?;
                     }
                 } else {
-                    self.array_reads.insert(key, value);
+                    self.arrays.reads.insert(key, value);
                 }
             }
         }
@@ -2554,16 +2558,16 @@ impl<'a> Context<'a> {
 
     fn array_read(&mut self, element: &Ty, identity: &str, index: &Linear) -> Result<Symbol> {
         self.charge_value_work(1)?;
-        if self.array_read_depth >= 64 {
+        if self.arrays.read_depth >= 64 {
             return Err("array history read depth limit reached (64)".into());
         }
-        self.array_read_depth += 1;
+        self.arrays.read_depth += 1;
         let result = (|| {
             let value = self.array_read_value(element, identity, index)?;
             self.replay_array_history(element, identity, index, &value)?;
             Ok(value)
         })();
-        self.array_read_depth -= 1;
+        self.arrays.read_depth -= 1;
         result
     }
 
@@ -2574,21 +2578,22 @@ impl<'a> Context<'a> {
             return Err("symbolic reads of reference-containing array elements need an alias contract; unsupported".into());
         }
         let key = (identity.to_owned(), index.clone());
-        if let Some(value) = self.array_reads.get(&key).cloned() {
+        if let Some(value) = self.arrays.reads.get(&key).cloned() {
             // Replay type facts, never facts specific to the first read's path.
-            self.assume_history_type(&value, !self.array_history.contains_key(identity))?;
+            self.assume_history_type(&value, !self.arrays.history.contains_key(identity))?;
             return Ok(value);
         }
         let value = if self.history_element(element) {
             let value = self.history_value(element)?;
-            self.assume_history_type(&value, !self.array_history.contains_key(identity))?;
+            self.assume_history_type(&value, !self.arrays.history.contains_key(identity))?;
             value
         } else {
             self.arbitrary(element)?
         };
         if self.history_element(element) {
             let observations = self
-                .array_reads
+                .arrays
+                .reads
                 .iter()
                 .filter(|((contents, _), _)| contents == identity)
                 .map(|((_, index), value)| (index.clone(), value.clone()))
@@ -2602,7 +2607,7 @@ impl<'a> Context<'a> {
                 self.assume(&relation)?;
             }
         }
-        self.array_reads.insert(key, value.clone());
+        self.arrays.reads.insert(key, value.clone());
         Ok(value)
     }
 
@@ -2616,10 +2621,11 @@ impl<'a> Context<'a> {
         match &e.kind {
             Kind::Name(n) => {
                 self.runtime_name(n)?;
-                if let Some(id) = self.roots.get(n) {
-                    self.memory.get(*id).cloned()
+                if let Some(id) = self.locals.places.get(n) {
+                    self.storage.memory.get(*id).cloned()
                 } else {
-                    self.env
+                    self.locals
+                        .values
                         .get(n)
                         .cloned()
                         .ok_or_else(|| format!("unknown storage place {n}"))
@@ -2679,8 +2685,8 @@ impl<'a> Context<'a> {
             }
             _ => {
                 let value = self.eval(e, None)?;
-                if self.phase != Phase::Specification && self.symbol_is_affine(&value) {
-                    self.temporaries.push((value.clone(), e.line));
+                if self.execution.phase != Phase::Specification && self.symbol_is_affine(&value) {
+                    self.storage.temporaries.push((value.clone(), e.line));
                 }
                 Ok(value)
             }
@@ -2688,7 +2694,7 @@ impl<'a> Context<'a> {
     }
 
     fn fact_at(&mut self, place: &Expr, fact: &str, line: usize) -> Result<Formula> {
-        if self.phase != Phase::Specification {
+        if self.execution.phase != Phase::Specification {
             return Err(format!(
                 "line {line}: named type facts are propositions, not runtime values"
             ));
@@ -2698,6 +2704,7 @@ impl<'a> Context<'a> {
             return Err("type facts require struct storage".into());
         };
         let def = self
+            .declarations
             .structs
             .get(typename)
             .ok_or("unknown fact owner")?
@@ -2709,18 +2716,18 @@ impl<'a> Context<'a> {
             .map(|(_, p)| p.clone())
             .ok_or_else(|| format!("unknown fact {typename}::{fact}"))?;
         let saved = self.clone_env()?;
-        let roots = self.roots.clone();
-        let facts = self.facts.clone();
-        self.env = fields.clone();
-        self.env.insert("self".into(), value);
-        self.roots.clear();
-        self.facts = def.facts.iter().cloned().collect();
-        let saved_module = std::mem::replace(&mut self.module, def.module.clone());
+        let roots = self.locals.places.clone();
+        let facts = self.proof.facts.clone();
+        self.locals.values = fields.clone();
+        self.locals.values.insert("self".into(), value);
+        self.locals.places.clear();
+        self.proof.facts = def.facts.iter().cloned().collect();
+        let saved_module = std::mem::replace(&mut self.locals.module, def.module.clone());
         let result = self.proposition(&expression);
-        self.module = saved_module;
-        self.env = saved;
-        self.roots = roots;
-        self.facts = facts;
+        self.locals.module = saved_module;
+        self.locals.values = saved;
+        self.locals.places = roots;
+        self.proof.facts = facts;
         result
     }
 
@@ -2746,46 +2753,49 @@ impl<'a> Context<'a> {
                 // A struct's field bindings shadow caller-side logical names.
                 self.runtime_name(n)?;
                 // Never let an unrelated fact redefine a type invariant.
-                if !self.env.contains_key(n) {
-                    if let Some(definition) = self.facts.get(n).cloned() {
-                        if self.phase != Phase::Specification {
+                if !self.locals.values.contains_key(n) {
+                    if let Some(definition) = self.proof.facts.get(n).cloned() {
+                        if self.execution.phase != Phase::Specification {
                             return Err(format!(
                                 "fact {n} is a proof-only proposition, not a runtime boolean"
                             ));
                         }
                         return self.eval(&definition, Some(&Ty::Bool));
                     }
-                    if self.proofs.contains_key(n) {
+                    if self.proof.witnesses.contains_key(n) {
                         return Err(format!("{n} is a proof witness; reference it with exact"));
                     }
                 }
 
-                let value = if let Some(id) = self.roots.get(n) {
-                    self.memory.get(*id).cloned()
+                let value = if let Some(id) = self.locals.places.get(n) {
+                    self.storage.memory.get(*id).cloned()
                 } else {
-                    self.env
+                    self.locals
+                        .values
                         .get(n)
                         .cloned()
                         .ok_or_else(|| format!("unknown value {n}"))
                 }?;
-                if self.phase != Phase::Specification && self.symbol_is_affine(&value) {
-                    if self.phase == Phase::Ideal && !self.erased_value(&value) {
+                if self.execution.phase != Phase::Specification && self.symbol_is_affine(&value) {
+                    if self.execution.phase == Phase::Ideal && !self.erased_value(&value) {
                         return Err("ideal execution cannot consume runtime ownership; use a read-only proof view".into());
                     }
-                    if self.phase == Phase::Runtime && !self.opened_planes.is_empty() {
+                    if self.execution.phase == Phase::Runtime
+                        && !self.storage.opened_planes.is_empty()
+                    {
                         return Err(
                             "runtime ownership moves are forbidden while invariants are open"
                                 .into(),
                         );
                     }
-                    if self.dropping && n == "self" {
+                    if self.execution.dropping && n == "self" {
                         return Err(
                             "a destructor must use a complete pattern to consume self".into()
                         );
                     }
                     let (r, _) = self.location(e)?;
-                    let id = self.memory.plane(r)?;
-                    self.memory.take(id)?;
+                    let id = self.storage.memory.plane(r)?;
+                    self.storage.memory.take(id)?;
                 }
                 Ok(value)
             }
@@ -2801,18 +2811,23 @@ impl<'a> Context<'a> {
             }
             Kind::Record(name, entries) => {
                 self.representation_access(name, e.line)?;
-                if self.phase == Phase::Ideal
-                    && is_affine(&Type::Named(name.clone()), self.structs, self.drops)
-                    && !erased_type(&Type::Named(name.clone()), self.structs)
+                if self.execution.phase == Phase::Ideal
+                    && is_affine(
+                        &Type::Named(name.clone()),
+                        self.declarations.structs,
+                        self.declarations.drops,
+                    )
+                    && !erased_type(&Type::Named(name.clone()), self.declarations.structs)
                 {
                     return Err("ideal execution cannot construct runtime ownership".into());
                 }
                 let def = self
+                    .declarations
                     .structs
                     .get(name)
                     .cloned()
                     .ok_or_else(|| format!("unknown struct {name}"))?;
-                if def.ideal && self.phase == Phase::Runtime {
+                if def.ideal && self.execution.phase == Phase::Runtime {
                     return Err(format!(
                         "{name} is ideal data and cannot be constructed at runtime"
                     ));
@@ -2836,9 +2851,9 @@ impl<'a> Context<'a> {
                         Type::Machine(t) => Some(Ty::Machine(*t)),
                         _ => None,
                     };
-                    let saved_phase = self.phase;
-                    if def.ideal_fields.contains(n) && self.phase == Phase::Runtime {
-                        self.phase = Phase::Ideal;
+                    let saved_phase = self.execution.phase;
+                    if def.ideal_fields.contains(n) && self.execution.phase == Phase::Runtime {
+                        self.execution.phase = Phase::Ideal;
                     }
                     let evaluated = if let Type::Array(element, _) = ty {
                         // Supply the element type now; the complete dependent
@@ -2852,27 +2867,30 @@ impl<'a> Context<'a> {
                         // Dependent field types refer to preceding record fields,
                         // while initializer expressions still use the caller's scope.
                         let caller = self.clone_env()?;
-                        let caller_roots = std::mem::take(&mut self.roots);
-                        self.env = fields.clone();
+                        let caller_roots = std::mem::take(&mut self.locals.places);
+                        self.locals.values = fields.clone();
                         let resolved = self.resolve(ty);
-                        self.env = caller;
-                        self.roots = caller_roots;
+                        self.locals.values = caller;
+                        self.locals.places = caller_roots;
                         self.eval(value, Some(&resolved?))?
                     } else {
                         self.eval(value, hint.as_ref())?
                     };
-                    self.phase = saved_phase;
+                    self.execution.phase = saved_phase;
                     fields.insert(n.clone(), evaluated);
                 }
-                self.env = saved;
+                self.locals.values = saved;
                 let record = Symbol::Record(name.clone(), fields);
                 self.record_valid(&record, e.line)?;
                 Ok(record)
             }
             Kind::Unary(op, x) if op == "&" => {
                 let (r, path) = self.location(x)?;
-                self.charge_value_work(symbol_weight(project(self.memory.read(r)?, &path)?)?)?;
-                let target = project(self.memory.read(r)?, &path)?.clone();
+                self.charge_value_work(symbol_weight(project(
+                    self.storage.memory.read(r)?,
+                    &path,
+                )?)?)?;
+                let target = project(self.storage.memory.read(r)?, &path)?.clone();
                 self.record_valid(&target, e.line)?;
                 let ty = target.ty();
                 Ok(Symbol::Ref(Box::new(ty), r, path))
@@ -3037,14 +3055,14 @@ impl<'a> Context<'a> {
                     return self.allocate_owned(args, expected, e.line);
                 }
                 if name == "old" {
-                    if self.phase == Phase::Runtime || args.len() != 1 {
+                    if self.execution.phase == Phase::Runtime || args.len() != 1 {
                         return Err(
                             "old is proof-only and takes one entry-state parameter expression"
                                 .into(),
                         );
                     }
                     let value = self.old_expression(&args[0], expected)?;
-                    if self.phase == Phase::Ideal && self.symbol_is_affine(&value) {
+                    if self.execution.phase == Phase::Ideal && self.symbol_is_affine(&value) {
                         return Err(
                             "old ownership snapshots are proof views, not new ideal resources"
                                 .into(),
@@ -3053,7 +3071,7 @@ impl<'a> Context<'a> {
                     return Ok(value);
                 }
                 if name == "integer" || name == "nat" {
-                    if self.phase == Phase::Runtime {
+                    if self.execution.phase == Phase::Runtime {
                         return Err("mathematical views are proof-only".into());
                     }
                     if args.len() != 1 {
@@ -3068,29 +3086,33 @@ impl<'a> Context<'a> {
                         n,
                     ));
                 }
-                if self.phase == Phase::Specification && self.current.as_ref() == Some(name) {
+                if self.execution.phase == Phase::Specification
+                    && self.execution.current.as_ref() == Some(name)
+                {
                     return Err("recursive calls are forbidden in specifications".into());
                 }
                 if name == "move" || name == "drop" {
-                    if self.phase == Phase::Runtime && !self.opened_planes.is_empty() {
+                    if self.execution.phase == Phase::Runtime
+                        && !self.storage.opened_planes.is_empty()
+                    {
                         return Err(
                             "moves and drops are forbidden while invariants are open".into()
                         );
                     }
-                    if self.dropping
+                    if self.execution.dropping
                         && !matches!(args.as_slice(), [argument] if matches!(&argument.kind, Kind::Name(name) if name != "self"))
                     {
                         return Err("destructor moves and drops require a complete local binding; decompose self first".into());
                     }
-                    if self.phase == Phase::Specification {
+                    if self.execution.phase == Phase::Specification {
                         return Err("specifications and facts cannot move or drop values".into());
                     }
                     if args.len() != 1 {
                         return Err(format!("{name} expects one place"));
                     }
-                    if self.phase == Phase::Ideal
-                        && !self.ideal_execution
-                        && !matches!(&args[0].kind, Kind::Name(n) if self.ideal_bindings.contains(n))
+                    if self.execution.phase == Phase::Ideal
+                        && !self.execution.ideal_execution
+                        && !matches!(&args[0].kind, Kind::Name(n) if self.locals.ideal_bindings.contains(n))
                     {
                         return Err("erased execution cannot move or drop a runtime place".into());
                     }
@@ -3101,13 +3123,13 @@ impl<'a> Context<'a> {
                                 .into(),
                         );
                     }
-                    let id = self.memory.plane(r)?;
-                    if !self.roots.values().any(|p| *p == id) {
+                    let id = self.storage.memory.plane(r)?;
+                    if !self.locals.places.values().any(|p| *p == id) {
                         return Err("cannot move or drop a borrowed parameter plane".into());
                     }
-                    let stored = self.memory.read(r)?.clone();
+                    let stored = self.storage.memory.read(r)?.clone();
                     self.record_valid(&stored, e.line)?;
-                    let value = self.memory.take(id)?;
+                    let value = self.storage.memory.take(id)?;
                     self.validate_argument(&value, e.line)?;
                     if name == "drop" {
                         self.cleanup_value(value, e.line)?;
@@ -3115,14 +3137,14 @@ impl<'a> Context<'a> {
                     }
                     return Ok(value);
                 }
-                let f = self.functions.get(name).ok_or_else(|| {
+                let f = self.declarations.functions.get(name).ok_or_else(|| {
                     if let Some(method) = name.strip_prefix("evg_method_") {
                         return format!(
                             "line {}: unknown method {method} or unresolved receiver type",
                             e.line
                         );
                     }
-                    if self.current.as_ref() == Some(name) {
+                    if self.execution.current.as_ref() == Some(name) {
                         format!(
                             "line {}: recursive ideal function {name} requires a decreases clause",
                             e.line
@@ -3131,15 +3153,15 @@ impl<'a> Context<'a> {
                         format!("line {}: unknown function {name}", e.line)
                     }
                 })?;
-                if self.phase == Phase::Runtime
-                    && !self.opened_planes.is_empty()
-                    && !self.cleanup_helpers.contains(name)
+                if self.execution.phase == Phase::Runtime
+                    && !self.storage.opened_planes.is_empty()
+                    && !self.declarations.cleanup_helpers.contains(name)
                 {
                     return Err("calls while invariants are open require checked scalar ownership-free effects".into());
                 }
-                if self.dropping
-                    && self.phase == Phase::Runtime
-                    && !self.cleanup_helpers.contains(name)
+                if self.execution.dropping
+                    && self.execution.phase == Phase::Runtime
+                    && !self.declarations.cleanup_helpers.contains(name)
                 {
                     return Err(
                         "destructor calls require a checked scalar ownership-free effect summary"
@@ -3147,26 +3169,29 @@ impl<'a> Context<'a> {
                     );
                 }
                 if f.partial {
-                    if self.phase != Phase::Runtime {
+                    if self.execution.phase != Phase::Runtime {
                         return Err("potentially divergent functions cannot be used in proofs or ideal execution".into());
                     }
-                    self.partial_execution = true;
+                    self.execution.partial_execution = true;
                 }
-                if self.phase == Phase::Specification
-                    && (heap::owns_planes_type(&f.ret, self.structs)
+                if self.execution.phase == Phase::Specification
+                    && (heap::owns_planes_type(&f.ret, self.declarations.structs)
                         || f.params
                             .iter()
-                            .any(|(_, ty)| heap::owns_planes_type(ty, self.structs)))
+                            .any(|(_, ty)| heap::owns_planes_type(ty, self.declarations.structs)))
                 {
                     return Err("proof calls must borrow heap owners; ownership transfers and owning results cannot be erased".into());
                 }
-                if !f.modifies.is_empty() && self.phase == Phase::Specification {
+                if !f.modifies.is_empty() && self.execution.phase == Phase::Specification {
                     return Err("modifying calls are forbidden in proof expressions".into());
                 }
-                if self.phase == Phase::Ideal && !f.ideal && !self.helpers.contains(name) {
+                if self.execution.phase == Phase::Ideal
+                    && !f.ideal
+                    && !self.declarations.helpers.contains(name)
+                {
                     return Err("modifying calls and runtime effects cannot be erased; an ideal expression needs ideal code or a checked pure scalar helper".into());
                 }
-                if f.ideal && self.phase == Phase::Runtime {
+                if f.ideal && self.execution.phase == Phase::Runtime {
                     return Err(format!(
                         "{name} is ideal code and cannot be called at runtime"
                     ));
@@ -3186,9 +3211,11 @@ impl<'a> Context<'a> {
                         Type::Plane(_) => self.literal_element_hint(t)?,
                         _ => None,
                     };
-                    let saved_specification = self.phase;
-                    if f.ideal_params.contains(parameter) && self.phase != Phase::Specification {
-                        self.phase = Phase::Ideal;
+                    let saved_specification = self.execution.phase;
+                    if f.ideal_params.contains(parameter)
+                        && self.execution.phase != Phase::Specification
+                    {
+                        self.execution.phase = Phase::Ideal;
                     }
                     let value = if let (Type::Array(element, _), Kind::Array(_)) = (t, &arg.kind) {
                         if let Some(element) = self.literal_element_hint(element)? {
@@ -3204,7 +3231,7 @@ impl<'a> Context<'a> {
                     } else {
                         self.eval(arg, hint.as_ref())?
                     };
-                    self.phase = saved_specification;
+                    self.execution.phase = saved_specification;
                     self.validate_argument(&value, e.line)?;
                     actuals.insert(parameter.clone(), value);
                 }
@@ -3214,15 +3241,15 @@ impl<'a> Context<'a> {
                     self.validate_argument(value, e.line)?;
                 }
                 let actuals = self.complete_arguments(f, actuals, e.line)?;
-                let mut saved = std::mem::take(&mut self.env);
-                let saved_roots = std::mem::take(&mut self.roots);
-                let saved_old = std::mem::take(&mut self.old_values);
-                let saved_old_memory = self.old_memory.take();
-                let saved_ideal = std::mem::take(&mut self.ideal_bindings);
-                let saved_module = std::mem::replace(&mut self.module, f.module.clone());
-                self.ideal_bindings = f.ideal_params.iter().cloned().collect();
-                self.env.clear();
-                self.roots.clear();
+                let mut saved = std::mem::take(&mut self.locals.values);
+                let saved_roots = std::mem::take(&mut self.locals.places);
+                let saved_old = std::mem::take(&mut self.entry.values);
+                let saved_old_memory = self.entry.memory.take();
+                let saved_ideal = std::mem::take(&mut self.locals.ideal_bindings);
+                let saved_module = std::mem::replace(&mut self.locals.module, f.module.clone());
+                self.locals.ideal_bindings = f.ideal_params.iter().cloned().collect();
+                self.locals.values.clear();
+                self.locals.places.clear();
                 self.bind_arguments(f, actuals, e.line)?;
                 self.capture_old(f)?;
                 if let Some(pre) = &f.pre {
@@ -3232,7 +3259,7 @@ impl<'a> Context<'a> {
                 let inputs = if f
                     .params
                     .iter()
-                    .any(|(_, ty)| type_has_reference(ty, self.structs))
+                    .any(|(_, ty)| type_has_reference(ty, self.declarations.structs))
                 {
                     self.incoming_references(f, !f.modifies.is_empty())?
                 } else {
@@ -3245,8 +3272,9 @@ impl<'a> Context<'a> {
                 if overlaps && f.external.is_some() {
                     return Err("external calls with overlapping reference ports require an alias-aware contract; unsupported".into());
                 }
-                if self.current.as_ref() == Some(name) && !f.partial {
+                if self.execution.current.as_ref() == Some(name) && !f.partial {
                     let entry = self
+                        .execution
                         .measure
                         .clone()
                         .ok_or("recursive calls require a decreases clause")?;
@@ -3254,10 +3282,10 @@ impl<'a> Context<'a> {
                         .decreases
                         .as_ref()
                         .ok_or("recursive calls require a decreases clause")?;
-                    let saved_specification = self.phase;
-                    self.phase = Phase::Specification;
+                    let saved_specification = self.execution.phase;
+                    self.execution.phase = Phase::Specification;
                     let next = self.nonnegative(expression, "nonnegative recursion measure")?;
-                    self.phase = saved_specification;
+                    self.execution.phase = saved_specification;
                     self.prove(
                         &Formula::Ge(entry.sub(&next)?.add(&Linear::number(-1))?),
                         "strictly decreasing recursion measure",
@@ -3267,7 +3295,7 @@ impl<'a> Context<'a> {
                 let ret = self.resolve(&f.ret)?;
                 let mut changed_roots = BTreeSet::new();
                 for write in &writes {
-                    let id = self.memory.plane(write.reference)?;
+                    let id = self.storage.memory.plane(write.reference)?;
                     changed_roots.insert(id);
                     let owned =
                         self.owns_plane_in(&saved, &saved_roots, id)? || self.owns_plane(id)?;
@@ -3275,10 +3303,10 @@ impl<'a> Context<'a> {
                         return Err(format!("line {}: call to {name} writes through a parameter without a matching modifies contract", e.line));
                     }
                 }
-                let heap_call = heap::function_uses_planes(f, self.structs);
+                let heap_call = heap::function_uses_planes(f, self.declarations.structs);
                 let value = if overlaps
                     || heap_call
-                    || !self.opened_planes.is_empty() && !f.modifies.is_empty()
+                    || !self.storage.opened_planes.is_empty() && !f.modifies.is_empty()
                 {
                     let reason = if overlaps {
                         "overlaps incoming references"
@@ -3302,13 +3330,15 @@ impl<'a> Context<'a> {
                         self.arbitrary(&ret)?
                     };
                     for write in writes {
-                        let id = self.memory.plane(write.reference)?;
+                        let id = self.storage.memory.plane(write.reference)?;
                         let mut new = self.arbitrary(&write.ty)?;
-                        self.charge_value_work(symbol_weight(self.memory.read(write.reference)?)?)?;
-                        let mut root = self.memory.read(write.reference)?.clone();
+                        self.charge_value_work(symbol_weight(
+                            self.storage.memory.read(write.reference)?,
+                        )?)?;
+                        let mut root = self.storage.memory.read(write.reference)?.clone();
                         self.preserve_views(project(&root, &write.path)?, &mut new)?;
                         self.replace_projection(&mut root, &write.path, new)?;
-                        self.memory.write(id, root, false)?;
+                        self.storage.memory.write(id, root, false)?;
                     }
                     for input in inputs.iter().filter(|_| !f.modifies.is_empty()) {
                         // Each input's declared type is an implicit return contract.
@@ -3316,17 +3346,18 @@ impl<'a> Context<'a> {
                         // local parameter is rebound. Caller-only enclosing types
                         // are obligations below, not assumptions here.
                         self.charge_value_work(symbol_weight(project(
-                            self.memory.read(input.reference)?,
+                            self.storage.memory.read(input.reference)?,
                             &input.path,
                         )?)?)?;
                         let target =
-                            project(self.memory.read(input.reference)?, &input.path)?.clone();
+                            project(self.storage.memory.read(input.reference)?, &input.path)?
+                                .clone();
                         self.assume_element_type(&target)?;
                     }
                     if !f.borrows.is_empty() {
                         self.assume_return_type(&value, &ret)?;
                     }
-                    self.env.insert("result".into(), value.clone());
+                    self.locals.values.insert("result".into(), value.clone());
                     if let Some(post) = &f.post {
                         let p = self.proposition(post)?;
                         self.assume(&p)?;
@@ -3344,27 +3375,32 @@ impl<'a> Context<'a> {
                     // An actual body may write and then release storage it
                     // received by ownership. Surviving plain aliases are never;
                     // validating a fictional post-store root would revive it.
-                    changed_roots.retain(|root| self.memory.get(*root).is_ok());
+                    changed_roots.retain(|root| self.storage.memory.get(*root).is_ok());
                 }
                 for root in &changed_roots {
-                    self.charge_value_work(symbol_weight(self.memory.get(*root)?)?)?;
-                    let stored = self.memory.get(*root)?.clone();
+                    self.charge_value_work(symbol_weight(self.storage.memory.get(*root)?)?)?;
+                    let stored = self.storage.memory.get(*root)?.clone();
                     for (binding, plane) in &saved_roots {
                         if plane == root {
                             saved.insert(binding.clone(), stored.clone());
                         }
                     }
                 }
-                self.env = saved;
-                self.roots = saved_roots;
-                self.old_values = saved_old;
-                self.old_memory = saved_old_memory;
-                self.ideal_bindings = saved_ideal;
-                self.module = saved_module;
+                self.locals.values = saved;
+                self.locals.places = saved_roots;
+                self.entry.values = saved_old;
+                self.entry.memory = saved_old_memory;
+                self.locals.ideal_bindings = saved_ideal;
+                self.locals.module = saved_module;
                 for root in changed_roots {
-                    self.charge_value_work(symbol_weight(self.memory.get(root)?)?)?;
-                    let stored = self.memory.get(root)?.clone();
-                    let lifted = self.opened_planes.get(&root).cloned().unwrap_or_default();
+                    self.charge_value_work(symbol_weight(self.storage.memory.get(root)?)?)?;
+                    let stored = self.storage.memory.get(root)?.clone();
+                    let lifted = self
+                        .storage
+                        .opened_planes
+                        .get(&root)
+                        .cloned()
+                        .unwrap_or_default();
                     self.retained_valid_with(&stored, e.line, &lifted)?;
                 }
                 if !f.modifies.is_empty() {
@@ -3376,32 +3412,36 @@ impl<'a> Context<'a> {
                 let p = self
                     .scoped_eval(condition, Some(&Ty::Bool))?
                     .proposition()?;
-                let base = self.paths.clone();
+                let base = self.proof.paths.clone();
                 // Give caller bindings stable storage identities before forking.
                 for (name, value) in self.clone_env()? {
-                    if !self.roots.contains_key(&name) {
-                        self.roots.insert(name, self.memory.allocate(value)?);
+                    if !self.locals.places.contains_key(&name) {
+                        self.locals
+                            .places
+                            .insert(name, self.storage.memory.allocate(value)?);
                     }
                 }
                 let env = self.clone_env()?;
-                let roots = self.roots.clone();
+                let roots = self.locals.places.clone();
                 let store = self.snapshot_memory()?;
-                self.paths = extend(&base, &p, false, self.session, &mut self.value_work)?;
+                self.proof.paths =
+                    extend(&base, &p, false, self.session, &mut self.work.value_work)?;
                 let a = self.scoped_eval(yes, expected)?;
-                let a_paths = self.paths.clone();
+                let a_paths = self.proof.paths.clone();
                 let a_store = self.snapshot_memory()?;
-                self.paths = extend(&base, &p, true, self.session, &mut self.value_work)?;
+                self.proof.paths =
+                    extend(&base, &p, true, self.session, &mut self.work.value_work)?;
                 self.charge_value_work(values_weight(env.values())?)?;
-                self.env = env.clone();
-                self.roots = roots.clone();
-                self.memory = self.clone_store(&store)?;
+                self.locals.values = env.clone();
+                self.locals.places = roots.clone();
+                self.storage.memory = self.clone_store(&store)?;
                 let b = self.scoped_eval(no, Some(&a.ty()))?;
-                let b_paths = self.paths.clone();
+                let b_paths = self.proof.paths.clone();
                 let b_store = self.snapshot_memory()?;
-                self.paths = base;
-                self.env = env;
-                self.roots = roots;
-                self.memory = self.clone_store(&store)?;
+                self.proof.paths = base;
+                self.locals.values = env;
+                self.locals.places = roots;
+                self.storage.memory = self.clone_store(&store)?;
                 let mut state_a = Formula::True;
                 let mut state_b = Formula::True;
                 let mut views = Vec::new();
@@ -3416,21 +3456,21 @@ impl<'a> Context<'a> {
                     match (av, bv) {
                         (Some(av), Some(bv)) if *ag == generation => {
                             let (joined, left, right) = self.join_value(av, bv, &mut views)?;
-                            self.memory.write(id, joined, false)?;
+                            self.storage.memory.write(id, joined, false)?;
                             state_a = state_a.and(left);
                             state_b = state_b.and(right);
                         }
                         (None, None) => {
                             let expected = if original.is_some() {generation.checked_add(1).ok_or("plane generation exhausted")?} else {generation};
                             if *ag != expected { return Err("conditional storage generation cannot be joined".into()); }
-                            if original.is_some() { self.memory.take(id)?; }
+                            if original.is_some() { self.storage.memory.take(id)?; }
                         }
                         _ => return Err("conditional branches must leave the same live bindings and storage layout".into()),
                     }
                 }
-                for (name, id) in &self.roots {
-                    if let Ok(value) = self.memory.get(*id) {
-                        self.env.insert(name.clone(), value.clone());
+                for (name, id) in &self.locals.places {
+                    if let Ok(value) = self.storage.memory.get(*id) {
+                        self.locals.values.insert(name.clone(), value.clone());
                     }
                 }
                 let (result, left, right) = self.join_value(&a, &b, &mut views)?;
@@ -3441,25 +3481,25 @@ impl<'a> Context<'a> {
                     &relation_a,
                     false,
                     self.session,
-                    &mut self.value_work,
+                    &mut self.work.value_work,
                 )?;
                 paths.extend(extend(
                     &b_paths,
                     &relation_b,
                     false,
                     self.session,
-                    &mut self.value_work,
+                    &mut self.work.value_work,
                 )?);
                 // Drop infeasible branch combinations only with a checked
                 // contradiction certificate; a failed probe keeps the path.
                 paths = self.feasible_paths(paths)?;
-                self.paths = paths::bounded(paths, self.session, &mut self.value_work)?;
+                self.proof.paths = paths::bounded(paths, self.session, &mut self.work.value_work)?;
                 for view in views {
                     self.materialize_joined_reference(&view, e.line)?;
                 }
-                for (name, id) in &self.roots {
-                    if let Ok(value) = self.memory.get(*id) {
-                        self.env.insert(name.clone(), value.clone());
+                for (name, id) in &self.locals.places {
+                    if let Ok(value) = self.storage.memory.get(*id) {
+                        self.locals.values.insert(name.clone(), value.clone());
                     }
                 }
                 Ok(result)
@@ -3633,7 +3673,7 @@ impl<'a> Context<'a> {
                     .collect::<BTreeSet<_>>();
                 let condition = self.arbitrary(&Ty::Bool)?.proposition()?;
                 let identity = self.fresh_name();
-                self.array_history.insert(
+                self.arrays.history.insert(
                     identity.clone(),
                     ArrayHistory::Choice {
                         condition: condition.clone(),
@@ -3774,15 +3814,17 @@ impl VerifiedProgram {
             let destructors = BTreeMap::new();
             let mut session = Session::search();
             let mut ctx = Context::new(
-                &functions,
-                &self.structs,
-                &self.drops,
-                &destructors,
-                &helpers,
-                &helpers,
+                Declarations {
+                    functions: &functions,
+                    structs: &self.structs,
+                    drops: &self.drops,
+                    destructors: &destructors,
+                    helpers: &helpers,
+                    cleanup_helpers: &helpers,
+                },
                 &mut session,
             );
-            ctx.current = Some("main".into());
+            ctx.execution.current = Some("main".into());
             ctx.capture_old(main)?;
             let p = ctx.proposition(pre)?;
             ctx.prove(&p, "entry precondition of main", pre.line)?;
@@ -3849,11 +3891,7 @@ fn check_type_expansion(structs: &[Struct]) -> Result<()> {
 }
 
 fn verify_using(parsed: syntax::Program, session: &mut Session) -> Result<VerifiedProgram> {
-    crate::shared::worker::run("evergreen-verifier", || verify_inner(parsed, session))
-}
-
-fn verify_inner(parsed: syntax::Program, session: &mut Session) -> Result<VerifiedProgram> {
-    program::verify(parsed, session)
+    crate::shared::worker::run("evergreen-verifier", || program::verify(parsed, session))
 }
 
 #[cfg(test)]

@@ -37,8 +37,9 @@ impl Context<'_> {
             }
             let mut proposition = Vec::new();
             goal.normalized().encode(&mut proposition);
-            self.session.trust(&self.paths, &proposition, line, label)?;
-            self.obligations += 1;
+            self.session
+                .trust(&self.proof.paths, &proposition, line, label)?;
+            self.work.obligations += 1;
             return Ok(());
         }
         let mut next = 0;
@@ -71,24 +72,26 @@ impl Context<'_> {
             }
             self.charge_value_work(symbol_weight(&Symbol::Bool((*premise).clone()))?)?;
         }
-        let snapshot_work = self.paths.iter().fold(0usize, |total, path| {
+        let snapshot_work = self.proof.paths.iter().fold(0usize, |total, path| {
             path.iter().fold(total, |total, row| {
                 total.saturating_add(1usize.saturating_add(row.terms.len()))
             })
         });
         self.charge_value_work(snapshot_work)?;
-        let paths = self.paths.clone();
+        let paths = self.proof.paths.clone();
         let result = (|| {
             for (name, premise) in hypotheses {
-                self.proofs.insert((*name).into(), (*premise).clone());
+                self.proof
+                    .witnesses
+                    .insert((*name).into(), (*premise).clone());
                 self.assume(premise)?;
             }
             check(self)
         })();
         for (name, _) in hypotheses {
-            self.proofs.remove(*name);
+            self.proof.witnesses.remove(*name);
         }
-        self.paths = paths;
+        self.proof.paths = paths;
         result
     }
 
@@ -114,12 +117,12 @@ impl Context<'_> {
         match step.as_str() {
             "omega" | "rfl" | "simp_all" | "decide" => self.prove(goal, label, line),
             "assumption" => {
-                let names = self.proofs.keys().cloned().collect::<Vec<_>>();
+                let names = self.proof.witnesses.keys().cloned().collect::<Vec<_>>();
                 self.charge_value_work(names.len())?;
                 for name in names {
-                    let candidate = self.proofs[&name].clone();
+                    let candidate = self.proof.witnesses[&name].clone();
                     if self.same_proposition(&candidate, goal)? {
-                        self.obligations += 1;
+                        self.work.obligations += 1;
                         return Ok(());
                     }
                 }
@@ -151,11 +154,11 @@ impl Context<'_> {
             }
             _ if step.starts_with("exact ") => {
                 let name = &step[6..];
-                let proven = self.proofs.get(name).cloned().ok_or_else(|| format!("line {line}: {name} is not a checked proof; fact declarations are propositions, not assumptions"))?;
+                let proven = self.proof.witnesses.get(name).cloned().ok_or_else(|| format!("line {line}: {name} is not a checked proof; fact declarations are propositions, not assumptions"))?;
                 if !self.same_proposition(&proven, goal)? {
                     return Err(format!("line {line}: exact {name} proves a different proposition or an earlier state"));
                 }
-                self.obligations += 1;
+                self.work.obligations += 1;
                 Ok(())
             }
             _ if step.starts_with("intro ") => {
@@ -176,17 +179,17 @@ impl Context<'_> {
             _ if step.starts_with("cases ") => {
                 let parts = step.split_whitespace().collect::<Vec<_>>();
                 if let ["cases", name] = parts.as_slice() {
-                    if !matches!(self.proofs.get(*name), Some(Formula::False)) {
+                    if !matches!(self.proof.witnesses.get(*name), Some(Formula::False)) {
                         return Err(format!("line {line}: cases {name} without a pattern requires a checked proof of false"));
                     }
-                    self.obligations += 1;
+                    self.work.obligations += 1;
                     return Ok(());
                 }
                 let ["cases", name, "with", first, separator, second] = parts.as_slice() else {
                     return Err(format!("line {line}: malformed cases step"));
                 };
                 let theorem =
-                    self.proofs.get(*name).cloned().ok_or_else(|| {
+                    self.proof.witnesses.get(*name).cloned().ok_or_else(|| {
                         format!("line {line}: cases {name} requires a checked proof")
                     })?;
                 match (theorem, *separator) {
@@ -212,7 +215,7 @@ impl Context<'_> {
             _ if step.starts_with("apply ") => {
                 let name = &step[6..];
                 let mut theorem =
-                    self.proofs.get(name).cloned().ok_or_else(|| {
+                    self.proof.witnesses.get(name).cloned().ok_or_else(|| {
                         format!("line {line}: apply {name} requires a checked proof")
                     })?;
                 let mut premises = Vec::new();
@@ -236,7 +239,7 @@ impl Context<'_> {
                 for premise in premises {
                     self.proof_goal(&premise, label, line, steps, next, depth + 1)?;
                 }
-                self.obligations += 1;
+                self.work.obligations += 1;
                 Ok(())
             }
             _ => Err(format!("line {line}: unsupported proof step {step}")),

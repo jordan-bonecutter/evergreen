@@ -121,7 +121,10 @@ impl Context<'_> {
         expected: Option<&Ty>,
         line: usize,
     ) -> Result<Symbol> {
-        if self.phase != Phase::Runtime || self.dropping || !self.opened_planes.is_empty() {
+        if self.execution.phase != Phase::Runtime
+            || self.execution.dropping
+            || !self.storage.opened_planes.is_empty()
+        {
             return Err("allocation requires runtime execution with closed invariants".into());
         }
         if args.len() == 2 {
@@ -137,13 +140,18 @@ impl Context<'_> {
         let value = self.eval(&args[0], hint)?;
         let ty = value.ty();
         let syntax = syntax_type(&ty, line)?;
-        if !runtime_type(&syntax, self.structs) || !payload_type(&syntax, self.structs) {
+        if !runtime_type(&syntax, self.declarations.structs)
+            || !payload_type(&syntax, self.declarations.structs)
+        {
             return Err("owned planes require runtime payloads without borrowed references".into());
         }
-        crate::compiler::layout::of(&syntax, self.structs)?;
+        crate::compiler::layout::of(&syntax, self.declarations.structs)?;
         self.validate_argument(&value, line)?;
-        let plane = self.memory.allocate(value)?;
-        Ok(Symbol::Plane(Box::new(ty), self.memory.borrow(plane)?))
+        let plane = self.storage.memory.allocate(value)?;
+        Ok(Symbol::Plane(
+            Box::new(ty),
+            self.storage.memory.borrow(plane)?,
+        ))
     }
 
     fn allocate_filled(
@@ -165,13 +173,13 @@ impl Context<'_> {
         let element = initial.ty();
         let syntax = syntax_type(&element, line)?;
         if self.symbol_is_affine(&initial)
-            || !payload_type(&syntax, self.structs)
+            || !payload_type(&syntax, self.declarations.structs)
             || !self.history_element(&element)
-            || !runtime_type(&syntax, self.structs)
+            || !runtime_type(&syntax, self.declarations.structs)
         {
             return Err("filled allocation requires copyable scalar or flat scalar-record elements without references".into());
         }
-        let stride = crate::compiler::layout::of(&syntax, self.structs)?.size;
+        let stride = crate::compiler::layout::of(&syntax, self.declarations.structs)?.size;
         let maximum = (crate::compiler::layout::MAX_ALLOCATION_BYTES / stride as u64) as i128;
         self.prove(
             &Formula::Ge(count.clone()),
@@ -186,7 +194,8 @@ impl Context<'_> {
         self.validate_argument(&initial, line)?;
         let identity = self.fresh_name();
         self.charge_value_work(symbol_weight(&initial)?)?;
-        self.array_history
+        self.arrays
+            .history
             .insert(identity.clone(), ArrayHistory::Fill(initial));
         let value = Symbol::Array {
             element: Box::new(element.clone()),
@@ -195,19 +204,19 @@ impl Context<'_> {
             cells: BTreeMap::new(),
             identity,
         };
-        let plane = self.memory.allocate(value)?;
+        let plane = self.storage.memory.allocate(value)?;
         Ok(Symbol::Plane(
             Box::new(Ty::Array(Box::new(element), count)),
-            self.memory.borrow(plane)?,
+            self.storage.memory.borrow(plane)?,
         ))
     }
 
     pub(super) fn owns_plane(&mut self, plane: PlaneId) -> Result<bool> {
-        if self.roots.values().any(|root| *root == plane) {
+        if self.locals.places.values().any(|root| *root == plane) {
             return Ok(true);
         }
         let env = self.clone_env()?;
-        let roots = self.roots.clone();
+        let roots = self.locals.places.clone();
         self.owns_plane_in(&env, &roots, plane)
     }
 
@@ -223,7 +232,7 @@ impl Context<'_> {
         let mut pending = Vec::new();
         for (name, value) in env {
             let observed = if let Some(root) = roots.get(name) {
-                let Ok(value) = self.memory.get(*root) else {
+                let Ok(value) = self.storage.memory.get(*root) else {
                     continue;
                 };
                 value
@@ -233,7 +242,7 @@ impl Context<'_> {
             let cost = symbol_weight(observed)?;
             self.charge_value_work(cost)?;
             let value = if let Some(root) = roots.get(name) {
-                self.memory.get(*root)?
+                self.storage.memory.get(*root)?
             } else {
                 value
             };
@@ -243,12 +252,12 @@ impl Context<'_> {
             self.charge_value_work(1)?;
             match value {
                 Symbol::Plane(_, reference) => {
-                    let owned = self.memory.plane(reference)?;
+                    let owned = self.storage.memory.plane(reference)?;
                     if owned == plane {
                         return Ok(true);
                     }
-                    self.charge_value_work(symbol_weight(self.memory.read(reference)?)?)?;
-                    pending.push(self.memory.read(reference)?.clone());
+                    self.charge_value_work(symbol_weight(self.storage.memory.read(reference)?)?)?;
+                    pending.push(self.storage.memory.read(reference)?.clone());
                 }
                 Symbol::Record(_, fields) => pending.extend(fields.into_values()),
                 Symbol::Array { items, cells, .. } => {

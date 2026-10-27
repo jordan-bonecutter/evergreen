@@ -69,17 +69,19 @@ fn check_record(
     let empty_drops = BTreeSet::new();
     let empty_destructors = BTreeMap::new();
     let mut ctx = Context::new(
-        &empty_functions,
-        structs,
-        &empty_drops,
-        &empty_destructors,
-        &empty_drops,
-        &empty_drops,
+        Declarations {
+            functions: &empty_functions,
+            structs,
+            drops: &empty_drops,
+            destructors: &empty_destructors,
+            helpers: &empty_drops,
+            cleanup_helpers: &empty_drops,
+        },
         session,
     );
-    ctx.module = s.module.clone();
-    ctx.declaring = Some(s.name.clone());
-    ctx.phase = if s.ideal {
+    ctx.locals.module = s.module.clone();
+    ctx.locals.declaring = Some(s.name.clone());
+    ctx.execution.phase = if s.ideal {
         Phase::Ideal
     } else {
         Phase::Runtime
@@ -97,25 +99,26 @@ fn check_record(
                 s.line
             ));
         }
-        if n == "self" || ctx.env.contains_key(n) {
+        if n == "self" || ctx.locals.values.contains_key(n) {
             return Err(format!("line {}: duplicate or reserved field {n}", s.line));
         }
-        let phase = ctx.phase;
-        if s.ideal_fields.contains(n) && ctx.phase == Phase::Runtime {
-            ctx.phase = Phase::Ideal;
+        let phase = ctx.execution.phase;
+        if s.ideal_fields.contains(n) && ctx.execution.phase == Phase::Runtime {
+            ctx.execution.phase = Phase::Ideal;
         }
         let t = ctx.resolve(t)?;
         let value = ctx.arbitrary(&t)?;
-        ctx.phase = phase;
-        ctx.env.insert(n.clone(), value);
+        ctx.execution.phase = phase;
+        ctx.locals.values.insert(n.clone(), value);
     }
     let fields = ctx.clone_env()?;
-    ctx.env
+    ctx.locals
+        .values
         .insert("self".into(), Symbol::Record(s.name.clone(), fields));
     for (name, proposition) in &s.facts {
         ctx.fresh_binding(name, proposition.line)?;
         ctx.proposition(proposition)?;
-        ctx.facts.insert(name.clone(), proposition.clone());
+        ctx.proof.facts.insert(name.clone(), proposition.clone());
     }
     if let Some(p) = &s.invariant {
         ctx.proposition(p)?;
@@ -245,17 +248,19 @@ impl Verification {
         }
         let (obligations, partial) = {
             let mut ctx = Context::new(
-                &self.functions,
-                &self.structs,
-                &self.drops,
-                &self.destructors,
-                &self.helpers,
-                &self.cleanup_helpers,
+                Declarations {
+                    functions: &self.functions,
+                    structs: &self.structs,
+                    drops: &self.drops,
+                    destructors: &self.destructors,
+                    helpers: &self.helpers,
+                    cleanup_helpers: &self.cleanup_helpers,
+                },
                 session,
             );
             ctx.enter_function(f)?;
             ctx.check_declaration_body(f)?;
-            (ctx.obligations, ctx.partial_execution)
+            (ctx.work.obligations, ctx.execution.partial_execution)
         };
         self.obligations += obligations;
         f.partial = partial;
@@ -294,25 +299,25 @@ impl Verification {
 
 impl Context<'_> {
     fn enter_function(&mut self, f: &Function) -> Result<()> {
-        self.module = f.module.clone();
-        self.ideal_execution = f.ideal;
-        self.partial_execution = f.partial;
-        self.dropping = f.drop_target.is_some();
+        self.locals.module = f.module.clone();
+        self.execution.ideal_execution = f.ideal;
+        self.execution.partial_execution = f.partial;
+        self.execution.dropping = f.drop_target.is_some();
         let execution = if f.ideal {
             Phase::Ideal
         } else {
             Phase::Runtime
         };
-        self.phase = execution;
-        self.ideal_bindings = f.ideal_params.iter().cloned().collect();
-        self.current = Some(f.name.clone());
+        self.execution.phase = execution;
+        self.locals.ideal_bindings = f.ideal_params.iter().cloned().collect();
+        self.execution.current = Some(f.name.clone());
         self.declare_parameters(f)?;
         self.capture_old(f)?;
         if let Some(pre) = &f.pre {
-            self.phase = Phase::Specification;
+            self.execution.phase = Phase::Specification;
             let p = self.eval(pre, Some(&Ty::Bool))?.proposition()?;
             self.assume(&p)?;
-            self.phase = execution;
+            self.execution.phase = execution;
         }
         Ok(())
     }
@@ -323,13 +328,14 @@ impl Context<'_> {
         } else {
             self.incoming_references(f, !f.modifies.is_empty())?
         };
-        self.writable = self.write_places(f, &inputs)?;
-        self.input_references = inputs.clone();
+        self.storage.writable = self.write_places(f, &inputs)?;
+        self.storage.inputs = inputs.clone();
         let ret = self.resolve(&f.ret)?;
         if let Some(measure) = &f.decreases {
-            self.phase = Phase::Specification;
-            self.measure = Some(self.nonnegative(measure, "nonnegative recursion measure")?);
-            self.phase = if f.ideal {
+            self.execution.phase = Phase::Specification;
+            self.execution.measure =
+                Some(self.nonnegative(measure, "nonnegative recursion measure")?);
+            self.execution.phase = if f.ideal {
                 Phase::Ideal
             } else {
                 Phase::Runtime

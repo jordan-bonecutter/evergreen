@@ -14,31 +14,33 @@ impl Context<'_> {
         // The caller has already bound arguments, checked preconditions and
         // authorized every declared write. Isolate lexical proof state and give
         // the body only its own grants, retaining actual plane identities.
-        let facts = std::mem::take(&mut self.facts);
-        let proofs = std::mem::take(&mut self.proofs);
+        let facts = std::mem::take(&mut self.proof.facts);
+        let proofs = std::mem::take(&mut self.proof.witnesses);
         // Keep opened_planes: their unlifted requirements apply after every
         // actual write, including writes in further nested helper calls.
-        let temporaries = std::mem::take(&mut self.temporaries);
-        let current = self.current.replace(function.name.clone());
-        let measure = self.measure.take();
-        let writable = std::mem::replace(&mut self.writable, writes);
-        let input_references = std::mem::replace(&mut self.input_references, inputs);
-        let dropping = std::mem::replace(&mut self.dropping, false);
-        let declaring = self.declaring.take();
-        let ideal_execution = std::mem::replace(&mut self.ideal_execution, function.ideal);
+        let temporaries = std::mem::take(&mut self.storage.temporaries);
+        let current = self.execution.current.replace(function.name.clone());
+        let measure = self.execution.measure.take();
+        let writable = std::mem::replace(&mut self.storage.writable, writes);
+        let input_references = std::mem::replace(&mut self.storage.inputs, inputs);
+        let dropping = std::mem::replace(&mut self.execution.dropping, false);
+        let declaring = self.locals.declaring.take();
+        let ideal_execution =
+            std::mem::replace(&mut self.execution.ideal_execution, function.ideal);
         let execution = if function.ideal {
             Phase::Ideal
         } else {
             Phase::Runtime
         };
-        let phase = std::mem::replace(&mut self.phase, execution);
+        let phase = std::mem::replace(&mut self.execution.phase, execution);
         let checked = (|| {
             if let Some(decreases) = &function.decreases {
-                self.phase = Phase::Specification;
-                self.measure = Some(self.nonnegative(decreases, "nonnegative recursion measure")?);
-                self.phase = execution;
+                self.execution.phase = Phase::Specification;
+                self.execution.measure =
+                    Some(self.nonnegative(decreases, "nonnegative recursion measure")?);
+                self.execution.phase = execution;
             }
-            let inputs = self.input_references.clone();
+            let inputs = self.storage.inputs.clone();
             let (value, post) = self.check_function_body(function, result_type, &inputs, false)?;
             if let Some(proposition) = post {
                 // Publish only a checked theorem for this alias configuration.
@@ -47,17 +49,17 @@ impl Context<'_> {
             }
             Ok(value)
         })();
-        self.facts = facts;
-        self.proofs = proofs;
-        self.temporaries = temporaries;
-        self.current = current;
-        self.measure = measure;
-        self.writable = writable;
-        self.input_references = input_references;
-        self.dropping = dropping;
-        self.declaring = declaring;
-        self.ideal_execution = ideal_execution;
-        self.phase = phase;
+        self.proof.facts = facts;
+        self.proof.witnesses = proofs;
+        self.storage.temporaries = temporaries;
+        self.execution.current = current;
+        self.execution.measure = measure;
+        self.storage.writable = writable;
+        self.storage.inputs = input_references;
+        self.execution.dropping = dropping;
+        self.locals.declaring = declaring;
+        self.execution.ideal_execution = ideal_execution;
+        self.execution.phase = phase;
         checked
     }
 
@@ -76,7 +78,7 @@ impl Context<'_> {
         let infeasible_entry = declaration
             && function.name != "main"
             && !function.borrows.is_empty()
-            && heap::function_uses_planes(function, self.structs)
+            && heap::function_uses_planes(function, self.declarations.structs)
             && self.follows(&Formula::False)?;
         // Entry aliases must precede stores and parameter rebinding.
         let aliases = self.return_aliases(function, Some(inputs))?;
@@ -88,12 +90,14 @@ impl Context<'_> {
         // The return value owns its allocations while local destructors run.
         // This reserved binding is not a source name or a cleanup binding, and
         // normal calls isolate it in the caller environment as usual.
-        if heap::owns_planes_type(&function.ret, self.structs) {
+        if heap::owns_planes_type(&function.ret, self.declarations.structs) {
             self.charge_value_work(symbol_weight(&value)?)?;
-            self.env.insert("evg_return_value".into(), value.clone());
+            self.locals
+                .values
+                .insert("evg_return_value".into(), value.clone());
         }
         self.finish_scope(function)?;
-        self.env.remove("evg_return_value");
+        self.locals.values.remove("evg_return_value");
         // Cleanup may change fields used to select a result-owned view.
         // Check provenance against the final returned storage, not a state
         // preceding destructor effects.
@@ -102,14 +106,14 @@ impl Context<'_> {
             self.validate_argument(&value, function.result.line)?;
         }
         let post = if let Some(post) = &function.post {
-            self.phase = Phase::Specification;
-            self.env = entry;
-            self.roots.clear();
+            self.execution.phase = Phase::Specification;
+            self.locals.values = entry;
+            self.locals.places.clear();
             self.charge_value_work(symbol_weight(&value)?)?;
-            self.env.insert("result".into(), value.clone());
-            let local_facts = std::mem::take(&mut self.facts);
+            self.locals.values.insert("result".into(), value.clone());
+            let local_facts = std::mem::take(&mut self.proof.facts);
             let proposition = self.proposition(post)?;
-            self.facts = local_facts;
+            self.proof.facts = local_facts;
             self.prove_with(
                 &proposition,
                 &format!("postcondition of {}", function.name),
