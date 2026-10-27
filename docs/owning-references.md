@@ -87,8 +87,8 @@ proposal is described separately in [pointer-model.md](pointer-model.md). `alloc
 generic lifetime claims in an opaque source API for duplication, merging, payload
 borrowing, and unique recovery. The earlier arithmetic credit libraries still
 grant no allocation authority. The [source Rc](rc.md) now couples these claims
-to a checked runtime counter, an automatic source destructor, and a `usize`
-payload. General payload types and concurrent ownership still need work.
+to a checked runtime counter, an automatic source destructor, and generic
+payloads. Concurrent ownership still needs work.
 See [allocation-backed credits](allocation-credits.md).
 Invariant lifting remains a separate general language facility.
 

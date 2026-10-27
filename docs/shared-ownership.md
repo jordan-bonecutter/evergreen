@@ -137,8 +137,8 @@ include opaque caller ownership; they are not the number of handles visible in
 the callee. Actual heap calls recheck resource transitions against caller storage.
 
 The sequential Rc now uses source counter updates, ordinary shared-pointer
-copies, and checked final promotion. General payload types and concurrent
-interference remain open work. Numeric credits
+copies, checked final promotion, and generic payloads. Concurrent interference
+remains open work. Numeric credits
 are retained as generic ideal-resource tests, not as Rc's allocation authority.
 Independent kernel checking of the resource-state rules and native preservation
 also remains unfinished. The capability tests do not establish a complete Rc or

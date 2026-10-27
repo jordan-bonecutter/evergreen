@@ -1,0 +1,16 @@
+// Payload destruction is ordinary source Drop, independent of Rc's counter.
+type Resource struct {tag: usize} where self.tag == 42;
+
+impl Drop for Resource {
+    fn drop(self) {proof valid_payload: self.tag == 42;}
+}
+
+fn main() -> usize {
+    let first = rc::new::<Resource>(Resource {tag: 42});
+    let payload = first.value();
+    let second = first.clone();
+    proof shared: first.strong_count() == 2;
+    drop(first);
+    proof sole: second.strong_count() == 1;
+    payload.tag
+}

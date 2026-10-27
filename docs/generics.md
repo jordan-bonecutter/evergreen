@@ -65,8 +65,8 @@ An explicit generic Copy implementation still needs Copy fields and must
 preserve refinements under shared-pointer census changes.
 
 Method-level generic parameters, trait bounds, specialized impl patterns, and
-argument inference remain unfinished. Rc and Vec still specialize their
-payloads to `usize` while their source definitions are migrated. Arrays still
+argument inference remain unfinished. [Rc](rc.md) now uses generic payloads;
+Vec still specializes its payload to `usize`. Arrays still
 use their existing layout rule; replacing it with a source const-generic
 definition using `make_type` remains future work.
 

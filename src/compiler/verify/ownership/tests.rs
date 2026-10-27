@@ -124,13 +124,54 @@ fn source_rc_updates_a_real_counter_alongside_allocation_claims() {
 }
 
 #[test]
+fn source_rc_shares_generic_payloads_and_destroys_them_once() {
+    for source in [
+        "fn prepare() -> rc::Rc<unique(u8, 1000000000)> {let data: unique(u8, 1000000000) = alloc(1000000000, 0); rc::new::<unique(u8, 1000000000)>(data)} fn main() -> usize {42}",
+        include_str!("../../../../examples/rc_generic.evg"),
+        "fn main() -> usize {let first = rc::new::<unique(usize)>(alloc(42)); let view = &**first.value(); let second = first.clone(); drop(first); proof sole: second.strong_count() == 1; *view}",
+        "fn main() -> u8 {let first = rc::new::<[u8; 2]>([7, 42]); let view = first.value(); let second = first.clone(); drop(first); (*view)[1]}",
+        "type Resource struct {tag: usize} where tag == 42; impl Drop for Resource {fn drop(self) {proof valid: self.tag == 42;}} fn main() -> usize {let inner = rc::new::<Resource>(Resource {tag: 42}); let outer = rc::new::<rc::Rc<Resource>>(inner); let second = outer.clone(); drop(outer); second.value().value().tag}",
+    ] {
+        let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+        let (value, events) = program.run_with_events().unwrap();
+        assert_eq!(value.to_string(), "42");
+        assert_eq!(events.iter().filter(|event| event.as_str() == "drop Resource").count(), usize::from(source.contains("type Resource")));
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
+    }
+}
+
+#[test]
+fn cloning_rc_does_not_copy_an_owning_payload() {
+    let source = "fn main() -> usize {let payload: shared(usize) = alloc(42); let first = rc::new::<shared(usize)>(payload); proof two: owner_count(payload) == 2; let second = first.clone(); proof still_two: owner_count(payload) == 2; drop(first); drop(second); proof one: owner_count(payload) == 1; let final: unique(usize) = move(payload); *final}";
+    let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+}
+
+#[test]
+fn generic_rc_payloads_keep_their_ownership_and_borrow_lifetimes() {
+    for source in [
+        "fn main() -> usize {let first = rc::new::<unique(usize)>(alloc(42)); let view = &**first.value(); let second = first.clone(); drop(first); drop(second); *view}",
+        "fn main() {let first = rc::new::<unique(usize)>(alloc(42)); let stolen = *first.value();}",
+        "type Resource struct {tag: usize} where tag == 42; fn main() -> usize {let first = rc::new::<Resource>(Resource {tag: 42}); let view = first.value(); let second = first.clone(); drop(first); drop(second); view.tag}",
+        "type Resource struct {tag: usize} where tag == 42; fn main() {let value = rc::new::<Resource>(Resource {tag: 42}); value.value().tag = 7;}",
+    ] {assert!(verify(source).is_err(), "accepted {source}");}
+}
+
+#[test]
 fn source_rc_rejects_counter_drift_overflow_and_missing_claims() {
     let library = include_str!("../../../../stdlib/rc/rc.evg");
     for (from, to, expected) in [
         ("allocation.count = allocation.count + 1;", "", "invariant"),
         (
-            "Credit {data: *allocation}",
-            "Credit {data: shape(shared(Data))}",
+            "Credit::<T> {data: *allocation}",
+            "Credit::<T> {data: shape(shared(Data::<T>))}",
             "type mismatch",
         ),
         ("data.count = data.count - 1;", "", "postcondition"),
@@ -147,6 +188,7 @@ fn source_rc_rejects_counter_drift_overflow_and_missing_claims() {
     ] {
         let wrong = library.replace(from, to);
         assert_ne!(wrong, library);
+        let wrong = format!("{wrong}\nfn exercise_counter() -> usize {{let first = new(42); let second = first.clone(); second.release_nonfinal(); *first.value()}}");
         let error = verify(&wrong).unwrap_err();
         assert!(error.contains(expected), "{error}\n{wrong}");
     }
