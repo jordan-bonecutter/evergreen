@@ -6,6 +6,7 @@ use super::*;
 use std::collections::BTreeSet;
 
 mod census;
+mod joins;
 use census::fresh_revision;
 pub use census::OwnerCensus;
 
@@ -25,7 +26,7 @@ impl OwnedReference {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Ownership {
     Unique,
     Shared(BTreeSet<u64>),

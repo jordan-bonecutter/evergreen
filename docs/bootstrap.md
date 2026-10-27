@@ -1460,6 +1460,13 @@ recovers and frees the unique plane. The compiler recognizes no Rc algorithm.
 shared; automatic conditional final release, generic payloads, and Arc remain
 unfinished. See [source Rc](rc.md) for the proof boundary and limitations.
 
+Ownership effects in `if`/Boolean `match` can reconverge when both arms leave the
+same live tokens and symbolic owner totals. Census revisions remain fresh after
+count-preserving round trips. Equal counts never substitute for matching token
+identities. Different live tokens or allocation lifetimes still need guarded
+resource-state joins and are rejected. `examples/conditional_ownership.evg`
+demonstrates a source Rc release in both match arms.
+
 `examples/opaque_values.evg` demonstrates runtime opaque values, public facts,
 and checked accessors; it runs and builds natively. Module-qualified programs
 use the internal verifier.

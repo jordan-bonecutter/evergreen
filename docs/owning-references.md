@@ -53,6 +53,16 @@ transitions and interference rules. No concurrent shared-ownership claim is made
 The frontend's resource transitions and machine-code erasure remain trusted
 implementation boundaries rather than independently checked kernel theorems.
 
+Conditional code can now consume claims when both arms leave exactly the same
+live token set and symbolic total for each preexisting allocation. For example,
+both arms may release the same nonfinal claim, or both may recover and destroy
+the same unique allocation. A temporary duplication/release on just one arm can
+also reconverge, but its old census evidence expires at the join. Equal counts
+with different live tokens still fail; no token identity is invented. Different
+allocation lifetimes, such as final release on one arm and nonfinal release on
+the other, remain unsupported. See
+[`conditional_ownership.evg`](../examples/conditional_ownership.evg).
+
 [`owning_references.evg`](../examples/owning_references.evg) runs in the interpreter
 and native backend without admissions. The selected Rc direction is
 allocation-backed, move-only credits. `allocation_credits::Credit` now wraps real

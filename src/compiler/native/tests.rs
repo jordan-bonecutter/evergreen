@@ -161,6 +161,8 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/owning_references.evg"),
         include_str!("../../../examples/allocation_credits.evg"),
         include_str!("../../../examples/rc.evg"),
+        include_str!("../../../examples/conditional_ownership.evg"),
+        "fn release(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {let unique = recover_owner(value); drop(unique);} else {let unique = recover_owner(value); drop(unique);}} fn main() -> usize {let unique: plane(usize) = alloc(7); let value = share_owner(unique); release(value, false); 42}",
         "fn main() -> usize {let items = [rc::new(42)]; let view = items[0].value(); let second = items[0].clone(); second.release_nonfinal(); *view}",
         "type Holder struct {shared: rc::Rc} fn main() -> usize {let holder = Holder {shared: rc::new(7)}; let view = holder.shared.value(); let second = holder.shared.clone(); *view = 42; second.release_nonfinal(); *holder.shared.value()}",
         "type Resource struct {value: usize} where value == 42; impl Drop for Resource {fn drop(self) {proof valid: self.value == 42;}} fn main() -> usize {let unique: plane(Resource) = alloc(Resource {value: 42}); let first = share_owner(unique); let second = duplicate_owner(&first); release_owner(first); second.value}",

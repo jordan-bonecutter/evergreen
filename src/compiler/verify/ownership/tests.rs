@@ -1,6 +1,65 @@
 use super::*;
 
 #[test]
+fn conditional_owner_releases_join_the_same_remaining_claims() {
+    for source in [
+        "fn release(value: owner(usize), flag: bool) where owners(value) > 1 {if flag {release_owner(value);} else {release_owner(value);}} fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate_owner(&first); let view = &*first; release(second, true); proof sole: owners(first) == 1; *view}",
+        "fn release(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {let unique = recover_owner(value); drop(unique);} else {let unique = recover_owner(value); drop(unique);}} fn main() -> usize {let unique: plane(usize) = alloc(7); let value = share_owner(unique); release(value, false); 42}",
+        "fn observe(value: &owner(usize), flag: bool) {if flag {let temporary = duplicate_owner(value); release_owner(temporary);} else {}} fn main() -> usize {let unique: plane(usize) = alloc(42); let value = share_owner(unique); let view = &*value; observe(&value, true); proof sole: owners(value) == 1; *view}",
+        "fn release(value: rc::Rc, flag: bool) where value.strong_count() > 1 {match flag {true => {value.release_nonfinal();}, false => {value.release_nonfinal();}}} fn main() -> usize {let first = rc::new(42); let second = first.clone(); release(second, false); proof sole: first.strong_count() == 1; *first.value()}",
+    ] {
+        let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
+    }
+}
+
+#[test]
+fn conditional_owner_transitions_do_not_preserve_admissions_or_invent_tokens() {
+    for transition in [
+        "if flag {let temporary = duplicate_owner(&value); release_owner(temporary);} else {}",
+        "if flag {let temporary = duplicate_owner(&value); release_owner(temporary);} else {let temporary = duplicate_owner(&value); release_owner(temporary);}",
+    ] {
+        let source = format!("fn reclaim(value: owner(usize), flag: bool) -> plane(usize) {{proof admitted: owners(value) == 1 by {{trustme}}; {transition} recover_owner(value)}} fn main() -> usize {{42}}");
+        let error = verify(&source).unwrap_err();
+        assert!(error.contains("unique owner recovery"), "{error}");
+    }
+    for source in [
+        "fn bad(value: &owner(usize), flag: bool) -> owner(usize) {if flag {duplicate_owner(value)} else {duplicate_owner(value)}}",
+        "fn bad(first: owner(usize), second: owner(usize), flag: bool) where owners(first) > 1 && owners(second) > 1 {if flag {release_owner(first);} else {release_owner(second);}}",
+        "fn bad(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {drop(value);} else {}}",
+        "fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate_owner(&first); if true {release_owner(second);} else {release_owner(second);} *second}",
+        "fn main() -> usize {let unique: plane(usize) = alloc(42); let value = share_owner(unique); let view = &*value; if true {drop(value);} else {drop(value);} *view}",
+    ] {
+        assert!(verify(source).is_err(), "accepted {source}");
+    }
+}
+
+#[test]
+fn conditional_owner_changes_keep_other_allocations_evidence_separate() {
+    let source = "fn reclaim(value: owner(usize), flag: bool) -> plane(usize) {proof sole: owners(value) == 1 by {trustme}; let unique: plane(usize) = alloc(7); let other = share_owner(unique); if flag {let temporary = duplicate_owner(&other); release_owner(temporary);} else {} drop(other); recover_owner(value)} fn main() -> usize {42}";
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(
+        program
+            .function_safety_assumptions("reclaim")
+            .unwrap()
+            .count(),
+        1
+    );
+    assert_eq!(
+        program.function_safety_assumptions("main").unwrap().count(),
+        0
+    );
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+}
+
+#[test]
 fn source_rc_updates_a_real_counter_alongside_allocation_claims() {
     let source = include_str!("../../../../examples/rc.evg");
     let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}"));

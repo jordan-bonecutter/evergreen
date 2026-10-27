@@ -1,0 +1,19 @@
+// Both arms consume the same claim and leave the same allocation alive.
+fn release(value: rc::Rc, flag: bool)
+where value.strong_count() > 1 {
+    match flag {
+        true => {value.release_nonfinal();},
+        false => {value.release_nonfinal();},
+    }
+}
+
+fn main() -> usize {
+    let first = rc::new(42);
+    let view = first.value();
+    let second = first.clone();
+    release(second, false);
+    proof unique: first.strong_count() == 1;
+    let answer = if first.strong_count() == 1 {*view} else {1};
+    first.release_last();
+    answer
+}

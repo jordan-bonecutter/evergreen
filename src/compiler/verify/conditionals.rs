@@ -138,6 +138,15 @@ impl Context<'_> {
         self.locals.values = env;
         self.locals.places = roots;
         self.restore_branch_view(&store)?;
+        if a_store.censuses != b_store.censuses {
+            return Err(
+                "conditional owner totals differ; guarded census joins are not implemented".into(),
+            );
+        }
+        self.storage
+            .memory
+            .join_ownership(&store.memory, &a_store.memory, &b_store.memory)?;
+        self.censuses = a_store.censuses.clone();
         self.proof
             .subjects
             .merge(&store.facts, &a_store.facts, &b_store.facts, &p)?;
@@ -259,13 +268,8 @@ impl Context<'_> {
     }
 
     fn restore_branch_view(&mut self, view: &BranchView) -> Result<()> {
-        if self.censuses != view.censuses {
-            return Err(
-                "conditional owner-census transitions require guarded token joins; unsupported"
-                    .into(),
-            );
-        }
         self.storage.memory = self.clone_store(&view.memory)?;
+        self.censuses = view.censuses.clone();
         self.proof.subjects.restore(view.facts.clone());
         Ok(())
     }
