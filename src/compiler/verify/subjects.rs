@@ -1,132 +1,38 @@
 //! State subjects are separate from simplified arithmetic. A snapshot names
-//! actual plane projections and their content epochs, never source spellings.
+//! actual plane projections and revisions; aliases share the same state entry.
 
 use super::*;
+use std::sync::Arc;
 
 const MAX_SUBJECTS: usize = 16_384;
+type SubjectPath = Arc<[Projection<Linear>]>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct Stamp {
     subject: usize,
-    epoch: u64,
+    revision: state::Revision,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum ClaimKey {
-    Unit,
-    Number(i128),
-    Bool(bool),
-    Read(Stamp),
-    Unary(String, Box<Self>),
-    Binary(String, Box<Self>, Box<Self>),
-    Array(Vec<Self>),
-    Record(String, Vec<(String, Self)>),
-}
-
-#[derive(Clone, Debug, Default)]
-pub(super) struct Snapshot {
-    pub(super) reads: BTreeSet<Stamp>,
-    pub(super) complete: bool,
-    pub(super) key: Option<ClaimKey>,
-}
-
-impl Snapshot {
-    pub(super) fn from_key(key: ClaimKey) -> Self {
-        let mut reads = BTreeSet::new();
-        let mut pending = vec![&key];
-        while let Some(key) = pending.pop() {
-            match key {
-                ClaimKey::Read(stamp) => {
-                    reads.insert(*stamp);
-                }
-                ClaimKey::Unary(_, value) => pending.push(value),
-                ClaimKey::Binary(_, a, b) => {
-                    pending.push(a);
-                    pending.push(b);
-                }
-                ClaimKey::Array(values) => pending.extend(values.iter()),
-                ClaimKey::Record(_, fields) => pending.extend(fields.iter().map(|(_, key)| key)),
-                _ => {}
-            }
-        }
-        Self {
-            reads,
-            complete: true,
-            key: Some(key),
-        }
-    }
-
-    pub(super) fn replace_read(&mut self, original: &Self, replacement: &Self) {
-        let (Some(ClaimKey::Read(original)), Some(replacement), Some(key)) =
-            (&original.key, &replacement.key, &mut self.key)
-        else {
-            return;
-        };
-        fn replace(key: &mut ClaimKey, original: Stamp, replacement: &ClaimKey) {
-            match key {
-                ClaimKey::Read(stamp) if *stamp == original => *key = replacement.clone(),
-                ClaimKey::Unary(_, key) => replace(key, original, replacement),
-                ClaimKey::Binary(_, a, b) => {
-                    replace(a, original, replacement);
-                    replace(b, original, replacement);
-                }
-                ClaimKey::Array(values) => {
-                    for key in values {
-                        replace(key, original, replacement);
-                    }
-                }
-                ClaimKey::Record(_, fields) => {
-                    for (_, key) in fields {
-                        replace(key, original, replacement);
-                    }
-                }
-                _ => {}
-            }
-        }
-        replace(key, *original, replacement);
-        *self = Self::from_key(key.clone());
-    }
-
-    pub(super) fn branch(&self, operator: &str, right: bool) -> Option<Self> {
-        if let Some(ClaimKey::Binary(op, a, b)) = &self.key {
-            if op != operator {
-                return None;
-            }
-            Some(Self::from_key(if right {
-                (**b).clone()
-            } else {
-                (**a).clone()
-            }))
-        } else {
-            None
-        }
-    }
-}
+mod snapshot;
+pub(super) use snapshot::{ClaimKey, Snapshot};
 
 #[derive(Debug)]
 struct Subject {
     plane: PlaneId,
     reference: Reference,
-    path: Vec<Projection<Linear>>,
+    path: SubjectPath,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct Subjects {
-    places: BTreeMap<PlaneId, Vec<usize>>,
+    identities: BTreeMap<(Reference, SubjectPath), usize>,
     entries: Vec<Subject>,
-    clock: u64,
     state: state::State,
+    history: state::History,
+    worlds: Vec<state::State>,
 }
 
 impl Subjects {
-    fn cost(&self, plane: PlaneId) -> usize {
-        self.places.get(&plane).map_or(1, |entries| {
-            entries.iter().fold(1usize, |cost, &id| {
-                cost.saturating_add(1 + self.entries[id].path.len())
-            })
-        })
-    }
-
     pub(super) fn observe(
         &mut self,
         memory: &Memory<Symbol>,
@@ -134,18 +40,29 @@ impl Subjects {
         path: Vec<Projection<Linear>>,
     ) -> Result<Stamp> {
         let plane = memory.plane(reference)?;
-        let entries = self.places.entry(plane).or_default();
-        let subject = if let Some(&id) = entries.iter().find(|&&id| {
-            let entry = &self.entries[id];
-            entry.reference == reference && entry.path == path
-        }) {
+        self.observe_in(&self.state.clone(), plane, reference, path)
+    }
+
+    fn observe_in(
+        &mut self,
+        state: &state::State,
+        plane: PlaneId,
+        reference: Reference,
+        path: Vec<Projection<Linear>>,
+    ) -> Result<Stamp> {
+        let path = Arc::<[Projection<Linear>]>::from(path);
+        let key = (reference, Arc::clone(&path));
+        let cost =
+            (path.len() + 1).saturating_mul((self.identities.len() + 1).ilog2() as usize + 1);
+        self.history.charge(cost)?;
+        let subject = if let Some(&id) = self.identities.get(&key) {
             id
         } else {
             if self.entries.len() >= MAX_SUBJECTS {
                 return Err("proof state subject limit reached".into());
             }
             let id = self.entries.len();
-            entries.push(id);
+            self.identities.insert(key, id);
             self.entries.push(Subject {
                 plane,
                 reference,
@@ -153,27 +70,116 @@ impl Subjects {
             });
             id
         };
-        self.state = self.state.observe(plane, subject);
         Ok(Stamp {
             subject,
-            epoch: self.state.region(plane, subject),
+            revision: self.history.region(
+                state.version(plane),
+                subject,
+                &self.entries[subject].path,
+            )?,
         })
     }
 
     pub(super) fn write(&mut self, plane: PlaneId, path: &[Projection<Linear>]) -> Result<()> {
-        self.clock = self
-            .clock
-            .checked_add(1)
-            .ok_or("proof state epoch exhausted")?;
-        let regions = self
-            .places
-            .get(&plane)
-            .into_iter()
-            .flatten()
-            .map(|&id| (id, overlap(&self.entries[id].path, path)))
-            .collect::<Vec<_>>();
-        self.state = self.state.write(plane, self.clock, &regions);
+        let prior = self.state.version(plane);
+        let version = self.history.write(prior, path)?;
+        self.state = self.state.write(plane, version);
         Ok(())
+    }
+
+    pub(super) fn save_world(&mut self) -> Result<state::WorldId> {
+        if self.worlds.len() >= MAX_VALUE_WORK {
+            return Err("historical proof state limit reached".into());
+        }
+        let id = state::WorldId(self.worlds.len());
+        self.worlds.push(self.state.clone());
+        Ok(id)
+    }
+
+    fn old_read(
+        &mut self,
+        world: state::WorldId,
+        reference: Reference,
+        path: Vec<Projection<Linear>>,
+    ) -> Result<Stamp> {
+        let state = self
+            .worlds
+            .get(world.0)
+            .ok_or("missing historical proof state")?
+            .clone();
+        self.observe_in(&state, reference.plane_identity(), reference, path)
+    }
+
+    pub(super) fn historical(
+        &mut self,
+        snapshot: &Snapshot,
+        world: state::WorldId,
+    ) -> Result<bool> {
+        if !snapshot.complete {
+            return Ok(false);
+        }
+        let state = self
+            .worlds
+            .get(world.0)
+            .ok_or("missing historical proof state")?;
+        for stamp in &snapshot.reads {
+            let Some(subject) = self.entries.get(stamp.subject) else {
+                return Ok(false);
+            };
+            let revision =
+                self.history
+                    .region(state.version(subject.plane), stamp.subject, &subject.path)?;
+            if revision != stamp.revision {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    pub(super) fn joined_predecessor(
+        &mut self,
+        stamp: Stamp,
+    ) -> Result<Option<(state::WorldId, Stamp, Formula)>> {
+        let Some((world, condition, left, right)) = self.history.join_view(stamp.revision) else {
+            return Ok(None);
+        };
+        let state = self
+            .worlds
+            .get(world.0)
+            .ok_or("missing branch predecessor proof state")?;
+        let subject = self
+            .entries
+            .get(stamp.subject)
+            .ok_or("missing proof projection")?;
+        let revision =
+            self.history
+                .region(state.version(subject.plane), stamp.subject, &subject.path)?;
+        let a = self.history.region(left, stamp.subject, &subject.path)?;
+        let b = self.history.region(right, stamp.subject, &subject.path)?;
+        let guard = match (a == revision, b == revision) {
+            (true, true) => Formula::True,
+            (true, false) => (*condition).clone(),
+            (false, true) => (*condition).clone().not(),
+            (false, false) => return Ok(None),
+        };
+        Ok(Some((
+            world,
+            Stamp {
+                subject: stamp.subject,
+                revision,
+            },
+            guard,
+        )))
+    }
+
+    pub(super) fn historical_candidates(
+        &self,
+        world: state::WorldId,
+    ) -> Result<(BTreeSet<evidence::NodeId>, usize)> {
+        self.worlds
+            .get(world.0)
+            .ok_or("missing historical proof state")?
+            .all_candidates()
     }
 
     pub(super) fn snapshot(&self) -> state::State {
@@ -188,12 +194,15 @@ impl Subjects {
         base: &state::State,
         a: &state::State,
         b: &state::State,
+        condition: &Formula,
     ) -> Result<()> {
-        self.clock = self
-            .clock
-            .checked_add(1)
-            .ok_or("proof state epoch exhausted")?;
-        self.state = base.merge(a, b, self.clock, &self.places);
+        if self.worlds.len() >= MAX_VALUE_WORK {
+            return Err("historical proof state limit reached".into());
+        }
+        let world = state::WorldId(self.worlds.len());
+        self.worlds.push(base.clone());
+        let branch = self.history.case(world, condition)?;
+        self.state = base.merge(a, b, &mut self.history, branch)?;
         Ok(())
     }
 
@@ -215,18 +224,31 @@ impl Subjects {
         self.state.candidates(&planes)
     }
 
-    pub(super) fn current(&self, snapshot: &Snapshot, memory: &Memory<Symbol>) -> bool {
-        snapshot.complete
-            && snapshot.reads.iter().all(|stamp| {
-                self.entries.get(stamp.subject).is_some_and(|subject| {
-                    self.state.region(subject.plane, stamp.subject) == stamp.epoch
-                        && memory.plane(subject.reference).ok() == Some(subject.plane)
-                })
-            })
+    pub(super) fn current(&mut self, snapshot: &Snapshot, memory: &Memory<Symbol>) -> Result<bool> {
+        if !snapshot.complete {
+            return Ok(false);
+        }
+        for stamp in &snapshot.reads {
+            let Some(subject) = self.entries.get(stamp.subject) else {
+                return Ok(false);
+            };
+            if memory.plane(subject.reference).ok() != Some(subject.plane) {
+                return Ok(false);
+            }
+            let revision = self.history.region(
+                self.state.version(subject.plane),
+                stamp.subject,
+                &subject.path,
+            )?;
+            if revision != stamp.revision {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 
-fn overlap(a: &[Projection<Linear>], b: &[Projection<Linear>]) -> bool {
+pub(super) fn overlap(a: &[Projection<Linear>], b: &[Projection<Linear>]) -> bool {
     for (a, b) in a.iter().zip(b) {
         match (a, b) {
             (Projection::Field(a), Projection::Field(b)) if a != b => return false,
@@ -259,7 +281,7 @@ impl Context<'_> {
         plane: PlaneId,
         path: &[Projection<Linear>],
     ) -> Result<()> {
-        self.charge_value_work(self.proof.subjects.cost(plane).saturating_add(path.len()))?;
+        self.charge_value_work(1usize.saturating_add(path.len()))?;
         self.proof.subjects.write(plane, path)
     }
 
@@ -277,194 +299,7 @@ impl Context<'_> {
     }
 }
 
-impl Context<'_> {
-    pub(super) fn claim_subjects(&mut self, expression: &Expr) -> Result<Snapshot> {
-        let mut snapshot = Snapshot::default();
-        snapshot.key = self.collect_subjects(expression, &mut snapshot, 0)?;
-        snapshot.complete = snapshot.key.is_some();
-        Ok(snapshot)
-    }
-
-    fn collect_subjects(
-        &mut self,
-        expression: &Expr,
-        snapshot: &mut Snapshot,
-        depth: usize,
-    ) -> Result<Option<ClaimKey>> {
-        self.charge_value_work(1)?;
-        if depth >= 32 {
-            return Ok(None);
-        }
-        let key = match &expression.kind {
-            Kind::Name(name) if !self.locals.values.contains_key(name) => {
-                if let Some(fact) = self.proof.facts.get(name).cloned() {
-                    return self.collect_subjects(&fact, snapshot, depth + 1);
-                }
-                None
-            }
-            Kind::Name(_) | Kind::Field(..) | Kind::Index(..) => {
-                return self.collect_place_subject(expression, snapshot, depth + 1);
-            }
-            Kind::Unary(op, place) if op == "&" => self
-                .collect_place_subject(place, snapshot, depth + 1)?
-                .map(|key| ClaimKey::Unary(op.clone(), Box::new(key))),
-            Kind::Unary(op, _) if op == "*" => {
-                return self.collect_place_subject(expression, snapshot, depth + 1);
-            }
-            Kind::Binary(op, a, b) => {
-                let a = self.collect_subjects(a, snapshot, depth + 1)?;
-                let b = self.collect_subjects(b, snapshot, depth + 1)?;
-                a.zip(b)
-                    .map(|(a, b)| ClaimKey::Binary(op.clone(), Box::new(a), Box::new(b)))
-            }
-            Kind::Unary(op, value) => self
-                .collect_subjects(value, snapshot, depth + 1)?
-                .map(|key| ClaimKey::Unary(op.clone(), Box::new(key))),
-            Kind::Array(items) => {
-                let mut keys = Vec::new();
-                let mut complete = true;
-                for item in items {
-                    if let Some(key) = self.collect_subjects(item, snapshot, depth + 1)? {
-                        keys.push(key);
-                    } else {
-                        complete = false;
-                    }
-                }
-                complete.then_some(ClaimKey::Array(keys))
-            }
-            Kind::Record(name, fields) => {
-                let mut keys = Vec::new();
-                let mut complete = true;
-                for (field, value) in fields {
-                    if let Some(key) = self.collect_subjects(value, snapshot, depth + 1)? {
-                        keys.push((field.clone(), key));
-                    } else {
-                        complete = false;
-                    }
-                }
-                complete.then_some(ClaimKey::Record(name.clone(), keys))
-            }
-            Kind::Call(_, arguments) => {
-                // Call-result subjects need value-flow provenance through
-                // parameter renaming. Never re-evaluate a call to discover it.
-                for argument in arguments {
-                    self.collect_subjects(argument, snapshot, depth + 1)?;
-                }
-                None
-            }
-            Kind::If(condition, _, _) | Kind::FactAt(condition, _) => {
-                self.collect_subjects(condition, snapshot, depth + 1)?;
-                None
-            }
-            Kind::Unit => Some(ClaimKey::Unit),
-            Kind::Number(n) | Kind::Constant(_, n) => Some(ClaimKey::Number(*n)),
-            Kind::Bool(b) => Some(ClaimKey::Bool(*b)),
-        };
-        Ok(key)
-    }
-
-    fn collect_place_subject(
-        &mut self,
-        expression: &Expr,
-        snapshot: &mut Snapshot,
-        depth: usize,
-    ) -> Result<Option<ClaimKey>> {
-        if let Some((reference, path)) = self.subject_place(expression, depth)? {
-            let plane = self.storage.memory.plane(reference)?;
-            self.charge_value_work(self.proof.subjects.cost(plane).saturating_add(path.len()))?;
-            let stamp = self
-                .proof
-                .subjects
-                .observe(&self.storage.memory, reference, path)?;
-            snapshot.reads.insert(stamp);
-            Ok(Some(ClaimKey::Read(stamp)))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Resolve only existing storage and simple index values. This deliberately
-    /// does not call `eval`, user functions, or expression elaboration twice.
-    fn subject_place(
-        &mut self,
-        expression: &Expr,
-        depth: usize,
-    ) -> Result<Option<(Reference, Vec<Projection<Linear>>)>> {
-        self.charge_value_work(1)?;
-        if depth >= 32 {
-            return Ok(None);
-        }
-        match &expression.kind {
-            Kind::Name(name) => {
-                let plane = if let Some(&plane) = self.locals.places.get(name) {
-                    plane
-                } else if let Some(value) = self.locals.values.get(name).cloned() {
-                    let plane = self.allocate_symbol(value)?;
-                    self.locals.places.insert(name.clone(), plane);
-                    plane
-                } else {
-                    return Ok(None);
-                };
-                Ok(self
-                    .storage
-                    .memory
-                    .borrow(plane)
-                    .ok()
-                    .map(|reference| (reference, vec![])))
-            }
-            Kind::Field(base, field) => {
-                let Some((reference, mut path)) = self.subject_place(base, depth + 1)? else {
-                    return Ok(None);
-                };
-                path.push(Projection::Field(field.clone()));
-                Ok(Some((reference, path)))
-            }
-            Kind::Index(base, index) => {
-                let Some((reference, mut path)) = self.subject_place(base, depth + 1)? else {
-                    return Ok(None);
-                };
-                let index = match &index.kind {
-                    Kind::Number(n) | Kind::Constant(_, n) => Some(Linear::number(*n)),
-                    Kind::Name(name) => {
-                        let value = self
-                            .locals
-                            .places
-                            .get(name)
-                            .and_then(|&id| self.storage.memory.get(id).ok())
-                            .or_else(|| self.locals.values.get(name));
-                        match value {
-                            Some(Symbol::Number(_, number)) => Some(number.clone()),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                };
-                let Some(index) = index else {
-                    return Ok(None);
-                };
-                path.push(Projection::Index(index));
-                Ok(Some((reference, path)))
-            }
-            Kind::Unary(op, base) if op == "*" => {
-                let Some((reference, path)) = self.subject_place(base, depth + 1)? else {
-                    return Ok(None);
-                };
-                match self
-                    .storage
-                    .memory
-                    .read(reference)
-                    .ok()
-                    .and_then(|value| project(value, &path).ok())
-                {
-                    Some(Symbol::Ref(_, reference, path)) => Ok(Some((*reference, path.clone()))),
-                    Some(Symbol::Plane(_, reference)) => Ok(Some((*reference, vec![]))),
-                    _ => Ok(None),
-                }
-            }
-            _ => Ok(None),
-        }
-    }
-}
+mod collect;
 
 #[cfg(test)]
 mod tests;

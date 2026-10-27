@@ -310,3 +310,71 @@ fn accepted_inferences_have_no_counterexample_in_two_atom_truth_tables() {
         }
     }
 }
+
+#[test]
+fn projection_of_a_constructed_conjunction_uses_only_the_selected_proof() {
+    let mut graph = Evidence::default();
+    let p = atom("p");
+    let q = atom("q");
+    let left = graph.admit(p.clone()).unwrap();
+    let right = graph.admit(q.clone()).unwrap();
+    let pair = graph
+        .derive(
+            Formula::And(Box::new(p), Box::new(q.clone())),
+            Rule::AndIntro(left, right),
+        )
+        .unwrap();
+    let projected = graph.derive(q, Rule::AndRight(pair)).unwrap();
+    assert_eq!(
+        graph.admissions(projected).admissions,
+        BTreeSet::from([right])
+    );
+    assert!(!graph.admissions(projected).admissions.contains(&left));
+}
+
+#[test]
+fn dependency_sources_cannot_be_used_as_mathematical_proofs() {
+    let mut session = Session::search();
+    let source = session
+        .trust(&[], b"external source", 1, "boundary")
+        .unwrap();
+    let mut graph = Evidence::default();
+    let imported = graph.import_trust(source).unwrap();
+    assert!(graph.claim(imported).is_err());
+    assert!(graph.derive(Formula::True, Rule::Reuse(imported)).is_err());
+    assert!(graph
+        .derive(Formula::True, Rule::FalseElim(imported))
+        .is_err());
+    assert!(graph
+        .record_subjects(imported, subjects::Snapshot::default())
+        .is_err());
+}
+
+#[test]
+fn guarded_frames_require_the_condition_and_are_memoized() {
+    let mut graph = Evidence::default();
+    let p = atom("p");
+    let condition = atom("condition");
+    let source = graph.admit(p.clone()).unwrap();
+    let guarded = graph.guard(source, &condition).unwrap();
+    graph.check_closed(guarded).unwrap();
+    let count = graph.nodes.len();
+    assert_eq!(graph.guard(source, &condition).unwrap(), guarded);
+    assert_eq!(graph.nodes.len(), count);
+    assert_eq!(graph.guarded_condition(guarded), Some(condition.clone()));
+    assert!(graph.derive(p.clone(), Rule::Reuse(guarded)).is_err());
+    let premise = graph.admit(condition).unwrap();
+    let result = graph
+        .derive(
+            p,
+            Rule::ImpElim {
+                theorem: guarded,
+                argument: premise,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        graph.admissions(result).admissions,
+        BTreeSet::from([source, premise])
+    );
+}

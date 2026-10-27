@@ -6,6 +6,7 @@
 //! declaration summaries remain explicit; the full trust boundary is incomplete.
 
 use super::*;
+use crate::compiler::certificate::TrustId;
 
 mod facts;
 use facts::{FactId, Facts};
@@ -27,7 +28,12 @@ impl NodeId {
 
 #[derive(Debug)]
 enum NodeRule {
-    Admission,
+    Admission(Option<TrustId>),
+    ImportedTrust(TrustId),
+    Reference {
+        parents: Vec<NodeId>,
+        pending: Option<summaries::Aspect>,
+    },
     Hypothesis,
     Arithmetic(Vec<NodeId>),
     Contract(Vec<NodeId>),
@@ -39,7 +45,8 @@ enum NodeRule {
 impl NodeRule {
     fn parents(&self) -> Vec<NodeId> {
         match self {
-            Self::Admission | Self::Hypothesis => vec![],
+            Self::Admission(_) | Self::ImportedTrust(_) | Self::Hypothesis => vec![],
+            Self::Reference { parents, .. } => parents.clone(),
             Self::Arithmetic(parents) | Self::Contract(parents) => parents.clone(),
             Self::Logical(rule) => rule.parents(),
             #[cfg(test)]
@@ -50,7 +57,7 @@ impl NodeRule {
 
 #[derive(Debug)]
 struct Node {
-    claim: FactId,
+    claim: Option<FactId>,
     rule: NodeRule,
     hypotheses: BTreeSet<HypothesisId>,
     weight: usize,
@@ -63,30 +70,84 @@ struct Node {
 pub(super) struct Evidence {
     nodes: Vec<Node>,
     facts: Facts,
+    sources: BTreeMap<TrustId, NodeId>,
     edges: usize,
     storage_weight: usize,
     rule_work: usize,
+    guards: BTreeMap<(NodeId, Formula), NodeId>,
 }
 
 impl Evidence {
-    pub(super) fn claim(&self, id: NodeId) -> &Formula {
-        self.facts.get(self.nodes[id.0].claim)
+    pub(super) fn claim(&self, id: NodeId) -> Result<&Formula> {
+        self.nodes
+            .get(id.0)
+            .and_then(|node| node.claim)
+            .map(|fact| self.facts.get(fact))
+            .ok_or_else(|| "proof dependency source is not a proposition".into())
     }
 
-    /// Only explicit admissions and checked imports can create leaf evidence.
+    pub(super) fn admit_source(&mut self, claim: Formula, trust: TrustId) -> Result<NodeId> {
+        let node = self.insert_node(
+            Some(claim),
+            NodeRule::Admission(Some(trust)),
+            BTreeSet::new(),
+        )?;
+        self.sources.insert(trust, node);
+        Ok(node)
+    }
+
+    #[cfg(test)]
     pub(super) fn admit(&mut self, claim: Formula) -> Result<NodeId> {
-        self.insert_node(claim, NodeRule::Admission, BTreeSet::new())
+        self.insert_node(Some(claim), NodeRule::Admission(None), BTreeSet::new())
+    }
+
+    pub(super) fn import_trust(&mut self, trust: TrustId) -> Result<NodeId> {
+        if let Some(&node) = self.sources.get(&trust) {
+            return Ok(node);
+        }
+        let node = self.insert_node(None, NodeRule::ImportedTrust(trust), BTreeSet::new())?;
+        self.sources.insert(trust, node);
+        Ok(node)
+    }
+
+    pub(super) fn trust(&self, node: NodeId) -> Result<TrustId> {
+        match self.nodes.get(node.0).map(|n| &n.rule) {
+            Some(NodeRule::Admission(Some(trust)) | NodeRule::ImportedTrust(trust)) => Ok(*trust),
+            _ => Err("admission has no source trust identity".into()),
+        }
+    }
+
+    pub(super) fn reference(
+        &mut self,
+        parents: Vec<NodeId>,
+        pending: Option<summaries::Aspect>,
+    ) -> Result<NodeId> {
+        let hypotheses = self.inherited_hypotheses(&parents)?;
+        self.insert_node(None, NodeRule::Reference { parents, pending }, hypotheses)
     }
 
     pub(super) fn hypothesis(&mut self, claim: Formula) -> Result<(HypothesisId, NodeId)> {
         let id = NodeId(self.nodes.len());
         let h = HypothesisId { node: id };
-        self.insert_node(claim, NodeRule::Hypothesis, BTreeSet::from([h]))?;
+        self.insert_node(Some(claim), NodeRule::Hypothesis, BTreeSet::from([h]))?;
         Ok((h, id))
     }
 
     pub(super) fn derive(&mut self, claim: Formula, rule: Rule) -> Result<NodeId> {
-        let weight = Self::claim_weight(&claim)?;
+        // Projecting a freshly constructed pair needs only that component's
+        // proof, preserving the dependencies actually used by elimination.
+        let rule = match rule {
+            Rule::AndLeft(parent) => match self.nodes.get(parent.0).map(|n| &n.rule) {
+                Some(NodeRule::Logical(Rule::AndIntro(left, _))) => Rule::Reuse(*left),
+                _ => Rule::AndLeft(parent),
+            },
+            Rule::AndRight(parent) => match self.nodes.get(parent.0).map(|n| &n.rule) {
+                Some(NodeRule::Logical(Rule::AndIntro(_, right))) => Rule::Reuse(*right),
+                _ => Rule::AndRight(parent),
+            },
+            rule => rule,
+        };
+        let weight = claim.storage_weight()?;
         let mut work = weight;
         for parent in rule.parents() {
             let node = self
@@ -101,9 +162,39 @@ impl Evidence {
             return Err("logical inference work limit reached".into());
         }
         let hypotheses = rule.check(self, &claim)?;
-        let id = self.insert_node(claim, NodeRule::Logical(rule), hypotheses)?;
+        let id = self.insert_node(Some(claim), NodeRule::Logical(rule), hypotheses)?;
         self.rule_work += work;
         Ok(id)
+    }
+
+    pub(super) fn guard(&mut self, proof: NodeId, condition: &Formula) -> Result<NodeId> {
+        if matches!(condition, Formula::True) {
+            return Ok(proof);
+        }
+        if let Some(&node) = self.guards.get(&(proof, condition.clone())) {
+            return Ok(node);
+        }
+        let body = self.claim(proof)?.clone();
+        let (hypothesis, _) = self.hypothesis(condition.clone())?;
+        let goal = Formula::Implies(Box::new(condition.clone()), Box::new(body));
+        let node = self.derive(
+            goal,
+            Rule::ImpIntro {
+                hypothesis,
+                body: proof,
+            },
+        )?;
+        self.guards.insert((proof, condition.clone()), node);
+        Ok(node)
+    }
+
+    pub(super) fn guarded_condition(&self, node: NodeId) -> Option<Formula> {
+        let NodeRule::Logical(Rule::ImpIntro { hypothesis, body }) = &self.nodes.get(node.0)?.rule
+        else {
+            return None;
+        };
+        let guard = self.claim(hypothesis.node).ok()?;
+        (self.guards.get(&(*body, guard.clone())) == Some(&node)).then(|| guard.clone())
     }
 
     pub(super) fn check_closed(&self, id: NodeId) -> Result<()> {
@@ -131,7 +222,7 @@ impl Evidence {
             self.admit(claim)
         } else {
             let hypotheses = self.inherited_hypotheses(&parents)?;
-            self.insert_node(claim, NodeRule::Fixture(parents), hypotheses)
+            self.insert_node(Some(claim), NodeRule::Fixture(parents), hypotheses)
         }
     }
 
@@ -147,33 +238,9 @@ impl Evidence {
         Ok(hypotheses)
     }
 
-    fn claim_weight(claim: &Formula) -> Result<usize> {
-        let mut weight = 0usize;
-        let mut pending = vec![(claim, 0usize)];
-        while let Some((part, depth)) = pending.pop() {
-            if depth >= 128 {
-                return Err("proof evidence claim depth limit reached".into());
-            }
-            weight = weight.saturating_add(1);
-            match part {
-                Formula::Ge(row) => weight = weight.saturating_add(row.terms.len()),
-                Formula::Not(p) => pending.push((p, depth + 1)),
-                Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b) => {
-                    pending.push((a, depth + 1));
-                    pending.push((b, depth + 1));
-                }
-                _ => {}
-            }
-            if weight > MAX_VALUE_WORK {
-                return Err("proof evidence claim storage limit reached".into());
-            }
-        }
-        Ok(weight)
-    }
-
     fn insert_node(
         &mut self,
-        claim: Formula,
+        claim: Option<Formula>,
         rule: NodeRule,
         hypotheses: BTreeSet<HypothesisId>,
     ) -> Result<NodeId> {
@@ -186,8 +253,14 @@ impl Evidence {
         if self.nodes.len() >= MAX_NODES || parents.len() > MAX_EDGES.saturating_sub(self.edges) {
             return Err("proof evidence graph limit reached".into());
         }
-        let weight = Self::claim_weight(&claim)?;
-        let fresh_formula = self.facts.find(&claim).is_none();
+        let weight = claim
+            .as_ref()
+            .map(Formula::storage_weight)
+            .transpose()?
+            .unwrap_or(0);
+        let fresh_formula = claim
+            .as_ref()
+            .is_some_and(|claim| self.facts.find(claim).is_none());
         let formula_storage = if fresh_formula { weight } else { 0 };
         let storage = formula_storage.saturating_add(hypotheses.len());
         if storage > MAX_VALUE_WORK.saturating_sub(self.storage_weight) {
@@ -199,7 +272,7 @@ impl Evidence {
         let id = NodeId(self.nodes.len());
         self.edges += parents.len();
         self.storage_weight += storage;
-        let claim = self.facts.intern(claim);
+        let claim = claim.map(|claim| self.facts.intern(claim));
         self.nodes.push(Node {
             claim,
             rule,
@@ -218,13 +291,15 @@ impl Evidence {
         snapshot: subjects::Snapshot,
     ) -> Result<()> {
         self.check_closed(node)?;
+        self.claim(node)?;
         if self.nodes[node.0].subjects.is_some() {
             return Err("proof node already has state subjects".into());
         }
-        if snapshot.reads.len() > MAX_VALUE_WORK.saturating_sub(self.storage_weight) {
+        let weight = snapshot.storage_weight()?;
+        if weight > MAX_VALUE_WORK.saturating_sub(self.storage_weight) {
             return Err("proof evidence subject storage limit reached".into());
         }
-        self.storage_weight += snapshot.reads.len();
+        self.storage_weight += weight;
         self.nodes[node.0].subjects = Some(snapshot);
         Ok(())
     }
@@ -235,7 +310,7 @@ impl Evidence {
 
     pub(super) fn contract(&mut self, claim: Formula, parents: Vec<NodeId>) -> Result<NodeId> {
         let hypotheses = self.inherited_hypotheses(&parents)?;
-        let id = self.insert_node(claim, NodeRule::Contract(parents), hypotheses)?;
+        let id = self.insert_node(Some(claim), NodeRule::Contract(parents), hypotheses)?;
         // Complete declaration summaries (including their own admissions) are
         // still pending; never report this instantiation as fully traced.
         self.nodes[id.0].unresolved_context = true;
@@ -245,7 +320,7 @@ impl Evidence {
     pub(super) fn arithmetic(&mut self, claim: Formula, support: paths::Support) -> Result<NodeId> {
         let parents = support.parents.into_iter().collect::<Vec<_>>();
         let hypotheses = self.inherited_hypotheses(&parents)?;
-        let id = self.insert_node(claim, NodeRule::Arithmetic(parents), hypotheses)?;
+        let id = self.insert_node(Some(claim), NodeRule::Arithmetic(parents), hypotheses)?;
         self.nodes[id.0].unresolved_context = support.unresolved;
         Ok(id)
     }
@@ -257,6 +332,7 @@ impl Evidence {
         let mut seen = BTreeSet::new();
         let mut admissions = BTreeSet::new();
         let mut complete = true;
+        let mut pending_summaries = BTreeSet::new();
         let mut work = 0usize;
         while let Some(id) = pending.pop() {
             work = work.saturating_add(1);
@@ -268,13 +344,25 @@ impl Evidence {
             if let Some(subjects) = &node.subjects {
                 complete &= subjects.complete;
             }
-            if matches!(node.rule, NodeRule::Admission) {
+            if let NodeRule::Reference {
+                pending: Some(aspect),
+                ..
+            } = node.rule
+            {
+                pending_summaries.insert(aspect);
+                complete = false;
+            }
+            if matches!(
+                node.rule,
+                NodeRule::Admission(_) | NodeRule::ImportedTrust(_)
+            ) {
                 admissions.insert(id);
             }
             pending.extend(node.parents.iter().copied());
         }
         AdmissionDependencies {
             admissions,
+            pending_summaries,
             complete,
             work,
         }
@@ -284,6 +372,7 @@ impl Evidence {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct AdmissionDependencies {
     pub(super) admissions: BTreeSet<NodeId>,
+    pub(super) pending_summaries: BTreeSet<summaries::Aspect>,
     pub(super) complete: bool,
     pub(super) work: usize,
 }

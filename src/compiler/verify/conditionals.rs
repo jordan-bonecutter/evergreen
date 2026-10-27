@@ -21,6 +21,19 @@ impl Context<'_> {
             .scoped_eval(condition, Some(&Ty::Bool))?
             .proposition()?;
         let base = self.proof.paths.clone();
+        let control_weight = self
+            .proof
+            .control
+            .as_ref()
+            .map(Formula::storage_weight)
+            .transpose()?
+            .unwrap_or(1);
+        self.charge_value_work(
+            control_weight
+                .saturating_add(p.storage_weight()?)
+                .saturating_mul(4),
+        )?;
+        let control = self.proof.control.clone().unwrap_or(Formula::True);
         let claims = self.proof.claims.clone();
         let value_claims = self.proof.value_claims.clone();
         // Give caller bindings stable storage identities before forking.
@@ -34,6 +47,7 @@ impl Context<'_> {
         let roots = self.locals.places.clone();
         let store = self.branch_view()?;
         self.proof.paths = extend(&base, &p, false, self.session, &mut self.work.value_work)?;
+        self.proof.control = Some(control.clone().and(p.clone()));
         let a = self.scoped_eval(yes, expected)?;
         let a_paths = self.proof.paths.clone();
         let a_store = self.branch_view()?;
@@ -44,18 +58,20 @@ impl Context<'_> {
         self.locals.values = env.clone();
         self.locals.places = roots.clone();
         self.restore_branch_view(&store)?;
+        self.proof.control = Some(control.clone().and(p.clone().not()));
         let b = self.scoped_eval(no, Some(&a.ty()))?;
         let b_paths = self.proof.paths.clone();
         let b_store = self.branch_view()?;
         self.proof.claims = claims;
         self.proof.value_claims = value_claims;
         self.proof.paths = base;
+        self.proof.control = Some(control);
         self.locals.values = env;
         self.locals.places = roots;
         self.restore_branch_view(&store)?;
         self.proof
             .subjects
-            .merge(&store.facts, &a_store.facts, &b_store.facts)?;
+            .merge(&store.facts, &a_store.facts, &b_store.facts, &p)?;
         let mut state_a = Formula::True;
         let mut state_b = Formula::True;
         let mut views = Vec::new();

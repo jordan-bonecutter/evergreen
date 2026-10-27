@@ -10,7 +10,7 @@ pub use owners::OwnedReference;
 
 static NEXT_ARENA: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Reference {
     owner: u64,
     slot: usize,
@@ -23,6 +23,17 @@ pub struct PlaneId {
     slot: usize,
 }
 
+impl Reference {
+    /// Identity for historical proof lookup. This does not check liveness or
+    /// authorize a memory read; operational reads still go through `Memory`.
+    pub(crate) fn plane_identity(self) -> PlaneId {
+        PlaneId {
+            owner: self.owner,
+            slot: self.slot,
+        }
+    }
+}
+
 impl PlaneId {
     /// Internal exact key. The store bounds slots to 100,000, well below 2^64.
     /// Arena identities remain opaque to Evergreen programs and proof artifacts.
@@ -31,7 +42,7 @@ impl PlaneId {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Projection<I = usize> {
     Field(String),
     Index(I),

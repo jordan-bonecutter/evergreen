@@ -82,21 +82,21 @@ impl Rule {
             if !matches!(graph.nodes[id.node.0].rule, NodeRule::Hypothesis) {
                 return Err("logical rule binder is not a hypothesis".into());
             }
-            Ok(claim(id.node))
+            claim(id.node)
         };
         let valid = match *self {
-            Self::Reuse(p) => same(claim(p), goal),
+            Self::Reuse(p) => same(claim(p)?, goal),
             Self::AndIntro(a, b) => {
-                matches!(goal, Formula::And(x, y) if same(claim(a), x) && same(claim(b), y))
+                matches!(goal, Formula::And(x, y) if same(claim(a)?, x) && same(claim(b)?, y))
             }
-            Self::AndLeft(p) => matches!(claim(p), Formula::And(a, _) if same(a, goal)),
-            Self::AndRight(p) => matches!(claim(p), Formula::And(_, b) if same(b, goal)),
-            Self::OrLeft(p) => matches!(goal, Formula::Or(a, _) if same(claim(p), a)),
-            Self::OrRight(p) => matches!(goal, Formula::Or(_, b) if same(claim(p), b)),
-            Self::FalseElim(p) => matches!(claim(p), Formula::False),
-            Self::ImpElim { theorem, argument } => match claim(theorem) {
-                Formula::Implies(a, b) => same(a, claim(argument)) && same(b, goal),
-                Formula::Not(a) => same(a, claim(argument)) && same(goal, &Formula::False),
+            Self::AndLeft(p) => matches!(claim(p)?, Formula::And(a, _) if same(a, goal)),
+            Self::AndRight(p) => matches!(claim(p)?, Formula::And(_, b) if same(b, goal)),
+            Self::OrLeft(p) => matches!(goal, Formula::Or(a, _) if same(claim(p)?, a)),
+            Self::OrRight(p) => matches!(goal, Formula::Or(_, b) if same(claim(p)?, b)),
+            Self::FalseElim(p) => matches!(claim(p)?, Formula::False),
+            Self::ImpElim { theorem, argument } => match claim(theorem)? {
+                Formula::Implies(a, b) => same(a, claim(argument)?) && same(b, goal),
+                Formula::Not(a) => same(a, claim(argument)?) && same(goal, &Formula::False),
                 _ => false,
             },
             Self::ImpIntro {
@@ -106,8 +106,8 @@ impl Rule {
                 let premise = hypothesis(h)?;
                 open.remove(&h);
                 match goal {
-                    Formula::Implies(a, b) => same(a, premise) && same(b, claim(body)),
-                    Formula::Not(a) => same(a, premise) && same(claim(body), &Formula::False),
+                    Formula::Implies(a, b) => same(a, premise) && same(b, claim(body)?),
+                    Formula::Not(a) => same(a, premise) && same(claim(body)?, &Formula::False),
                     _ => false,
                 }
             }
@@ -130,9 +130,9 @@ impl Rule {
                 open.remove(&lh);
                 open.remove(&rh);
                 scoped
-                    && same(claim(left), goal)
-                    && same(claim(right), goal)
-                    && matches!(claim(source), Formula::Or(a, b) if same(a, lp) && same(b, rp))
+                    && same(claim(left)?, goal)
+                    && same(claim(right)?, goal)
+                    && matches!(claim(source)?, Formula::Or(a, b) if same(a, lp) && same(b, rp))
             }
         };
         if !valid {

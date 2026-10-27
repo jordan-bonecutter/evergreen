@@ -18,6 +18,7 @@ pub(super) fn verify(
         drops,
         destructors,
         functions: BTreeMap::new(),
+        summaries: BTreeMap::new(),
         helpers: BTreeSet::new(),
         cleanup_helpers: BTreeSet::new(),
         obligations: 0,
@@ -67,11 +68,13 @@ fn check_record(
     session: &mut Session,
 ) -> Result<()> {
     let empty_functions = BTreeMap::new();
+    let empty_summaries = BTreeMap::new();
     let empty_drops = BTreeSet::new();
     let empty_destructors = BTreeMap::new();
     let mut ctx = Context::new(
         Declarations {
             functions: &empty_functions,
+            summaries: &empty_summaries,
             structs,
             drops: &empty_drops,
             destructors: &empty_destructors,
@@ -171,6 +174,7 @@ struct Verification {
     drops: BTreeSet<String>,
     destructors: BTreeMap<String, Function>,
     functions: BTreeMap<String, Function>,
+    summaries: BTreeMap<String, summaries::Summary>,
     helpers: BTreeSet<String>,
     cleanup_helpers: BTreeSet<String>,
     obligations: usize,
@@ -247,10 +251,11 @@ impl Verification {
         if f.decreases.is_some() || f.partial {
             self.functions.insert(f.name.clone(), f.clone());
         }
-        let (obligations, partial) = {
+        let (obligations, partial, summary) = {
             let mut ctx = Context::new(
                 Declarations {
                     functions: &self.functions,
+                    summaries: &self.summaries,
                     structs: &self.structs,
                     drops: &self.drops,
                     destructors: &self.destructors,
@@ -261,8 +266,14 @@ impl Verification {
             );
             ctx.enter_function(f)?;
             ctx.check_declaration_body(f)?;
-            (ctx.work.obligations, ctx.execution.partial_execution)
+            let summary = ctx.declaration_summary()?;
+            (
+                ctx.work.obligations,
+                ctx.execution.partial_execution,
+                summary,
+            )
         };
+        self.summaries.insert(f.name.clone(), summary);
         self.obligations += obligations;
         f.partial = partial;
         if crate::compiler::effects::invariant_independent(
@@ -288,6 +299,7 @@ impl Verification {
     fn finish(self, functions: Vec<Function>, session: &Session) -> VerifiedProgram {
         VerifiedProgram {
             functions,
+            summaries: self.summaries,
             structs: self.structs,
             obligations: self.obligations,
             drops: self.drops,

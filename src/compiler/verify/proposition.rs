@@ -87,3 +87,29 @@ impl Formula {
         }
     }
 }
+
+impl Formula {
+    pub(super) fn storage_weight(&self) -> super::Result<usize> {
+        let mut weight = 0usize;
+        let mut pending = vec![(self, 0usize)];
+        while let Some((part, depth)) = pending.pop() {
+            if depth >= 128 {
+                return Err("proof evidence claim depth limit reached".into());
+            }
+            weight = weight.saturating_add(1);
+            match part {
+                Formula::Ge(row) => weight = weight.saturating_add(row.terms.len()),
+                Formula::Not(p) => pending.push((p, depth + 1)),
+                Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b) => {
+                    pending.push((a, depth + 1));
+                    pending.push((b, depth + 1));
+                }
+                _ => {}
+            }
+            if weight > super::MAX_VALUE_WORK {
+                return Err("proof evidence claim storage limit reached".into());
+            }
+        }
+        Ok(weight)
+    }
+}

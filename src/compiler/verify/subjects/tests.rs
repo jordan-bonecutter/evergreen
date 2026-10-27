@@ -8,6 +8,8 @@ fn value(n: i128) -> Symbol {
 fn snapshot(stamp: Stamp) -> Snapshot {
     Snapshot {
         reads: BTreeSet::from([stamp]),
+        past: BTreeMap::new(),
+        values: BTreeMap::new(),
         complete: true,
         key: Some(ClaimKey::Read(stamp)),
     }
@@ -20,17 +22,24 @@ fn with_source(source: &str, check: impl FnOnce(&mut Context<'_>, &[Statement]))
         .into_iter()
         .map(|record| (record.name.clone(), record))
         .collect();
-    let functions = parsed
+    let functions: BTreeMap<String, Function> = parsed
         .functions
         .iter()
         .filter(|f| f.name != "main")
         .cloned()
         .map(|f| (f.name.clone(), f))
         .collect();
+    // These fixtures intentionally bypass declaration verification; supply
+    // explicit empty summaries only for their admission-free helper bodies.
+    let summaries = functions
+        .keys()
+        .map(|name: &String| (name.clone(), summaries::Summary::default()))
+        .collect();
     let names = BTreeSet::new();
     let main = parsed.functions.iter().find(|f| f.name == "main").unwrap();
     let declarations = Declarations {
         functions: &functions,
+        summaries: &summaries,
         structs: &structs,
         drops: &names,
         destructors: &functions,
@@ -55,16 +64,24 @@ fn constant_folding_keeps_subjects_and_same_value_assignment_expires_them() {
         }
         let node = ctx.proof.witnesses["admitted"];
         assert_eq!(
-            ctx.proof.evidence.claim(node),
+            ctx.proof.evidence.claim(node).unwrap(),
             &equal(&Linear::number(43), &Linear::number(42)).unwrap()
         );
         let snapshot = named_snapshot(ctx, "admitted");
         assert_eq!(snapshot.reads.len(), 1);
-        assert!(ctx.proof.subjects.current(&snapshot, &ctx.storage.memory));
+        assert!(ctx
+            .proof
+            .subjects
+            .current(&snapshot, &ctx.storage.memory)
+            .unwrap());
         let fact = ctx.proof.facts["is_42"].clone();
         assert_eq!(snapshot.key, ctx.claim_subjects(&fact).unwrap().key);
         ctx.statement(&body[3]).unwrap();
-        assert!(!ctx.proof.subjects.current(&snapshot, &ctx.storage.memory));
+        assert!(!ctx
+            .proof
+            .subjects
+            .current(&snapshot, &ctx.storage.memory)
+            .unwrap());
         let fact = ctx.proof.facts["is_42"].clone();
         let current = ctx.claim_subjects(&fact).unwrap();
         assert_ne!(snapshot.key, current.key);
@@ -82,8 +99,8 @@ fn collapsed_arithmetic_does_not_merge_subjects_or_statement_shapes() {
         let b = named_snapshot(ctx, "b");
         let c = named_snapshot(ctx, "c");
         assert_eq!(
-            ctx.proof.evidence.claim(ctx.proof.witnesses["a"]),
-            ctx.proof.evidence.claim(ctx.proof.witnesses["b"])
+            ctx.proof.evidence.claim(ctx.proof.witnesses["a"]).unwrap(),
+            ctx.proof.evidence.claim(ctx.proof.witnesses["b"]).unwrap()
         );
         assert_ne!(a.key, b.key);
         assert_eq!(a.reads, c.reads);
@@ -119,8 +136,16 @@ fn real_field_assignment_preserves_the_other_fields_subject() {
         let left = named_snapshot(ctx, "a");
         let right = named_snapshot(ctx, "b");
         ctx.statement(&body[3]).unwrap();
-        assert!(!ctx.proof.subjects.current(&left, &ctx.storage.memory));
-        assert!(ctx.proof.subjects.current(&right, &ctx.storage.memory));
+        assert!(!ctx
+            .proof
+            .subjects
+            .current(&left, &ctx.storage.memory)
+            .unwrap());
+        assert!(ctx
+            .proof
+            .subjects
+            .current(&right, &ctx.storage.memory)
+            .unwrap());
     });
 }
 
@@ -133,7 +158,11 @@ fn writing_through_an_alias_expires_the_referents_subject() {
         }
         let original = named_snapshot(ctx, "a");
         ctx.statement(&body[3]).unwrap();
-        assert!(!ctx.proof.subjects.current(&original, &ctx.storage.memory));
+        assert!(!ctx
+            .proof
+            .subjects
+            .current(&original, &ctx.storage.memory)
+            .unwrap());
     });
 }
 
@@ -146,9 +175,17 @@ fn moving_an_owner_slot_preserves_the_payload_subject_until_drop() {
         }
         let payload = named_snapshot(ctx, "a");
         ctx.statement(&body[2]).unwrap();
-        assert!(ctx.proof.subjects.current(&payload, &ctx.storage.memory));
+        assert!(ctx
+            .proof
+            .subjects
+            .current(&payload, &ctx.storage.memory)
+            .unwrap());
         ctx.statement(&body[3]).unwrap();
-        assert!(!ctx.proof.subjects.current(&payload, &ctx.storage.memory));
+        assert!(!ctx
+            .proof
+            .subjects
+            .current(&payload, &ctx.storage.memory)
+            .unwrap());
     });
 }
 
@@ -161,7 +198,11 @@ fn helper_effect_contracts_advance_the_actual_callers_subject() {
         }
         let original = named_snapshot(ctx, "a");
         ctx.statement(&body[2]).unwrap();
-        assert!(!ctx.proof.subjects.current(&original, &ctx.storage.memory));
+        assert!(!ctx
+            .proof
+            .subjects
+            .current(&original, &ctx.storage.memory)
+            .unwrap());
     });
 }
 
@@ -181,10 +222,10 @@ fn aliases_share_epochs_but_sibling_fields_do_not() {
         *old_left.reads.iter().next().unwrap()
     );
     subjects.write(plane, &left).unwrap();
-    assert!(!subjects.current(&old_left, &memory));
-    assert!(subjects.current(&old_right, &memory));
+    assert!(!subjects.current(&old_left, &memory).unwrap());
+    assert!(subjects.current(&old_right, &memory).unwrap());
     subjects.write(plane, &[]).unwrap();
-    assert!(!subjects.current(&old_right, &memory));
+    assert!(!subjects.current(&old_right, &memory).unwrap());
 }
 
 #[test]
@@ -197,13 +238,13 @@ fn same_value_writes_and_reused_branch_allocations_cannot_revive_claims() {
     let old = snapshot(subjects.observe(&memory, reference, vec![]).unwrap());
     subjects.write(plane, &[]).unwrap();
     memory.write(plane, value(42), false).unwrap();
-    assert!(!subjects.current(&old, &memory));
+    assert!(!subjects.current(&old, &memory).unwrap());
     let new = snapshot(subjects.observe(&memory, reference, vec![]).unwrap());
     memory = baseline;
     let reused = memory.allocate(value(42)).unwrap();
     assert_eq!(plane, reused);
     subjects.write(reused, &[]).unwrap();
-    assert!(!subjects.current(&new, &memory));
+    assert!(!subjects.current(&new, &memory).unwrap());
 }
 
 #[test]
@@ -216,7 +257,7 @@ fn generation_changes_invalidate_even_unchanged_contents() {
         .unwrap();
     memory.take(plane).unwrap();
     memory.write(plane, value(42), false).unwrap();
-    assert!(!subjects.current(&snapshot(stamp), &memory));
+    assert!(!subjects.current(&snapshot(stamp), &memory).unwrap());
 }
 
 #[test]
@@ -285,20 +326,20 @@ fn immutable_plane_roots_preserve_independent_branch_versions() {
     subjects.write(plane, &left).unwrap();
     let a = subjects.snapshot();
     subjects.restore(base.clone());
-    assert!(subjects.current(&old_left, &memory));
-    assert!(subjects.current(&old_right, &memory));
+    assert!(subjects.current(&old_left, &memory).unwrap());
+    assert!(subjects.current(&old_right, &memory).unwrap());
     subjects.write(plane, &right).unwrap();
     let b = subjects.snapshot();
-    assert!(subjects.current(&old_left, &memory));
-    assert!(!subjects.current(&old_right, &memory));
-    subjects.merge(&base, &a, &b).unwrap();
-    assert!(!subjects.current(&old_left, &memory));
-    assert!(!subjects.current(&old_right, &memory));
+    assert!(subjects.current(&old_left, &memory).unwrap());
+    assert!(!subjects.current(&old_right, &memory).unwrap());
+    subjects.merge(&base, &a, &b, &Formula::True).unwrap();
+    assert!(!subjects.current(&old_left, &memory).unwrap());
+    assert!(!subjects.current(&old_right, &memory).unwrap());
     subjects.restore(a);
-    assert!(!subjects.current(&old_left, &memory));
-    assert!(subjects.current(&old_right, &memory));
+    assert!(!subjects.current(&old_left, &memory).unwrap());
+    assert!(subjects.current(&old_right, &memory).unwrap());
     subjects.restore(base);
-    assert!(subjects.current(&old_left, &memory));
+    assert!(subjects.current(&old_left, &memory).unwrap());
 }
 
 #[test]
@@ -315,11 +356,11 @@ fn observing_a_region_in_one_branch_does_not_change_the_other_branch() {
     subjects.restore(base);
     let unchanged = subjects.observe(&memory, reference, vec![]).unwrap();
     assert_ne!(changed, unchanged);
-    assert!(!subjects.current(&snapshot(changed), &memory));
-    assert!(subjects.current(&snapshot(unchanged), &memory));
+    assert!(!subjects.current(&snapshot(changed), &memory).unwrap());
+    assert!(subjects.current(&snapshot(unchanged), &memory).unwrap());
     subjects.restore(branch);
-    assert!(subjects.current(&snapshot(changed), &memory));
-    assert!(!subjects.current(&snapshot(unchanged), &memory));
+    assert!(subjects.current(&snapshot(changed), &memory).unwrap());
+    assert!(!subjects.current(&snapshot(unchanged), &memory).unwrap());
 }
 
 #[test]
@@ -335,17 +376,37 @@ fn statement_snapshots_preserve_old_facts_without_making_them_current() {
         let stamp = *claim.reads.iter().next().unwrap();
         let plane = ctx.proof.subjects.entries[stamp.subject].plane;
         assert_eq!(
-            ctx.proof.states[1].region(plane, stamp.subject),
-            stamp.epoch
+            ctx.proof
+                .subjects
+                .history
+                .region(
+                    ctx.proof.states[1].version(plane),
+                    stamp.subject,
+                    &ctx.proof.subjects.entries[stamp.subject].path
+                )
+                .unwrap(),
+            stamp.revision
         );
         assert_ne!(
-            ctx.proof.states[2].region(plane, stamp.subject),
-            stamp.epoch
+            ctx.proof
+                .subjects
+                .history
+                .region(
+                    ctx.proof.states[2].version(plane),
+                    stamp.subject,
+                    &ctx.proof.subjects.entries[stamp.subject].path
+                )
+                .unwrap(),
+            stamp.revision
         );
         assert!(ctx.proof.states[1]
             .candidates(&BTreeSet::from([plane]))
             .contains(&node));
-        assert!(!ctx.proof.subjects.current(&claim, &ctx.storage.memory));
+        assert!(!ctx
+            .proof
+            .subjects
+            .current(&claim, &ctx.storage.memory)
+            .unwrap());
     });
 }
 
@@ -373,7 +434,11 @@ fn evaluating_old_helpers_cannot_mutate_the_live_planes_fact_state() {
             ctx.statement(statement).unwrap();
         }
         let live = named_snapshot(ctx, "live");
-        assert!(ctx.proof.subjects.current(&live, &ctx.storage.memory));
+        assert!(ctx
+            .proof
+            .subjects
+            .current(&live, &ctx.storage.memory)
+            .unwrap());
         let expression = Expr {
             line: 1,
             kind: Kind::Call(
@@ -391,6 +456,86 @@ fn evaluating_old_helpers_cannot_mutate_the_live_planes_fact_state() {
             ),
         };
         ctx.old_expression(&expression, Some(&ty)).unwrap();
-        assert!(ctx.proof.subjects.current(&live, &ctx.storage.memory));
+        assert!(ctx
+            .proof
+            .subjects
+            .current(&live, &ctx.storage.memory)
+            .unwrap());
+    });
+}
+
+#[test]
+fn old_pointee_uses_the_saved_world_while_dereferencing_an_old_pointer_is_live() {
+    let source = "fn main() -> usize {let x: usize = 7; let pointer = &x; 0}";
+    with_source(source, |ctx, body| {
+        for statement in body {
+            ctx.statement(statement).unwrap();
+        }
+        let checkpoint = syntax::parse("fn checkpoint(pointer: &usize) {}")
+            .unwrap()
+            .functions
+            .remove(0);
+        ctx.capture_old(&checkpoint).unwrap();
+        let pointer = Expr {
+            kind: Kind::Name("pointer".into()),
+            line: 1,
+        };
+        let dereference = Expr {
+            kind: Kind::Unary("*".into(), Box::new(pointer.clone())),
+            line: 1,
+        };
+        let old_value = Expr {
+            kind: Kind::Call("old".into(), vec![dereference.clone()]),
+            line: 1,
+        };
+        let old_pointer = Expr {
+            kind: Kind::Call("old".into(), vec![pointer]),
+            line: 1,
+        };
+        let live_value = Expr {
+            kind: Kind::Unary("*".into(), Box::new(old_pointer)),
+            line: 1,
+        };
+        let historical = ctx.claim_subjects(&old_value).unwrap();
+        let live = ctx.claim_subjects(&live_value).unwrap();
+        assert!(historical.complete && historical.reads.is_empty());
+        assert_eq!(historical.past.len(), 1);
+        assert_eq!(live.reads.len(), 1);
+        ctx.assign(
+            &dereference,
+            &Expr {
+                kind: Kind::Number(8),
+                line: 1,
+            },
+        )
+        .unwrap();
+        assert!(ctx
+            .proof
+            .subjects
+            .current(&historical, &ctx.storage.memory)
+            .unwrap());
+        assert!(!ctx
+            .proof
+            .subjects
+            .current(&live, &ctx.storage.memory)
+            .unwrap());
+        let stamp = *historical
+            .past
+            .values()
+            .next()
+            .unwrap()
+            .iter()
+            .next()
+            .unwrap();
+        assert!(ctx
+            .proof
+            .subjects
+            .historical(&snapshot(stamp), ctx.entry.world)
+            .unwrap());
+        assert!(!ctx
+            .proof
+            .subjects
+            .current(&snapshot(stamp), &ctx.storage.memory)
+            .unwrap());
     });
 }

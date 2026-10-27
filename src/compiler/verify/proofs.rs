@@ -22,6 +22,7 @@ impl<'a> Script<'a> {
 }
 
 impl Context<'_> {
+    #[cfg(test)]
     pub(super) fn proof_script(
         &mut self,
         goal: &Formula,
@@ -59,9 +60,9 @@ impl Context<'_> {
                 .iter()
                 .map(|path| path.to_vec())
                 .collect::<Vec<_>>();
-            self.session.trust(&rows, &proposition, line, label)?;
+            let trust = self.session.trust(&rows, &proposition, line, label)?;
             self.work.obligations += 1;
-            let node = self.proof.evidence.admit(goal.clone())?;
+            let node = self.proof.evidence.admit_source(goal.clone(), trust)?;
             debug_assert!(self.proof.evidence.admissions(node).complete);
             return Ok(node);
         }
@@ -104,7 +105,10 @@ impl Context<'_> {
         let Some(snapshot) = self.proof.evidence.subjects(node) else {
             return Ok(true);
         };
-        Ok(self.proof.subjects.current(snapshot, &self.storage.memory)
+        Ok(self
+            .proof
+            .subjects
+            .current(snapshot, &self.storage.memory)?
             && subjects.is_some_and(|goal| goal.complete && snapshot.key == goal.key))
     }
 
@@ -118,7 +122,11 @@ impl Context<'_> {
             return Ok(());
         }
         if let Some(snapshot) = self.proof.evidence.subjects(node) {
-            if !self.proof.subjects.current(snapshot, &self.storage.memory) {
+            if !self
+                .proof
+                .subjects
+                .current(snapshot, &self.storage.memory)?
+            {
                 return Err(format!(
                     "line {line}: proof {name} refers to an earlier or unresolved state"
                 ));
@@ -140,7 +148,7 @@ impl Context<'_> {
                 return Err(format!("line {line}: duplicate proof hypothesis {name}"));
             }
             self.charge_value_work(symbol_weight(&Symbol::Bool(
-                self.proof.evidence.claim(*node).clone(),
+                self.proof.evidence.claim(*node)?.clone(),
             ))?)?;
         }
         let snapshot_work = self.proof.paths.iter().fold(0usize, |total, path| {
@@ -152,7 +160,7 @@ impl Context<'_> {
         let paths = self.proof.paths.clone();
         let result = (|| {
             for (name, node) in hypotheses {
-                let premise = self.proof.evidence.claim(*node).clone();
+                let premise = self.proof.evidence.claim(*node)?.clone();
                 self.proof.witnesses.insert((*name).into(), *node);
                 self.assume_from(&premise, paths::Origin::Evidence(*node))?;
             }
@@ -191,7 +199,7 @@ impl Context<'_> {
                 self.charge_value_work(names.len())?;
                 for name in names {
                     let node = self.proof.witnesses[&name];
-                    let candidate = self.proof.evidence.claim(node).clone();
+                    let candidate = self.proof.evidence.claim(node)?.clone();
                     if self.witness_matches(node, &candidate, goal, subjects)? {
                         self.work.obligations += 1;
                         return self.proof.evidence.derive(goal.clone(), Rule::Reuse(node));
@@ -236,7 +244,7 @@ impl Context<'_> {
             _ if step.starts_with("exact ") => {
                 let name = &step[6..];
                 let proven = self.proof.witnesses.get(name).cloned().ok_or_else(|| format!("line {line}: {name} is not a checked proof; fact declarations are propositions, not assumptions"))?;
-                let claim = self.proof.evidence.claim(proven).clone();
+                let claim = self.proof.evidence.claim(proven)?.clone();
                 if !self.witness_matches(proven, &claim, goal, subjects)? {
                     return Err(format!("line {line}: exact {name} proves a different proposition or an earlier state"));
                 }
@@ -279,9 +287,9 @@ impl Context<'_> {
                 let parts = step.split_whitespace().collect::<Vec<_>>();
                 if let ["cases", name] = parts.as_slice() {
                     let node = self.proof.witnesses.get(*name).copied();
-                    if !node
-                        .is_some_and(|id| matches!(self.proof.evidence.claim(id), Formula::False))
-                    {
+                    if !node.is_some_and(|id| {
+                        matches!(self.proof.evidence.claim(id), Ok(Formula::False))
+                    }) {
                         return Err(format!("line {line}: cases {name} without a pattern requires a checked proof of false"));
                     }
                     self.require_live_witness(node.unwrap(), name, line)?;
@@ -299,7 +307,7 @@ impl Context<'_> {
                         format!("line {line}: cases {name} requires a checked proof")
                     })?;
                 self.require_live_witness(theorem, name, line)?;
-                let claim = self.proof.evidence.claim(theorem).clone();
+                let claim = self.proof.evidence.claim(theorem)?.clone();
                 match (claim, *separator) {
                     (Formula::And(a, b), ",") => {
                         let left = self.proof.evidence.derive(*a, Rule::AndLeft(theorem))?;
@@ -335,7 +343,7 @@ impl Context<'_> {
                         format!("line {line}: apply {name} requires a checked proof")
                     })?;
                 self.require_live_witness(source, name, line)?;
-                let mut theorem = self.proof.evidence.claim(source).clone();
+                let mut theorem = self.proof.evidence.claim(source)?.clone();
                 let mut theorem_subjects = self.proof.evidence.subjects(source).cloned();
                 let mut premises = Vec::new();
                 while !self.same_proposition(&theorem, goal)? {
@@ -375,7 +383,7 @@ impl Context<'_> {
                 for (premise, premise_subjects) in premises {
                     let argument =
                         self.proof_goal(&premise, script, depth + 1, premise_subjects.as_ref())?;
-                    let conclusion = match self.proof.evidence.claim(applied) {
+                    let conclusion = match self.proof.evidence.claim(applied)? {
                         Formula::Implies(_, result) => (**result).clone(),
                         Formula::Not(_) => Formula::False,
                         _ => return Err("application lost its implication premise".into()),
@@ -408,6 +416,7 @@ mod tests {
         let names = BTreeSet::new();
         let declarations = Declarations {
             functions: &functions,
+            summaries: &BTreeMap::new(),
             structs: &structs,
             drops: &names,
             destructors: &functions,
@@ -552,7 +561,7 @@ mod tests {
             let premise = Formula::Ge(Linear::variable("p"));
             let goal = Formula::Implies(Box::new(premise.clone()), Box::new(premise));
             let root = script(ctx, &goal, &["intro h", "exact h"]);
-            assert_eq!(ctx.proof.evidence.claim(root), &goal);
+            assert_eq!(ctx.proof.evidence.claim(root).unwrap(), &goal);
             let dependencies = ctx.proof.evidence.admissions(root);
             assert!(dependencies.complete);
             assert!(dependencies.admissions.is_empty());

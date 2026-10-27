@@ -3,9 +3,14 @@
 
 use super::*;
 
+struct ArgumentOrigin {
+    subjects: subjects::Snapshot,
+    world: state::WorldId,
+}
+
 struct Arguments {
     values: Vec<Symbol>,
-    subjects: BTreeMap<String, subjects::Snapshot>,
+    subjects: BTreeMap<String, ArgumentOrigin>,
 }
 
 impl<'a> Context<'a> {
@@ -200,8 +205,23 @@ impl<'a> Context<'a> {
                 Type::Plane(_) => self.literal_element_hint(t)?,
                 _ => None,
             };
-            if !self.proof.claims.is_empty() {
-                subjects.insert(parameter.clone(), self.claim_subjects(arg)?);
+            if f.pre.is_some()
+                || !self.proof.claims.is_empty()
+                || self
+                    .declarations
+                    .summaries
+                    .get(&f.name)
+                    .is_some_and(|s| !s.contract.is_empty())
+            {
+                let observed = self.claim_subjects(arg)?;
+                let world = self.proof.subjects.save_world()?;
+                subjects.insert(
+                    parameter.clone(),
+                    ArgumentOrigin {
+                        subjects: observed,
+                        world,
+                    },
+                );
             }
             let saved_specification = self.execution.phase;
             if f.ideal_params.contains(parameter) && self.execution.phase != Phase::Specification {
@@ -219,6 +239,21 @@ impl<'a> Context<'a> {
                 self.eval(arg, hint.as_ref())?
             };
             self.execution.phase = saved_specification;
+            if subjects
+                .get(parameter)
+                .is_some_and(|origin| !origin.subjects.complete)
+            {
+                let world = self.proof.subjects.save_world()?;
+                if let Some(observed) = subjects::Snapshot::saved_scalar(world, None, &value) {
+                    subjects.insert(
+                        parameter.clone(),
+                        ArgumentOrigin {
+                            subjects: observed,
+                            world,
+                        },
+                    );
+                }
+            }
             self.validate_argument(&value, line)?;
             actuals.insert(parameter.clone(), value);
         }
@@ -236,20 +271,39 @@ impl<'a> Context<'a> {
     fn call_subjects(
         &mut self,
         expression: &Expr,
-        origins: &BTreeMap<String, subjects::Snapshot>,
+        origins: &BTreeMap<String, ArgumentOrigin>,
         line: usize,
+        force: bool,
     ) -> Result<Option<subjects::Snapshot>> {
-        if origins.is_empty() && self.proof.claims.is_empty() {
+        if !force && origins.is_empty() && self.proof.claims.is_empty() {
             return Ok(None);
         }
         let mut goal = self.claim_subjects(expression)?;
         for (parameter, origin) in origins {
-            if self.proof.subjects.current(origin, &self.storage.memory) {
+            let scalar = matches!(
+                self.locals.values.get(parameter),
+                Some(Symbol::Number(..) | Symbol::Bool(_) | Symbol::Unit)
+            );
+            let available = if scalar {
+                self.proof
+                    .subjects
+                    .historical(&origin.subjects, origin.world)?
+            } else {
+                self.proof
+                    .subjects
+                    .current(&origin.subjects, &self.storage.memory)?
+            };
+            if available {
                 let local = self.claim_subjects(&Expr {
                     kind: Kind::Name(parameter.clone()),
                     line,
                 })?;
-                goal.replace_read(&local, origin);
+                let replacement = if scalar {
+                    origin.subjects.old_at(origin.world)
+                } else {
+                    origin.subjects.clone()
+                };
+                goal.replace_read(&local, &replacement);
             }
         }
         Ok(Some(goal))
@@ -265,6 +319,7 @@ impl<'a> Context<'a> {
         let mut saved = std::mem::take(&mut self.locals.values);
         let saved_roots = std::mem::take(&mut self.locals.places);
         let saved_old = std::mem::take(&mut self.entry.values);
+        let saved_entry_world = self.entry.world;
         let saved_old_memory = self.entry.memory.take();
         let saved_ideal = std::mem::take(&mut self.locals.ideal_bindings);
         let saved_module = std::mem::replace(&mut self.locals.module, f.module.clone());
@@ -275,7 +330,7 @@ impl<'a> Context<'a> {
         self.capture_old(f)?;
         let mut call_dependencies = Vec::new();
         if let Some(pre) = &f.pre {
-            let subjects = self.call_subjects(pre, &actuals.subjects, line)?;
+            let subjects = self.call_subjects(pre, &actuals.subjects, line, false)?;
             let p = self.proposition(pre)?;
             let evidence = self.prove_subjects(
                 &p,
@@ -357,6 +412,11 @@ impl<'a> Context<'a> {
                     )
                 })?
         } else {
+            let safety = self.import_summary(name, summaries::Aspect::Safety)?;
+            self.proof.uses.extend(safety);
+            let contract = self.import_summary(name, summaries::Aspect::Contract)?;
+            self.proof.contract_parents.extend(contract);
+            call_dependencies = self.proof.contract_parents.clone();
             let value = if !f.borrows.is_empty() {
                 let aliases = self.return_aliases(f, None)?;
                 self.return_shape(&ret, &mut Vec::new(), &aliases)?
@@ -396,14 +456,32 @@ impl<'a> Context<'a> {
                     self.assume(&p)?;
                 } else {
                     let paths = self.proof.paths.clone();
-                    let subjects = self.call_subjects(post, &actuals.subjects, line)?;
+                    let subjects = self.call_subjects(post, &actuals.subjects, line, true)?;
                     let p = self.proposition(post)?;
                     self.proof.paths = paths;
                     let node = self.proof.evidence.contract(p, call_dependencies.clone())?;
-                    if let Some(subjects) = subjects {
-                        self.publish_evidence(node, subjects)?;
+                    if self.evidence_dependencies(node)?.admissions.is_empty() {
+                        if let Some(snapshot) = subjects {
+                            self.record_recursive_context(node, snapshot)?;
+                        }
+                        let p = self.proof.evidence.claim(node)?.clone();
+                        self.assume_from(&p, paths::Origin::Evidence(node))?;
+                    } else {
+                        let clauses = self.contract_clauses(node, subjects.unwrap_or_default())?;
+                        let origin = self.claim_subjects(&Expr {
+                            kind: Kind::Name("result".into()),
+                            line,
+                        })?;
+                        for proof in clauses {
+                            self.proof.claims.insert(proof);
+                            self.charge_value_work(symbol_weight(&value)?)?;
+                            self.proof.results.push(value_evidence::CallResult {
+                                value: value.clone(),
+                                proof,
+                                origin: origin.clone(),
+                            });
+                        }
                     }
-                    self.proof.claims.insert(node);
                 }
             }
             // Alias contracts describe entry storage. After applying the
@@ -433,6 +511,7 @@ impl<'a> Context<'a> {
         self.locals.values = saved;
         self.locals.places = saved_roots;
         self.entry.values = saved_old;
+        self.entry.world = saved_entry_world;
         self.entry.memory = saved_old_memory;
         self.locals.ideal_bindings = saved_ideal;
         self.locals.module = saved_module;

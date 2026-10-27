@@ -37,8 +37,10 @@ mod references;
 mod returns;
 mod state;
 mod subjects;
+mod summaries;
 mod updates;
 mod validation;
+mod value_evidence;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Ty {
@@ -1085,6 +1087,7 @@ impl<'a> Context<'a> {
     }
 
     fn capture_old(&mut self, function: &Function) -> Result<()> {
+        self.entry.world = self.proof.subjects.save_world()?;
         self.charge_value_work(values_weight(self.locals.values.values())?)?;
         let target_cost =
             self.locals
@@ -1250,8 +1253,12 @@ impl<'a> Context<'a> {
                 .proof
                 .evidence
                 .contract(p.clone(), self.proof.contract_parents.clone())?;
-            self.proof.value_claims.push(node);
-            Ok(())
+            if self.evidence_dependencies(node)?.admissions.is_empty() {
+                self.assume_from(p, paths::Origin::Evidence(node))
+            } else {
+                self.proof.value_claims.push(node);
+                Ok(())
+            }
         }
     }
 
@@ -1798,8 +1805,10 @@ impl<'a> Context<'a> {
             Statement::Let { name, ty, value } => {
                 self.fresh_binding(name, value.line)?;
                 let ty = ty.as_ref().map(|t| self.resolve(t)).transpose()?;
+                let start = self.proof.results.len();
                 let v = self.eval(value, ty.as_ref())?;
-                self.locals.values.insert(name.clone(), v);
+                self.locals.values.insert(name.clone(), v.clone());
+                self.bind_call_evidence(name, &v, start, value.line)?;
                 Ok(())
             }
             Statement::Fact { name, value } => {
@@ -1820,7 +1829,10 @@ impl<'a> Context<'a> {
                 let p = self.proposition(proposition)?;
                 debug_assert!(
                     !subjects.complete
-                        || self.proof.subjects.current(&subjects, &self.storage.memory)
+                        || self
+                            .proof
+                            .subjects
+                            .current(&subjects, &self.storage.memory)?
                 );
                 let label = if name == "_" {
                     "anonymous proof".into()
@@ -2206,10 +2218,24 @@ impl<'a> Context<'a> {
         line: usize,
         steps: Option<&[String]>,
     ) -> Result<()> {
+        self.prove_with_subjects(goal, label, line, steps, None)
+    }
+
+    fn prove_with_subjects(
+        &mut self,
+        goal: &Formula,
+        label: &str,
+        line: usize,
+        steps: Option<&[String]>,
+        subjects: Option<&subjects::Snapshot>,
+    ) -> Result<()> {
         if let Some(steps) = steps {
-            return self.proof_script(goal, label, line, steps).map(|_| ());
+            let node = self.proof_script_for(goal, label, line, steps, subjects)?;
+            self.proof.uses.push(node);
+        } else {
+            self.prove_subjects(goal, subjects, label, line)?;
         }
-        self.prove(goal, label, line)
+        Ok(())
     }
 
     fn eval(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {
@@ -2981,6 +3007,7 @@ pub struct VerifiedProgram {
     pub(crate) drops: BTreeSet<String>,
     pub(crate) cleanup_helpers: BTreeSet<String>,
     trusted: Vec<crate::compiler::certificate::TrustedAssumption>,
+    summaries: BTreeMap<String, summaries::Summary>,
     proof_searches: usize,
 }
 
@@ -2993,6 +3020,27 @@ impl VerifiedProgram {
 
     pub fn trusted_assumptions(&self) -> &[crate::compiler::certificate::TrustedAssumption] {
         &self.trusted
+    }
+
+    /// Known admissions supporting the function's checked runtime obligations.
+    /// Aggregate value provenance and frontend state imports remain incomplete.
+    pub fn function_safety_assumptions(
+        &self,
+        name: &str,
+    ) -> Option<impl Iterator<Item = &crate::compiler::certificate::TrustedAssumption>> {
+        self.summaries
+            .get(name)
+            .map(|summary| summary.safety.iter().map(|id| &self.trusted[id.index()]))
+    }
+
+    /// Known admissions supporting the advertised result, including safety.
+    pub fn function_contract_assumptions(
+        &self,
+        name: &str,
+    ) -> Option<impl Iterator<Item = &crate::compiler::certificate::TrustedAssumption>> {
+        self.summaries
+            .get(name)
+            .map(|summary| summary.contract.iter().map(|id| &self.trusted[id.index()]))
     }
 
     pub fn potentially_diverging_functions(&self) -> impl Iterator<Item = &str> {
@@ -3036,6 +3084,7 @@ impl VerifiedProgram {
             let mut ctx = Context::new(
                 Declarations {
                     functions: &functions,
+                    summaries: &self.summaries,
                     structs: &self.structs,
                     drops: &self.drops,
                     destructors: &destructors,

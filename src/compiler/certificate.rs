@@ -57,6 +57,16 @@ struct TrustRecord {
     statement: String,
 }
 
+/// Stable position in this checked session's audited admission manifest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct TrustId(usize);
+
+impl TrustId {
+    pub(crate) fn index(self) -> usize {
+        self.0
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TrustedAssumption {
     pub line: usize,
@@ -392,7 +402,7 @@ impl Session {
         goal: &[u8],
         line: usize,
         label: &str,
-    ) -> Result<()> {
+    ) -> Result<TrustId> {
         if self.trusted.len() >= MAX_RECORDS {
             return Err("trusted assumption limit reached".into());
         }
@@ -421,7 +431,7 @@ impl Session {
             line,
             goal: label.into(),
         });
-        Ok(())
+        Ok(TrustId(self.trust_summary.len() - 1))
     }
 
     pub(crate) fn trusted_assumptions(&self) -> &[TrustedAssumption] {

@@ -1,8 +1,8 @@
 # Proof evidence and scoped admissions
 
 This records the requested proof model and the partial implementation below.
-It is not a completed trust boundary: declaration summaries and complete value
-provenance still need integration.
+It is not a completed trust boundary: complete value provenance and independent
+checking of frontend state/contract imports remain work in progress.
 
 ## Claims and evidence
 
@@ -40,10 +40,26 @@ The current implementation uses a persistent compressed binary trie with exact
 integer keys: plane identities index immutable plane states, and proof identities
 index their evidence. It introduces no new package dependency.
 
-Each plane state records a content version, projection versions, and an evidence
-index. Projection versions provide the structural frame rule for unchanged
-fields and distinct constant array indices. Every alias consults the same plane
-entry in the current snapshot. A pointer copy does not freeze the pointee.
+Each plane state records a revision ID and an evidence index. An append-only
+arena records writes and joins by predecessor IDs. A write does not scan every
+observed field or update their facts. A read computes that projection's revision
+only when requested, preserving unchanged fields and distinct constant indices.
+The result is memoized by revision and immutable subject identity. Snapshots keep
+sharing their roots; memoization does not change their meaning. Long histories
+are queried and destroyed iteratively, without recursively linked allocations.
+
+Mutable read dependencies identify a plane, revision, and projection. Aliases
+consult the same plane entry. A saved proof-state ID selects historical revisions:
+`old(*p)` observes the function/call entry value, while `*old(p)` reads the current
+pointee through the saved pointer identity. Historical lookup does not authorize
+a live memory read; generation checks still protect runtime references.
+
+Branches record the condition alongside their revision join. Looking through an
+unchanged branch produces a guarded historical premise. An overwritten branch
+cannot inherit that premise. Same-guard facts are applied together; the checker
+first resolves the condition from checked execution paths and otherwise checks
+both cases. This avoids repeating an exponential case split for every premise.
+The old fact is never renamed into a fact about new contents.
 
 Evidence entries are candidates, not unchecked assumptions. A fact involving
 several planes is indexed under each one, while its proof remains one DAG node.
@@ -51,10 +67,11 @@ Using it checks every recorded dependency against the selected snapshot. This
 keeps invalidation lazy: a write does not scan and delete all dependent facts.
 Old snapshots retain their evidence without making it available in the new state.
 
-Branches fork the root. Their merge preserves unchanged regions and gives changed
-regions fresh versions; branch-local facts require a join proof before they can
-become generally available. Version identities are never reused. Subject identity
-registration is append-only and separate from these immutable version maps.
+Branches fork the root. Their merge records fresh join revisions; projection
+queries later determine which regions stayed unchanged. Branch-local facts still
+require a join proof before becoming generally available. Revision identities are
+never reused. Subject identities are append-only, with an exact ordered index of
+reference generations and shared projection paths.
 
 An explicit proof can establish a property of a saved scalar before the source
 changes. The saved scalar's independent plane then retains that evidence. A proof
@@ -85,9 +102,13 @@ without evidence, separately admitted proofs of the same conclusion, sharing
 through deep derivations, and storage limits for both fresh formulas and scoped
 hypotheses.
 
-This is the first immutable state layer. Memory, path constraints, and lexical
-scopes have not all migrated to a unified persistent state. Complete statement
-footprints and function-summary transport remain work in progress. Raw fact
+This implements the first lazy state layer described in `README2.md`: writes
+record transitions and projection/fact lookup is demanded by a proof. Formula
+elaboration, contract decomposition, and path collection still perform eager
+work. Memory, path constraints, and lexical scopes have not all migrated to a
+unified persistent state. Complete statement
+footprints, aggregate value origins, and guarded transport of branch-local facts
+remain work in progress. Raw fact
 references require a witness or a scoped hypothesis to serve as premises.
 
 ## State dependencies
@@ -160,8 +181,8 @@ surrounding context is inconsistent. Explicitly supplied empty path sets without
 an explanation remain unresolved.
 
 Arithmetic leaves inherit unresolved provenance only when the checked support
-actually uses unresolved origins. Runtime/type facts and call summaries still
-lack complete origins, so an empty set of known admissions does **not** alone
+actually uses unresolved origins. Runtime/type facts and frontend contract instantiations still
+lack completely checked origins, so an empty set of known admissions does **not** alone
 imply admission-free evidence. Scoped hypotheses now have distinct identities
 and are propagated through arithmetic imports and logical rules. Implication introduction discharges only
 its declared binder. Disjunction elimination checks both branches, prevents
@@ -188,24 +209,26 @@ logical checking work.
 
 Explicit proof declarations now store state-subject snapshots separately from
 arithmetic formulas. Canonical claim keys retain operator structure and replace
-storage reads with projection/epoch stamps. Different subjects or different
+storage reads with projection/revision stamps. Different subjects or different
 statements cannot become the same key merely because arithmetic simplifies to
 the same constant expression. Named facts are expanded when the proof is checked.
 
-The epoch tracker is connected to direct and indirect assignments, declared call
-writes, allocation, and ownership takes. Alias writes share the referent's epoch;
+The revision tracker is connected to direct and indirect assignments, declared call
+writes, allocation, and ownership takes. Alias writes share the referent's revision;
 sibling fields and distinct constant indices stay independent. Unknown indices
-conservatively overlap. Same-value writes advance the epoch. Liveness generations
+conservatively overlap. Same-value writes advance the revision. Liveness generations
 and allocation notifications prevent a dropped or reused slot from reviving old
 snapshots. Moving an owner slot preserves subjects on its separate payload plane.
 
 Subject capture currently resolves existing places and literal/name indices
 without evaluating user code again. Call results, conditional subjects, named
 type facts, and more complex index expressions remain incomplete. Scalar argument
-keys now transfer through parameter renaming for call preconditions and dependent
-postconditions. Aggregate/call-result value origins are not complete. Epochs
-conservatively include writes from either symbolic branch; precise availability
-within branches and joined claims still needs integration.
+keys now transfer through parameter renaming and retain the argument-evaluation
+proof-state. Scalar call results can transfer advertised facts into their binding,
+where direct and aliased writes invalidate them. Explicitly saved return values
+and scalar entry parameters retain their value evidence through scope cleanup.
+Aggregate value origins remain incomplete. Guarded historical queries handle
+common branch predecessors; arbitrary branch-local fact transport remains pending.
 
 Explicit source proof declarations with admissions no longer constrain execution
 paths. They enter a scoped candidate set. A proof obligation first tries ordinary
@@ -220,8 +243,8 @@ Writes prevent reuse of a mutable source claim. Checked operations can retain
 exact properties of already-evaluated SSA values for subsequent revalidation.
 Those properties do not form a general contradiction context for new values
 that share SSA variables. A call's precondition proof does not become a permanent
-fact about its input. These value facts stay scoped to branches and helper bodies. Explicit `exact`/`apply` uses of
-admitted claims check subject identity and state; explicit false elimination
+fact about its input. These value facts stay scoped to branches and helper bodies. Explicit
+`exact`/`apply` uses of admitted claims check subject identity and state; explicit false elimination
 remains possible and records the admission edge.
 
 A call accepted under an admitted precondition retains that dependency. Its
@@ -231,13 +254,36 @@ ordinary type facts. Tests cover unrelated checks after false dependent posts an
 impossible result invariants, as well as mutation, aliases, helper writes, anonymous
 proofs, compound proofs, independently provable calls, and replay.
 
-This is partial admission isolation, not the completed trust boundary. Declaration
-summaries still need the admissions used in their own verification, including
-external contracts and explicit postcondition proof scripts. Complete value-flow
-provenance, branch guards, aggregate/constant value evidence, and independent
+This is partial admission isolation, not the completed trust boundary.
+Declaration summaries now retain the admissions actually reached from their
+runtime obligations and postcondition proofs. These are separate aspects: an
+unused admitted postcondition of an ordinary function does not taint a caller
+that ignores it. Safety
+requirements propagate through calls, including external operation boundaries.
+Explicit function proof scripts contribute their proof roots. Recursive summary
+references retain their aspect until the enclosing declaration closes the two
+finite dependency sets; only checked callees and the permitted self hypothesis
+are available.
+
+Imported trust sources have typed manifest IDs and no proposition. Propositional
+rules reject them as mathematical premises. Contract conjuncts are indexed as
+separate candidates using checked conjunction elimination, so an exchange's new
+contents need not use its old-result clause. Named multi-plane source proofs keep
+their declared dependencies; explicit projection can establish an independent
+fact before a write. Projection of a constructed conjunction reuses only the
+selected component proof.
+
+Recursive hypotheses retain the call's saved state and branch condition. When
+checked path relations connect a goal to a recursive contract, lookup can request
+those historical facts under that condition. This supports the library CAS loops
+without restoring globally assumed external postconditions.
+
+`VerifiedProgram::function_safety_assumptions` and
+`function_contract_assumptions` expose these known dependencies. Complete value-
+flow provenance, aggregate origins, branch-local fact transport, and independent
 checking of all state/contract imports remain pending. Fact well-formedness
-evaluation also needs isolation from assumptions created by helper summaries. The public trust
-manifest still lists every admission, including unused ones; operation-level DAG
+evaluation also needs isolation from assumptions created by helper summaries.
+The public trust manifest still lists every admission, including unused ones; operation-level DAG
 reporting is not yet exposed. `--deny-trust` remains strict.
 
 `examples/scoped_admissions.evg` demonstrates an admitted call followed by an

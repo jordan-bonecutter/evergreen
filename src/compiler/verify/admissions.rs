@@ -2,9 +2,14 @@
 //! constrain execution paths merely by being declared.
 
 use super::*;
+mod contracts;
+mod guards;
+mod history;
+use history::Demand;
+pub(super) use history::RecursiveContext;
 
 impl Formula {
-    fn variables(&self, work: &mut usize) -> Result<BTreeSet<String>> {
+    pub(super) fn variables(&self, work: &mut usize) -> Result<BTreeSet<String>> {
         let mut variables = BTreeSet::new();
         let mut pending = vec![self];
         while let Some(formula) = pending.pop() {
@@ -47,6 +52,7 @@ impl Context<'_> {
     ) -> Result<Vec<evidence::NodeId>> {
         let variables = goal.variables(&mut self.work.value_work)?;
         let mut relevant = Vec::new();
+        let mut historical = Demand::from_subjects(subjects);
         let candidates = if let Some(subjects) = subjects.filter(|s| s.complete) {
             self.proof
                 .subjects
@@ -65,31 +71,48 @@ impl Context<'_> {
             if self.work.value_work > MAX_VALUE_WORK {
                 return Err("proof subject relevance work limit reached".into());
             }
-            if !self.proof.subjects.current(snapshot, &self.storage.memory) {
+            if !self
+                .proof
+                .subjects
+                .current(snapshot, &self.storage.memory)?
+            {
                 continue;
             }
             let same_subject = subjects.is_some_and(|goal| {
                 goal.complete
-                    && (snapshot.key == goal.key || !snapshot.reads.is_disjoint(&goal.reads))
+                    && (snapshot.key == goal.key
+                        || !snapshot.reads.is_disjoint(&goal.reads)
+                        || snapshot.past.values().any(|reads| {
+                            !reads.is_disjoint(&goal.reads)
+                                || goal
+                                    .past
+                                    .values()
+                                    .any(|required| !reads.is_disjoint(required))
+                        }))
             });
+            let live_dependency = !snapshot.reads.is_empty() || snapshot.past.is_empty();
             if same_subject
-                || !variables.is_disjoint(
-                    &self
-                        .proof
-                        .evidence
-                        .claim(node)
-                        .variables(&mut self.work.value_work)?,
-                )
+                || live_dependency
+                    && !variables.is_disjoint(
+                        &self
+                            .proof
+                            .evidence
+                            .claim(node)?
+                            .variables(&mut self.work.value_work)?,
+                    )
             {
                 relevant.push(node);
+                historical.extend(snapshot);
             }
         }
+        self.recursive_demands(&mut historical, &variables)?;
+        relevant.extend(self.follow_history(historical, subjects)?);
         // Revalidation of an already-evaluated value may reuse that exact
         // property. It must not turn historical argument assertions into a
         // general contradiction context for new values sharing SSA variables.
         if !variables.is_empty() {
             for &node in &self.proof.value_claims {
-                let claim = self.proof.evidence.claim(node);
+                let claim = self.proof.evidence.claim(node)?;
                 claim.variables(&mut self.work.value_work)?;
                 if claim.normalized() == goal.normalized() {
                     relevant.push(node);
@@ -140,17 +163,7 @@ impl Context<'_> {
         if complete {
             return Ok(ordinary);
         }
-        let mut temporary = self.proof.paths.clone();
-        for node in candidates {
-            temporary = extend_from(
-                &temporary,
-                self.proof.evidence.claim(node),
-                false,
-                paths::Origin::Evidence(node),
-                self.session,
-                &mut self.work.value_work,
-            )?;
-        }
+        let mut temporary = self.candidate_paths(&candidates)?;
         temporary = extend_from(
             &temporary,
             goal,
@@ -188,6 +201,7 @@ impl Context<'_> {
     ) -> Result<evidence::NodeId> {
         let support = self.arithmetic_support_for(goal, subjects, label, line)?;
         let node = self.proof.evidence.arithmetic(goal.clone(), support)?;
+        self.proof.evidence.check_closed(node)?;
         self.proof.uses.push(node);
         Ok(node)
     }

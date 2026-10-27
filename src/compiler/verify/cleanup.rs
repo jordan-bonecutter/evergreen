@@ -19,6 +19,7 @@ struct Scope {
     writable: Vec<WritePlace>,
     inputs: Vec<InputReference>,
     old_values: BTreeMap<String, Symbol>,
+    entry_world: state::WorldId,
     old_memory: Option<Box<EntryMemory>>,
     ideal: BTreeSet<String>,
     temporaries: Vec<(Symbol, usize)>,
@@ -42,6 +43,7 @@ impl Scope {
             writable: std::mem::take(&mut ctx.storage.writable),
             inputs: std::mem::take(&mut ctx.storage.inputs),
             old_values: std::mem::take(&mut ctx.entry.values),
+            entry_world: ctx.entry.world,
             old_memory: ctx.entry.memory.take(),
             ideal: std::mem::take(&mut ctx.locals.ideal_bindings),
             temporaries: std::mem::take(&mut ctx.storage.temporaries),
@@ -66,6 +68,7 @@ impl Scope {
         ctx.storage.writable = self.writable;
         ctx.storage.inputs = self.inputs;
         ctx.entry.values = self.old_values;
+        ctx.entry.world = self.entry_world;
         ctx.entry.memory = self.old_memory;
         ctx.locals.ideal_bindings = self.ideal;
         ctx.storage.temporaries = self.temporaries;

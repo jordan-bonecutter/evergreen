@@ -18,6 +18,7 @@ impl Context<'_> {
         let proofs = std::mem::take(&mut self.proof.witnesses);
         let claims = std::mem::take(&mut self.proof.claims);
         let value_claims = std::mem::take(&mut self.proof.value_claims);
+        let contract_uses = std::mem::take(&mut self.proof.contract_uses);
         // Keep opened_planes: their unlifted requirements apply after every
         // actual write, including writes in further nested helper calls.
         let temporaries = std::mem::take(&mut self.storage.temporaries);
@@ -35,6 +36,7 @@ impl Context<'_> {
             Phase::Runtime
         };
         let phase = std::mem::replace(&mut self.execution.phase, execution);
+        let mut returned_claims = Vec::new();
         let checked = (|| {
             if let Some(decreases) = &function.decreases {
                 self.execution.phase = Phase::Specification;
@@ -45,10 +47,16 @@ impl Context<'_> {
             let inputs = self.storage.inputs.clone();
             let (value, post) = self.check_function_body(function, result_type, &inputs, false)?;
             if let Some(proposition) = post {
-                // Publish only a checked theorem for this alias configuration.
-                // An explicit trustme remains recorded in the proof manifest.
-                if self.proof.contract_parents.is_empty() {
-                    self.assume(&proposition)?;
+                let mut parents = self.proof.contract_parents.clone();
+                parents.extend(self.proof.contract_uses.iter().copied());
+                let node = self.proof.evidence.contract(proposition.clone(), parents)?;
+                if self.evidence_dependencies(node)?.admissions.is_empty() {
+                    self.assume_from(&proposition, paths::Origin::Evidence(node))?;
+                } else {
+                    if let Some(post) = &function.post {
+                        let snapshot = self.claim_subjects(post)?;
+                        returned_claims.extend(self.contract_clauses(node, snapshot)?);
+                    }
                 }
             }
             Ok(value)
@@ -57,6 +65,8 @@ impl Context<'_> {
         self.proof.witnesses = proofs;
         self.proof.claims = claims;
         self.proof.value_claims = value_claims;
+        self.proof.claims.extend(returned_claims);
+        self.proof.contract_uses = contract_uses;
         self.storage.temporaries = temporaries;
         self.execution.current = current;
         self.execution.measure = measure;
@@ -91,7 +101,19 @@ impl Context<'_> {
         for statement in &function.body {
             self.statement(statement)?;
         }
+        let return_source = if function.post.is_some() && !self.proof.claims.is_empty() {
+            Some(self.claim_subjects(&function.result)?)
+        } else {
+            None
+        };
         let value = self.scoped_eval(&function.result, Some(result_type))?;
+        let return_subjects = if function.post.is_some() {
+            self.charge_value_work(symbol_weight(&value)?)?;
+            let return_world = self.proof.subjects.save_world()?;
+            subjects::Snapshot::saved_scalar(return_world, return_source.as_ref(), &value)
+        } else {
+            None
+        };
         self.validate_live(function.result.line)?;
         // The return value owns its allocations while local destructors run.
         // This reserved binding is not a source name or a cleanup binding, and
@@ -111,20 +133,42 @@ impl Context<'_> {
         if self.ty_has_reference(result_type) {
             self.validate_argument(&value, function.result.line)?;
         }
+        let safety_end = self.proof.uses.len();
         let post = if let Some(post) = &function.post {
             self.execution.phase = Phase::Specification;
             self.locals.values = entry;
             self.locals.places.clear();
             self.charge_value_work(symbol_weight(&value)?)?;
             self.locals.values.insert("result".into(), value.clone());
+            let mut post_subjects = self.claim_subjects(post)?;
+            if let Some(saved) = &return_subjects {
+                let result = self.claim_subjects(&Expr {
+                    kind: Kind::Name("result".into()),
+                    line: post.line,
+                })?;
+                post_subjects.replace_read(&result, saved);
+            }
+            for (name, _) in &function.params {
+                let old = self.entry.values.get(name).cloned();
+                if let Some(saved) = old.as_ref().and_then(|value| {
+                    subjects::Snapshot::saved_scalar(self.entry.world, None, value)
+                }) {
+                    let parameter = self.claim_subjects(&Expr {
+                        kind: Kind::Name(name.clone()),
+                        line: post.line,
+                    })?;
+                    post_subjects.replace_read(&parameter, &saved);
+                }
+            }
             let local_facts = std::mem::take(&mut self.proof.facts);
             let proposition = self.proposition(post)?;
             self.proof.facts = local_facts;
-            self.prove_with(
+            self.prove_with_subjects(
                 &proposition,
                 &format!("postcondition of {}", function.name),
                 post.line,
                 function.proof.as_deref(),
+                Some(&post_subjects),
             )?;
             Some(proposition)
         } else if function.proof.is_some() {
@@ -135,6 +179,8 @@ impl Context<'_> {
         } else {
             None
         };
+        let post_uses = self.proof.uses.split_off(safety_end);
+        self.proof.contract_uses.extend(post_uses);
         Ok((value, post))
     }
 }

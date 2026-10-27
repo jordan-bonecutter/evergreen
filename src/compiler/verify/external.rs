@@ -53,12 +53,15 @@ impl Context<'_> {
         if let Some(post) = &function.post {
             self.proposition(post)?;
         }
-        self.session.trust(
+        let trust = self.session.trust(
             &[],
             format!("x86_64 external declaration {function:?}").as_bytes(),
             function.line,
             &format!("external contract for {}", function.name),
         )?;
+        let source = self.proof.evidence.import_trust(trust)?;
+        self.proof.uses.push(source);
+        self.proof.contract_uses.push(source);
         self.work.obligations += 1;
         Ok(())
     }

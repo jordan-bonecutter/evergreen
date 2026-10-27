@@ -1,14 +1,18 @@
 //! Immutable per-plane proof state. Snapshot cloning shares every unchanged
-//! trie node; writes replace only the affected plane and region entries.
+//! trie node. Writes record revisions; projection versions are queried lazily.
 
 use super::*;
+mod lazy;
+pub(super) use lazy::{CaseId, History, Revision};
 mod persistent;
 use persistent::Map;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct WorldId(pub(super) usize);
+
 #[derive(Clone, Debug, Default)]
 struct PlaneState {
-    version: u64,
-    regions: Map<u64>,
+    version: Revision,
     evidence: Map<evidence::NodeId>,
 }
 
@@ -19,48 +23,19 @@ pub(super) struct State {
 }
 
 impl State {
-    pub(super) fn region(&self, plane: PlaneId, subject: usize) -> u64 {
-        self.planes.get(plane.state_key()).map_or(0, |state| {
-            state
-                .regions
-                .get(subject as u128)
-                .copied()
-                .unwrap_or(state.version)
-        })
+    pub(super) fn version(&self, plane: PlaneId) -> Revision {
+        self.planes
+            .get(plane.state_key())
+            .map_or(Revision::default(), |state| state.version)
     }
 
-    pub(super) fn observe(&self, plane: PlaneId, subject: usize) -> Self {
+    pub(super) fn write(&self, plane: PlaneId, version: Revision) -> Self {
         let mut next = self.clone();
         let mut state = self
             .planes
             .get(plane.state_key())
             .cloned()
             .unwrap_or_default();
-        if state.regions.get(subject as u128).is_none() {
-            state.regions = state.regions.insert(subject as u128, state.version);
-            next.planes = self.planes.insert(plane.state_key(), state);
-        }
-        next
-    }
-
-    pub(super) fn write(&self, plane: PlaneId, version: u64, regions: &[(usize, bool)]) -> Self {
-        let mut next = self.clone();
-        let mut state = self
-            .planes
-            .get(plane.state_key())
-            .cloned()
-            .unwrap_or_default();
-        for &(id, changed) in regions {
-            let prior = state
-                .regions
-                .get(id as u128)
-                .copied()
-                .unwrap_or(state.version);
-            let selected = if changed { version } else { prior };
-            if state.regions.get(id as u128) != Some(&selected) {
-                state.regions = state.regions.insert(id as u128, selected);
-            }
-        }
         state.version = version;
         next.planes = self.planes.insert(plane.state_key(), state);
         next
@@ -70,16 +45,12 @@ impl State {
         &self,
         left: &Self,
         right: &Self,
-        version: u64,
-        regions: &BTreeMap<PlaneId, Vec<usize>>,
-    ) -> Self {
+        history: &mut History,
+        branch: CaseId,
+    ) -> Result<Self> {
         let mut next = self.clone();
         let mut keys = self.planes.changed_keys(&left.planes);
         keys.extend(self.planes.changed_keys(&right.planes));
-        let by_key = regions
-            .iter()
-            .map(|(plane, ids)| (plane.state_key(), ids))
-            .collect::<BTreeMap<_, _>>();
         for key in keys {
             let base = self.planes.get(key).cloned().unwrap_or_default();
             let a = left.planes.get(key).cloned().unwrap_or_default();
@@ -87,22 +58,13 @@ impl State {
             if a.version == base.version && b.version == base.version {
                 continue;
             }
-            let mut joined = base.clone();
-            joined.version = version;
-            if let Some(ids) = by_key.get(&key) {
-                for &id in ids.iter() {
-                    let a = a.regions.get(id as u128).copied().unwrap_or(a.version);
-                    let b = b.regions.get(id as u128).copied().unwrap_or(b.version);
-                    joined.regions = joined
-                        .regions
-                        .insert(id as u128, if a == b { a } else { version });
-                }
-            }
-            // Branch-local claims need an explicit join proof. Existing facts
-            // remain candidates, validated lazily against their dependencies.
+            let mut joined = base;
+            joined.version = history.join(a.version, b.version, branch)?;
+            // Branch-local evidence still requires a join proof. Projection
+            // versions are computed only if a later obligation requests them.
             next.planes = next.planes.insert(key, joined);
         }
-        next
+        Ok(next)
     }
 
     pub(super) fn publish(&self, proof: evidence::NodeId, planes: &BTreeSet<PlaneId>) -> Self {
@@ -134,5 +96,28 @@ impl State {
             }
         }
         facts
+    }
+
+    pub(super) fn all_candidates(&self) -> Result<(BTreeSet<evidence::NodeId>, usize)> {
+        let mut facts = BTreeSet::new();
+        let mut work = 0usize;
+        for (_, &proof) in self.ambient.iter() {
+            work += 1;
+            facts.insert(proof);
+        }
+        for (_, state) in self.planes.iter() {
+            work += 1;
+            for (_, &proof) in state.evidence.iter() {
+                work += 1;
+                if work > MAX_VALUE_WORK {
+                    return Err("historical proof index work limit reached".into());
+                }
+                facts.insert(proof);
+            }
+            if work > MAX_VALUE_WORK {
+                return Err("historical proof index work limit reached".into());
+            }
+        }
+        Ok((facts, work))
     }
 }

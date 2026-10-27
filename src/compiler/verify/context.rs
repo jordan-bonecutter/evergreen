@@ -4,6 +4,7 @@
 use super::*;
 
 pub(super) struct Declarations<'a> {
+    pub(super) summaries: &'a BTreeMap<String, summaries::Summary>,
     pub(super) functions: &'a BTreeMap<String, Function>,
     pub(super) structs: &'a BTreeMap<String, Struct>,
     pub(super) drops: &'a BTreeSet<String>,
@@ -30,6 +31,10 @@ pub(super) struct ProofState {
     pub(super) claims: BTreeSet<evidence::NodeId>,
     pub(super) value_claims: Vec<evidence::NodeId>,
     pub(super) uses: Vec<evidence::NodeId>,
+    pub(super) contract_uses: Vec<evidence::NodeId>,
+    pub(super) results: Vec<value_evidence::CallResult>,
+    pub(super) control: Option<Formula>,
+    pub(super) recursive_contexts: Vec<admissions::RecursiveContext>,
     pub(super) contract_parents: Vec<evidence::NodeId>,
     pub(super) paths: paths::Paths,
     pub(super) states: Vec<state::State>,
@@ -70,6 +75,7 @@ pub(super) struct Storage {
 
 #[derive(Default)]
 pub(super) struct EntryState {
+    pub(super) world: state::WorldId,
     pub(super) values: BTreeMap<String, Symbol>,
     pub(super) memory: Option<Box<EntryMemory>>,
 }
