@@ -80,31 +80,33 @@ pub fn array_length(expression: &Expr) -> Result<usize> {
         .map_err(|_| "native array length is negative or exceeds the host limit".into())
 }
 
+/// Identity of constant source types, ignoring array-expression locations.
+pub(crate) fn same_type(a: &Type, b: &Type) -> Result<bool> {
+    Ok(match (a, b) {
+        (Type::Union(a), Type::Union(b)) => {
+            if a.len() != b.len() {
+                false
+            } else {
+                a.iter().try_fold(true, |same, member| {
+                    Ok::<_, String>(
+                        same && b.iter().try_fold(false, |found, candidate| {
+                            Ok::<_, String>(found || same_type(member, candidate)?)
+                        })?,
+                    )
+                })?
+            }
+        }
+        (Type::Array(a, al), Type::Array(b, bl)) => {
+            same_type(a, b)? && array_length(al)? == array_length(bl)?
+        }
+        (Type::Ref(a), Type::Ref(b))
+        | (Type::Plane(a), Type::Plane(b))
+        | (Type::Shape(a), Type::Shape(b)) => same_type(a, b)?,
+        _ => a == b,
+    })
+}
+
 pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
-    fn same_member(a: &Type, b: &Type) -> Result<bool> {
-        Ok(match (a, b) {
-            (Type::Union(a), Type::Union(b)) => {
-                if a.len() != b.len() {
-                    false
-                } else {
-                    a.iter().try_fold(true, |same, member| {
-                        Ok::<_, String>(
-                            same && b.iter().try_fold(false, |found, candidate| {
-                                Ok::<_, String>(found || same_member(member, candidate)?)
-                            })?,
-                        )
-                    })?
-                }
-            }
-            (Type::Array(a, al), Type::Array(b, bl)) => {
-                same_member(a, b)? && array_length(al)? == array_length(bl)?
-            }
-            (Type::Ref(a), Type::Ref(b))
-            | (Type::Plane(a), Type::Plane(b))
-            | (Type::Shape(a), Type::Shape(b)) => same_member(a, b)?,
-            _ => a == b,
-        })
-    }
     fn compute(
         ty: &Type,
         structs: &BTreeMap<String, Struct>,
@@ -140,7 +142,7 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
                 let mut size = 1;
                 for (index, member) in members.iter().enumerate() {
                     let duplicate = members[..index].iter().try_fold(false, |found, prior| {
-                        Ok::<_, String>(found || same_member(prior, member)?)
+                        Ok::<_, String>(found || same_type(prior, member)?)
                     })?;
                     if duplicate || matches!(member, Type::Union(_)) {
                         return Err("raw union members must be distinct and flattened".into());

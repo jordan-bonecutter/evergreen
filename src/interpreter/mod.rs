@@ -5,7 +5,10 @@ use crate::{
     shared::planes::{Memory, PlaneId, Projection, Reference},
     syntax::{Expr, External, Function, Kind, MachineInt, Statement, Struct, Type},
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 mod atomic;
 mod compat;
@@ -19,7 +22,9 @@ pub enum Value {
     Int(i128),
     Nat(i128),
     Bool(bool),
-    Array(Vec<Value>),
+    // Shared evaluator metadata preserves empty-array types without making
+    // snapshots copy type trees. Native arrays have no metadata header.
+    Array(Arc<Type>, Vec<Value>),
     Record(String, BTreeMap<String, Value>),
     Unit,
     Ref(Box<Type>, Reference, Vec<Projection>),
@@ -39,7 +44,7 @@ fn charge_value(value: &Value, fuel: &mut usize) -> Result<()> {
         }
         match value {
             Value::Union(_, value) => pending.push(value),
-            Value::Array(items) => pending.extend(items),
+            Value::Array(_, items) => pending.extend(items),
             Value::Record(_, fields) => pending.extend(fields.values()),
             _ => {}
         }
@@ -60,7 +65,7 @@ impl std::fmt::Display for Value {
             Self::Shape(_) => write!(f, "<shape>"),
             Self::Int(n) | Self::Nat(n) | Self::Machine(_, n) => write!(f, "{n}"),
             Self::Bool(b) => write!(f, "{b}"),
-            Self::Array(items) => {
+            Self::Array(_, items) => {
                 write!(f, "[")?;
                 for (i, x) in items.iter().enumerate() {
                     if i != 0 {
@@ -81,9 +86,9 @@ impl std::fmt::Display for Value {
 impl Value {
     fn matches_type(&self, expected: &Type) -> Result<bool> {
         match (self, expected) {
-            (Self::Array(items), Type::Array(element, count)) => {
+            (Self::Array(actual, items), Type::Array(element, count)) => {
                 let length = crate::compiler::layout::array_length(count)?;
-                if items.len() != length {
+                if items.len() != length || !crate::compiler::layout::same_type(actual, element)? {
                     return Ok(false);
                 }
                 items
@@ -120,8 +125,8 @@ impl Value {
             Self::Plane(t, _) => Some(Type::Plane(t.clone())),
             Self::Unit => Some(Type::Unit),
             Self::Machine(t, _) => Some(Type::Machine(*t)),
-            Self::Array(items) => Some(Type::Array(
-                Box::new(items.first().and_then(Value::hint).unwrap_or(Type::Int)),
+            Self::Array(element, items) => Some(Type::Array(
+                Box::new((**element).clone()),
                 Box::new(Expr {
                     kind: Kind::Number(items.len() as i128),
                     line: 0,
@@ -167,6 +172,7 @@ impl Evaluator<'_> {
 
     fn hint(&self, e: &Expr, env: &BTreeMap<String, Value>) -> Option<Type> {
         match &e.kind {
+            Kind::Bytes(bytes) => Some(Type::bytes(bytes.len(), e.line)),
             Kind::Bool(_) => Some(Type::Bool),
             Kind::Constant(t, _) => Some(Type::Machine(*t)),
             Kind::Name(n) => env.get(n).and_then(Value::hint),
@@ -415,7 +421,9 @@ impl Evaluator<'_> {
                 self.structs,
                 self.drops,
             ),
-            Value::Array(xs) => xs.iter().any(|v| self.value_is_move_only(v)),
+            Value::Array(element, _) => {
+                crate::shared::ownership::is_move_only(element, self.structs, self.drops)
+            }
             Value::Machine(_, _) | Value::Bool(_) | Value::Unit | Value::Ref(..) => {
                 value.hint().is_some_and(|ty| {
                     crate::shared::ownership::is_move_only(&ty, self.structs, self.drops)
@@ -465,7 +473,7 @@ impl Evaluator<'_> {
                     }
                 }
             }
-            Value::Array(items) => {
+            Value::Array(_, items) => {
                 for value in items {
                     self.drop_value(value)?;
                 }
@@ -627,6 +635,19 @@ impl Evaluator<'_> {
         expected: Option<&Type>,
     ) -> Result<Value> {
         match &e.kind {
+            Kind::Bytes(bytes) => {
+                let element = MachineInt {
+                    signed: false,
+                    bits: 8,
+                };
+                Ok(Value::Array(
+                    Arc::new(Type::Machine(element)),
+                    bytes
+                        .iter()
+                        .map(|&byte| Value::Machine(element, i128::from(byte)))
+                        .collect(),
+                ))
+            }
             Kind::FactAt(..) => Err("type facts are erased propositions".into()),
             Kind::Unit => Ok(Value::Unit),
             Kind::Constant(t, n) => Ok(Value::Machine(*t, *n)),
@@ -795,12 +816,12 @@ impl Evaluator<'_> {
                     .iter()
                     .map(|x| self.expr(x, env, element.as_ref()))
                     .collect::<Result<Vec<_>>>()
-                    .map(Value::Array)
+                    .map(|items| Value::Array(Arc::new(element.unwrap_or(Type::Int)), items))
             }
             Kind::Index(array, index) => {
                 let array = self.expr(array, env, None)?;
                 let index = self.expr(index, env, Some(&Type::Nat))?.number()?;
-                let Value::Array(items) = array else {
+                let Value::Array(_, items) = array else {
                     return Err("expected array".into());
                 };
                 let i = usize::try_from(index).map_err(|_| "index exceeds evaluator limit")?;
@@ -861,13 +882,15 @@ impl Evaluator<'_> {
                         items.push(copy_value(&initial, &mut self.fuel)?);
                     }
                     let ty = Type::Array(
-                        Box::new(element),
+                        Box::new(element.clone()),
                         Box::new(Expr {
                             kind: Kind::Number(count as i128),
                             line: e.line,
                         }),
                     );
-                    let plane = self.memory.allocate(Value::Array(items))?;
+                    let plane = self
+                        .memory
+                        .allocate(Value::Array(Arc::new(element), items))?;
                     return Ok(Value::Plane(Box::new(ty), self.memory.borrow(plane)?));
                 }
                 if name == "alloc" {
@@ -968,12 +991,12 @@ impl Evaluator<'_> {
                 self.memory.read(r)?;
                 Ok((r, p))
             }
-            Kind::Record(..) | Kind::Call(..) | Kind::If(..) => {
+            Kind::Bytes(_) | Kind::Record(..) | Kind::Call(..) | Kind::If(..) => {
                 let value = self.expr(e, env, None)?;
-                let Value::Record(name, _) = &value else {
+                if !matches!(value, Value::Record(..)) && !matches!(e.kind, Kind::Bytes(_)) {
                     return Err("temporary borrows require a record value".into());
-                };
-                let ty = Type::Named(name.clone());
+                }
+                let ty = value.hint().ok_or("temporary has no type")?;
                 let plane = self.memory.allocate(value)?;
                 let reference = self.memory.borrow(plane)?;
                 self.temporaries.push(Value::Plane(Box::new(ty), reference));
@@ -1012,7 +1035,7 @@ impl Evaluator<'_> {
                 project(self.memory.read(r)?, &path).cloned()
             }
             Kind::Index(base, index) => {
-                let Value::Array(items) = self.storage(base, env)? else {
+                let Value::Array(_, items) = self.storage(base, env)? else {
                     return Err("expected array storage".into());
                 };
                 let index = usize::try_from(self.expr(index, env, Some(&Type::Nat))?.number()?)
@@ -1049,8 +1072,10 @@ fn same_layout(a: &Value, b: &Value) -> bool {
                 && a.iter()
                     .all(|(n, v)| b.get(n).is_some_and(|w| same_layout(v, w)))
         }
-        (Value::Array(a), Value::Array(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(v, w)| same_layout(v, w))
+        (Value::Array(at, a), Value::Array(bt, b)) => {
+            crate::compiler::layout::same_type(at, bt).unwrap_or(false)
+                && a.len() == b.len()
+                && a.iter().zip(b).all(|(v, w)| same_layout(v, w))
         }
         (Value::Int(_), Value::Int(_))
         | (Value::Nat(_), Value::Nat(_))
@@ -1069,7 +1094,7 @@ fn project<'a>(value: &'a Value, path: &[Projection]) -> Result<&'a Value> {
     }
     let value = match (&path[0], value) {
         (Projection::Field(n), Value::Record(_, fields)) => fields.get(n).ok_or("unknown field")?,
-        (Projection::Index(i), Value::Array(items)) => {
+        (Projection::Index(i), Value::Array(_, items)) => {
             items.get(*i).ok_or("index out of bounds")?
         }
         _ => return Err("invalid reference projection".into()),
@@ -1086,7 +1111,7 @@ fn replace_projection(value: &mut Value, path: &[Projection], new: Value) -> Res
         (Projection::Field(n), Value::Record(_, fields)) => {
             fields.get_mut(n).ok_or("unknown field")?
         }
-        (Projection::Index(i), Value::Array(items)) => {
+        (Projection::Index(i), Value::Array(_, items)) => {
             items.get_mut(*i).ok_or("index out of bounds")?
         }
         _ => return Err("invalid reference projection".into()),

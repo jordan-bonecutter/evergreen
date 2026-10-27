@@ -27,6 +27,7 @@ mod evidence;
 mod external;
 mod footprints;
 mod heap;
+mod literals;
 mod loops;
 mod parameters;
 mod paths;
@@ -2039,11 +2040,11 @@ impl<'a> Context<'a> {
                 self.storage.memory.read(r)?;
                 Ok((r, path))
             }
-            Kind::Record(..) | Kind::Call(..) | Kind::If(..)
+            Kind::Bytes(_) | Kind::Record(..) | Kind::Call(..) | Kind::If(..)
                 if self.execution.phase == Phase::Runtime =>
             {
                 let value = self.eval(e, None)?;
-                if !matches!(value, Symbol::Record(..)) {
+                if !matches!(value, Symbol::Record(..)) && !matches!(e.kind, Kind::Bytes(_)) {
                     return Err("temporary borrows require a record value".into());
                 }
                 let ty = value.ty();
@@ -2133,6 +2134,7 @@ impl<'a> Context<'a> {
             return Some(value.ty());
         }
         match &e.kind {
+            Kind::Bytes(bytes) => Self::declared_hint(&Type::bytes(bytes.len(), e.line)),
             Kind::Call(name, _) if name == "typeof" => Some(Ty::Type),
             Kind::Call(name, args) if name == "shape" && args.len() == 1 => self
                 .type_literal(&args[0])
@@ -2647,6 +2649,7 @@ impl<'a> Context<'a> {
             }
         }
         match &e.kind {
+            Kind::Bytes(bytes) => self.byte_literal(bytes),
             Kind::FactAt(place, name) => Ok(Symbol::Bool(self.fact_at(place, name, e.line)?)),
             Kind::Unit => Ok(Symbol::Unit),
             Kind::Constant(t, n) => Ok(Symbol::Number(Ty::Machine(*t), Linear::number(*n))),

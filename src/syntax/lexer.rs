@@ -4,6 +4,7 @@
 pub(super) struct Token {
     pub(super) text: String,
     pub(super) line: usize,
+    pub(super) bytes: Option<Vec<u8>>,
 }
 
 pub(super) fn lex(source: &str) -> Result<Vec<Token>, String> {
@@ -28,6 +29,16 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, String> {
             continue;
         }
         let start = i;
+        let start_line = line;
+        if c == '"' {
+            let bytes = super::strings::literal(&chars, &mut i, &mut line)?;
+            out.push(Token {
+                text: chars[start..i].iter().collect(),
+                line: start_line,
+                bytes: Some(bytes),
+            });
+            continue;
+        }
         if c.is_ascii_alphabetic() || c == '_' {
             i += 1;
             while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
@@ -62,11 +73,13 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, String> {
         out.push(Token {
             text: chars[start..i].iter().collect(),
             line,
+            bytes: None,
         });
     }
     out.push(Token {
         text: "<eof>".into(),
         line,
+        bytes: None,
     });
     Ok(out)
 }

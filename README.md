@@ -14,6 +14,8 @@ standalone Linux x86-64 executable for the supported verified subset. Without
 
 Bundled stdlib dependencies load automatically. For byte output, try
 `cargo run -- build examples/hello.evg -o /tmp/hello` and run `/tmp/hello`.
+String literals are fixed byte arrays; see [literal semantics](docs/string-literals.md)
+and `examples/string_bytes.evg` for Unicode, empty literals, and extent inference.
 
 `cargo run -- run examples/raw_union.evg` exercises a source-defined optional
 payload. `examples/raw_union_owner.evg` adds conditional owning pointers, and

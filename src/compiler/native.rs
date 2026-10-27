@@ -461,6 +461,7 @@ impl Emitter<'_> {
 
     fn hint(&self, e: &Expr) -> Option<Type> {
         match &e.kind {
+            Kind::Bytes(bytes) => Some(Type::bytes(bytes.len(), e.line)),
             Kind::Name(n) => self.slots.get(n).map(|(_, t)| t.clone()),
             Kind::Record(name, _) => Some(Type::Named(name.clone())),
             Kind::Field(base, name) => self.field(&self.hint(base)?, name).ok().map(|f| f.ty),
@@ -520,9 +521,9 @@ impl Emitter<'_> {
                 Type::Ref(inner) | Type::Plane(inner) => Ok(*inner),
                 _ => Err("native place dereference requires a reference".into()),
             },
-            Kind::Record(..) | Kind::Call(..) | Kind::If(..) => {
+            Kind::Bytes(_) | Kind::Record(..) | Kind::Call(..) | Kind::If(..) => {
                 let ty = self.expr(e, None)?;
-                if !matches!(ty, Type::Named(_)) {
+                if !matches!(ty, Type::Named(_)) && !matches!(e.kind, Kind::Bytes(_)) {
                     return Err("temporary borrows require a record value".into());
                 }
                 let home = self.allocate(&ty)?;
@@ -537,6 +538,10 @@ impl Emitter<'_> {
 
     fn expr(&mut self, e: &Expr, expected: Option<&Type>) -> Result<Type> {
         let ty = match &e.kind {
+            Kind::Bytes(bytes) => self.expr(
+                &Expr::byte_array(bytes, e.line),
+                Some(&Type::bytes(bytes.len(), e.line)),
+            )?,
             Kind::Number(n) => {
                 self.immediate(*n as u64);
                 expected

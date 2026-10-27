@@ -5,6 +5,7 @@ use lexer::{lex, Token};
 mod lexer;
 mod modules;
 mod representation;
+mod strings;
 pub use representation::{Endianness, IntegralEncoding, Representation, ScalarDefinition};
 
 mod functions;
@@ -68,6 +69,18 @@ pub enum Type {
 }
 
 impl Type {
+    pub(crate) fn bytes(length: usize, line: usize) -> Self {
+        Self::Array(
+            Box::new(Self::Machine(MachineInt {
+                signed: false,
+                bits: 8,
+            })),
+            Box::new(Expr {
+                kind: Kind::Number(length as i128),
+                line,
+            }),
+        )
+    }
     /// A pointer-shaped union is unambiguous only with one pointer member.
     /// This selects a type for elaboration; the checker must prove it active.
     pub(crate) fn pointer_member(&self) -> Option<&Type> {
@@ -103,6 +116,25 @@ pub struct Expr {
 }
 
 impl Expr {
+    pub(crate) fn byte_array(bytes: &[u8], line: usize) -> Self {
+        let element = MachineInt {
+            signed: false,
+            bits: 8,
+        };
+        Self {
+            kind: Kind::Array(
+                bytes
+                    .iter()
+                    .map(|&byte| Self {
+                        kind: Kind::Constant(element, i128::from(byte)),
+                        line,
+                    })
+                    .collect(),
+            ),
+            line,
+        }
+    }
+
     /// The syntax of a type used as an ideal value. Resolving names and proving
     /// dependent extents remain the verifier's responsibility.
     pub(crate) fn literal_type(&self) -> Option<Type> {
@@ -159,6 +191,7 @@ impl Expr {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
+    Bytes(Vec<u8>),
     Number(i128),
     Constant(MachineInt, i128),
     Bool(bool),
@@ -673,6 +706,12 @@ impl Parser {
             self.expect("}")?;
             Expr {
                 kind: Kind::If(Box::new(cond), Box::new(yes), Box::new(no)),
+                line,
+            }
+        } else if let Some(bytes) = self.tokens[self.pos].bytes.clone() {
+            self.pos += 1;
+            Expr {
+                kind: Kind::Bytes(bytes),
                 line,
             }
         } else if self.eat("[") {

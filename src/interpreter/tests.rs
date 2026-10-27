@@ -1,10 +1,11 @@
 //! Interpreter execution, ownership, and cleanup regressions.
 
 use super::{copy_value, Value};
+use crate::syntax::Type;
 
 #[test]
 fn aggregate_copy_work_is_charged_before_cloning() {
-    let value = Value::Array(vec![Value::Bool(true); 64]);
+    let value = Value::Array(Type::Bool.into(), vec![Value::Bool(true); 64]);
     let mut fuel = 64;
     assert!(copy_value(&value, &mut fuel)
         .unwrap_err()

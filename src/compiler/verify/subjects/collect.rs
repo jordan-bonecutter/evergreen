@@ -26,6 +26,12 @@ impl Context<'_> {
             return Ok(None);
         }
         let key = match &expression.kind {
+            Kind::Bytes(bytes) => Some(ClaimKey::Array(
+                bytes
+                    .iter()
+                    .map(|&byte| ClaimKey::Number(i128::from(byte)))
+                    .collect(),
+            )),
             Kind::Name(name) if !self.locals.values.contains_key(name) => {
                 if let Some(fact) = self.proof.facts.get(name).cloned() {
                     return self.collect_subjects(&fact, snapshot, depth + 1);

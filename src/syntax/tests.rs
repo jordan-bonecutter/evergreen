@@ -3,6 +3,46 @@
 use super::*;
 
 #[test]
+fn strings_decode_to_utf8_bytes_and_keep_following_source_lines() {
+    let source = "fn main() {let text = \"λ🦀\\n\\r\\t\\0\\\\\\\"\\x41\\u{1F980}\";}";
+    let program = parse(source).unwrap();
+    let Statement::Let { value, .. } = &program.functions[0].body[0] else {
+        panic!("missing string binding");
+    };
+    assert_eq!(
+        value.kind,
+        Kind::Bytes("λ🦀\n\r\t\0\\\"A🦀".as_bytes().to_vec())
+    );
+    let multiline = parse("fn main() {let text = \"one\ntwo\";\n42}").unwrap();
+    assert_eq!(multiline.functions[0].result.line, 3);
+    let quoted_syntax =
+        parse("fn main() {let text = \"// not a comment: module a { }\";}").unwrap();
+    assert_eq!(quoted_syntax.functions.len(), 1);
+}
+
+#[test]
+fn invalid_string_escapes_cannot_create_non_utf8_literals() {
+    for literal in [
+        r#""\x80""#,
+        r#""\xFF""#,
+        r#""\xG0""#,
+        r#""\x0""#,
+        r#""\u{}""#,
+        r#""\u{D800}""#,
+        r#""\u{110000}""#,
+        r#""\u{1234567}""#,
+        r#""\u1234""#,
+        r#""\z""#,
+        "\"unterminated",
+        "\"escape\\",
+    ] {
+        let source = format!("fn main() {{let text = {literal};}}");
+        let error = parse(&source).unwrap_err();
+        assert!(error.contains("line 1:"), "{error}");
+    }
+}
+
+#[test]
 fn module_scopes_are_closed_and_names_are_qualified_once() {
     let program = parse("module a {opaque type Item struct {n: usize} fn get() -> Item {Item {n: 42}}} fn main() -> usize {let item: a::Item = a::get(); 42}").unwrap();
     assert_eq!(program.structs[0].name, "a::Item");

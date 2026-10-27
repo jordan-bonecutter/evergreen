@@ -127,6 +127,8 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        include_str!("../../../examples/string_bytes.evg"),
+        r#"fn consume(value: [u8; 0]) -> usize {42} fn main() -> usize {let value: [u8; 0] | bool = ""; consume(value)}"#,
         include_str!("../../../examples/raw_union.evg"),
         include_str!("../../../examples/raw_union_drop.evg"),
         include_str!("../../../examples/raw_union_owner.evg"),
@@ -587,6 +589,14 @@ fn native_syscalls_write_exact_bytes_and_preserve_results() {
     let prefix = format!("{} fn main() -> usize {{let bytes: [u8; 3] = [65, 66, 67]; if linux_io::write(1, &bytes, 2) == 2 {{0}} else {{1}}}}", concat!(include_str!("../../../stdlib/linux_io/linux_io.evg"), "\u{1e}"));
     for (source, expected) in [
         (hello.as_str(), b"Hello, Evergreen\n".as_slice()),
+        (
+            r#"fn main() -> usize {if linux_io::print_bytes(&"λ\0🦀\n") == 8 {0} else {1}}"#,
+            "λ\0🦀\n".as_bytes(),
+        ),
+        (
+            r#"fn main() -> usize {if linux_io::print_bytes(&"") == 0 {0} else {1}}"#,
+            b"".as_slice(),
+        ),
         (large.as_str(), large_expected.as_slice()),
         (prefix.as_str(), b"AB".as_slice()),
         (empty.as_str(), b"".as_slice()),
