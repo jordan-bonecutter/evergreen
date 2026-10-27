@@ -1983,10 +1983,10 @@ The full relationship between mutable dependent fields and logical Vec length is
 being worked through with the vector implementation; this does not claim support
 for uninitialized generic element storage or arbitrary resizing in place.
 
-### Owned machine-word vector
+### Owned vector with initialized backing storage
 
-`stdlib/vec/vec.evg` supplies an initial `vec::Vec` with an opaque three-word
-representation: capacity, length, and `Zero | unique(usize, cap)`. `Zero` is a
+`stdlib/vec/vec.evg` supplies `vec::Vec<T = usize>` with an opaque three-word
+representation: capacity, length, and `Zero | unique(T, cap)`. `Zero` is a
 source-defined, machine-word-sized record constrained to zero. The invariant
 selects `Zero` exactly when capacity is zero; otherwise the pointer's extent
 depends on capacity. The raw union has no runtime discriminator.
@@ -1999,13 +1999,13 @@ cargo run -- build examples/vec.evg -o /tmp/vec
 ```
 
 `new(0)` stores a zero word without allocating; positive capacities allocate
-initialized `usize` storage. Its source-defined Drop releases only the allocated
+initialized integer storage. Its source-defined Drop releases only the allocated
 case. `push(&value, item)` requires
 spare capacity, `pop(&value)` requires a nonempty vector, and `get(&value, index)`
 returns a checked reference to an element below length. `length` and `capacity`
 expose those quantities without exposing the representation. Capacity is bounded
 by addressability:
-`integer(capacity) * integer(size_of(usize)) <= integer(isize::MAX)`.
+`integer(capacity) * integer(size_of(T)) <= integer(isize::MAX)`.
 Native allocation can still fail at runtime; the interpreter has a separate work
 budget. Neither imposes a 8192-element language limit.
 
@@ -2017,8 +2017,15 @@ into the released buffer become invalid. Pushes within capacity retain the same
 allocation, preserving references to existing cells. Reallocation must accommodate
 all live elements; shrinking below length is rejected.
 
-This is a machine-word specialization with explicit reallocation, not yet the
-README's generic vector. All capacity slots are initialized copyable values;
+Explicit specializations support integer and Boolean copy operations, for example
+`vec::Vec::<u8>::new(2)`. `filled(capacity, initial)` creates an empty vector with
+every backing slot initialized to a copy of `initial`; Boolean storage uses this
+constructor. `reallocate_filled(new_capacity, initial)` supplies the initializer
+for replacement storage. Flat scalar records with explicit Copy implementations
+can initialize storage and transfer it with `into_data()`. Generic record
+push/pop contracts still need an equality interface. See [vec.md](vec.md).
+
+This is not yet the README's vector of move-only resources. All capacity slots are initialized copyable values;
 uninitialized slots and arbitrary element destructors need further work. The
 checker proves access bounds, ownership, and the length/capacity invariant. Prefix
 copying is implemented as an Evergreen `while` loop whose invariant proves the

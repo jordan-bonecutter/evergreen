@@ -66,7 +66,8 @@ preserve refinements under shared-pointer census changes.
 
 Method-level generic parameters, trait bounds, specialized impl patterns, and
 argument inference remain unfinished. [Rc](rc.md) now uses generic payloads;
-Vec still specializes its payload to `usize`. Arrays still
+[Vec](vec.md) specializes initialized backing storage and scalar copy operations.
+Move-only vector elements still need initialization and consumption proofs. Arrays still
 use their existing layout rule; replacing it with a source const-generic
 definition using `make_type` remains future work.
 

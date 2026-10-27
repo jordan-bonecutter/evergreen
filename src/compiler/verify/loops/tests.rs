@@ -9,7 +9,7 @@ fn library_buffer_copy_uses_a_checked_loop_with_explicit_bounds() {
     let function = program
         .functions
         .iter()
-        .find(|f| f.name == "vec::copy_prefix")
+        .find(|f| f.module.as_deref() == Some("vec") && f.name.ends_with("_copy_prefix"))
         .unwrap();
     assert!(!crate::compiler::effects::recursive(function));
     assert!(function
@@ -25,7 +25,7 @@ fn library_buffer_copy_uses_a_checked_loop_with_explicit_bounds() {
     for invalid in ["5, 1", "3, 4"] {
         let error = verify(&source.replace("3, 1", invalid)).unwrap_err();
         assert!(
-            error.contains("precondition of vec::copy_prefix"),
+            error.contains("precondition") && error.contains("copy_prefix"),
             "{error}"
         );
     }

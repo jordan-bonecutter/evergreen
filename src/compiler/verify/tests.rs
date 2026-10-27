@@ -3229,7 +3229,7 @@ fn owned_word_vectors_check_capacity_and_reference_lifetimes() {
     let copy = program
         .functions
         .iter()
-        .find(|f| f.name == "vec::copy_prefix")
+        .find(|f| f.module.as_deref() == Some("vec") && f.name.ends_with("_copy_prefix"))
         .unwrap();
     assert!(!crate::compiler::effects::recursive(copy));
     assert!(!copy.partial);

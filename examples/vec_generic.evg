@@ -1,0 +1,8 @@
+// The current Vec initializes all capacity slots and copies its elements.
+fn main() -> u8 {
+    let values = vec::Vec::<u8>::new(2);
+    values.push(7);
+    values.push(42);
+    values = values.reallocate(4);
+    values.pop()
+}

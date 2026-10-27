@@ -1,6 +1,43 @@
 use crate::compiler::verify::{prove, verify, verify_with_certificate};
 
 #[test]
+fn source_vectors_specialize_storage_and_copy_operations() {
+    for source in [
+        include_str!("../../../examples/vec.evg"),
+        include_str!("../../../examples/vec_generic.evg"),
+        "fn main() -> i16 {let values = vec::Vec::<i16>::new(2); values.push(-7); values.push(42); values = values.reallocate(4); values.pop()}",
+        "fn main() -> usize {let values = vec::Vec::<bool>::filled(2, false); values.push(true); values = values.reallocate_filled(4, false); if values.pop() {42} else {1}}",
+        "type Item struct {tag: u8, count: u16} impl Copy for Item {} fn main() -> u16 {let values = vec::Vec::<Item>::filled(2, Item {tag: 7, count: 42}); let data = values.into_data(); (*data)[1].count}",
+        "fn prepare() -> vec::Vec<u8> {vec::Vec::<u8>::new(1000000000)} fn main() -> usize {42}",
+    ] {
+        let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
+    }
+}
+
+#[test]
+fn source_vectors_reject_implicit_copies_stale_borrows_and_byte_overflow() {
+    for source in [
+        "fn main() {let values = vec::Vec::<unique(usize)>::filled(2, alloc(7));}",
+        "type Item struct {tag: usize} fn main() {let values = vec::Vec::<Item>::filled(2, Item {tag: 7});}",
+        "fn main() {let values = vec::Vec::<u8>::new(usize::MAX);}",
+        "fn main() {let values = vec::Vec::<u16>::new(9223372036854775807);}",
+        "fn main() -> u8 {let values = vec::Vec::<u8>::new(2); values.push(42); let view = values.get(0); values = values.reallocate(4); *view}",
+        "fn main() -> u8 {let values = vec::Vec::<u8>::new(2); values.push(42); values.pop(); *values.get(0)}",
+    ] {
+        assert!(verify(source).is_err(), "accepted {source}");
+    }
+    let library = include_str!("../../../stdlib/vec/vec.evg").replace(
+        "integer(capacity) * integer(size_of(T)) <= integer(isize::MAX)",
+        "true",
+    );
+    let exercised = format!("{library}\nfn exercise() -> u16 {{let values = new::<u16>(2); values.push(42); values.pop()}}");
+    assert!(verify(&exercised).is_err());
+}
+
+#[test]
 fn generic_methods_and_drop_are_concrete_checked_source_functions() {
     for source in [
         "type Buffer<T, const N: usize> struct {data: array(T, N)} impl<U, const M: usize> Buffer<U, M> {method& get(index: usize) -> &U where index < M borrows(&self.data[index]) {&self.data[index]}} fn main() -> usize {let value = Buffer::<usize, 2> {data: [7, 42]}; *value.get(1)}",

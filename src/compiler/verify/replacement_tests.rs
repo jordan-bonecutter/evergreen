@@ -59,7 +59,8 @@ fn zero_capacity_vectors_use_one_zero_word_and_preserve_header_borrows_on_growth
         let (program, bundle) = prove(source).unwrap();
         assert_eq!(program.run().unwrap().to_string(), "42");
         assert_eq!(crate::compiler::layout::of(&Type::Named("vec::Zero".into()), &program.structs).unwrap().size, 8);
-        assert_eq!(crate::compiler::layout::of(&Type::Named("vec::Vec".into()), &program.structs).unwrap().size, 24);
+        let vector = program.structs.values().find(|record| record.module.as_deref() == Some("vec") && record.name.ends_with("_Vec")).unwrap();
+        assert_eq!(crate::compiler::layout::of(&Type::Named(vector.name.clone()), &program.structs).unwrap().size, 24);
         assert!(program.trusted_assumptions().is_empty());
         assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
     }
