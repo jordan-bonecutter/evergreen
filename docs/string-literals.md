@@ -1,5 +1,17 @@
 # String literals
 
+The current implementation below uses UTF-8 byte-array literals. The intended
+replacement is an ideal Unicode string value: a sequence of Unicode scalar
+values independent of runtime encoding. Source-library encoders should produce
+UTF-8, UTF-16, or another explicitly selected representation, with checked
+materialization of their compile-time results. This needs more generic aggregate
+and ideal-value support; it has not replaced the current literal behavior.
+
+`utf8::Text::from_bytes` remains an independent constructor. Its precondition
+requires a proof that the supplied bytes are valid UTF-8, and its result retains
+the source-defined encoding invariant. Encoding an ideal string and validating
+existing bytes are two construction paths for the same runtime type.
+
 `"Hello, Evergreen\n"` has type `[u8; 17]`. Literals are fixed inline byte
 arrays, passed by value or borrowed with `&` using the ordinary array rules.
 There is no trailing zero byte, heap allocation, runtime length field, or

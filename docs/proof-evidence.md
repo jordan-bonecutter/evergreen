@@ -74,6 +74,14 @@ A named fact stores a proposition expression. It does not establish truth.
 Using it instantiates that expression in the current state. Checking a declaration
 must not publish proof assumptions as a side effect of unused facts.
 
+Proven facts should appear to users as refinements of the value's type at its
+current plane revision, as though those properties were additional `where`
+clauses. Their representation should remain a shared proof-state view queried
+on demand, rather than eagerly copying a conjunction of all known facts into
+every type. Mutation expires dependent inferred refinements. Declared nominal
+invariants remain obligations, and nominal construction and ownership transfers
+retain their own checks. A named proposition without evidence adds no guarantee.
+
 A proof node records its instantiated claim, state dependencies, and the evidence
 actually used. Named proofs refer to nodes; anonymous proofs need no user-visible
 name. Arithmetic certificate weights identify the exact constraint rows used by
@@ -97,6 +105,17 @@ and logical rules still require checking. Artifact replay must reconstruct and
 check dependencies rather than trusting cached graph annotations.
 
 ## Immutable plane states
+
+Conditional return provenance is the next extension to the exact-alias model.
+The intended contract spelling is `borrows(a) when condition else borrows(b)`,
+including independent choices for each reference-bearing return field. These
+guards use saved function/call-entry observations, as existing borrow origins do.
+The returned pointer retains the selected plane and generation even when later
+writes change the values used by the guard. Its proof representation needs
+guarded plane alternatives, with every reachable case justified independently.
+This must also support symbolic selection from reference-bearing arrays; fresh
+unrelated pointees cannot stand in for such a selection. The syntax and general
+guarded-plane representation are not implemented yet.
 
 The verification state has a logical snapshot at each successful statement.
 Snapshots share unchanged nodes rather than cloning every plane and fact set.

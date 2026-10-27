@@ -47,12 +47,35 @@ in an Evergreen library. The interpreter independently checks live token IDs.
 This is the initial sequential capability layer. Conditional changes that need
 guarded token joins, ownership transitions in loops, and transitions while
 representation facts are lifted remain unsupported. They are rejected rather
-than approximated by a count of local bindings. These are the next requirements
-for a source Rc destructor/clone protocol. Arc additionally needs atomic resource
+than approximated by a count of local bindings. These capabilities are an
+experimental ownership layer. Arc additionally needs atomic resource
 transitions and interference rules. No concurrent shared-ownership claim is made.
 The frontend's resource transitions and machine-code erasure remain trusted
 implementation boundaries rather than independently checked kernel theorems.
 
 [`owning_references.evg`](../examples/owning_references.evg) runs in the interpreter
-and native backend without admissions. Credits remain generic erased-resource
-test libraries; they are not part of the Rc implementation strategy.
+and native backend without admissions. The selected Rc direction is
+allocation-backed, move-only credits. Existing credits libraries exercise erased
+resource arithmetic; they do not yet grant allocation or destruction authority.
+Connecting that authority to credits is required before claiming an implemented
+source Rc. Invariant lifting remains a separate general language facility.
+
+## Reference contracts: intended direction
+
+The reference validity rule should be exposed as a logical specification, rather
+than inferred from pointer bits alone. The proposed sketch is a word-sized
+`Reference<T>` with a refinement like `typeof(memory_at(address)) == T`.
+Generic reference declarations and `memory_at` are not implemented yet.
+
+The observation needs an ideal witness for the live allocation identity and
+generation, plus the typed projection and byte range. This establishes bounds,
+alignment, initialization, and the interpretation as `T`. A record and its first
+field can share an address while having different valid typed projections.
+Reusing an address for a later allocation must preserve the distinction between
+their identities. Copies preserve the original witness.
+
+Ordinary stores evolve the plane's fact-state revision while retaining its
+allocation identity. Facts about contents depend on those revisions. An owning
+pointer additionally carries allocation/destruction authority. These witnesses
+are ideal metadata; the current target's runtime representation remains one
+pointer word. Other targets must specify their own representation.
