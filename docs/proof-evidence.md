@@ -13,7 +13,10 @@ must not publish proof assumptions as a side effect of unused facts.
 A proof node records its instantiated claim, state dependencies, and the evidence
 actually used. Named proofs refer to nodes; anonymous proofs need no user-visible
 name. Arithmetic certificate weights identify the exact constraint rows used by
-a checked derivation. Logical steps must likewise identify their premise nodes.
+a checked derivation. Logical steps identify their premise nodes and retain an
+explicit inference rule.
+The rule checker validates connective shape and premise/conclusion agreement
+before inserting a derived node. Tactics cannot insert arbitrary logical edges.
 An admitted claim is a distinct node, not a proved constraint in the execution
 path context. Row provenance is positional: equal arithmetic rows can have
 different origins. Negated-goal rows must not become premise edges back to the
@@ -69,9 +72,9 @@ proof. The pointer and multi-plane rejection cases are regression tests.
 
 This is the first immutable state layer. Fact declarations and the proof DAG still
 use the bootstrap's existing representations; memory, path constraints, and lexical
-scopes have not all migrated to a unified persistent state. Explicit inference-rule
-records, complete statement footprints, and function-summary transport remain work
-in progress. The target model keeps propositions distinct from their evidence:
+scopes have not all migrated to a unified persistent state. Complete statement
+footprints, proposition interning, and function-summary transport remain work in
+progress. The target model keeps propositions distinct from their evidence:
 raw fact references require a witness or a scoped hypothesis to serve as premises.
 
 ## State dependencies
@@ -146,9 +149,29 @@ an explanation remain unresolved.
 Arithmetic leaves inherit unresolved provenance only when the checked support
 actually uses unresolved origins. Runtime/type facts and call summaries still
 lack complete origins, so an empty set of known admissions does **not** alone
-imply admission-free evidence. Scoped hypotheses additionally need explicit
-discharge metadata before the DAG can serve as independently checkable proof
-evidence.
+imply admission-free evidence. Scoped hypotheses now have distinct identities
+and are propagated through arithmetic imports and logical rules. Implication introduction discharges only
+its declared binder. Disjunction elimination checks both branches, prevents
+cross-branch assumptions, and forbids either case hypothesis from justifying the
+source disjunction. Proof-script results and published state evidence must have
+no remaining open hypotheses.
+
+The propositional rule checker is separate from tactic selection. It checks
+reuse, conjunction introduction/elimination, disjunction introduction/elimination,
+implication introduction/elimination (including negation), and false elimination.
+Implication application produces one checked elimination per argument rather than
+an opaque group of premise edges. Unused conjunction destructuring does not add
+an admission dependency to an independently proved result. Tests reject wrong
+premises, forged binders, wrong conclusions, open-hypothesis publication, and
+cross-branch leaks; a finite truth-table sweep checks accepted introduction and
+elimination candidates for counterexamples. Nested case scopes are reconstructed
+on replay.
+
+These checks establish the local propositional rules, not the complete source-to-
+proof pipeline. Arithmetic leaves still rely on the certificate session and its
+row-origin translation; declaration imports remain explicitly unresolved. Graph
+node/edge/storage limits also bound formula depth, open hypotheses, and aggregate
+logical checking work.
 
 Explicit proof declarations now store state-subject snapshots separately from
 arithmetic formulas. Canonical claim keys retain operator structure and replace
@@ -199,8 +222,8 @@ This is partial admission isolation, not the completed trust boundary. Declarati
 summaries still need the admissions used in their own verification, including
 external contracts and explicit postcondition proof scripts. Complete value-flow
 provenance, branch guards, aggregate/constant value evidence, and independent
-logical discharge checking remain pending. Fact well-formedness evaluation also
-needs isolation from assumptions created by helper summaries. The public trust
+checking of all state/contract imports remain pending. Fact well-formedness
+evaluation also needs isolation from assumptions created by helper summaries. The public trust
 manifest still lists every admission, including unused ones; operation-level DAG
 reporting is not yet exposed. `--deny-trust` remains strict.
 

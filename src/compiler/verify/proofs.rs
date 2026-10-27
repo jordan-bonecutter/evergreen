@@ -1,6 +1,7 @@
 //! Small propositional proof rules. Arithmetic leaves still use certificates.
 
 use super::*;
+use evidence::Rule;
 
 struct Script<'a> {
     steps: &'a [String],
@@ -17,20 +18,6 @@ impl<'a> Script<'a> {
             .ok_or_else(|| format!("line {}: proof has an unfinished goal", self.line))?;
         self.next += 1;
         Ok(step)
-    }
-}
-
-impl Formula {
-    // Retain connective structure for introduction/elimination rules, while
-    // exact matching keeps the existing normalization of logical expressions.
-    pub(super) fn normalized(&self) -> Self {
-        match self {
-            Self::And(a, b) => a.normalized().and(b.normalized()),
-            Self::Or(a, b) => a.normalized().or(b.normalized()),
-            Self::Implies(a, b) => a.normalized().not().or(b.normalized()),
-            Self::Not(p) => p.normalized().not(),
-            _ => self.clone(),
-        }
     }
 }
 
@@ -74,7 +61,7 @@ impl Context<'_> {
                 .collect::<Vec<_>>();
             self.session.trust(&rows, &proposition, line, label)?;
             self.work.obligations += 1;
-            let node = self.proof.evidence.insert(goal.clone(), vec![], true)?;
+            let node = self.proof.evidence.admit(goal.clone())?;
             debug_assert!(self.proof.evidence.admissions(node).complete);
             return Ok(node);
         }
@@ -90,6 +77,7 @@ impl Context<'_> {
                 "line {line}: unused proof steps after the goal was closed"
             ));
         }
+        self.proof.evidence.check_closed(node)?;
         Ok(node)
     }
 
@@ -141,18 +129,19 @@ impl Context<'_> {
 
     fn with_proof_hypotheses(
         &mut self,
-        hypotheses: &[(&str, &Formula)],
-        parents: &[evidence::NodeId],
+        hypotheses: &[(&str, evidence::NodeId)],
         line: usize,
         check: impl FnOnce(&mut Self) -> Result<evidence::NodeId>,
     ) -> Result<evidence::NodeId> {
         let mut names = BTreeSet::new();
-        for (name, premise) in hypotheses {
+        for (name, node) in hypotheses {
             self.fresh_binding(name, line)?;
             if !names.insert(*name) {
                 return Err(format!("line {line}: duplicate proof hypothesis {name}"));
             }
-            self.charge_value_work(symbol_weight(&Symbol::Bool((*premise).clone()))?)?;
+            self.charge_value_work(symbol_weight(&Symbol::Bool(
+                self.proof.evidence.claim(*node).clone(),
+            ))?)?;
         }
         let snapshot_work = self.proof.paths.iter().fold(0usize, |total, path| {
             path.iter().fold(total, |total, row| {
@@ -162,13 +151,10 @@ impl Context<'_> {
         self.charge_value_work(snapshot_work)?;
         let paths = self.proof.paths.clone();
         let result = (|| {
-            for (name, premise) in hypotheses {
-                let node =
-                    self.proof
-                        .evidence
-                        .insert((*premise).clone(), parents.to_vec(), false)?;
-                self.proof.witnesses.insert((*name).into(), node);
-                self.assume_from(premise, paths::Origin::Evidence(node))?;
+            for (name, node) in hypotheses {
+                let premise = self.proof.evidence.claim(*node).clone();
+                self.proof.witnesses.insert((*name).into(), *node);
+                self.assume_from(&premise, paths::Origin::Evidence(*node))?;
             }
             check(self)
         })();
@@ -208,7 +194,7 @@ impl Context<'_> {
                     let candidate = self.proof.evidence.claim(node).clone();
                     if self.witness_matches(node, &candidate, goal, subjects)? {
                         self.work.obligations += 1;
-                        return self.proof.evidence.insert(goal.clone(), vec![node], false);
+                        return self.proof.evidence.derive(goal.clone(), Rule::Reuse(node));
                     }
                 }
                 Err(format!(
@@ -225,7 +211,9 @@ impl Context<'_> {
                 let right_subjects = subjects.and_then(|s| s.branch("&&", true));
                 let a = self.proof_goal(a, script, depth + 1, left_subjects.as_ref())?;
                 let b = self.proof_goal(b, script, depth + 1, right_subjects.as_ref())?;
-                self.proof.evidence.insert(goal.clone(), vec![a, b], false)
+                self.proof
+                    .evidence
+                    .derive(goal.clone(), Rule::AndIntro(a, b))
             }
             "left" | "right" => {
                 let Formula::Or(a, b) = goal else {
@@ -238,9 +226,12 @@ impl Context<'_> {
                     depth + 1,
                     branch_subjects.as_ref(),
                 )?;
-                self.proof
-                    .evidence
-                    .insert(goal.clone(), vec![premise], false)
+                let rule = if step == "left" {
+                    Rule::OrLeft(premise)
+                } else {
+                    Rule::OrRight(premise)
+                };
+                self.proof.evidence.derive(goal.clone(), rule)
             }
             _ if step.starts_with("exact ") => {
                 let name = &step[6..];
@@ -252,7 +243,7 @@ impl Context<'_> {
                 self.work.obligations += 1;
                 self.proof
                     .evidence
-                    .insert(goal.clone(), vec![proven], false)
+                    .derive(goal.clone(), Rule::Reuse(proven))
             }
             _ if step.starts_with("intro ") => {
                 let (premise, consequence) = match goal {
@@ -266,8 +257,9 @@ impl Context<'_> {
                 };
                 let name = &step[6..];
                 let consequence_subjects = subjects.and_then(|s| s.branch("=>", true));
+                let (hypothesis, premise_node) = self.proof.evidence.hypothesis(premise.clone())?;
                 let consequence =
-                    self.with_proof_hypotheses(&[(name, premise)], &[], line, |ctx| {
+                    self.with_proof_hypotheses(&[(name, premise_node)], line, |ctx| {
                         ctx.proof_goal(
                             consequence,
                             script,
@@ -275,9 +267,13 @@ impl Context<'_> {
                             consequence_subjects.as_ref(),
                         )
                     })?;
-                self.proof
-                    .evidence
-                    .insert(goal.clone(), vec![consequence], false)
+                self.proof.evidence.derive(
+                    goal.clone(),
+                    Rule::ImpIntro {
+                        hypothesis,
+                        body: consequence,
+                    },
+                )
             }
             _ if step.starts_with("cases ") => {
                 let parts = step.split_whitespace().collect::<Vec<_>>();
@@ -293,7 +289,7 @@ impl Context<'_> {
                     return self
                         .proof
                         .evidence
-                        .insert(goal.clone(), vec![node.unwrap()], false);
+                        .derive(goal.clone(), Rule::FalseElim(node.unwrap()));
                 }
                 let ["cases", name, "with", first, separator, second] = parts.as_slice() else {
                     return Err(format!("line {line}: malformed cases step"));
@@ -306,22 +302,28 @@ impl Context<'_> {
                 let claim = self.proof.evidence.claim(theorem).clone();
                 match (claim, *separator) {
                     (Formula::And(a, b), ",") => {
-                        let branch = self.with_proof_hypotheses(&[(first, &a), (second, &b)], &[theorem], line, |ctx| {
+                        let left = self.proof.evidence.derive(*a, Rule::AndLeft(theorem))?;
+                        let right = self.proof.evidence.derive(*b, Rule::AndRight(theorem))?;
+                        let branch = self.with_proof_hypotheses(&[(first, left), (second, right)], line, |ctx| {
                             ctx.proof_goal(goal, script, depth + 1, subjects)
                         })?;
-                        self.proof.evidence.insert(goal.clone(), vec![theorem, branch], false)
+                        self.proof.evidence.derive(goal.clone(), Rule::Reuse(branch))
                     }
                     (Formula::Or(a, b), "|") => {
                         // Validate both names before starting either branch.
                         self.fresh_binding(first, line)?;
                         self.fresh_binding(second, line)?;
-                        let left = self.with_proof_hypotheses(&[(first, &a)], &[theorem], line, |ctx| {
+                        let (left_hypothesis, left_node) = self.proof.evidence.hypothesis(*a)?;
+                        let (right_hypothesis, right_node) = self.proof.evidence.hypothesis(*b)?;
+                        let left = self.with_proof_hypotheses(&[(first, left_node)], line, |ctx| {
                             ctx.proof_goal(goal, script, depth + 1, subjects)
                         })?;
-                        let right = self.with_proof_hypotheses(&[(second, &b)], &[theorem], line, |ctx| {
+                        let right = self.with_proof_hypotheses(&[(second, right_node)], line, |ctx| {
                             ctx.proof_goal(goal, script, depth + 1, subjects)
                         })?;
-                        self.proof.evidence.insert(goal.clone(), vec![theorem, left, right], false)
+                        self.proof.evidence.derive(goal.clone(), Rule::OrElim {
+                            source: theorem, left_hypothesis, left, right_hypothesis, right,
+                        })
                     }
                     _ => Err(format!("line {line}: cases requires a conjunction with ',' or a disjunction with '|'")),
                 }
@@ -369,17 +371,27 @@ impl Context<'_> {
                         }
                     }
                 }
-                let mut parents = vec![source];
+                let mut applied = source;
                 for (premise, premise_subjects) in premises {
-                    parents.push(self.proof_goal(
-                        &premise,
-                        script,
-                        depth + 1,
-                        premise_subjects.as_ref(),
-                    )?);
+                    let argument =
+                        self.proof_goal(&premise, script, depth + 1, premise_subjects.as_ref())?;
+                    let conclusion = match self.proof.evidence.claim(applied) {
+                        Formula::Implies(_, result) => (**result).clone(),
+                        Formula::Not(_) => Formula::False,
+                        _ => return Err("application lost its implication premise".into()),
+                    };
+                    applied = self.proof.evidence.derive(
+                        conclusion,
+                        Rule::ImpElim {
+                            theorem: applied,
+                            argument,
+                        },
+                    )?;
                 }
                 self.work.obligations += 1;
-                self.proof.evidence.insert(goal.clone(), parents, false)
+                self.proof
+                    .evidence
+                    .derive(goal.clone(), Rule::Reuse(applied))
             }
             _ => Err(format!("line {line}: unsupported proof step {step}")),
         }
@@ -545,6 +557,57 @@ mod tests {
             assert!(dependencies.complete);
             assert!(dependencies.admissions.is_empty());
             assert!(!ctx.proof.witnesses.contains_key("h"));
+        });
+    }
+
+    #[test]
+    fn nested_case_hypotheses_are_discharged_on_search_and_replay() {
+        fn check(session: &mut Session) {
+            with_context(session, |ctx| {
+                let p = Formula::Ge(Linear::variable("p"));
+                let q = Formula::Ge(Linear::variable("q"));
+                let goal = Formula::Implies(
+                    Box::new(Formula::Or(Box::new(p.clone()), Box::new(q.clone()))),
+                    Box::new(Formula::Or(Box::new(q), Box::new(p))),
+                );
+                let root = script(
+                    ctx,
+                    &goal,
+                    &[
+                        "intro either",
+                        "cases either with p | q",
+                        "right",
+                        "exact p",
+                        "left",
+                        "exact q",
+                    ],
+                );
+                ctx.proof.evidence.check_closed(root).unwrap();
+                assert!(ctx.proof.witnesses.is_empty());
+                assert_eq!(ctx.proof.paths, paths::Paths::unit());
+                assert!(ctx.proof.evidence.admissions(root).admissions.is_empty());
+            });
+        }
+        let mut recording = Session::recording();
+        check(&mut recording);
+        recording.finish().unwrap();
+        let bundle = recording.bundle("scoped logical rules").unwrap();
+        let mut replay = Session::replay(&bundle);
+        check(&mut replay);
+        replay.finish().unwrap();
+        assert_eq!(replay.search_count(), 0);
+    }
+
+    #[test]
+    fn unused_conjunction_evidence_does_not_taint_an_independent_proof() {
+        with_context(&mut Session::search(), |ctx| {
+            let p = Formula::Ge(Linear::variable("p"));
+            let pair = Formula::And(Box::new(p.clone()), Box::new(p));
+            let source = script(ctx, &pair, &["trustme"]);
+            ctx.proof.witnesses.insert("source".into(), source);
+            let root = script(ctx, &Formula::True, &["cases source with p , q", "omega"]);
+            assert!(ctx.proof.evidence.admissions(root).admissions.is_empty());
+            ctx.proof.evidence.check_closed(root).unwrap();
         });
     }
 }

@@ -31,83 +31,14 @@ mod paths;
 use paths::{extend, extend_from};
 mod program;
 mod proofs;
+mod proposition;
+use proposition::Formula;
 mod references;
 mod returns;
 mod state;
 mod subjects;
 mod updates;
 mod validation;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Formula {
-    True,
-    False,
-    Ge(Linear),
-    And(Box<Self>, Box<Self>),
-    Or(Box<Self>, Box<Self>),
-    Not(Box<Self>),
-    Implies(Box<Self>, Box<Self>),
-}
-
-impl Formula {
-    fn encode(&self, out: &mut Vec<u8>) {
-        match self {
-            Self::True => out.push(0),
-            Self::False => out.push(1),
-            Self::Ge(row) => {
-                out.push(2);
-                out.extend(row.constant.to_le_bytes());
-                out.extend((row.terms.len() as u64).to_le_bytes());
-                for (name, coefficient) in &row.terms {
-                    out.extend((name.len() as u64).to_le_bytes());
-                    out.extend(name.as_bytes());
-                    out.extend(coefficient.to_le_bytes());
-                }
-            }
-            Self::And(a, b) | Self::Or(a, b) => {
-                out.push(if matches!(self, Self::And(..)) { 3 } else { 4 });
-                a.encode(out);
-                b.encode(out);
-            }
-            Self::Not(p) => {
-                out.push(5);
-                p.encode(out);
-            }
-            Self::Implies(a, b) => {
-                out.push(6);
-                a.encode(out);
-                b.encode(out);
-            }
-        }
-    }
-
-    fn and(self, other: Self) -> Self {
-        match (self, other) {
-            (Self::False, _) | (_, Self::False) => Self::False,
-            (Self::True, p) | (p, Self::True) => p,
-            (a, b) if a == b => a,
-            (a, b) => Self::And(Box::new(a), Box::new(b)),
-        }
-    }
-
-    fn or(self, other: Self) -> Self {
-        match (self, other) {
-            (Self::True, _) | (_, Self::True) => Self::True,
-            (Self::False, p) | (p, Self::False) => p,
-            (a, b) if a == b => a,
-            (a, b) => Self::Or(Box::new(a), Box::new(b)),
-        }
-    }
-
-    fn not(self) -> Self {
-        match self {
-            Self::True => Self::False,
-            Self::False => Self::True,
-            Self::Not(p) => *p,
-            p => Self::Not(Box::new(p)),
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Ty {
