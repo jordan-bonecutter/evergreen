@@ -56,49 +56,133 @@ impl<'a> IntoIterator for &'a Path {
     }
 }
 
-/// Each path is a conjunction of inequalities. The path list is a disjunction.
+/// Dependencies of checked contradictions and arithmetic derivations. Unknown
+/// origins are explicit; an empty parent set alone does not mean independence.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Support {
+    pub(super) parents: BTreeSet<evidence::NodeId>,
+    pub(super) unresolved: bool,
+}
+
+impl Support {
+    fn add_origin(&mut self, origin: Origin) {
+        match origin {
+            Origin::Evidence(node) => {
+                self.parents.insert(node);
+            }
+            Origin::Unresolved => self.unresolved = true,
+            Origin::NegatedGoal => {}
+        }
+    }
+
+    pub(super) fn add_rows(&mut self, path: &Path, rows: &[usize]) {
+        for &index in rows {
+            self.add_origin(path.origin(index));
+        }
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.parents.extend(other.parents);
+        self.unresolved |= other.unresolved;
+    }
+}
+
+/// A disjunction keeps the explanations for removed alternatives alongside its
+/// live alternatives. An empty live list is not an unexplained proof of false.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Paths {
+    live: Vec<Path>,
+    pub(super) closed: Support,
+}
+
+impl Paths {
+    pub(super) fn unit() -> Self {
+        Self::from(vec![Path::default()])
+    }
+
+    pub(super) fn extend(&mut self, other: Self) {
+        self.live.extend(other.live);
+        self.closed.merge(other.closed);
+    }
+
+    pub(super) fn append(&mut self, other: &mut Self) {
+        self.extend(std::mem::take(other));
+    }
+}
+
+impl Default for Paths {
+    fn default() -> Self {
+        Self::from(Vec::new())
+    }
+}
+
+impl From<Vec<Path>> for Paths {
+    fn from(live: Vec<Path>) -> Self {
+        // Empty paths supplied without an explanation must not appear to be a
+        // checked contradiction. Known closures use an explicit Support.
+        let closed = Support {
+            unresolved: live.is_empty(),
+            ..Support::default()
+        };
+        Self { live, closed }
+    }
+}
+
+impl std::ops::Deref for Paths {
+    type Target = [Path];
+    fn deref(&self) -> &Self::Target {
+        &self.live
+    }
+}
+
+/// Each path is a conjunction of inequalities. The path set is a disjunction.
 pub(super) fn extend(
-    paths: &[Path],
+    paths: &Paths,
     formula: &Formula,
     negated: bool,
     session: &mut Session,
     work: &mut usize,
-) -> Result<Vec<Path>> {
+) -> Result<Paths> {
     extend_from(paths, formula, negated, Origin::Unresolved, session, work)
 }
 
 pub(super) fn extend_from(
-    paths: &[Path],
+    paths: &Paths,
     formula: &Formula,
     negated: bool,
     origin: Origin,
     session: &mut Session,
     work: &mut usize,
-) -> Result<Vec<Path>> {
+) -> Result<Paths> {
     extend_normalized(paths, &formula.normalized(), negated, origin, session, work)
 }
 
 fn extend_normalized(
-    paths: &[Path],
+    paths: &Paths,
     formula: &Formula,
     negated: bool,
     origin: Origin,
     session: &mut Session,
     work: &mut usize,
-) -> Result<Vec<Path>> {
+) -> Result<Paths> {
+    *work = work.saturating_add(paths.closed.parents.len());
+    if *work > MAX_VALUE_WORK {
+        return Err("verification path evidence work limit reached".into());
+    }
     let result = match formula {
-        Formula::True => {
-            if negated {
-                vec![]
+        Formula::True | Formula::False => {
+            let contradiction = matches!(formula, Formula::False) != negated;
+            if contradiction {
+                // This formula alone closes every alternative. For a negated
+                // goal, that is a tautology, not a dependency on the goal node.
+                let mut closed = Support::default();
+                closed.add_origin(origin);
+                Paths {
+                    live: vec![],
+                    closed,
+                }
             } else {
-                paths.to_vec()
-            }
-        }
-        Formula::False => {
-            if negated {
-                paths.to_vec()
-            } else {
-                vec![]
+                paths.clone()
             }
         }
         Formula::Ge(value) => {
@@ -107,14 +191,11 @@ fn extend_normalized(
             } else {
                 value.clone()
             };
-            paths
-                .iter()
-                .map(|p| {
-                    let mut p = p.clone();
-                    p.push(row.clone(), origin);
-                    p
-                })
-                .collect()
+            let mut result = paths.clone();
+            for path in &mut result.live {
+                path.push(row.clone(), origin);
+            }
+            result
         }
         Formula::Not(p) => return extend_normalized(paths, p, !negated, origin, session, work),
         Formula::Implies(a, b) => {
@@ -154,19 +235,33 @@ fn extend_normalized(
     bounded(result, session, work)
 }
 
-pub(super) fn bounded(
-    paths: Vec<Path>,
-    session: &mut Session,
-    work: &mut usize,
-) -> Result<Vec<Path>> {
+pub(super) fn feasible(mut paths: Paths, session: &mut Session) -> Result<Paths> {
+    if paths.len() <= 1 {
+        return Ok(paths);
+    }
+    let mut live = Vec::new();
+    for path in paths.live {
+        match session.probe_with_support(&path)? {
+            Some(support) => paths.closed.add_rows(&path, &support),
+            None => live.push(path),
+        }
+    }
+    paths.live = live;
+    Ok(paths)
+}
+
+pub(super) fn bounded(paths: Paths, session: &mut Session, work: &mut usize) -> Result<Paths> {
     if paths.len() <= 64 {
         return Ok(paths);
     }
-    // Compare borrowed rows, not deep copies of their coefficient maps. Work
-    // is bounded before sorting or allocating keys for the overflow batch.
-    let cost = paths.iter().flatten().fold(0usize, |cost, row| {
-        cost.saturating_add(1usize.saturating_add(row.terms.len()))
-    });
+    // Compare borrowed rows and origins, retaining the first path's original
+    // row order so certificate indices keep their meaning.
+    let cost = paths
+        .iter()
+        .flatten()
+        .fold(paths.closed.parents.len(), |cost, row| {
+            cost.saturating_add(1usize.saturating_add(row.terms.len()))
+        });
     *work = work.saturating_add(cost);
     if *work > MAX_VALUE_WORK {
         return Err("verification path deduplication work limit reached".into());
@@ -174,34 +269,38 @@ pub(super) fn bounded(
     let mut keep = Vec::with_capacity(paths.len());
     {
         let mut seen = BTreeSet::new();
-        for path in &paths {
+        for path in paths.iter() {
             let mut key = path.annotated().collect::<Vec<_>>();
             key.sort_unstable();
             key.dedup();
             keep.push(seen.insert(key));
         }
     }
-    let unique = paths
+    let live = paths
+        .live
         .into_iter()
         .zip(keep)
         .filter_map(|(path, keep)| keep.then_some(path))
         .collect::<Vec<_>>();
+    let mut unique = Paths {
+        live,
+        closed: paths.closed,
+    };
     if unique.len() > 64 {
-        let mut feasible = Vec::new();
-        for path in unique {
-            // The search result alone has no authority. Session checks every
-            // supplied contradiction certificate and records it for replay.
-            if !session.probe(&path)? {
-                feasible.push(path);
-                if feasible.len() > 64 {
-                    return Err("verification path limit reached (64)".into());
+        let mut live = Vec::new();
+        for path in unique.live {
+            match session.probe_with_support(&path)? {
+                Some(support) => unique.closed.add_rows(&path, &support),
+                None => {
+                    live.push(path);
+                    if live.len() > 64 {
+                        return Err("verification path limit reached (64)".into());
+                    }
                 }
             }
         }
-        return Ok(feasible);
+        unique.live = live;
     }
-    // Retain the first path's original rows and order for certificates. No
-    // inequality is removed and no possibly feasible alternative is forgotten.
     Ok(unique)
 }
 
@@ -218,7 +317,9 @@ mod tests {
         let mut session = Session::recording();
         let mut work = 0;
         assert_eq!(
-            bounded(duplicates, &mut session, &mut work).unwrap(),
+            bounded(duplicates.into(), &mut session, &mut work)
+                .unwrap()
+                .live,
             vec![first]
         );
         let mut paths = (1..=65)
@@ -226,13 +327,17 @@ mod tests {
             .collect::<Vec<_>>();
         paths.push(Path::from(vec![x.clone()]));
         assert_eq!(
-            bounded(paths.clone(), &mut session, &mut work).unwrap(),
+            bounded(paths.clone().into(), &mut session, &mut work)
+                .unwrap()
+                .live,
             vec![Path::from(vec![x.clone()])]
         );
         let bundle = session.bundle("path pruning").unwrap();
         let mut replay = Session::replay(&bundle);
         assert_eq!(
-            bounded(paths.clone(), &mut replay, &mut 0).unwrap(),
+            bounded(paths.clone().into(), &mut replay, &mut 0)
+                .unwrap()
+                .live,
             vec![Path::from(vec![x])]
         );
         replay.finish().unwrap();
@@ -240,7 +345,68 @@ mod tests {
         let text = bundle.to_text();
         assert!(text.contains(" 0:1"));
         let corrupted = ProofBundle::parse(&text.replacen(" 0:1", " 9:1", 1)).unwrap();
-        assert!(bounded(paths, &mut Session::replay(&corrupted), &mut 0).is_err());
+        assert!(bounded(paths.into(), &mut Session::replay(&corrupted), &mut 0).is_err());
+    }
+
+    #[test]
+    fn removed_alternatives_keep_only_checked_contradiction_support_on_replay() {
+        fn check(session: &mut Session) -> Support {
+            let mut graph = evidence::Evidence::default();
+            let used = graph.insert(Formula::False, vec![], true).unwrap();
+            let unused = graph.insert(Formula::True, vec![], true).unwrap();
+            let mut impossible = Path::default();
+            impossible.push(Linear::number(-1), Origin::Evidence(used));
+            impossible.push(Linear::variable("unrelated"), Origin::Evidence(unused));
+            let mut live = Path::default();
+            live.push(Linear::variable("live"), Origin::NegatedGoal);
+            let result = feasible(Paths::from(vec![impossible, live.clone()]), session).unwrap();
+            assert_eq!(result.live, vec![live]);
+            assert_eq!(result.closed.parents, BTreeSet::from([used]));
+            assert!(!result.closed.unresolved);
+            result.closed
+        }
+        let mut recording = Session::recording();
+        let expected = check(&mut recording);
+        recording.finish().unwrap();
+        let bundle = recording.bundle("pruning evidence").unwrap();
+        let mut replay = Session::replay(&bundle);
+        assert_eq!(check(&mut replay), expected);
+        replay.finish().unwrap();
+        assert_eq!(replay.search_count(), 0);
+    }
+
+    #[test]
+    fn overflow_pruning_preserves_explanations_for_every_removed_path() {
+        let mut graph = evidence::Evidence::default();
+        let source = graph.insert(Formula::False, vec![], true).unwrap();
+        let live = Path::from(vec![Linear::variable("live")]);
+        let mut alternatives = (1..=65)
+            .map(|n| {
+                let mut path = Path::default();
+                path.push(Linear::number(-n), Origin::Evidence(source));
+                path
+            })
+            .collect::<Vec<_>>();
+        alternatives.push(live.clone());
+        let result = bounded(alternatives.into(), &mut Session::search(), &mut 0).unwrap();
+        assert_eq!(result.live, vec![live]);
+        assert_eq!(result.closed.parents, BTreeSet::from([source]));
+        assert!(!result.closed.unresolved);
+    }
+
+    #[test]
+    fn unexplained_empty_context_is_not_independent_evidence() {
+        assert!(Paths::default().closed.unresolved);
+        assert!(!Paths::unit().closed.unresolved);
+    }
+
+    #[test]
+    fn pruning_unknown_origins_does_not_invent_complete_evidence() {
+        let input = Paths::from(vec![Path::from(vec![Linear::number(-1)]), Path::default()]);
+        let result = feasible(input, &mut Session::search()).unwrap();
+        assert_eq!(result.live, vec![Path::default()]);
+        assert!(result.closed.parents.is_empty());
+        assert!(result.closed.unresolved);
     }
 
     #[test]
@@ -256,7 +422,9 @@ mod tests {
         let mut paths = vec![first.clone(); 64];
         paths.push(second.clone());
         assert_eq!(
-            bounded(paths, &mut Session::search(), &mut 0).unwrap(),
+            bounded(paths.into(), &mut Session::search(), &mut 0)
+                .unwrap()
+                .live,
             vec![first, second]
         );
     }
@@ -271,8 +439,8 @@ mod tests {
                     Linear::number(n).sub(&x).unwrap(),
                 ])
             })
-            .collect();
-        let error = bounded(paths, &mut Session::search(), &mut 0).unwrap_err();
+            .collect::<Vec<_>>();
+        let error = bounded(paths.into(), &mut Session::search(), &mut 0).unwrap_err();
         assert!(error.contains("path limit"));
     }
 }

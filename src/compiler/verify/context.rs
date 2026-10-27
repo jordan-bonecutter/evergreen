@@ -26,7 +26,7 @@ pub(super) struct ProofState {
     pub(super) facts: BTreeMap<String, Expr>,
     pub(super) witnesses: BTreeMap<String, evidence::NodeId>,
     pub(super) evidence: evidence::Evidence,
-    pub(super) paths: Vec<paths::Path>,
+    pub(super) paths: paths::Paths,
 }
 
 pub(super) struct Execution {
@@ -102,7 +102,7 @@ impl<'a> Context<'a> {
             declarations,
             locals: Locals::default(),
             proof: ProofState {
-                paths: vec![paths::Path::default()],
+                paths: paths::Paths::unit(),
                 ..ProofState::default()
             },
             execution: Execution::default(),

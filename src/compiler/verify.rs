@@ -961,8 +961,10 @@ impl<'a> Context<'a> {
             true,
             self.session,
             &mut self.work.value_work,
-        )? {
-            if !self.session.probe(&path)? {
+        )?
+        .iter()
+        {
+            if !self.session.probe(path)? {
                 return Ok(false);
             }
         }
@@ -1313,17 +1315,8 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
-    fn feasible_paths(&mut self, paths: Vec<paths::Path>) -> Result<Vec<paths::Path>> {
-        if paths.len() <= 1 {
-            return Ok(paths);
-        }
-        let mut feasible = Vec::new();
-        for path in paths {
-            if !self.session.probe(&path)? {
-                feasible.push(path);
-            }
-        }
-        Ok(feasible)
+    fn feasible_paths(&mut self, paths: paths::Paths) -> Result<paths::Paths> {
+        paths::feasible(paths, self.session)
     }
 
     fn proposition(&mut self, e: &Expr) -> Result<Formula> {
@@ -1353,28 +1346,25 @@ impl<'a> Context<'a> {
         p: &Formula,
         label: &str,
         line: usize,
-    ) -> Result<Vec<evidence::NodeId>> {
+    ) -> Result<paths::Support> {
         self.work.obligations += 1;
-        let mut parents = BTreeSet::new();
-        for path in extend_from(
+        let expanded = extend_from(
             &self.proof.paths,
             p,
             true,
             paths::Origin::NegatedGoal,
             self.session,
             &mut self.work.value_work,
-        )? {
+        )?;
+        let mut dependencies = expanded.closed.clone();
+        for path in expanded.iter() {
             let support = self
                 .session
-                .prove_with_support(&path)
+                .prove_with_support(path)
                 .map_err(|e| format!("line {line}: cannot prove {label}: {e}"))?;
-            for index in support {
-                if let paths::Origin::Evidence(node) = path.origin(index) {
-                    parents.insert(node);
-                }
-            }
+            dependencies.add_rows(path, &support);
         }
-        Ok(parents.into_iter().collect())
+        Ok(dependencies)
     }
 
     fn resolve(&mut self, t: &Type) -> Result<Ty> {
@@ -1992,8 +1982,10 @@ impl<'a> Context<'a> {
                     true,
                     self.session,
                     &mut self.work.value_work,
-                )? {
-                    if !self.session.probe(&path)? {
+                )?
+                .iter()
+                {
+                    if !self.session.probe(path)? {
                         return Ok(false);
                     }
                 }

@@ -298,7 +298,13 @@ impl Session {
     }
 
     pub(crate) fn probe(&mut self, rows: &[Linear]) -> Result<bool> {
-        Ok(self.query(rows, true)?.is_some())
+        Ok(self.probe_with_support(rows)?.is_some())
+    }
+
+    /// A successful optional query carries the same checked support as a
+    /// required proof. Failure carries no evidence and cannot justify pruning.
+    pub(crate) fn probe_with_support(&mut self, rows: &[Linear]) -> Result<Option<Vec<usize>>> {
+        self.query(rows, true)
     }
 
     fn query(&mut self, rows: &[Linear], optional: bool) -> Result<Option<Vec<usize>>> {

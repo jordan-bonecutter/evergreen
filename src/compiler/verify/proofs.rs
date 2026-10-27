@@ -362,9 +362,9 @@ mod tests {
                 let root = script(ctx, &goal, &["omega"]);
                 let dependencies = ctx.proof.evidence.admissions(root);
                 assert_eq!(dependencies.admissions, BTreeSet::from([used]));
-                // Pruned alternatives and other path context still need
-                // dependency explanations before completeness is justified.
-                assert!(!dependencies.complete);
+                // Every used row here has an explicit origin; the unrelated
+                // admission is available but is not a premise of the result.
+                assert!(dependencies.complete);
                 dependencies
             })
         }
@@ -376,6 +376,26 @@ mod tests {
         assert_eq!(check(&mut replay), expected);
         replay.finish().unwrap();
         assert_eq!(replay.search_count(), 0);
+    }
+
+    #[test]
+    fn constant_false_context_retains_its_admission_dependency() {
+        with_context(&mut Session::search(), |ctx| {
+            let source = script(ctx, &Formula::False, &["trustme"]);
+            ctx.assume_from(&Formula::False, paths::Origin::Evidence(source))
+                .unwrap();
+            assert!(ctx.proof.paths.is_empty());
+            let goal = Formula::Ge(Linear::variable("arbitrary"));
+            let root = script(ctx, &goal, &["omega"]);
+            let dependencies = ctx.proof.evidence.admissions(root);
+            assert_eq!(dependencies.admissions, BTreeSet::from([source]));
+            assert!(dependencies.complete);
+            // True needs no false premise, even in this inconsistent context.
+            let truth = script(ctx, &Formula::True, &["omega"]);
+            let truth_dependencies = ctx.proof.evidence.admissions(truth);
+            assert!(truth_dependencies.admissions.is_empty());
+            assert!(truth_dependencies.complete);
+        });
     }
 
     #[test]
@@ -392,6 +412,22 @@ mod tests {
                 ctx.proof.evidence.admissions(result).admissions,
                 BTreeSet::from([source])
             );
+        });
+    }
+
+    #[test]
+    fn closing_a_local_false_hypothesis_does_not_poison_the_outer_context() {
+        with_context(&mut Session::search(), |ctx| {
+            let baseline = ctx.proof.paths.clone();
+            let arbitrary = Formula::Ge(Linear::variable("arbitrary"));
+            let goal = Formula::Implies(Box::new(Formula::False), Box::new(arbitrary.clone()));
+            let result = script(ctx, &goal, &["intro impossible", "omega"]);
+            assert!(ctx.proof.evidence.admissions(result).admissions.is_empty());
+            assert_eq!(ctx.proof.paths, baseline);
+            assert!(!ctx.proof.witnesses.contains_key("impossible"));
+            assert!(ctx
+                .proof_script(&arbitrary, "outside hypothesis", 1, &["omega".into()])
+                .is_err());
         });
     }
 

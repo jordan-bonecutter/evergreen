@@ -90,13 +90,20 @@ steps reconstruct edges from kernel-checked certificate support during search
 and replay. Path deduplication retains distinct proof origins even for equal
 arithmetic constraints.
 
-Arithmetic leaves remain explicitly marked as having unresolved context
-provenance. Path pruning can remove an entire alternative, and the explanation
-for that removal is not yet retained in the graph. Runtime/type facts and call
-summaries also lack complete origins. An empty set of known admissions therefore
-does **not** imply admission-free evidence. Scoped hypotheses additionally need
-explicit discharge metadata before the DAG can serve as independently checkable
-proof evidence.
+Path sets retain checked support for removed alternatives. Successful optional
+arithmetic queries reconstruct the contradiction's row support during both
+search and replay; failed probes contribute no evidence. Direct constant-false
+closures also retain their origin, including when no live alternatives remain.
+An independently true goal does not inherit a contradiction merely because the
+surrounding context is inconsistent. Explicitly supplied empty path sets without
+an explanation remain unresolved.
+
+Arithmetic leaves inherit unresolved provenance only when the checked support
+actually uses unresolved origins. Runtime/type facts and call summaries still
+lack complete origins, so an empty set of known admissions does **not** alone
+imply admission-free evidence. Scoped hypotheses additionally need explicit
+discharge metadata before the DAG can serve as independently checkable proof
+evidence.
 
 State-version tracking, admission isolation, and dependency-aware call summaries
 remain to be integrated. Existing acceptance of contradictions through global
