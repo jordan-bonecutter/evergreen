@@ -29,6 +29,51 @@ Proof dependency bookkeeping does not establish validity. Arithmetic certificate
 and logical rules still require checking. Artifact replay must reconstruct and
 check dependencies rather than trusting cached graph annotations.
 
+## Immutable plane states
+
+The verification state has a logical snapshot at each successful statement.
+Snapshots share unchanged nodes rather than cloning every plane and fact set.
+The current implementation uses a persistent compressed binary trie with exact
+integer keys: plane identities index immutable plane states, and proof identities
+index their evidence. It introduces no new package dependency.
+
+Each plane state records a content version, projection versions, and an evidence
+index. Projection versions provide the structural frame rule for unchanged
+fields and distinct constant array indices. Every alias consults the same plane
+entry in the current snapshot. A pointer copy does not freeze the pointee.
+
+Evidence entries are candidates, not unchecked assumptions. A fact involving
+several planes is indexed under each one, while its proof remains one DAG node.
+Using it checks every recorded dependency against the selected snapshot. This
+keeps invalidation lazy: a write does not scan and delete all dependent facts.
+Old snapshots retain their evidence without making it available in the new state.
+
+Branches fork the root. Their merge preserves unchanged regions and gives changed
+regions fresh versions; branch-local facts require a join proof before they can
+become generally available. Version identities are never reused. Subject identity
+registration is append-only and separate from these immutable version maps.
+
+An explicit proof can establish a property of a saved scalar before the source
+changes. The saved scalar's independent plane then retains that evidence. A proof
+about a copied pointer's pointee still depends on the shared target, so an alias
+write invalidates it. Tests cover both cases, multi-plane facts, independent
+branch snapshots, newly observed branch regions, and historical statement roots.
+The persistent map is checked against `BTreeMap` across updates and old snapshots,
+including boundary keys and independent forks. Structural diffs skip shared
+subtrees, so a join does not scan every unchanged plane. Branch and `old()`
+restoration pair the fact root with the corresponding memory view.
+
+`examples/carry_proofs.evg` is a runnable example with no admissions: it explicitly
+establishes a fact about a saved scalar, changes the source, and reuses the saved
+proof. The pointer and multi-plane rejection cases are regression tests.
+
+This is the first immutable state layer. Fact declarations and the proof DAG still
+use the bootstrap's existing representations; memory, path constraints, and lexical
+scopes have not all migrated to a unified persistent state. Explicit inference-rule
+records, complete statement footprints, and function-summary transport remain work
+in progress. The target model keeps propositions distinct from their evidence:
+raw fact references require a witness or a scoped hypothesis to serve as premises.
+
 ## State dependencies
 
 Reads identify value/plane versions and projections, rather than only textual

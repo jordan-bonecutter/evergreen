@@ -13,6 +13,12 @@ const MAX_EDGES: usize = 2_000_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct NodeId(usize);
 
+impl NodeId {
+    pub(super) fn key(self) -> u128 {
+        self.0 as u128
+    }
+}
+
 #[derive(Debug)]
 struct Node {
     claim: Formula,

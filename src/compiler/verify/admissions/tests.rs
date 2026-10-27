@@ -118,3 +118,56 @@ fn a_consumed_precondition_does_not_resurrect_after_symbolic_mutation() {
         .unwrap_err()
         .contains("precondition of needs"));
 }
+
+#[test]
+fn scalar_copy_requires_explicit_admission_transfer_and_then_survives_source_write() {
+    let before = "fn needs(parameter: usize) where parameter == 42 {} fn main() -> usize {let x: usize = 43; proof source: x == 42 by {trustme}; let saved = x; ";
+    let implicit = format!("{before} needs(saved); 0}}");
+    assert!(verify(&implicit)
+        .unwrap_err()
+        .contains("precondition of needs"));
+    let symbolic = "fn needs(parameter: usize) where parameter == 42 {} fn test(x: usize) {proof source: x == 42 by {trustme}; let saved = x; needs(saved);} fn main() {}";
+    assert!(verify(symbolic)
+        .unwrap_err()
+        .contains("precondition of needs"));
+    let symbolic_carried = symbolic.replace("let saved = x; needs(saved);", "let saved = x; proof carried: saved == 42 by {cases source with lower , upper; omega}; x = x + 1; needs(saved);");
+    assert!(verify(&symbolic_carried).is_ok());
+    let explicit = format!("{before} proof carried: saved == 42 by {{cases source with lower , upper; omega}}; x = x + 1; needs(saved); 0}}");
+    let (program, bundle) = prove(&explicit).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "0");
+    assert_eq!(
+        verify_with_certificate(&explicit, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+}
+
+#[test]
+fn copying_a_pointer_does_not_preserve_proofs_when_the_shared_pointee_changes() {
+    let source = "fn needs(parameter: usize) where parameter == 42 {} fn main() -> usize {let x: usize = 43; let p = &x; proof original: *p == 42 by {trustme}; let q = p; proof carried: *q == 42 by {exact original}; *p = 43; needs(*q); 0}";
+    assert!(verify(source)
+        .unwrap_err()
+        .contains("precondition of needs"));
+    let aggregate = "type Holder struct {pointer: &usize} impl Copy for Holder {} fn needs(parameter: usize) where parameter == 42 {} fn main() -> usize {let x: usize = 43; let holder = Holder {pointer: &x}; proof original: *holder.pointer == 42 by {trustme}; let saved = holder; proof carried: *saved.pointer == 42 by {exact original}; *holder.pointer = 43; needs(*saved.pointer); 0}";
+    assert!(verify(aggregate)
+        .unwrap_err()
+        .contains("precondition of needs"));
+}
+
+#[test]
+fn a_multi_plane_claim_expires_when_either_dependency_changes() {
+    let before = "fn needs(parameter: usize) where parameter == 42 {} fn main() -> usize {let x: usize = 43; let y: usize = 43; proof together: x == 42 && y == 42 by {trustme}; ";
+    let implicit = format!("{before} x = x + 1; needs(y); 0}}");
+    assert!(verify(&implicit)
+        .unwrap_err()
+        .contains("precondition of needs"));
+    let explicit = format!("{before} proof independent: y == 42 by {{cases together with left , right; exact right}}; x = x + 1; needs(y); 0}}");
+    let (_, bundle) = prove(&explicit).unwrap();
+    assert_eq!(
+        verify_with_certificate(&explicit, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+}

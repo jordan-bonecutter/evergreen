@@ -269,3 +269,128 @@ fn independently_provable_operations_do_not_acquire_available_admissions() {
             .is_empty()));
     });
 }
+
+#[test]
+fn immutable_plane_roots_preserve_independent_branch_versions() {
+    let mut memory = Memory::default();
+    let plane = memory.allocate(value(0)).unwrap();
+    let reference = memory.borrow(plane).unwrap();
+    let mut subjects = Subjects::default();
+    subjects.write(plane, &[]).unwrap();
+    let left = vec![Projection::Field("left".into())];
+    let right = vec![Projection::Field("right".into())];
+    let old_left = snapshot(subjects.observe(&memory, reference, left.clone()).unwrap());
+    let old_right = snapshot(subjects.observe(&memory, reference, right.clone()).unwrap());
+    let base = subjects.snapshot();
+    subjects.write(plane, &left).unwrap();
+    let a = subjects.snapshot();
+    subjects.restore(base.clone());
+    assert!(subjects.current(&old_left, &memory));
+    assert!(subjects.current(&old_right, &memory));
+    subjects.write(plane, &right).unwrap();
+    let b = subjects.snapshot();
+    assert!(subjects.current(&old_left, &memory));
+    assert!(!subjects.current(&old_right, &memory));
+    subjects.merge(&base, &a, &b).unwrap();
+    assert!(!subjects.current(&old_left, &memory));
+    assert!(!subjects.current(&old_right, &memory));
+    subjects.restore(a);
+    assert!(!subjects.current(&old_left, &memory));
+    assert!(subjects.current(&old_right, &memory));
+    subjects.restore(base);
+    assert!(subjects.current(&old_left, &memory));
+}
+
+#[test]
+fn observing_a_region_in_one_branch_does_not_change_the_other_branch() {
+    let mut memory = Memory::default();
+    let plane = memory.allocate(value(0)).unwrap();
+    let reference = memory.borrow(plane).unwrap();
+    let mut subjects = Subjects::default();
+    subjects.write(plane, &[]).unwrap();
+    let base = subjects.snapshot();
+    subjects.write(plane, &[]).unwrap();
+    let changed = subjects.observe(&memory, reference, vec![]).unwrap();
+    let branch = subjects.snapshot();
+    subjects.restore(base);
+    let unchanged = subjects.observe(&memory, reference, vec![]).unwrap();
+    assert_ne!(changed, unchanged);
+    assert!(!subjects.current(&snapshot(changed), &memory));
+    assert!(subjects.current(&snapshot(unchanged), &memory));
+    subjects.restore(branch);
+    assert!(subjects.current(&snapshot(changed), &memory));
+    assert!(!subjects.current(&snapshot(unchanged), &memory));
+}
+
+#[test]
+fn statement_snapshots_preserve_old_facts_without_making_them_current() {
+    let source = "fn main() -> usize {let x: usize = 43; proof p: x == 42 by {trustme}; x = x; 0}";
+    with_source(source, |ctx, body| {
+        for statement in body {
+            ctx.statement(statement).unwrap();
+        }
+        assert_eq!(ctx.proof.states.len(), body.len());
+        let node = ctx.proof.witnesses["p"];
+        let claim = named_snapshot(ctx, "p");
+        let stamp = *claim.reads.iter().next().unwrap();
+        let plane = ctx.proof.subjects.entries[stamp.subject].plane;
+        assert_eq!(
+            ctx.proof.states[1].region(plane, stamp.subject),
+            stamp.epoch
+        );
+        assert_ne!(
+            ctx.proof.states[2].region(plane, stamp.subject),
+            stamp.epoch
+        );
+        assert!(ctx.proof.states[1]
+            .candidates(&BTreeSet::from([plane]))
+            .contains(&node));
+        assert!(!ctx.proof.subjects.current(&claim, &ctx.storage.memory));
+    });
+}
+
+#[test]
+fn evaluating_old_helpers_cannot_mutate_the_live_planes_fact_state() {
+    let source = "fn identity(value: usize) -> usize where &value == &value ensures result == value {value} fn main() -> usize {let x: usize = 43; proof live: x == 42 by {trustme}; 0}";
+    with_source(source, |ctx, body| {
+        let ty = Ty::Machine(MachineInt::parse("usize").unwrap());
+        let input = ctx
+            .allocate_symbol(Symbol::Number(ty.clone(), Linear::number(7)))
+            .unwrap();
+        let reference = ctx.storage.memory.borrow(input).unwrap();
+        ctx.locals.values.insert(
+            "input".into(),
+            Symbol::Ref(Box::new(ty.clone()), reference, vec![]),
+        );
+        let mut function = syntax::parse("fn point(input: &usize) -> usize {0}")
+            .unwrap()
+            .functions
+            .remove(0);
+        function.entry_memory = true;
+        ctx.execution.current = Some("point".into());
+        ctx.capture_old(&function).unwrap();
+        for statement in body {
+            ctx.statement(statement).unwrap();
+        }
+        let live = named_snapshot(ctx, "live");
+        assert!(ctx.proof.subjects.current(&live, &ctx.storage.memory));
+        let expression = Expr {
+            line: 1,
+            kind: Kind::Call(
+                "identity".into(),
+                vec![Expr {
+                    line: 1,
+                    kind: Kind::Unary(
+                        "*".into(),
+                        Box::new(Expr {
+                            line: 1,
+                            kind: Kind::Name("input".into()),
+                        }),
+                    ),
+                }],
+            ),
+        };
+        ctx.old_expression(&expression, Some(&ty)).unwrap();
+        assert!(ctx.proof.subjects.current(&live, &ctx.storage.memory));
+    });
+}

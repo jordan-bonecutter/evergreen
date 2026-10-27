@@ -8,7 +8,7 @@ struct Scope {
     roots: BTreeMap<String, PlaneId>,
     facts: BTreeMap<String, Expr>,
     proofs: BTreeMap<String, evidence::NodeId>,
-    claims: Vec<evidence::NodeId>,
+    claims: BTreeSet<evidence::NodeId>,
     value_claims: Vec<evidence::NodeId>,
     module: Option<String>,
     phase: Phase,

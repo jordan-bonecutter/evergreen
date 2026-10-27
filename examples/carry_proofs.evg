@@ -1,0 +1,22 @@
+fn needs_42(value: usize) where value == 42 {}
+
+fn preserve(x: usize) where x == 42 {
+    fact original = x == 42;
+    proof source: original by {omega};
+
+    let saved = x;
+    fact saved_is_42 = saved == 42;
+    proof carried: saved_is_42 by {
+        cases source with lower , upper;
+        omega
+    };
+
+    x = x + 1;
+    proof saved_is_42 by {exact carried};
+    needs_42(saved);
+}
+
+fn main() -> usize {
+    preserve(42);
+    0
+}

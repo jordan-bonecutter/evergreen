@@ -401,9 +401,9 @@ impl<'a> Context<'a> {
                     self.proof.paths = paths;
                     let node = self.proof.evidence.contract(p, call_dependencies.clone())?;
                     if let Some(subjects) = subjects {
-                        self.proof.evidence.record_subjects(node, subjects)?;
+                        self.publish_evidence(node, subjects)?;
                     }
-                    self.proof.claims.push(node);
+                    self.proof.claims.insert(node);
                 }
             }
             // Alias contracts describe entry storage. After applying the

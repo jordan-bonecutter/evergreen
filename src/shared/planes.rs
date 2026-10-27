@@ -23,6 +23,14 @@ pub struct PlaneId {
     slot: usize,
 }
 
+impl PlaneId {
+    /// Internal exact key. The store bounds slots to 100,000, well below 2^64.
+    /// Arena identities remain opaque to Evergreen programs and proof artifacts.
+    pub(crate) fn state_key(self) -> u128 {
+        (u128::from(self.owner) << 64) | self.slot as u128
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Projection<I = usize> {
     Field(String),

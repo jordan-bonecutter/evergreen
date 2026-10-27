@@ -33,6 +33,7 @@ mod program;
 mod proofs;
 mod references;
 mod returns;
+mod state;
 mod subjects;
 mod updates;
 mod validation;
@@ -577,6 +578,7 @@ struct EntryMemory {
     env: BTreeMap<String, Symbol>,
     roots: BTreeMap<String, PlaneId>,
     memory: Memory<Symbol>,
+    facts: state::State,
     module: Option<String>,
 }
 
@@ -1187,6 +1189,7 @@ impl<'a> Context<'a> {
                 env: self.clone_env()?,
                 roots: self.locals.places.clone(),
                 memory: self.snapshot_memory()?,
+                facts: self.proof.subjects.snapshot(),
                 module: self.locals.module.clone(),
             }))
         } else {
@@ -1260,6 +1263,8 @@ impl<'a> Context<'a> {
         std::mem::swap(&mut self.locals.places, &mut entry.roots);
         std::mem::swap(&mut self.storage.memory, &mut entry.memory);
         std::mem::swap(&mut self.locals.module, &mut entry.module);
+        let live_state = self.proof.subjects.snapshot();
+        self.proof.subjects.restore(entry.facts.clone());
         let facts = std::mem::take(&mut self.proof.facts);
         let proofs = std::mem::take(&mut self.proof.witnesses);
         let claims = std::mem::take(&mut self.proof.claims);
@@ -1275,6 +1280,8 @@ impl<'a> Context<'a> {
         std::mem::swap(&mut self.locals.places, &mut entry.roots);
         std::mem::swap(&mut self.storage.memory, &mut entry.memory);
         std::mem::swap(&mut self.locals.module, &mut entry.module);
+        entry.facts = self.proof.subjects.snapshot();
+        self.proof.subjects.restore(live_state);
         self.entry.memory = Some(entry);
         // Pure entry expressions cannot construct addresses. Conditional
         // selections may introduce a new symbolic cell path on an incoming
@@ -1707,7 +1714,9 @@ impl<'a> Context<'a> {
     fn statement(&mut self, s: &Statement) -> Result<()> {
         let start = self.storage.temporaries.len();
         self.statement_inner(s)?;
-        self.finish_temporaries(start)
+        self.finish_temporaries(start)?;
+        self.proof.states.push(self.proof.subjects.snapshot());
+        Ok(())
     }
 
     fn finish_temporaries(&mut self, start: usize) -> Result<()> {
@@ -1889,12 +1898,12 @@ impl<'a> Context<'a> {
                 };
                 let evidence =
                     self.proof_script_for(&p, &label, proposition.line, steps, Some(&subjects))?;
-                self.proof.evidence.record_subjects(evidence, subjects)?;
+                self.publish_evidence(evidence, subjects)?;
                 let dependencies = self.evidence_dependencies(evidence)?;
                 if dependencies.admissions.is_empty() {
                     self.assume_from(&p, paths::Origin::Evidence(evidence))?;
                 } else {
-                    self.proof.claims.push(evidence);
+                    self.proof.claims.insert(evidence);
                 }
                 if name != "_" {
                     self.proof.witnesses.insert(name.clone(), evidence);

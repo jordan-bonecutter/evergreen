@@ -47,7 +47,17 @@ impl Context<'_> {
     ) -> Result<Vec<evidence::NodeId>> {
         let variables = goal.variables(&mut self.work.value_work)?;
         let mut relevant = Vec::new();
-        for &node in &self.proof.claims {
+        let candidates = if let Some(subjects) = subjects.filter(|s| s.complete) {
+            self.proof
+                .subjects
+                .candidates(subjects)
+                .intersection(&self.proof.claims)
+                .copied()
+                .collect::<BTreeSet<_>>()
+        } else {
+            self.proof.claims.clone()
+        };
+        for node in candidates {
             let Some(snapshot) = self.proof.evidence.subjects(node) else {
                 continue;
             };

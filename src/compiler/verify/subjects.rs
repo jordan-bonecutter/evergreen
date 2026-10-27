@@ -108,7 +108,6 @@ struct Subject {
     plane: PlaneId,
     reference: Reference,
     path: Vec<Projection<Linear>>,
-    epoch: u64,
 }
 
 #[derive(Debug, Default)]
@@ -116,6 +115,7 @@ pub(super) struct Subjects {
     places: BTreeMap<PlaneId, Vec<usize>>,
     entries: Vec<Subject>,
     clock: u64,
+    state: state::State,
 }
 
 impl Subjects {
@@ -135,55 +135,91 @@ impl Subjects {
     ) -> Result<Stamp> {
         let plane = memory.plane(reference)?;
         let entries = self.places.entry(plane).or_default();
-        if let Some(&subject) = entries.iter().find(|&&id| {
+        let subject = if let Some(&id) = entries.iter().find(|&&id| {
             let entry = &self.entries[id];
             entry.reference == reference && entry.path == path
         }) {
-            return Ok(Stamp {
-                subject,
-                epoch: self.entries[subject].epoch,
+            id
+        } else {
+            if self.entries.len() >= MAX_SUBJECTS {
+                return Err("proof state subject limit reached".into());
+            }
+            let id = self.entries.len();
+            entries.push(id);
+            self.entries.push(Subject {
+                plane,
+                reference,
+                path,
             });
-        }
-        if self.entries.len() >= MAX_SUBJECTS {
-            return Err("proof state subject limit reached".into());
-        }
-        let subject = self.entries.len();
-        entries.push(subject);
-        self.entries.push(Subject {
-            plane,
-            reference,
-            path,
-            epoch: self.clock,
-        });
+            id
+        };
+        self.state = self.state.observe(plane, subject);
         Ok(Stamp {
             subject,
-            epoch: self.clock,
+            epoch: self.state.region(plane, subject),
         })
     }
 
-    /// Epochs never rewind when symbolic memory is restored for another branch.
-    /// A write on either branch conservatively invalidates affected old claims.
     pub(super) fn write(&mut self, plane: PlaneId, path: &[Projection<Linear>]) -> Result<()> {
         self.clock = self
             .clock
             .checked_add(1)
             .ok_or("proof state epoch exhausted")?;
-        if let Some(entries) = self.places.get(&plane) {
-            for &id in entries {
-                let subject = &mut self.entries[id];
-                if overlap(&subject.path, path) {
-                    subject.epoch = self.clock;
-                }
-            }
-        }
+        let regions = self
+            .places
+            .get(&plane)
+            .into_iter()
+            .flatten()
+            .map(|&id| (id, overlap(&self.entries[id].path, path)))
+            .collect::<Vec<_>>();
+        self.state = self.state.write(plane, self.clock, &regions);
         Ok(())
+    }
+
+    pub(super) fn snapshot(&self) -> state::State {
+        self.state.clone()
+    }
+    pub(super) fn restore(&mut self, state: state::State) {
+        self.state = state;
+    }
+
+    pub(super) fn merge(
+        &mut self,
+        base: &state::State,
+        a: &state::State,
+        b: &state::State,
+    ) -> Result<()> {
+        self.clock = self
+            .clock
+            .checked_add(1)
+            .ok_or("proof state epoch exhausted")?;
+        self.state = base.merge(a, b, self.clock, &self.places);
+        Ok(())
+    }
+
+    pub(super) fn publish(&mut self, node: evidence::NodeId, snapshot: &Snapshot) {
+        let planes = snapshot
+            .reads
+            .iter()
+            .map(|stamp| self.entries[stamp.subject].plane)
+            .collect();
+        self.state = self.state.publish(node, &planes);
+    }
+
+    pub(super) fn candidates(&self, snapshot: &Snapshot) -> BTreeSet<evidence::NodeId> {
+        let planes = snapshot
+            .reads
+            .iter()
+            .map(|stamp| self.entries[stamp.subject].plane)
+            .collect();
+        self.state.candidates(&planes)
     }
 
     pub(super) fn current(&self, snapshot: &Snapshot, memory: &Memory<Symbol>) -> bool {
         snapshot.complete
             && snapshot.reads.iter().all(|stamp| {
                 self.entries.get(stamp.subject).is_some_and(|subject| {
-                    subject.epoch == stamp.epoch
+                    self.state.region(subject.plane, stamp.subject) == stamp.epoch
                         && memory.plane(subject.reference).ok() == Some(subject.plane)
                 })
             })
@@ -206,6 +242,18 @@ fn overlap(a: &[Projection<Linear>], b: &[Projection<Linear>]) -> bool {
 }
 
 impl Context<'_> {
+    pub(super) fn publish_evidence(
+        &mut self,
+        node: evidence::NodeId,
+        snapshot: Snapshot,
+    ) -> Result<()> {
+        self.proof
+            .evidence
+            .record_subjects(node, snapshot.clone())?;
+        self.proof.subjects.publish(node, &snapshot);
+        Ok(())
+    }
+
     pub(super) fn note_state_write(
         &mut self,
         plane: PlaneId,

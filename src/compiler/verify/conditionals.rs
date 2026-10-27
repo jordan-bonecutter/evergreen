@@ -3,6 +3,11 @@
 
 use super::*;
 
+struct BranchView {
+    memory: Memory<Symbol>,
+    facts: state::State,
+}
+
 impl Context<'_> {
     pub(super) fn eval_conditional(
         &mut self,
@@ -27,33 +32,36 @@ impl Context<'_> {
         }
         let env = self.clone_env()?;
         let roots = self.locals.places.clone();
-        let store = self.snapshot_memory()?;
+        let store = self.branch_view()?;
         self.proof.paths = extend(&base, &p, false, self.session, &mut self.work.value_work)?;
         let a = self.scoped_eval(yes, expected)?;
         let a_paths = self.proof.paths.clone();
-        let a_store = self.snapshot_memory()?;
+        let a_store = self.branch_view()?;
         self.proof.claims = claims.clone();
         self.proof.value_claims = value_claims.clone();
         self.proof.paths = extend(&base, &p, true, self.session, &mut self.work.value_work)?;
         self.charge_value_work(values_weight(env.values())?)?;
         self.locals.values = env.clone();
         self.locals.places = roots.clone();
-        self.storage.memory = self.clone_store(&store)?;
+        self.restore_branch_view(&store)?;
         let b = self.scoped_eval(no, Some(&a.ty()))?;
         let b_paths = self.proof.paths.clone();
-        let b_store = self.snapshot_memory()?;
+        let b_store = self.branch_view()?;
         self.proof.claims = claims;
         self.proof.value_claims = value_claims;
         self.proof.paths = base;
         self.locals.values = env;
         self.locals.places = roots;
-        self.storage.memory = self.clone_store(&store)?;
+        self.restore_branch_view(&store)?;
+        self.proof
+            .subjects
+            .merge(&store.facts, &a_store.facts, &b_store.facts)?;
         let mut state_a = Formula::True;
         let mut state_b = Formula::True;
         let mut views = Vec::new();
-        let a_states = a_store.states();
-        let b_states = b_store.states();
-        for (index, (id, generation, original)) in store.states().into_iter().enumerate() {
+        let a_states = a_store.memory.states();
+        let b_states = b_store.memory.states();
+        for (index, (id, generation, original)) in store.memory.states().into_iter().enumerate() {
             let (_, ag, av) = a_states.get(index).ok_or("missing branch plane")?;
             let (_, bg, bv) = b_states.get(index).ok_or("missing branch plane")?;
             if ag != bg {
@@ -124,6 +132,19 @@ impl Context<'_> {
             }
         }
         Ok(result)
+    }
+
+    fn branch_view(&mut self) -> Result<BranchView> {
+        Ok(BranchView {
+            memory: self.snapshot_memory()?,
+            facts: self.proof.subjects.snapshot(),
+        })
+    }
+
+    fn restore_branch_view(&mut self, view: &BranchView) -> Result<()> {
+        self.storage.memory = self.clone_store(&view.memory)?;
+        self.proof.subjects.restore(view.facts.clone());
+        Ok(())
     }
 
     fn join_value(
