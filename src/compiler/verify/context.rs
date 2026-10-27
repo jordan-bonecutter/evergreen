@@ -107,6 +107,7 @@ pub(super) struct Context<'a> {
     pub(super) storage: Storage,
     pub(super) entry: EntryState,
     pub(super) arrays: Arrays,
+    pub(super) applications: ideal::Applications,
     pub(super) work: Work,
     pub(super) session: &'a mut Session,
 }
@@ -124,6 +125,7 @@ impl<'a> Context<'a> {
             storage: Storage::default(),
             entry: EntryState::default(),
             arrays: Arrays::default(),
+            applications: ideal::Applications::default(),
             work: Work::default(),
             session,
         }

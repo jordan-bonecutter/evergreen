@@ -4,10 +4,12 @@
 
 use super::*;
 
+mod applications;
 mod evaluate;
 #[cfg(test)]
 mod tests;
 mod values;
+pub(super) use applications::Applications;
 
 use values::{Budget, Importer, Value};
 

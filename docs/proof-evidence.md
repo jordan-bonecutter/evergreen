@@ -22,6 +22,15 @@ admissions still use the ordinary call checker. Definition interpretation is a
 frontend trust boundary, rather than an independent kernel reduction certificate.
 Symbolic inputs and unsupported computations continue through verified contracts.
 
+Repeated read-only ideal Boolean applications use the same symbolic proposition
+for identical scalar values, immutable array versions, and reference projection
+revisions. Changing a referenced region creates a different application;
+changing an independent sibling projection preserves the original one. These
+application identities express congruence, not evidence of truth. Preconditions,
+postconditions, explicit proofs, and admissions still pass through ordinary
+checking. Nested references and resource-bearing inputs need transitive
+observation footprints and are excluded from this identification for now.
+
 Runtime loops use a finite initialization/preservation/exit rule in the frontend.
 Their invariant imports have the same explicit unresolved context as checked
 function-contract imports. The proof graph remains acyclic: an arbitrary head

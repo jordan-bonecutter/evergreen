@@ -1,6 +1,53 @@
 use super::*;
 
 #[test]
+fn unchanged_symbolic_predicate_arguments_name_the_same_proposition() {
+    let source = "ideal fn positive(n: usize) -> bool {n > 0} fn forward(n: usize) -> usize where positive(n) {proof same: positive(n); n} fn main() -> usize {forward(42)}";
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let bad = source.replace("where positive(n)", "");
+    assert!(verify(&bad).is_err());
+    let changed = source.replace(
+        "proof same: positive(n);",
+        "n = 0; proof same: positive(n);",
+    );
+    assert!(verify(&changed).is_err());
+}
+
+#[test]
+fn observation_predicates_track_exact_reference_projection_revisions() {
+    let source = "type Pair struct {left: usize, right: usize} ideal fn nonzero(value: &usize) -> bool {*value != 0} fn change(pair: &Pair) where nonzero(&pair.left) modifies(&pair.right) {pair.right = 0; proof preserved: nonzero(&pair.left);} fn main() -> usize {let pair = Pair {left: 42, right: 7}; change(&pair); pair.left}";
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let invalidated = source
+        .replace("modifies(&pair.right)", "modifies(&pair.left)")
+        .replace("pair.right = 0", "pair.left = 0");
+    assert!(verify(&invalidated).is_err());
+    let symbolic_write = source
+        .replace(
+            "fn change(pair: &Pair)",
+            "fn change(pair: &Pair, next: usize)",
+        )
+        .replace("modifies(&pair.right)", "modifies(&pair.left)")
+        .replace("pair.right = 0", "pair.left = next")
+        .replace("change(&pair)", "change(&pair, 0)");
+    assert!(verify(&symbolic_write).is_err());
+}
+
+#[test]
 fn utf8_validity_is_computed_from_library_definitions_and_replayed() {
     let source = include_str!("../../../../examples/utf8_literal.evg");
     let (program, bundle) = prove(source).unwrap();

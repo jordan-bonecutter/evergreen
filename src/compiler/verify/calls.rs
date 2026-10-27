@@ -430,6 +430,8 @@ impl<'a> Context<'a> {
             call_dependencies = self.proof.contract_parents.clone();
             let value = if let Some(value) = self.reduce_ideal(f)? {
                 value
+            } else if let Some(value) = self.model_ideal_predicate(f)? {
+                value
             } else if !f.borrows.is_empty() {
                 let aliases = self.return_aliases(f, None)?;
                 self.return_shape(&ret, &mut Vec::new(), &aliases)?
