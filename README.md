@@ -15,6 +15,12 @@ standalone Linux x86-64 executable for the supported verified subset. Without
 Bundled stdlib dependencies load automatically. For byte output, try
 `cargo run -- build examples/hello.evg -o /tmp/hello` and run `/tmp/hello`.
 
+### Neovim support
+
+Run `./scripts/install-nvim.sh` to install `.evg` highlighting, indentation, and
+comment settings. See [the Neovim runtime documentation](editors/nvim/README.md)
+for custom install locations and removal.
+
 ### Reading the compiler
 
 | Responsibility | Code |
