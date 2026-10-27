@@ -83,11 +83,20 @@ historical dependencies after lexical hypotheses leave scope. Node, edge, and
 aggregate claim-storage limits bound graph growth. Tests cover transitive and
 unused admissions, local hypotheses, deep chains, and reconstruction on replay.
 
-Arithmetic leaves are explicitly marked as having unresolved context provenance.
-An empty set of known admissions therefore does **not** imply admission-free
-evidence. Checked arithmetic row support still needs to be connected to path-row
-origins; scoped hypotheses also need explicit discharge metadata before the DAG
-can serve as independently checkable proof evidence.
+Arithmetic path rows now carry positional origins. Rows introduced by explicit
+proofs and local proof hypotheses point to their evidence nodes; negated-goal
+rows have a distinct origin and never become premise edges. Arithmetic proof
+steps reconstruct edges from kernel-checked certificate support during search
+and replay. Path deduplication retains distinct proof origins even for equal
+arithmetic constraints.
+
+Arithmetic leaves remain explicitly marked as having unresolved context
+provenance. Path pruning can remove an entire alternative, and the explanation
+for that removal is not yet retained in the graph. Runtime/type facts and call
+summaries also lack complete origins. An empty set of known admissions therefore
+does **not** imply admission-free evidence. Scoped hypotheses additionally need
+explicit discharge metadata before the DAG can serve as independently checkable
+proof evidence.
 
 State-version tracking, admission isolation, and dependency-aware call summaries
 remain to be integrated. Existing acceptance of contradictions through global

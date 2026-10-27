@@ -27,6 +27,7 @@ mod external;
 mod heap;
 mod parameters;
 mod paths;
+use paths::{extend, extend_from};
 mod program;
 mod proofs;
 mod references;
@@ -321,90 +322,6 @@ fn type_has_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
             .is_some_and(|s| s.fields.iter().any(|(_, t)| type_has_reference(t, structs))),
         _ => false,
     }
-}
-
-/// Each path is a conjunction of inequalities. The path list is a disjunction.
-fn extend(
-    paths: &[Vec<Linear>],
-    formula: &Formula,
-    negated: bool,
-    session: &mut Session,
-    work: &mut usize,
-) -> Result<Vec<Vec<Linear>>> {
-    extend_normalized(paths, &formula.normalized(), negated, session, work)
-}
-
-fn extend_normalized(
-    paths: &[Vec<Linear>],
-    formula: &Formula,
-    negated: bool,
-    session: &mut Session,
-    work: &mut usize,
-) -> Result<Vec<Vec<Linear>>> {
-    let result = match formula {
-        Formula::True => {
-            if negated {
-                vec![]
-            } else {
-                paths.to_vec()
-            }
-        }
-        Formula::False => {
-            if negated {
-                paths.to_vec()
-            } else {
-                vec![]
-            }
-        }
-        Formula::Ge(value) => {
-            let row = if negated {
-                value.scale(-1)?.add(&Linear::number(-1))?
-            } else {
-                value.clone()
-            };
-            paths
-                .iter()
-                .map(|p| {
-                    let mut p = p.clone();
-                    p.push(row.clone());
-                    p
-                })
-                .collect()
-        }
-        Formula::Not(p) => return extend_normalized(paths, p, !negated, session, work),
-        Formula::Implies(a, b) => {
-            if negated {
-                extend_normalized(
-                    &extend_normalized(paths, a, false, session, work)?,
-                    b,
-                    true,
-                    session,
-                    work,
-                )?
-            } else {
-                let mut left = extend_normalized(paths, a, true, session, work)?;
-                left.extend(extend_normalized(paths, b, false, session, work)?);
-                left
-            }
-        }
-        Formula::And(a, b) | Formula::Or(a, b) => {
-            let conjunction = matches!(formula, Formula::And(..)) != negated;
-            if conjunction {
-                extend_normalized(
-                    &extend_normalized(paths, a, negated, session, work)?,
-                    b,
-                    negated,
-                    session,
-                    work,
-                )?
-            } else {
-                let mut left = extend_normalized(paths, a, negated, session, work)?;
-                left.extend(extend_normalized(paths, b, negated, session, work)?);
-                left
-            }
-        }
-    };
-    paths::bounded(result, session, work)
 }
 
 fn equal(a: &Linear, b: &Linear) -> Result<Formula> {
@@ -1380,10 +1297,15 @@ impl<'a> Context<'a> {
     }
 
     fn assume(&mut self, p: &Formula) -> Result<()> {
-        let paths = extend(
+        self.assume_from(p, paths::Origin::Unresolved)
+    }
+
+    fn assume_from(&mut self, p: &Formula, origin: paths::Origin) -> Result<()> {
+        let paths = extend_from(
             &self.proof.paths,
             p,
             false,
+            origin,
             self.session,
             &mut self.work.value_work,
         )?;
@@ -1391,7 +1313,7 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
-    fn feasible_paths(&mut self, paths: Vec<Vec<Linear>>) -> Result<Vec<Vec<Linear>>> {
+    fn feasible_paths(&mut self, paths: Vec<paths::Path>) -> Result<Vec<paths::Path>> {
         if paths.len() <= 1 {
             return Ok(paths);
         }
@@ -1423,19 +1345,36 @@ impl<'a> Context<'a> {
     }
 
     fn prove(&mut self, p: &Formula, label: &str, line: usize) -> Result<()> {
+        self.arithmetic_support(p, label, line).map(|_| ())
+    }
+
+    fn arithmetic_support(
+        &mut self,
+        p: &Formula,
+        label: &str,
+        line: usize,
+    ) -> Result<Vec<evidence::NodeId>> {
         self.work.obligations += 1;
-        for path in extend(
+        let mut parents = BTreeSet::new();
+        for path in extend_from(
             &self.proof.paths,
             p,
             true,
+            paths::Origin::NegatedGoal,
             self.session,
             &mut self.work.value_work,
         )? {
-            self.session
-                .prove(&path)
+            let support = self
+                .session
+                .prove_with_support(&path)
                 .map_err(|e| format!("line {line}: cannot prove {label}: {e}"))?;
+            for index in support {
+                if let paths::Origin::Evidence(node) = path.origin(index) {
+                    parents.insert(node);
+                }
+            }
         }
-        Ok(())
+        Ok(parents.into_iter().collect())
     }
 
     fn resolve(&mut self, t: &Type) -> Result<Ty> {
@@ -1947,7 +1886,7 @@ impl<'a> Context<'a> {
                     format!("proof {name}")
                 };
                 let evidence = self.proof_script(&p, &label, proposition.line, steps)?;
-                self.assume(&p)?;
+                self.assume_from(&p, paths::Origin::Evidence(evidence))?;
                 if name != "_" {
                     self.proof.witnesses.insert(name.clone(), evidence);
                 }

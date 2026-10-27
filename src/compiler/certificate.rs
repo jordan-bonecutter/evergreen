@@ -287,10 +287,6 @@ impl Session {
         }
     }
 
-    pub(crate) fn prove(&mut self, rows: &[Linear]) -> Result<()> {
-        self.prove_with_support(rows).map(|_| ())
-    }
-
     /// Original row indices with nonzero weights in a kernel-checked
     /// certificate. These identify actual premises, not every available fact.
     /// Replay obtains them from the checked certificate, never artifact claims.

@@ -1,7 +1,8 @@
 //! Append-only evidence for explicit propositional proof steps.
 //!
-//! Edges point to earlier nodes. Arithmetic path origins and value versions are
-//! not represented yet, so this graph must not authorize admission isolation.
+//! Edges point to earlier nodes. Arithmetic certificates add edges for the
+//! evidence rows they use. Pruning explanations and value versions remain
+//! incomplete, so this graph must not authorize admission isolation.
 
 use super::*;
 
@@ -74,10 +75,10 @@ impl Evidence {
         Ok(id)
     }
 
-    pub(super) fn arithmetic(&mut self, claim: Formula) -> Result<NodeId> {
-        let id = self.insert(claim, vec![], false)?;
-        // Kernel checking establishes truth in the current path context, but
-        // its row origins are not yet linked to proof nodes. Do not report an
+    pub(super) fn arithmetic(&mut self, claim: Formula, parents: Vec<NodeId>) -> Result<NodeId> {
+        let id = self.insert(claim, parents, false)?;
+        // Used evidence rows have edges, but pruned paths, runtime facts and
+        // derived summaries still lack complete provenance. Do not report an
         // arithmetic leaf as admission-free merely because its edges are empty.
         self.nodes[id.0].unresolved_context = true;
         Ok(id)
@@ -136,7 +137,7 @@ mod tests {
     #[test]
     fn unresolved_arithmetic_context_cannot_appear_admission_free() {
         let mut graph = Evidence::default();
-        let leaf = graph.arithmetic(Formula::True).unwrap();
+        let leaf = graph.arithmetic(Formula::True, vec![]).unwrap();
         let root = graph.insert(Formula::True, vec![leaf], false).unwrap();
         let dependencies = graph.admissions(root);
         assert!(dependencies.admissions.is_empty());

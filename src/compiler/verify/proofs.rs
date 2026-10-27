@@ -37,8 +37,13 @@ impl Context<'_> {
             }
             let mut proposition = Vec::new();
             goal.normalized().encode(&mut proposition);
-            self.session
-                .trust(&self.proof.paths, &proposition, line, label)?;
+            let rows = self
+                .proof
+                .paths
+                .iter()
+                .map(|path| path.to_vec())
+                .collect::<Vec<_>>();
+            self.session.trust(&rows, &proposition, line, label)?;
             self.work.obligations += 1;
             let node = self.proof.evidence.insert(goal.clone(), vec![], true)?;
             debug_assert!(self.proof.evidence.admissions(node).complete);
@@ -89,7 +94,7 @@ impl Context<'_> {
                         .evidence
                         .insert((*premise).clone(), parents.to_vec(), false)?;
                 self.proof.witnesses.insert((*name).into(), node);
-                self.assume(premise)?;
+                self.assume_from(premise, paths::Origin::Evidence(node))?;
             }
             check(self)
         })();
@@ -121,9 +126,8 @@ impl Context<'_> {
         *next += 1;
         match step.as_str() {
             "omega" | "rfl" | "simp_all" | "decide" => {
-                self.prove(goal, label, line)?;
-                // Arithmetic context provenance is the next integration step.
-                self.proof.evidence.arithmetic(goal.clone())
+                let parents = self.arithmetic_support(goal, label, line)?;
+                self.proof.evidence.arithmetic(goal.clone(), parents)
             }
             "assumption" => {
                 let names = self.proof.witnesses.keys().cloned().collect::<Vec<_>>();
@@ -335,6 +339,39 @@ mod tests {
         let expected = check(&mut recording);
         recording.finish().unwrap();
         let bundle = recording.bundle("proof graph replay").unwrap();
+        let mut replay = Session::replay(&bundle);
+        assert_eq!(check(&mut replay), expected);
+        replay.finish().unwrap();
+        assert_eq!(replay.search_count(), 0);
+    }
+
+    #[test]
+    fn arithmetic_edges_use_checked_row_support_on_search_and_replay() {
+        fn check(session: &mut Session) -> evidence::AdmissionDependencies {
+            with_context(session, |ctx| {
+                let x = Linear::variable("x");
+                let used_claim = Formula::Ge(x.clone());
+                let unused_claim = Formula::Ge(Linear::variable("unrelated"));
+                let used = script(ctx, &used_claim, &["trustme"]);
+                let unused = script(ctx, &unused_claim, &["trustme"]);
+                ctx.assume_from(&used_claim, paths::Origin::Evidence(used))
+                    .unwrap();
+                ctx.assume_from(&unused_claim, paths::Origin::Evidence(unused))
+                    .unwrap();
+                let goal = Formula::Ge(x.add(&Linear::number(1)).unwrap());
+                let root = script(ctx, &goal, &["omega"]);
+                let dependencies = ctx.proof.evidence.admissions(root);
+                assert_eq!(dependencies.admissions, BTreeSet::from([used]));
+                // Pruned alternatives and other path context still need
+                // dependency explanations before completeness is justified.
+                assert!(!dependencies.complete);
+                dependencies
+            })
+        }
+        let mut recording = Session::recording();
+        let expected = check(&mut recording);
+        recording.finish().unwrap();
+        let bundle = recording.bundle("arithmetic proof graph replay").unwrap();
         let mut replay = Session::replay(&bundle);
         assert_eq!(check(&mut replay), expected);
         replay.finish().unwrap();
