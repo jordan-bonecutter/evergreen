@@ -177,7 +177,11 @@ impl Parser {
         self.expect("type")?;
         let name = self.name()?;
         self.expect("=")?;
-        self.expect("make_type")?;
+        if !self.eat("make_type") {
+            return Err(self.err(
+                "type aliases are not supported; use a struct with a where clause for a refined type, or make_type(...) for a primitive representation",
+            ));
+        }
         self.expect("(")?;
         let mut entries = Vec::new();
         if !self.eat(")") {
