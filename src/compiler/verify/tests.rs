@@ -3667,3 +3667,23 @@ fn ideal_integer_spelling_and_named_constructor_proofs() {
     assert!(verify("fn main() -> integer {0}").is_err());
     assert!(verify("fn main() -> usize {integer(0)}").is_err());
 }
+
+#[test]
+fn return_provenance_errors_explain_the_required_surviving_planes() {
+    let local = "fn foo() -> &usize {let x: usize = 0; &x} fn main() -> usize {0}";
+    let error = verify(local).unwrap_err();
+    assert!(error.contains("local plane"), "{error}");
+    assert!(error.contains("local storage ends"), "{error}");
+    let missing = "fn foo(x: &usize) -> &usize {x}";
+    let error = verify(missing).unwrap_err();
+    assert!(
+        error.contains("surviving planes") && error.contains("borrows contract"),
+        "{error}"
+    );
+    let extra = "fn foo(x: &usize) -> usize borrows(x) {*x}";
+    assert!(verify(extra)
+        .unwrap_err()
+        .contains("return type contains no references"));
+    let good = "fn foo(x: &usize) -> &usize borrows(x) {x} fn main() -> usize {let x: usize = 42; *foo(&x)}";
+    assert_eq!(verify(good).unwrap().run().unwrap().to_string(), "42");
+}

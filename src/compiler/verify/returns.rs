@@ -146,8 +146,25 @@ pub(super) fn check_return_borrows(f: &Function, structs: &BTreeMap<String, Stru
         }
     }
     if supplied != required {
+        if required.is_empty() {
+            return Err(format!(
+                "line {}: borrows describes return-plane provenance, but the return type contains no references",
+                f.line
+            ));
+        }
+        if !f
+            .params
+            .iter()
+            .any(|(_, ty)| type_has_reference(ty, structs))
+            && !heap::owns_planes_type(&f.ret, structs)
+        {
+            return Err(format!(
+                "line {}: cannot return a reference into a local plane: local storage ends when this function returns; a returned reference needs a surviving incoming plane or an owner returned with it",
+                f.result.line
+            ));
+        }
         return Err(format!(
-            "line {}: borrows must name every return reference leaf exactly once",
+            "line {}: returned references need surviving planes; the borrows contract must identify the plane for every reference in the return value exactly once",
             f.line
         ));
     }
