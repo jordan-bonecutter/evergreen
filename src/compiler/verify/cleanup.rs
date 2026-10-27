@@ -8,6 +8,8 @@ struct Scope {
     roots: BTreeMap<String, PlaneId>,
     facts: BTreeMap<String, Expr>,
     proofs: BTreeMap<String, evidence::NodeId>,
+    claims: Vec<evidence::NodeId>,
+    value_claims: Vec<evidence::NodeId>,
     module: Option<String>,
     phase: Phase,
     current: Option<String>,
@@ -29,6 +31,8 @@ impl Scope {
             roots: std::mem::take(&mut ctx.locals.places),
             facts: std::mem::take(&mut ctx.proof.facts),
             proofs: std::mem::take(&mut ctx.proof.witnesses),
+            claims: std::mem::take(&mut ctx.proof.claims),
+            value_claims: std::mem::take(&mut ctx.proof.value_claims),
             module: std::mem::replace(&mut ctx.locals.module, f.module.clone()),
             phase: std::mem::replace(&mut ctx.execution.phase, Phase::Runtime),
             current: ctx.execution.current.replace(f.name.clone()),
@@ -51,6 +55,8 @@ impl Scope {
         ctx.locals.places = self.roots;
         ctx.proof.facts = self.facts;
         ctx.proof.witnesses = self.proofs;
+        ctx.proof.claims = self.claims;
+        ctx.proof.value_claims = self.value_claims;
         ctx.locals.module = self.module;
         ctx.execution.phase = self.phase;
         ctx.execution.current = self.current;

@@ -2,6 +2,24 @@
 
 use super::*;
 
+struct Script<'a> {
+    steps: &'a [String],
+    next: usize,
+    label: &'a str,
+    line: usize,
+}
+
+impl<'a> Script<'a> {
+    fn take(&mut self) -> Result<&'a str> {
+        let step = self
+            .steps
+            .get(self.next)
+            .ok_or_else(|| format!("line {}: proof has an unfinished goal", self.line))?;
+        self.next += 1;
+        Ok(step)
+    }
+}
+
 impl Formula {
     // Retain connective structure for introduction/elimination rules, while
     // exact matching keeps the existing normalization of logical expressions.
@@ -23,6 +41,17 @@ impl Context<'_> {
         label: &str,
         line: usize,
         steps: &[String],
+    ) -> Result<evidence::NodeId> {
+        self.proof_script_for(goal, label, line, steps, None)
+    }
+
+    pub(super) fn proof_script_for(
+        &mut self,
+        goal: &Formula,
+        label: &str,
+        line: usize,
+        steps: &[String],
+        subjects: Option<&subjects::Snapshot>,
     ) -> Result<evidence::NodeId> {
         if steps.len() > 1024 {
             return Err(format!(
@@ -49,9 +78,14 @@ impl Context<'_> {
             debug_assert!(self.proof.evidence.admissions(node).complete);
             return Ok(node);
         }
-        let mut next = 0;
-        let node = self.proof_goal(goal, label, line, steps, &mut next, 0)?;
-        if next != steps.len() {
+        let mut script = Script {
+            steps,
+            next: 0,
+            label,
+            line,
+        };
+        let node = self.proof_goal(goal, &mut script, 0, subjects)?;
+        if script.next != steps.len() {
             return Err(format!(
                 "line {line}: unused proof steps after the goal was closed"
             ));
@@ -63,6 +97,46 @@ impl Context<'_> {
         self.charge_value_work(symbol_weight(&Symbol::Bool(a.clone()))?)?;
         self.charge_value_work(symbol_weight(&Symbol::Bool(b.clone()))?)?;
         Ok(a.normalized() == b.normalized())
+    }
+
+    fn witness_matches(
+        &mut self,
+        node: evidence::NodeId,
+        claim: &Formula,
+        goal: &Formula,
+        subjects: Option<&subjects::Snapshot>,
+    ) -> Result<bool> {
+        if !self.same_proposition(claim, goal)? {
+            return Ok(false);
+        }
+        let dependencies = self.evidence_dependencies(node)?;
+        if dependencies.admissions.is_empty() {
+            return Ok(true);
+        }
+        let Some(snapshot) = self.proof.evidence.subjects(node) else {
+            return Ok(true);
+        };
+        Ok(self.proof.subjects.current(snapshot, &self.storage.memory)
+            && subjects.is_some_and(|goal| goal.complete && snapshot.key == goal.key))
+    }
+
+    fn require_live_witness(
+        &mut self,
+        node: evidence::NodeId,
+        name: &str,
+        line: usize,
+    ) -> Result<()> {
+        if self.evidence_dependencies(node)?.admissions.is_empty() {
+            return Ok(());
+        }
+        if let Some(snapshot) = self.proof.evidence.subjects(node) {
+            if !self.proof.subjects.current(snapshot, &self.storage.memory) {
+                return Err(format!(
+                    "line {line}: proof {name} refers to an earlier or unresolved state"
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn with_proof_hypotheses(
@@ -108,25 +182,22 @@ impl Context<'_> {
     fn proof_goal(
         &mut self,
         goal: &Formula,
-        label: &str,
-        line: usize,
-        steps: &[String],
-        next: &mut usize,
+        script: &mut Script<'_>,
         depth: usize,
+        subjects: Option<&subjects::Snapshot>,
     ) -> Result<evidence::NodeId> {
+        let label = script.label;
+        let line = script.line;
         if depth >= 64 {
             return Err(format!(
                 "line {line}: proof goal nesting limit reached (64)"
             ));
         }
         self.charge_value_work(1)?;
-        let step = steps
-            .get(*next)
-            .ok_or_else(|| format!("line {line}: proof has an unfinished goal"))?;
-        *next += 1;
-        match step.as_str() {
+        let step = script.take()?;
+        match step {
             "omega" | "rfl" | "simp_all" | "decide" => {
-                let parents = self.arithmetic_support(goal, label, line)?;
+                let parents = self.arithmetic_support_for(goal, subjects, label, line)?;
                 self.proof.evidence.arithmetic(goal.clone(), parents)
             }
             "assumption" => {
@@ -135,7 +206,7 @@ impl Context<'_> {
                 for name in names {
                     let node = self.proof.witnesses[&name];
                     let candidate = self.proof.evidence.claim(node).clone();
-                    if self.same_proposition(&candidate, goal)? {
+                    if self.witness_matches(node, &candidate, goal, subjects)? {
                         self.work.obligations += 1;
                         return self.proof.evidence.insert(goal.clone(), vec![node], false);
                     }
@@ -150,21 +221,22 @@ impl Context<'_> {
                         "line {line}: constructor requires a conjunction goal"
                     ));
                 };
-                let a = self.proof_goal(a, label, line, steps, next, depth + 1)?;
-                let b = self.proof_goal(b, label, line, steps, next, depth + 1)?;
+                let left_subjects = subjects.and_then(|s| s.branch("&&", false));
+                let right_subjects = subjects.and_then(|s| s.branch("&&", true));
+                let a = self.proof_goal(a, script, depth + 1, left_subjects.as_ref())?;
+                let b = self.proof_goal(b, script, depth + 1, right_subjects.as_ref())?;
                 self.proof.evidence.insert(goal.clone(), vec![a, b], false)
             }
             "left" | "right" => {
                 let Formula::Or(a, b) = goal else {
                     return Err(format!("line {line}: {step} requires a disjunction goal"));
                 };
+                let branch_subjects = subjects.and_then(|s| s.branch("||", step == "right"));
                 let premise = self.proof_goal(
                     if step == "left" { a } else { b },
-                    label,
-                    line,
-                    steps,
-                    next,
+                    script,
                     depth + 1,
+                    branch_subjects.as_ref(),
                 )?;
                 self.proof
                     .evidence
@@ -174,7 +246,7 @@ impl Context<'_> {
                 let name = &step[6..];
                 let proven = self.proof.witnesses.get(name).cloned().ok_or_else(|| format!("line {line}: {name} is not a checked proof; fact declarations are propositions, not assumptions"))?;
                 let claim = self.proof.evidence.claim(proven).clone();
-                if !self.same_proposition(&claim, goal)? {
+                if !self.witness_matches(proven, &claim, goal, subjects)? {
                     return Err(format!("line {line}: exact {name} proves a different proposition or an earlier state"));
                 }
                 self.work.obligations += 1;
@@ -193,9 +265,15 @@ impl Context<'_> {
                     }
                 };
                 let name = &step[6..];
+                let consequence_subjects = subjects.and_then(|s| s.branch("=>", true));
                 let consequence =
                     self.with_proof_hypotheses(&[(name, premise)], &[], line, |ctx| {
-                        ctx.proof_goal(consequence, label, line, steps, next, depth + 1)
+                        ctx.proof_goal(
+                            consequence,
+                            script,
+                            depth + 1,
+                            consequence_subjects.as_ref(),
+                        )
                     })?;
                 self.proof
                     .evidence
@@ -210,6 +288,7 @@ impl Context<'_> {
                     {
                         return Err(format!("line {line}: cases {name} without a pattern requires a checked proof of false"));
                     }
+                    self.require_live_witness(node.unwrap(), name, line)?;
                     self.work.obligations += 1;
                     return self
                         .proof
@@ -223,11 +302,12 @@ impl Context<'_> {
                     self.proof.witnesses.get(*name).cloned().ok_or_else(|| {
                         format!("line {line}: cases {name} requires a checked proof")
                     })?;
+                self.require_live_witness(theorem, name, line)?;
                 let claim = self.proof.evidence.claim(theorem).clone();
                 match (claim, *separator) {
                     (Formula::And(a, b), ",") => {
                         let branch = self.with_proof_hypotheses(&[(first, &a), (second, &b)], &[theorem], line, |ctx| {
-                            ctx.proof_goal(goal, label, line, steps, next, depth + 1)
+                            ctx.proof_goal(goal, script, depth + 1, subjects)
                         })?;
                         self.proof.evidence.insert(goal.clone(), vec![theorem, branch], false)
                     }
@@ -236,10 +316,10 @@ impl Context<'_> {
                         self.fresh_binding(first, line)?;
                         self.fresh_binding(second, line)?;
                         let left = self.with_proof_hypotheses(&[(first, &a)], &[theorem], line, |ctx| {
-                            ctx.proof_goal(goal, label, line, steps, next, depth + 1)
+                            ctx.proof_goal(goal, script, depth + 1, subjects)
                         })?;
                         let right = self.with_proof_hypotheses(&[(second, &b)], &[theorem], line, |ctx| {
-                            ctx.proof_goal(goal, label, line, steps, next, depth + 1)
+                            ctx.proof_goal(goal, script, depth + 1, subjects)
                         })?;
                         self.proof.evidence.insert(goal.clone(), vec![theorem, left, right], false)
                     }
@@ -252,16 +332,24 @@ impl Context<'_> {
                     self.proof.witnesses.get(name).copied().ok_or_else(|| {
                         format!("line {line}: apply {name} requires a checked proof")
                     })?;
+                self.require_live_witness(source, name, line)?;
                 let mut theorem = self.proof.evidence.claim(source).clone();
+                let mut theorem_subjects = self.proof.evidence.subjects(source).cloned();
                 let mut premises = Vec::new();
                 while !self.same_proposition(&theorem, goal)? {
                     match theorem {
                         Formula::Implies(premise, consequence) => {
-                            premises.push(*premise);
+                            let premise_subjects = theorem_subjects
+                                .as_ref()
+                                .and_then(|s| s.branch("=>", false));
+                            premises.push((*premise, premise_subjects));
+                            theorem_subjects =
+                                theorem_subjects.as_ref().and_then(|s| s.branch("=>", true));
                             theorem = *consequence;
                         }
                         Formula::Not(premise) => {
-                            premises.push(*premise);
+                            premises.push((*premise, None));
+                            theorem_subjects = None;
                             theorem = Formula::False;
                         }
                         _ => {
@@ -271,9 +359,24 @@ impl Context<'_> {
                         }
                     }
                 }
+                if !self.evidence_dependencies(source)?.admissions.is_empty() {
+                    if let Some(conclusion) = &theorem_subjects {
+                        if !subjects.is_some_and(|goal| goal.complete && goal.key == conclusion.key)
+                        {
+                            return Err(format!(
+                                "line {line}: apply {name} concludes a different subject or state"
+                            ));
+                        }
+                    }
+                }
                 let mut parents = vec![source];
-                for premise in premises {
-                    parents.push(self.proof_goal(&premise, label, line, steps, next, depth + 1)?);
+                for (premise, premise_subjects) in premises {
+                    parents.push(self.proof_goal(
+                        &premise,
+                        script,
+                        depth + 1,
+                        premise_subjects.as_ref(),
+                    )?);
                 }
                 self.work.obligations += 1;
                 self.proof.evidence.insert(goal.clone(), parents, false)

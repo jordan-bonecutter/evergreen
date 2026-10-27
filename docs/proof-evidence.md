@@ -1,8 +1,8 @@
 # Proof evidence and scoped admissions
 
-This records the requested proof model. It is not a description of completed
-implementation. The current global treatment of `trustme` does not yet satisfy
-these requirements.
+This records the requested proof model and the partial implementation below.
+It is not a completed trust boundary: declaration summaries and complete value
+provenance still need integration.
 
 ## Claims and evidence
 
@@ -120,12 +120,45 @@ snapshots. Moving an owner slot preserves subjects on its separate payload plane
 
 Subject capture currently resolves existing places and literal/name indices
 without evaluating user code again. Call results, conditional subjects, named
-type facts, and more complex index expressions remain incomplete. Argument-value
-origins across parameter renaming are pending. Epochs conservatively include
-writes from either symbolic branch; precise availability within branches and
-joined claims still needs integration.
+type facts, and more complex index expressions remain incomplete. Scalar argument
+keys now transfer through parameter renaming for call preconditions and dependent
+postconditions. Aggregate/call-result value origins are not complete. Epochs
+conservatively include writes from either symbolic branch; precise availability
+within branches and joined claims still needs integration.
 
-Admission isolation and dependency-aware call summaries remain to be integrated.
-The stored subjects are not yet used to authorize admission reuse or retract
-assumptions. Existing acceptance of contradictions through global `trustme`
-assumptions is a known gap, not the intended semantics.
+Explicit source proof declarations with admissions no longer constrain execution
+paths. They enter a scoped candidate set. A proof obligation first tries ordinary
+checked evidence; only a failed check tries relevant live candidates in a temporary
+context. Checked certificate support records the dependencies actually used.
+Relevance uses current projection stamps and immutable arithmetic variables;
+constant-folded claims cannot match unrelated subjects through equal arithmetic
+alone. Optional failures and successful support are reconstructed during replay.
+Relevance scanning and dependency traversal charge the verifier's work budget.
+
+Writes prevent reuse of a mutable source claim. Checked operations can retain
+exact properties of already-evaluated SSA values for subsequent revalidation.
+Those properties do not form a general contradiction context for new values
+that share SSA variables. A call's precondition proof does not become a permanent
+fact about its input. These value facts stay scoped to branches and helper bodies. Explicit `exact`/`apply` uses of
+admitted claims check subject identity and state; explicit false elimination
+remains possible and records the admission edge.
+
+A call accepted under an admitted precondition retains that dependency. Its
+postconditions and newly assumed refinements remain conditional evidence instead
+of entering execution paths; fundamental fresh scalar representation bounds stay
+ordinary type facts. Tests cover unrelated checks after false dependent posts and
+impossible result invariants, as well as mutation, aliases, helper writes, anonymous
+proofs, compound proofs, independently provable calls, and replay.
+
+This is partial admission isolation, not the completed trust boundary. Declaration
+summaries still need the admissions used in their own verification, including
+external contracts and explicit postcondition proof scripts. Complete value-flow
+provenance, branch guards, aggregate/constant value evidence, and independent
+logical discharge checking remain pending. Fact well-formedness evaluation also
+needs isolation from assumptions created by helper summaries. The public trust
+manifest still lists every admission, including unused ones; operation-level DAG
+reporting is not yet exposed. `--deny-trust` remains strict.
+
+`examples/scoped_admissions.evg` demonstrates an admitted call followed by an
+independent proof about the changed value. `examples/reject_stale_admission.evg`
+rejects a second call that tries to reuse the old admission after mutation.

@@ -16,6 +16,8 @@ impl Context<'_> {
         // the body only its own grants, retaining actual plane identities.
         let facts = std::mem::take(&mut self.proof.facts);
         let proofs = std::mem::take(&mut self.proof.witnesses);
+        let claims = std::mem::take(&mut self.proof.claims);
+        let value_claims = std::mem::take(&mut self.proof.value_claims);
         // Keep opened_planes: their unlifted requirements apply after every
         // actual write, including writes in further nested helper calls.
         let temporaries = std::mem::take(&mut self.storage.temporaries);
@@ -45,12 +47,16 @@ impl Context<'_> {
             if let Some(proposition) = post {
                 // Publish only a checked theorem for this alias configuration.
                 // An explicit trustme remains recorded in the proof manifest.
-                self.assume(&proposition)?;
+                if self.proof.contract_parents.is_empty() {
+                    self.assume(&proposition)?;
+                }
             }
             Ok(value)
         })();
         self.proof.facts = facts;
         self.proof.witnesses = proofs;
+        self.proof.claims = claims;
+        self.proof.value_claims = value_claims;
         self.storage.temporaries = temporaries;
         self.execution.current = current;
         self.execution.measure = measure;

@@ -30,6 +30,79 @@ pub(super) struct Snapshot {
     pub(super) key: Option<ClaimKey>,
 }
 
+impl Snapshot {
+    pub(super) fn from_key(key: ClaimKey) -> Self {
+        let mut reads = BTreeSet::new();
+        let mut pending = vec![&key];
+        while let Some(key) = pending.pop() {
+            match key {
+                ClaimKey::Read(stamp) => {
+                    reads.insert(*stamp);
+                }
+                ClaimKey::Unary(_, value) => pending.push(value),
+                ClaimKey::Binary(_, a, b) => {
+                    pending.push(a);
+                    pending.push(b);
+                }
+                ClaimKey::Array(values) => pending.extend(values.iter()),
+                ClaimKey::Record(_, fields) => pending.extend(fields.iter().map(|(_, key)| key)),
+                _ => {}
+            }
+        }
+        Self {
+            reads,
+            complete: true,
+            key: Some(key),
+        }
+    }
+
+    pub(super) fn replace_read(&mut self, original: &Self, replacement: &Self) {
+        let (Some(ClaimKey::Read(original)), Some(replacement), Some(key)) =
+            (&original.key, &replacement.key, &mut self.key)
+        else {
+            return;
+        };
+        fn replace(key: &mut ClaimKey, original: Stamp, replacement: &ClaimKey) {
+            match key {
+                ClaimKey::Read(stamp) if *stamp == original => *key = replacement.clone(),
+                ClaimKey::Unary(_, key) => replace(key, original, replacement),
+                ClaimKey::Binary(_, a, b) => {
+                    replace(a, original, replacement);
+                    replace(b, original, replacement);
+                }
+                ClaimKey::Array(values) => {
+                    for key in values {
+                        replace(key, original, replacement);
+                    }
+                }
+                ClaimKey::Record(_, fields) => {
+                    for (_, key) in fields {
+                        replace(key, original, replacement);
+                    }
+                }
+                _ => {}
+            }
+        }
+        replace(key, *original, replacement);
+        *self = Self::from_key(key.clone());
+    }
+
+    pub(super) fn branch(&self, operator: &str, right: bool) -> Option<Self> {
+        if let Some(ClaimKey::Binary(op, a, b)) = &self.key {
+            if op != operator {
+                return None;
+            }
+            Some(Self::from_key(if right {
+                (**b).clone()
+            } else {
+                (**a).clone()
+            }))
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Subject {
     plane: PlaneId,

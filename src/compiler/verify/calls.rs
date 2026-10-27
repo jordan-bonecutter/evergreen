@@ -3,6 +3,11 @@
 
 use super::*;
 
+struct Arguments {
+    values: Vec<Symbol>,
+    subjects: BTreeMap<String, subjects::Snapshot>,
+}
+
 impl<'a> Context<'a> {
     pub(super) fn eval_call(
         &mut self,
@@ -178,13 +183,14 @@ impl<'a> Context<'a> {
         f: &Function,
         args: &[Expr],
         line: usize,
-    ) -> Result<Vec<Symbol>> {
+    ) -> Result<Arguments> {
         let supplied = f
             .supplied_parameters(args.len())
             .map_err(|error| format!("line {}: {error}", line))?;
         // Evaluate actuals in the caller; dependent parameter types in an
         // isolated callee environment. Restore the caller on completion.
         let mut actuals = BTreeMap::new();
+        let mut subjects = BTreeMap::new();
         for ((parameter, t), arg) in supplied.into_iter().zip(args) {
             let hint = match t {
                 Type::Nat => Some(Ty::Nat),
@@ -194,6 +200,9 @@ impl<'a> Context<'a> {
                 Type::Plane(_) => self.literal_element_hint(t)?,
                 _ => None,
             };
+            if !self.proof.claims.is_empty() {
+                subjects.insert(parameter.clone(), self.claim_subjects(arg)?);
+            }
             let saved_specification = self.execution.phase;
             if f.ideal_params.contains(parameter) && self.execution.phase != Phase::Specification {
                 self.execution.phase = Phase::Ideal;
@@ -218,14 +227,39 @@ impl<'a> Context<'a> {
         for value in actuals.values() {
             self.validate_argument(value, line)?;
         }
-        self.complete_arguments(f, actuals, line)
+        Ok(Arguments {
+            values: self.complete_arguments(f, actuals, line)?,
+            subjects,
+        })
+    }
+
+    fn call_subjects(
+        &mut self,
+        expression: &Expr,
+        origins: &BTreeMap<String, subjects::Snapshot>,
+        line: usize,
+    ) -> Result<Option<subjects::Snapshot>> {
+        if origins.is_empty() && self.proof.claims.is_empty() {
+            return Ok(None);
+        }
+        let mut goal = self.claim_subjects(expression)?;
+        for (parameter, origin) in origins {
+            if self.proof.subjects.current(origin, &self.storage.memory) {
+                let local = self.claim_subjects(&Expr {
+                    kind: Kind::Name(parameter.clone()),
+                    line,
+                })?;
+                goal.replace_read(&local, origin);
+            }
+        }
+        Ok(Some(goal))
     }
 
     fn apply_call(
         &mut self,
         name: &str,
         f: &Function,
-        actuals: Vec<Symbol>,
+        actuals: Arguments,
         line: usize,
     ) -> Result<Symbol> {
         let mut saved = std::mem::take(&mut self.locals.values);
@@ -237,12 +271,26 @@ impl<'a> Context<'a> {
         self.locals.ideal_bindings = f.ideal_params.iter().cloned().collect();
         self.locals.values.clear();
         self.locals.places.clear();
-        self.bind_arguments(f, actuals, line)?;
+        self.bind_arguments(f, actuals.values, line)?;
         self.capture_old(f)?;
+        let mut call_dependencies = Vec::new();
         if let Some(pre) = &f.pre {
+            let subjects = self.call_subjects(pre, &actuals.subjects, line)?;
             let p = self.proposition(pre)?;
-            self.prove(&p, &format!("precondition of {name}"), line)?;
+            let evidence = self.prove_subjects(
+                &p,
+                subjects.as_ref(),
+                &format!("precondition of {name}"),
+                line,
+            )?;
+            if !self.evidence_dependencies(evidence)?.admissions.is_empty() {
+                call_dependencies.push(evidence);
+            }
         }
+        let inherited_contracts = self.proof.contract_parents.clone();
+        self.proof
+            .contract_parents
+            .extend(call_dependencies.iter().copied());
         let inputs = if f
             .params
             .iter()
@@ -343,8 +391,20 @@ impl<'a> Context<'a> {
             }
             self.locals.values.insert("result".into(), value.clone());
             if let Some(post) = &f.post {
-                let p = self.proposition(post)?;
-                self.assume(&p)?;
+                if call_dependencies.is_empty() {
+                    let p = self.proposition(post)?;
+                    self.assume(&p)?;
+                } else {
+                    let paths = self.proof.paths.clone();
+                    let subjects = self.call_subjects(post, &actuals.subjects, line)?;
+                    let p = self.proposition(post)?;
+                    self.proof.paths = paths;
+                    let node = self.proof.evidence.contract(p, call_dependencies.clone())?;
+                    if let Some(subjects) = subjects {
+                        self.proof.evidence.record_subjects(node, subjects)?;
+                    }
+                    self.proof.claims.push(node);
+                }
             }
             // Alias contracts describe entry storage. After applying the
             // checked postcondition, revalidate the saved reference and its
@@ -390,6 +450,7 @@ impl<'a> Context<'a> {
         if !f.modifies.is_empty() {
             self.validate_live(line)?;
         }
+        self.proof.contract_parents = inherited_contracts;
         Ok(value)
     }
 }

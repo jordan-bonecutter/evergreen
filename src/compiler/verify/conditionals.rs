@@ -16,6 +16,8 @@ impl Context<'_> {
             .scoped_eval(condition, Some(&Ty::Bool))?
             .proposition()?;
         let base = self.proof.paths.clone();
+        let claims = self.proof.claims.clone();
+        let value_claims = self.proof.value_claims.clone();
         // Give caller bindings stable storage identities before forking.
         for (name, value) in self.clone_env()? {
             if !self.locals.places.contains_key(&name) {
@@ -30,6 +32,8 @@ impl Context<'_> {
         let a = self.scoped_eval(yes, expected)?;
         let a_paths = self.proof.paths.clone();
         let a_store = self.snapshot_memory()?;
+        self.proof.claims = claims.clone();
+        self.proof.value_claims = value_claims.clone();
         self.proof.paths = extend(&base, &p, true, self.session, &mut self.work.value_work)?;
         self.charge_value_work(values_weight(env.values())?)?;
         self.locals.values = env.clone();
@@ -38,6 +42,8 @@ impl Context<'_> {
         let b = self.scoped_eval(no, Some(&a.ty()))?;
         let b_paths = self.proof.paths.clone();
         let b_store = self.snapshot_memory()?;
+        self.proof.claims = claims;
+        self.proof.value_claims = value_claims;
         self.proof.paths = base;
         self.locals.values = env;
         self.locals.places = roots;

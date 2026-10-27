@@ -229,3 +229,43 @@ fn unknown_indices_overlap_and_distinct_constant_indices_do_not() {
     ));
     assert!(overlap(&[], &index(1)));
 }
+
+#[test]
+fn deferred_admissions_leave_paths_unchanged_and_only_used_claims_become_edges() {
+    let source = "fn needs(parameter: usize) where parameter == 42 {} fn main() -> usize {let x: usize = 43; proof unused: false by {trustme}; proof needed: x == 42 by {trustme}; needs(x); 0}";
+    with_source(source, |ctx, body| {
+        ctx.statement(&body[0]).unwrap();
+        let paths = ctx.proof.paths.clone();
+        ctx.statement(&body[1]).unwrap();
+        ctx.statement(&body[2]).unwrap();
+        assert_eq!(ctx.proof.paths, paths);
+        let unused = ctx.proof.witnesses["unused"];
+        let needed = ctx.proof.witnesses["needed"];
+        ctx.statement(&body[3]).unwrap();
+        assert_eq!(ctx.proof.paths, paths);
+        let dependencies = ctx
+            .proof
+            .uses
+            .iter()
+            .flat_map(|&node| ctx.proof.evidence.admissions(node).admissions)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(dependencies, BTreeSet::from([needed]));
+        assert!(!dependencies.contains(&unused));
+    });
+}
+
+#[test]
+fn independently_provable_operations_do_not_acquire_available_admissions() {
+    let source = "fn needs(parameter: usize) where parameter == 42 {} fn main() -> usize {let x: usize = 42; proof unnecessary: x == 42 by {trustme}; needs(x); 0}";
+    with_source(source, |ctx, body| {
+        for statement in body {
+            ctx.statement(statement).unwrap();
+        }
+        assert!(ctx.proof.uses.iter().all(|&node| ctx
+            .proof
+            .evidence
+            .admissions(node)
+            .admissions
+            .is_empty()));
+    });
+}

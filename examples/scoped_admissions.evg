@@ -1,0 +1,14 @@
+// An admission can justify this call, without making later checks vacuous.
+fn process(parameter: usize) where parameter == 42 {}
+
+fn main() -> usize {
+    let x: usize = 43;
+    fact claimed = x == 42;
+    proof admitted: claimed by {trustme};
+    process(x);
+
+    x = x + 1;
+    fact current_value = x == 44;
+    proof current_value by {omega};
+    0
+}

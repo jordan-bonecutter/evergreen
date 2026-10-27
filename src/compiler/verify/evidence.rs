@@ -2,8 +2,8 @@
 //!
 //! Edges point to earlier nodes. Arithmetic certificates add edges for the
 //! evidence rows they use, including evidence that closed discarded paths.
-//! Runtime fact provenance and value versions remain incomplete, so this graph
-//! must not authorize admission isolation.
+//! Known subject and row edges support scoped admission use. Unresolved
+//! declaration summaries remain explicit; the full trust boundary is incomplete.
 
 use super::*;
 
@@ -94,9 +94,16 @@ impl Evidence {
         Ok(())
     }
 
-    #[cfg(test)]
     pub(super) fn subjects(&self, node: NodeId) -> Option<&subjects::Snapshot> {
         self.nodes[node.0].subjects.as_ref()
+    }
+
+    pub(super) fn contract(&mut self, claim: Formula, parents: Vec<NodeId>) -> Result<NodeId> {
+        let id = self.insert(claim, parents, false)?;
+        // Complete declaration summaries (including their own admissions) are
+        // still pending; never report this instantiation as fully traced.
+        self.nodes[id.0].unresolved_context = true;
+        Ok(id)
     }
 
     pub(super) fn arithmetic(&mut self, claim: Formula, support: paths::Support) -> Result<NodeId> {
@@ -112,7 +119,9 @@ impl Evidence {
         let mut seen = BTreeSet::new();
         let mut admissions = BTreeSet::new();
         let mut complete = true;
+        let mut work = 0usize;
         while let Some(id) = pending.pop() {
+            work = work.saturating_add(1);
             if !seen.insert(id.0) {
                 continue;
             }
@@ -129,6 +138,7 @@ impl Evidence {
         AdmissionDependencies {
             admissions,
             complete,
+            work,
         }
     }
 }
@@ -137,6 +147,7 @@ impl Evidence {
 pub(super) struct AdmissionDependencies {
     pub(super) admissions: BTreeSet<NodeId>,
     pub(super) complete: bool,
+    pub(super) work: usize,
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
 
+mod admissions;
 mod array_history;
 
 #[cfg(test)]
@@ -1261,11 +1262,15 @@ impl<'a> Context<'a> {
         std::mem::swap(&mut self.locals.module, &mut entry.module);
         let facts = std::mem::take(&mut self.proof.facts);
         let proofs = std::mem::take(&mut self.proof.witnesses);
+        let claims = std::mem::take(&mut self.proof.claims);
+        let value_claims = std::mem::take(&mut self.proof.value_claims);
         let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
         let value = self.eval(expression, expected);
         self.execution.phase = phase;
         self.proof.facts = facts;
         self.proof.witnesses = proofs;
+        self.proof.claims = claims;
+        self.proof.value_claims = value_claims;
         std::mem::swap(&mut self.locals.values, &mut entry.env);
         std::mem::swap(&mut self.locals.places, &mut entry.roots);
         std::mem::swap(&mut self.storage.memory, &mut entry.memory);
@@ -1300,7 +1305,16 @@ impl<'a> Context<'a> {
     }
 
     fn assume(&mut self, p: &Formula) -> Result<()> {
-        self.assume_from(p, paths::Origin::Unresolved)
+        if self.proof.contract_parents.is_empty() {
+            self.assume_from(p, paths::Origin::Unresolved)
+        } else {
+            let node = self
+                .proof
+                .evidence
+                .contract(p.clone(), self.proof.contract_parents.clone())?;
+            self.proof.value_claims.push(node);
+            Ok(())
+        }
     }
 
     fn assume_from(&mut self, p: &Formula, origin: paths::Origin) -> Result<()> {
@@ -1339,33 +1353,11 @@ impl<'a> Context<'a> {
     }
 
     fn prove(&mut self, p: &Formula, label: &str, line: usize) -> Result<()> {
-        self.arithmetic_support(p, label, line).map(|_| ())
-    }
-
-    fn arithmetic_support(
-        &mut self,
-        p: &Formula,
-        label: &str,
-        line: usize,
-    ) -> Result<paths::Support> {
-        self.work.obligations += 1;
-        let expanded = extend_from(
-            &self.proof.paths,
-            p,
-            true,
-            paths::Origin::NegatedGoal,
-            self.session,
-            &mut self.work.value_work,
-        )?;
-        let mut dependencies = expanded.closed.clone();
-        for path in expanded.iter() {
-            let support = self
-                .session
-                .prove_with_support(path)
-                .map_err(|e| format!("line {line}: cannot prove {label}: {e}"))?;
-            dependencies.add_rows(path, &support);
+        let node = self.prove_subjects(p, None, label, line)?;
+        if !self.evidence_dependencies(node)?.admissions.is_empty() {
+            self.proof.value_claims.push(node);
         }
-        Ok(dependencies)
+        Ok(())
     }
 
     fn resolve(&mut self, t: &Type) -> Result<Ty> {
@@ -1447,8 +1439,14 @@ impl<'a> Context<'a> {
             Ty::Machine(t) => {
                 let n = Linear::variable(name);
                 let (lo, hi) = t.bounds();
-                self.assume(&Formula::Ge(n.sub(&Linear::number(lo))?))?;
-                self.assume(&Formula::Ge(Linear::number(hi).sub(&n)?))?;
+                self.assume_from(
+                    &Formula::Ge(n.sub(&Linear::number(lo))?),
+                    paths::Origin::Unresolved,
+                )?;
+                self.assume_from(
+                    &Formula::Ge(Linear::number(hi).sub(&n)?),
+                    paths::Origin::Unresolved,
+                )?;
                 Ok(Symbol::Number(Ty::Machine(*t), n))
             }
             Ty::Unit => Ok(Symbol::Unit),
@@ -1480,13 +1478,16 @@ impl<'a> Context<'a> {
             Ty::Int => Ok(Symbol::Number(Ty::Int, Linear::variable(name))),
             Ty::Nat => {
                 let n = Linear::variable(name);
-                self.assume(&Formula::Ge(n.clone()))?;
+                self.assume_from(&Formula::Ge(n.clone()), paths::Origin::Unresolved)?;
                 Ok(Symbol::Number(Ty::Nat, n))
             }
             Ty::Bool => {
                 let n = Linear::variable(name);
-                self.assume(&Formula::Ge(n.clone()))?;
-                self.assume(&Formula::Ge(Linear::number(1).sub(&n)?))?;
+                self.assume_from(&Formula::Ge(n.clone()), paths::Origin::Unresolved)?;
+                self.assume_from(
+                    &Formula::Ge(Linear::number(1).sub(&n)?),
+                    paths::Origin::Unresolved,
+                )?;
                 Ok(Symbol::Bool(equal(&n, &Linear::number(1))?))
             }
             Ty::Array(element, len) => {
@@ -1886,9 +1887,15 @@ impl<'a> Context<'a> {
                 } else {
                     format!("proof {name}")
                 };
-                let evidence = self.proof_script(&p, &label, proposition.line, steps)?;
+                let evidence =
+                    self.proof_script_for(&p, &label, proposition.line, steps, Some(&subjects))?;
                 self.proof.evidence.record_subjects(evidence, subjects)?;
-                self.assume_from(&p, paths::Origin::Evidence(evidence))?;
+                let dependencies = self.evidence_dependencies(evidence)?;
+                if dependencies.admissions.is_empty() {
+                    self.assume_from(&p, paths::Origin::Evidence(evidence))?;
+                } else {
+                    self.proof.claims.push(evidence);
+                }
                 if name != "_" {
                     self.proof.witnesses.insert(name.clone(), evidence);
                 }
