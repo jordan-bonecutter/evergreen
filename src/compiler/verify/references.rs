@@ -4,6 +4,33 @@ use super::*;
 
 impl Context<'_> {
     pub(super) fn reference_equality(&mut self, a: &Symbol, b: &Symbol) -> Result<Formula> {
+        if matches!(a, Symbol::RefCases(..)) || matches!(b, Symbol::RefCases(..)) {
+            let base = self.proof.paths.clone();
+            for value in [a, b] {
+                for case in guarded_references::cases(value)? {
+                    self.proof.paths = extend(
+                        &base,
+                        &case.guard,
+                        false,
+                        self.session,
+                        &mut self.work.value_work,
+                    )?;
+                    let paths = self.proof.paths.clone();
+                    let checked = if self.checked_impossible(&paths, &Formula::True)? {
+                        Ok(())
+                    } else {
+                        self.storage
+                            .memory
+                            .read(case.reference)
+                            .and_then(|root| project(root, &case.path))
+                            .map(|_| ())
+                    };
+                    self.proof.paths = base.clone();
+                    checked?;
+                }
+            }
+            return guarded_references::identity_equal(a, b);
+        }
         let (Symbol::Ref(_, a, a_path), Symbol::Ref(_, b, b_path)) = (a, b) else {
             return Err("reference equality requires reference operands".into());
         };
@@ -167,11 +194,12 @@ impl Context<'_> {
             ctx: &mut Context<'_>,
             value: &Symbol,
             origin: String,
-            borrowed: bool,
+            mode: (bool, Formula),
             inputs: &mut Vec<InputReference>,
             work: &mut usize,
             limit: usize,
         ) -> Result<()> {
+            let borrowed = mode.0;
             *work = work.saturating_add(1 + origin.len() / 32);
             if *work > limit {
                 return Err(
@@ -179,6 +207,34 @@ impl Context<'_> {
                 );
             }
             match value {
+                Symbol::RefCases(ty, cases) => {
+                    let base = ctx.proof.paths.clone();
+                    for case in cases {
+                        ctx.proof.paths = extend(
+                            &base,
+                            &case.guard,
+                            false,
+                            ctx.session,
+                            &mut ctx.work.value_work,
+                        )?;
+                        let paths = ctx.proof.paths.clone();
+                        let checked = if ctx.checked_impossible(&paths, &Formula::True)? {
+                            Ok(())
+                        } else {
+                            visit(
+                                ctx,
+                                &Symbol::Ref(ty.clone(), case.reference, case.path.clone()),
+                                origin.clone(),
+                                (borrowed, mode.1.clone().and(case.guard.clone())),
+                                inputs,
+                                work,
+                                limit,
+                            )
+                        };
+                        ctx.proof.paths = base.clone();
+                        checked?;
+                    }
+                }
                 Symbol::Ref(pointee, reference, path) => {
                     for step in path {
                         *work = work.saturating_add(
@@ -202,6 +258,7 @@ impl Context<'_> {
                     }
                     inputs.push(InputReference {
                         origin: origin.clone(),
+                        guard: mode.1.clone(),
                         reference: *reference,
                         path: path.clone(),
                         pointee: pointee.clone(),
@@ -213,7 +270,7 @@ impl Context<'_> {
                         ctx,
                         &target,
                         format!("(*{origin})"),
-                        true,
+                        (true, mode.1.clone()),
                         inputs,
                         work,
                         limit,
@@ -225,7 +282,7 @@ impl Context<'_> {
                         ctx,
                         &Symbol::Plane(pointee.clone(), reference),
                         origin,
-                        borrowed,
+                        mode.clone(),
                         inputs,
                         work,
                         limit,
@@ -235,6 +292,7 @@ impl Context<'_> {
                     if borrowed {
                         inputs.push(InputReference {
                             origin: origin.clone(),
+                            guard: mode.1.clone(),
                             reference: *reference,
                             path: Vec::new(),
                             pointee: pointee.clone(),
@@ -247,7 +305,7 @@ impl Context<'_> {
                         ctx,
                         &target,
                         format!("(*{origin})"),
-                        borrowed,
+                        mode.clone(),
                         inputs,
                         work,
                         limit,
@@ -268,7 +326,15 @@ impl Context<'_> {
                         // An undecided union is still rechecked with actual storage
                         // at calls; it cannot grant a conditional write contract.
                         if ctx.checked_entails(&guard)? {
-                            visit(ctx, payload, origin.clone(), borrowed, inputs, work, limit)?;
+                            visit(
+                                ctx,
+                                payload,
+                                origin.clone(),
+                                mode.clone(),
+                                inputs,
+                                work,
+                                limit,
+                            )?;
                         }
                     }
                 }
@@ -278,7 +344,7 @@ impl Context<'_> {
                             ctx,
                             value,
                             format!("{origin}.{name}"),
-                            borrowed,
+                            mode.clone(),
                             inputs,
                             work,
                             limit,
@@ -298,7 +364,7 @@ impl Context<'_> {
                                 ctx,
                                 value,
                                 format!("{origin}[{index}]"),
-                                borrowed,
+                                mode.clone(),
                                 inputs,
                                 work,
                                 limit,
@@ -320,7 +386,7 @@ impl Context<'_> {
                             ctx,
                             &value,
                             format!("{origin}[{index}]"),
-                            borrowed,
+                            mode.clone(),
                             inputs,
                             work,
                             limit,
@@ -348,7 +414,7 @@ impl Context<'_> {
                     self,
                     &value,
                     name.clone(),
-                    false,
+                    (false, Formula::True),
                     &mut inputs,
                     &mut work,
                     remaining,

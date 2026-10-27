@@ -428,9 +428,17 @@ impl<'a> Context<'a> {
             .params
             .iter()
             .any(|(_, ty)| array_ports::contains_reference_array(ty, self.declarations.structs));
+        let conditional_ports = inputs.iter().any(|input| input.guard != Formula::True);
+        if conditional_ports && f.external.is_some() {
+            return Err(
+                "external calls with conditional reference ports need guarded effect contracts"
+                    .into(),
+            );
+        }
         let value = if overlaps
             || heap_call
             || deferred_ports
+            || conditional_ports
             || !self.storage.opened_planes.is_empty() && !f.modifies.is_empty()
         {
             let reason = if overlaps {
@@ -439,6 +447,8 @@ impl<'a> Context<'a> {
                 "uses owned planes"
             } else if deferred_ports {
                 "observes deferred reference ports"
+            } else if conditional_ports {
+                "observes conditional reference ports"
             } else {
                 "writes while invariants are open"
             };

@@ -219,12 +219,11 @@ impl Context<'_> {
                     continue;
                 }
                 let value = if let Some(inputs) = inputs {
-                    let place = self.incoming_place(&alias.reference, inputs, None)?;
-                    Symbol::Ref(place.ty, place.reference, place.path)
+                    self.incoming_borrow(&alias.reference, inputs)?
                 } else {
                     self.eval(&alias.reference, None)?
                 };
-                if !matches!(value, Symbol::Ref(..)) {
+                if !matches!(value, Symbol::Ref(..) | Symbol::RefCases(..)) {
                     return Err("return aliases must denote references".into());
                 }
                 aliases.insert(alias.path.clone(), AliasTarget::Incoming(value));
@@ -277,6 +276,9 @@ impl Context<'_> {
             {
                 self.compatible(a_ty, b_ty, line)?;
                 a == b && self.paths_equal(a_path, b_path)?
+            } else if matches!(actual.ty(), Ty::Ref(_)) && actual.ty() == expected.ty() {
+                let relation = guarded_references::identity_equal(actual, &expected)?;
+                self.checked_entails(&relation)?
             } else {
                 false
             };

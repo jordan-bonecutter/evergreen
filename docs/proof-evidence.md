@@ -106,16 +106,29 @@ check dependencies rather than trusting cached graph annotations.
 
 ## Immutable plane states
 
-Conditional return provenance is the next extension to the exact-alias model.
-The intended contract spelling is `borrows(a) when condition else borrows(b)`,
-including independent choices for each reference-bearing return field. These
+Conditional return provenance uses `borrows(a) when condition else borrows(b)`.
+Each reference-bearing return field can independently use a conditional
+reference expression in its `borrows(field: reference)` entry. These
 guards use saved function/call-entry observations, as existing borrow origins do.
 The returned pointer retains the selected plane and generation even when later
-writes change the values used by the guard. Its proof representation needs
-guarded plane alternatives, with every reachable case justified independently.
-This must also support symbolic selection from reference-bearing arrays; fresh
-unrelated pointees cannot stand in for such a selection. The syntax and general
-guarded-plane representation are not implemented yet.
+writes change the values used by the guard. Its proof representation stores
+guarded real-plane alternatives, with every reachable case justified independently.
+Scalar reads are memoized by those alternatives and their projection revisions;
+each read replays its guarded value definition, without assuming a nominal
+invariant about changed contents. A stale candidate stays stale, and only a
+checked, admission-free guard can exclude it from an operational read.
+
+Proof subjects retain the guards on their data dependencies. A candidate fact
+about a selected value is available only in cases whose relevant regions remain
+unchanged, and only for data flows which actually select the related region.
+The same conditions propagate through historical searches. An admitted false
+fact about one selection cannot automatically establish a property of the
+opposite selection. These are frontend state/provenance rules, not independently
+kernel-checked memory theorems.
+
+Guarded stores, general projected addresses through an unresolved plane choice,
+and symbolic reference-array selection remain incomplete. Fresh unrelated
+pointees cannot stand in for such a selection.
 
 The verification state has a logical snapshot at each successful statement.
 Snapshots share unchanged nodes rather than cloning every plane and fact set.

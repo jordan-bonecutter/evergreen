@@ -33,6 +33,75 @@ pub(super) struct Subjects {
 }
 
 impl Subjects {
+    pub(super) fn availability(
+        &mut self,
+        snapshot: &Snapshot,
+        memory: &Memory<Symbol>,
+        world: Option<state::WorldId>,
+    ) -> Result<Formula> {
+        if !snapshot.complete {
+            return Ok(Formula::False);
+        };
+        let (guarded, reads) = snapshot.guarded_reads(true)?;
+        if !guarded {
+            let available = match world {
+                Some(world) => self.historical(snapshot, world)?,
+                None => self.current(snapshot, memory)?,
+            };
+            return Ok(if available {
+                Formula::True
+            } else {
+                Formula::False
+            });
+        }
+        let state = match world {
+            Some(world) => self
+                .worlds
+                .get(world.0)
+                .ok_or("missing guarded historical state")?,
+            None => &self.state,
+        };
+        let mut available = Formula::True;
+        for (stamp, guard) in reads {
+            let subject = self
+                .entries
+                .get(stamp.subject)
+                .ok_or("missing guarded read subject")?;
+            let live =
+                world.is_some() || memory.plane(subject.reference).ok() == Some(subject.plane);
+            let revision =
+                self.history
+                    .region(state.version(subject.plane), stamp.subject, &subject.path)?;
+            if !live || revision != stamp.revision {
+                available = available.and(guard.not());
+            }
+        }
+        Ok(available)
+    }
+
+    pub(super) fn same_read_region(&self, a: Stamp, b: Stamp) -> Result<Formula> {
+        let a = self
+            .entries
+            .get(a.subject)
+            .ok_or("unknown guarded proof subject")?;
+        let b = self
+            .entries
+            .get(b.subject)
+            .ok_or("unknown guarded proof subject")?;
+        if a.reference != b.reference || a.path.len() != b.path.len() {
+            return Ok(Formula::False);
+        };
+        let mut equal_path = Formula::True;
+        for (a, b) in a.path.iter().zip(b.path.iter()) {
+            equal_path = equal_path.and(match (a, b) {
+                (Projection::Field(a), Projection::Field(b)) if a == b => Formula::True,
+                (Projection::Index(a), Projection::Index(b)) => equal(a, b)?,
+                _ => Formula::False,
+            });
+        }
+        Ok(equal_path)
+    }
+
     pub(super) fn observe(
         &mut self,
         memory: &Memory<Symbol>,
@@ -311,6 +380,7 @@ impl Context<'_> {
 }
 
 mod collect;
+mod places;
 
 #[cfg(test)]
 mod tests;

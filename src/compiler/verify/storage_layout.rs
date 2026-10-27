@@ -79,6 +79,7 @@ impl Context<'_> {
             | (Symbol::Plane(..), Symbol::Plane(..))
             | (Symbol::Owner(..), Symbol::Owner(..))
             | (Symbol::Unit, Symbol::Unit) => Ok(true),
+            (a, b) if matches!(a.ty(), Ty::Ref(_)) && matches!(b.ty(), Ty::Ref(_)) => Ok(true),
             _ => Ok(false),
         }
     }

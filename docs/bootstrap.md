@@ -1090,7 +1090,8 @@ they are not a proof of a whole-process memory or time bound.
 
 Conditional expressions can select scalar or copyable scalar-field record cells
 within one array, for example
-`if flag {&data[0]} else {&data[1]}`. Both alternatives must use the same live
+`if flag {&data[0]} else {&data[1]}`. In its compact array-index representation,
+both alternatives use the same live
 plane and generation, the same projection prefix, and compatible target types.
 One array index may differ, followed by the same optional record-field path.
 For example, selecting `&data[0].point.x` or `&data[1].point.x` is supported for
@@ -1111,13 +1112,34 @@ run, build, and replay with the internal verifier.
 `examples/record_array_borrows.evg` selects both whole record cells and scalar
 fields, proves their identities agree, and checks writes and same-layout
 replacement through those borrows. It also runs, builds, and replays internally.
-Conditional scalar-array
-values also join their contents and tracked views. Different target planes,
-different record-field suffixes, conditional storage generations, and selections
-of owning or reference-bearing record elements remain unsupported. Returned references must match
-the exact entry projection declared by `borrows`, including a conditional entry
-index as described below. Selecting between different target planes in a
-contract remains unsupported.
+Conditional scalar-array values also join their contents and tracked views.
+
+References can also choose different planes or field paths, provided their target
+types agree. The checker stores guarded alternatives with the original plane
+identities and generations; it allocates no replacement pointee. These choices
+support reads, identity comparisons, whole-target reborrows, and returned
+references. The spelling below captures the guard and aliases at function/call
+entry, consistent with existing borrow origins:
+
+```evg
+fn maximum(a: &usize, b: &usize) -> &usize
+borrows(a) when *a >= *b else borrows(b) {
+    if *a >= *b {a} else {b}
+}
+```
+
+Later writes to the comparison's inputs do not reroute the returned reference.
+Each field can choose independently using `borrows(first: if left {a} else {b},
+second: if right {a} else {b})`. Every reachable returned origin must match its
+contract; admissions cannot replace that provenance check.
+`examples/conditional_planes.evg` demonstrates selection, forwarding, and a
+subsequent comparison-input write.
+
+Operations needing a single address can use such a choice when checked execution
+facts establish its selected case. Guarded stores and general projected addresses
+through unresolved plane choices remain pending, as do guarded external effects
+and conditional storage-generation transitions. Calls receiving guarded ports
+currently recheck actual storage instead of using independent-port summaries.
 
 A reference return requires an exact alias contract, for example:
 

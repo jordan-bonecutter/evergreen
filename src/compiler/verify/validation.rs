@@ -9,6 +9,26 @@ enum Validation {
 }
 
 impl Context<'_> {
+    fn validate_dormant_reference(
+        &mut self,
+        reference: Reference,
+        path: &[Projection<Linear>],
+        line: usize,
+    ) -> Result<()> {
+        if self.storage.memory.read(reference).is_err() {
+            return Ok(());
+        }
+        if path.is_empty()
+            && self
+                .storage
+                .opened_planes
+                .contains_key(&self.storage.memory.plane(reference)?)
+        {
+            return Ok(());
+        }
+        self.validate_retained_reference(reference, path, line)
+    }
+
     pub(super) fn record_valid(&mut self, value: &Symbol, line: usize) -> Result<()> {
         self.validate_value(value, line, &BTreeSet::new(), Validation::Complete)
     }
@@ -51,6 +71,31 @@ impl Context<'_> {
     ) -> Result<()> {
         self.charge_value_work(1)?;
         match value {
+            Symbol::RefCases(ty, cases) => {
+                let base = self.proof.paths.clone();
+                for case in cases {
+                    self.proof.paths = extend(
+                        &base,
+                        &case.guard,
+                        false,
+                        self.session,
+                        &mut self.work.value_work,
+                    )?;
+                    let paths = self.proof.paths.clone();
+                    let checked = if self.checked_impossible(&paths, &Formula::True)? {
+                        Ok(())
+                    } else {
+                        self.validate_argument_mode(
+                            &Symbol::Ref(ty.clone(), case.reference, case.path.clone()),
+                            line,
+                            mode,
+                        )
+                    };
+                    self.proof.paths = base.clone();
+                    checked?;
+                }
+                Ok(())
+            }
             Symbol::Union {
                 active, payloads, ..
             } => {
@@ -276,21 +321,29 @@ impl Context<'_> {
         for (plane, value) in values {
             if let Symbol::Ref(_, reference, path) = &value {
                 // A stale plain reference can remain as never until observed.
-                if self.storage.memory.read(*reference).is_err() {
-                    continue;
-                }
                 // A dormant whole-object view cannot be observed while its
                 // invariant is lifted. Its own future use still checks the
                 // complete target type; remaining requirements are checked here.
-                if path.is_empty()
-                    && self
-                        .storage
-                        .opened_planes
-                        .contains_key(&self.storage.memory.plane(*reference)?)
-                {
-                    continue;
+                self.validate_dormant_reference(*reference, path, line)?;
+            } else if let Symbol::RefCases(_, cases) = &value {
+                let base = self.proof.paths.clone();
+                for case in cases {
+                    self.proof.paths = extend(
+                        &base,
+                        &case.guard,
+                        false,
+                        self.session,
+                        &mut self.work.value_work,
+                    )?;
+                    let paths = self.proof.paths.clone();
+                    let checked = if self.checked_impossible(&paths, &Formula::True)? {
+                        Ok(())
+                    } else {
+                        self.validate_dormant_reference(case.reference, &case.path, line)
+                    };
+                    self.proof.paths = base.clone();
+                    checked?;
                 }
-                self.validate_argument_mode(&value, line, Validation::Retained)?;
             } else {
                 let lifted = plane
                     .and_then(|plane| self.storage.opened_planes.get(&plane))
@@ -303,7 +356,25 @@ impl Context<'_> {
         // view. Borrowed input storage must remain valid at this boundary.
         let inputs = std::mem::take(&mut self.storage.inputs);
         let result = inputs.iter().try_for_each(|input| {
-            self.validate_retained_reference(input.reference, &input.path, line)
+            if input.guard == Formula::True {
+                return self.validate_retained_reference(input.reference, &input.path, line);
+            }
+            let base = self.proof.paths.clone();
+            self.proof.paths = extend(
+                &base,
+                &input.guard,
+                false,
+                self.session,
+                &mut self.work.value_work,
+            )?;
+            let paths = self.proof.paths.clone();
+            let checked = if self.checked_impossible(&paths, &Formula::True)? {
+                Ok(())
+            } else {
+                self.validate_retained_reference(input.reference, &input.path, line)
+            };
+            self.proof.paths = base;
+            checked
         });
         self.storage.inputs = inputs;
         result?;

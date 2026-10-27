@@ -71,11 +71,11 @@ impl Context<'_> {
             if self.work.value_work > MAX_VALUE_WORK {
                 return Err("proof subject relevance work limit reached".into());
             }
-            if !self
-                .proof
-                .subjects
-                .current(snapshot, &self.storage.memory)?
-            {
+            let available =
+                self.proof
+                    .subjects
+                    .availability(snapshot, &self.storage.memory, None)?;
+            if available == Formula::False {
                 continue;
             }
             let same_subject = subjects.is_some_and(|goal| {
@@ -101,8 +101,12 @@ impl Context<'_> {
                             .variables(&mut self.work.value_work)?,
                     )
             {
-                relevant.push(node);
-                historical.extend(snapshot);
+                let snapshot = snapshot.clone();
+                let scope = self
+                    .reference_claim_scope(&snapshot, subjects)?
+                    .and(available);
+                relevant.push(self.proof.evidence.guard(node, &scope)?);
+                historical.extend_under(&snapshot, &scope);
             }
         }
         self.recursive_demands(&mut historical, &variables)?;

@@ -50,7 +50,15 @@ impl Context<'_> {
     ) -> Result<()> {
         // Actual expressions have already been evaluated in source order and
         // checked for liveness. Resolve dependent types in the full callee scope.
-        for ((name, _), value) in function.params.iter().zip(values) {
+        for ((name, _), mut value) in function.params.iter().zip(values) {
+            if let Symbol::RefCases(ty, cases) = &value {
+                for case in cases {
+                    if self.checked_entails(&case.guard)? {
+                        value = Symbol::Ref(ty.clone(), case.reference, case.path.clone());
+                        break;
+                    }
+                }
+            }
             self.locals.values.insert(name.clone(), value);
         }
         let execution = self.execution.phase;

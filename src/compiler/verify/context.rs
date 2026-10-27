@@ -82,6 +82,7 @@ pub(super) struct Storage {
     pub(super) inputs: Vec<InputReference>,
     pub(super) temporaries: Vec<(Symbol, usize)>,
     pub(super) loops: Vec<loops::Frame>,
+    pub(super) reference_reads: BTreeMap<guarded_references::ReadKey, Symbol>,
 }
 
 #[derive(Default)]

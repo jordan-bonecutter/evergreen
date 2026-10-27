@@ -16,6 +16,7 @@ pub(in crate::compiler::verify) enum ClaimKey {
     Binary(String, Box<Self>, Box<Self>),
     Array(Vec<Self>),
     Record(String, Vec<(String, Self)>),
+    Guarded(Vec<(Formula, Self)>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,6 +60,59 @@ pub(in crate::compiler::verify) struct Snapshot {
 }
 
 impl Snapshot {
+    pub(in crate::compiler::verify) fn guarded_reads(
+        &self,
+        live_only: bool,
+    ) -> Result<(bool, Vec<(Stamp, Formula)>)> {
+        let mut guarded = false;
+        let mut reads: BTreeMap<Stamp, Formula> = BTreeMap::new();
+        let mut pending = self
+            .key
+            .iter()
+            .map(|key| (key, Formula::True))
+            .collect::<Vec<_>>();
+        let mut work = 0usize;
+        while let Some((key, guard)) = pending.pop() {
+            work = work.saturating_add(1 + guard.storage_weight()?);
+            if work > MAX_VALUE_WORK {
+                return Err("guarded proof read work limit reached".into());
+            };
+            match key {
+                ClaimKey::Read(stamp) => {
+                    let prior = reads.entry(*stamp).or_insert(Formula::False);
+                    *prior = prior.clone().or(guard);
+                }
+                ClaimKey::OldRead(_, stamp) | ClaimKey::SavedScalar(_, Some(stamp), _)
+                    if !live_only =>
+                {
+                    let prior = reads.entry(*stamp).or_insert(Formula::False);
+                    *prior = prior.clone().or(guard);
+                }
+                ClaimKey::Guarded(cases) => {
+                    guarded = true;
+                    pending.extend(
+                        cases
+                            .iter()
+                            .map(|(condition, key)| (key, guard.clone().and(condition.clone()))),
+                    );
+                }
+                ClaimKey::Unary(_, key) => pending.push((key, guard)),
+                ClaimKey::Binary(_, a, b) => {
+                    pending.push((a, guard.clone()));
+                    pending.push((b, guard));
+                }
+                ClaimKey::Array(values) => {
+                    pending.extend(values.iter().map(|key| (key, guard.clone())))
+                }
+                ClaimKey::Record(_, fields) => {
+                    pending.extend(fields.iter().map(|(_, key)| (key, guard.clone())))
+                }
+                _ => {}
+            }
+        }
+        Ok((guarded, reads.into_iter().collect()))
+    }
+
     pub(in crate::compiler::verify) fn from_key(key: ClaimKey) -> Self {
         let mut reads = BTreeSet::new();
         let mut past: BTreeMap<state::WorldId, BTreeSet<Stamp>> = BTreeMap::new();
@@ -83,6 +137,7 @@ impl Snapshot {
                 }
                 ClaimKey::Array(values) => pending.extend(values.iter()),
                 ClaimKey::Record(_, fields) => pending.extend(fields.iter().map(|(_, key)| key)),
+                ClaimKey::Guarded(cases) => pending.extend(cases.iter().map(|(_, key)| key)),
                 _ => {}
             }
         }
@@ -122,6 +177,12 @@ impl Snapshot {
                 }
                 ClaimKey::Array(keys) => pending.extend(keys),
                 ClaimKey::Record(_, fields) => pending.extend(fields.iter().map(|(_, key)| key)),
+                ClaimKey::Guarded(cases) => {
+                    for (guard, key) in cases {
+                        weight = weight.saturating_add(guard.storage_weight()?);
+                        pending.push(key);
+                    }
+                }
                 ClaimKey::SavedScalar(_, _, Scalar::Number(n)) => {
                     weight = weight.saturating_add(n.terms.len())
                 }
@@ -174,6 +235,11 @@ impl Snapshot {
                         freeze(key, world);
                     }
                 }
+                ClaimKey::Guarded(cases) => {
+                    for (_, key) in cases {
+                        freeze(key, world);
+                    }
+                }
                 _ => {}
             }
         }
@@ -209,6 +275,11 @@ impl Snapshot {
                 }
                 ClaimKey::Record(_, fields) => {
                     for (_, key) in fields {
+                        replace(key, original, replacement);
+                    }
+                }
+                ClaimKey::Guarded(cases) => {
+                    for (_, key) in cases {
                         replace(key, original, replacement);
                     }
                 }

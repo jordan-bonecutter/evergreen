@@ -4,6 +4,33 @@
 use super::*;
 
 impl Context<'_> {
+    pub(super) fn reference_claim_scope(
+        &mut self,
+        snapshot: &subjects::Snapshot,
+        goal: Option<&subjects::Snapshot>,
+    ) -> Result<Formula> {
+        let Some(goal) = goal.filter(|goal| goal.complete) else {
+            return Ok(Formula::True);
+        };
+        if snapshot.key == goal.key {
+            return Ok(Formula::True);
+        };
+        let (a_guarded, a) = snapshot.guarded_reads(false)?;
+        let (b_guarded, b) = goal.guarded_reads(false)?;
+        if !a_guarded && !b_guarded {
+            return Ok(Formula::True);
+        };
+        let mut scope = Formula::False;
+        for (a, a_guard) in &a {
+            for (b, b_guard) in &b {
+                self.charge_value_work(1 + a_guard.storage_weight()? + b_guard.storage_weight()?)?;
+                let aliases = self.proof.subjects.same_read_region(*a, *b)?;
+                scope = scope.or(a_guard.clone().and(b_guard.clone()).and(aliases));
+            }
+        }
+        Ok(scope)
+    }
+
     fn probe_guard(
         &mut self,
         paths: &paths::Paths,

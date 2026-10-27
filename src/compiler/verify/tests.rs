@@ -818,11 +818,11 @@ fn conditional_record_array_borrows_preserve_fields_and_storage_identity() {
         assert!(verify(&wrong).is_err(), "accepted {wrong}");
     }
     let different_planes = "type Cell struct {value: usize} fn bad(flag: bool) {let a = Cell {value: 7}; let b = Cell {value: 9}; let selected = if flag {&a} else {&b};}";
-    assert!(verify(different_planes).is_err());
+    assert!(verify(different_planes).is_ok());
     let owners = "type Cell struct {value: usize} fn bad(flag: bool) {let data: [Cell; 2] = [Cell {value: 7}, Cell {value: 9}]; let selected = if flag {&data[0]} else {&data[1]};}";
     assert!(verify(owners).is_ok()); // Borrowing never copies the move-only element.
     let dropping = owners.replace("fn bad", "impl Drop for Cell {fn drop(self) {}} fn bad");
-    assert!(verify(&dropping).is_err());
+    assert!(verify(&dropping).is_ok());
     let refined = "type Positive struct {value: usize} where(value > 0); fn choose(data: &[Positive; 2], flag: bool) -> &Positive borrows(&(*data)[if flag {0} else {1}]) {if flag {&(*data)[0]} else {&(*data)[1]}} fn read(flag: bool) -> usize ensures(result == 42) {let data: [Positive; 2] = [Positive {value: 7}, Positive {value: 9}]; let selected = choose(&data, flag); data[0].value = 42; data[1].value = 42; proof typed: (*selected).value > 0; (*selected).value} fn main() -> usize {read(false)}";
     assert_eq!(verify(refined).unwrap().run().unwrap().to_string(), "42");
     let nested = "type Inner struct {value: usize} type Cell struct {inner: Inner} fn read(flag: bool) -> usize ensures(result == 42) {let data: [Cell; 2] = [Cell {inner: Inner {value: 7}}, Cell {inner: Inner {value: 9}}]; let selected = if flag {&data[0].inner.value} else {&data[1].inner.value}; *selected = 42; if flag {data[0].inner.value} else {data[1].inner.value}} fn main() -> usize {read(true)}";
@@ -1048,7 +1048,6 @@ fn conditional_references_cannot_change_origins_or_escape_generation_checks() {
         "fn bad(a: &usize, b: &usize, flag: bool) -> &usize borrows(a) {if flag {a} else {b}}",
         "fn bad(flag: bool) -> usize {let data: [usize; 2] = [7, 9]; let selected = if flag {&data[0]} else {&data[1]}; drop(data); *selected}",
         "fn bad(data: &[usize; 2], i: usize) -> &usize where(i < 2) borrows(&(*data)[i]) {i = 0; if i == 0 {&(*data)[0]} else {&(*data)[1]}}",
-        "type Pair struct {a: usize, b: usize} fn bad(flag: bool) {let pair = Pair {a: 7, b: 9}; let selected = if flag {&pair.a} else {&pair.b};}",
     ] {assert!(verify(source).is_err(), "accepted {source}");}
 }
 
@@ -1319,7 +1318,6 @@ fn reference_returns_preserve_incoming_planes_and_reject_local_escapes() {
         "fn bad(n: usize) -> &usize borrows(&n) {&n}",
         "fn bad(r: &usize) -> &usize {r}",
         "fn bad(r: &usize) -> usize borrows(r) {*r}",
-        "fn bad(r: &usize) -> &usize borrows(if true {r} else {r}) {r}",
     ] {
         assert!(verify(source).is_err(), "{source}");
     }

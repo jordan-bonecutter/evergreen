@@ -430,6 +430,7 @@ impl Parser {
                     | "where"
                     | "ensures"
                     | "borrows"
+                    | "when"
                     | "module"
                     | "import"
                     | "method"

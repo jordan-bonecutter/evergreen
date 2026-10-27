@@ -205,6 +205,46 @@ impl Parser {
                 self.expect(",")?;
             }
         }
+        if self.eat("when") {
+            if borrows.is_empty() {
+                return Err(self.err("when requires a preceding borrows contract"));
+            }
+            if self.depth >= 128 {
+                return Err(self.err("conditional borrow nesting limit reached"));
+            }
+            self.depth += 1;
+            let condition = self.expr(0)?;
+            self.expect("else")?;
+            let alternatives = self.return_borrows()?;
+            self.depth -= 1;
+            if alternatives.len() != borrows.len()
+                || borrows.iter().any(|alias| {
+                    alternatives
+                        .iter()
+                        .filter(|other| other.path == alias.path)
+                        .count()
+                        != 1
+                })
+            {
+                return Err(self.err(
+                    "conditional borrows must name the same return paths in every alternative",
+                ));
+            }
+            for alias in &mut borrows {
+                let other = alternatives
+                    .iter()
+                    .find(|other| other.path == alias.path)
+                    .ok_or_else(|| self.err("missing conditional return path"))?;
+                alias.reference = Expr {
+                    line: condition.line,
+                    kind: Kind::If(
+                        Box::new(condition.clone()),
+                        Box::new(alias.reference.clone()),
+                        Box::new(other.reference.clone()),
+                    ),
+                };
+            }
+        }
         Ok(borrows)
     }
 }

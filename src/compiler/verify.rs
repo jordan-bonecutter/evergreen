@@ -30,6 +30,7 @@ use context::{Context, Declarations};
 mod evidence;
 mod external;
 mod footprints;
+mod guarded_references;
 mod heap;
 mod ideal;
 mod literals;
@@ -98,6 +99,7 @@ enum Symbol {
     Record(String, BTreeMap<String, Symbol>),
     Unit,
     Ref(Box<Ty>, Reference, Vec<Projection<Linear>>),
+    RefCases(Box<Ty>, Vec<guarded_references::Case>),
     Plane(Box<Ty>, Reference),
     Owner(Box<Ty>, crate::shared::planes::OwnedReference),
 }
@@ -114,6 +116,7 @@ impl Symbol {
             Self::Record(name, _) => Ty::Record(name.clone()),
             Self::Unit => Ty::Unit,
             Self::Ref(t, _, _) => Ty::Ref(t.clone()),
+            Self::RefCases(t, _) => Ty::Ref(t.clone()),
             Self::Plane(t, _) => Ty::Plane(t.clone()),
             Self::Owner(t, _) => Ty::Owner(t.clone()),
         }
@@ -209,6 +212,13 @@ fn symbol_weight(value: &Symbol) -> Result<usize> {
                 pending.extend(fields.values().map(|v| Node::Value(v, depth + 1)));
             }
             Node::Value(Symbol::Ref(_, _, path), _) => weight = weight.saturating_add(path.len()),
+            Node::Value(Symbol::RefCases(ty, cases), depth) => {
+                pending.push(Node::Type(ty, depth + 1));
+                for case in cases {
+                    weight = weight.saturating_add(case.path.len() + 1);
+                    pending.push(Node::Formula(&case.guard, depth + 1));
+                }
+            }
             Node::Formula(Formula::Ge(n), _) => weight = weight.saturating_add(n.terms.len()),
             Node::Formula(Formula::Not(p), depth) => pending.push(Node::Formula(p, depth + 1)),
             Node::Formula(
@@ -437,6 +447,7 @@ fn borrow_expression(e: &Expr) -> bool {
         Kind::Field(e, _) => borrow_expression(e),
         Kind::Unary(op, e) if op == "&" || op == "*" => borrow_expression(e),
         Kind::Index(e, index) => borrow_expression(e) && place_index_expression(index),
+        Kind::If(_, yes, no) => borrow_expression(yes) && borrow_expression(no),
         _ => false,
     }
 }
@@ -496,6 +507,7 @@ struct WritePlace {
 #[derive(Clone)]
 struct InputReference {
     origin: String,
+    guard: Formula,
     reference: Reference,
     path: Vec<Projection<Linear>>,
     pointee: Box<Ty>,
@@ -1080,10 +1092,13 @@ impl<'a> Context<'a> {
         self.charge_value_work(target_cost)?;
         self.entry.values.clear();
         let mut targets = Vec::new();
+        let mut conditional_targets = Vec::new();
         for (name, value) in &self.locals.values {
             self.entry.values.insert(name.clone(), value.clone());
             if let Symbol::Ref(_, reference, fields) = value {
                 targets.push((name.clone(), *reference, fields.clone()));
+            } else if matches!(value, Symbol::RefCases(..)) {
+                conditional_targets.push((name.clone(), value.clone()));
             } else if let Symbol::Plane(_, reference) = value {
                 targets.push((name.clone(), *reference, Vec::new()));
             } else if let Symbol::Owner(_, owner) = value {
@@ -1092,6 +1107,10 @@ impl<'a> Context<'a> {
         }
         for (name, reference, fields) in targets {
             let target = self.read_projection_value(reference, &fields)?;
+            self.entry.values.insert(format!("*{name}"), target);
+        }
+        for (name, value) in conditional_targets {
+            let target = self.read_reference(&value, function.line)?;
             self.entry.values.insert(format!("*{name}"), target);
         }
         self.entry.memory = if function.entry_memory {
@@ -1831,8 +1850,14 @@ impl<'a> Context<'a> {
                 if name != "_" {
                     self.fresh_binding(name, proposition.line)?;
                 }
-                let subjects = self.claim_subjects(proposition)?;
+                let mut subjects = self.claim_subjects(proposition)?;
                 let p = self.proposition(proposition)?;
+                if !subjects.complete {
+                    // Specifications cannot mutate source storage. A first
+                    // observation may have materialized a deferred input port;
+                    // capture that existing identity without re-evaluation.
+                    subjects = self.claim_subjects(proposition)?;
+                }
                 debug_assert!(
                     !subjects.complete
                         || self
@@ -1998,6 +2023,7 @@ impl<'a> Context<'a> {
             Kind::Unary(op, x) if op == "*" => {
                 let (r, path) = match self.pointer_operand(x)? {
                     Symbol::Ref(_, r, path) => (r, path),
+                    value @ Symbol::RefCases(..) => self.direct_reference(&value)?,
                     Symbol::Plane(_, r) => (r, Vec::new()),
                     Symbol::Owner(_, owner) => {
                         (self.storage.memory.borrow_owned(owner)?, Vec::new())
@@ -2300,7 +2326,9 @@ impl<'a> Context<'a> {
             Symbol::Number(Ty::Machine(integer), _) => self.ty_is_move_only(&Ty::Machine(*integer)),
             Symbol::Bool(_) => self.ty_is_move_only(&Ty::Bool),
             Symbol::Unit => self.ty_is_move_only(&Ty::Unit),
-            Symbol::Ref(inner, _, _) => self.ty_is_move_only(&Ty::Ref(inner.clone())),
+            Symbol::Ref(inner, _, _) | Symbol::RefCases(inner, _) => {
+                self.ty_is_move_only(&Ty::Ref(inner.clone()))
+            }
             _ => false,
         }
     }
@@ -2553,10 +2581,7 @@ impl<'a> Context<'a> {
                     .cloned()
                     .ok_or_else(|| format!("unknown field {name}"))
             }
-            Kind::Unary(op, _) if op == "*" => {
-                let (r, path) = self.location(e)?;
-                self.read_projection_value(r, &path)
-            }
+            Kind::Unary(op, pointer) if op == "*" => self.dereference(pointer, e.line),
             Kind::Index(base, index) => {
                 let array = self.storage(base)?;
                 let index = self.nonnegative(index, "nonnegative storage index")?;
@@ -2822,6 +2847,21 @@ impl<'a> Context<'a> {
                 Ok(record)
             }
             Kind::Unary(op, x) if op == "&" => {
+                if let Kind::Unary(op, pointer) = &x.kind {
+                    if op == "*" {
+                        let value = self.pointer_operand(pointer)?;
+                        let borrowed = match value {
+                            value @ (Symbol::Ref(..) | Symbol::RefCases(..)) => value,
+                            Symbol::Plane(ty, reference) => Symbol::Ref(ty, reference, vec![]),
+                            Symbol::Owner(ty, owner) => {
+                                Symbol::Ref(ty, self.storage.memory.borrow_owned(owner)?, vec![])
+                            }
+                            _ => return Err("reborrow requires a live pointer".into()),
+                        };
+                        self.validate_argument(&borrowed, e.line)?;
+                        return Ok(borrowed);
+                    }
+                }
                 let (r, path) = self.location(x)?;
                 self.charge_value_work(symbol_weight(project(
                     self.storage.memory.read(r)?,
@@ -2832,10 +2872,7 @@ impl<'a> Context<'a> {
                 let ty = target.ty();
                 Ok(Symbol::Ref(Box::new(ty), r, path))
             }
-            Kind::Unary(op, _) if op == "*" => {
-                let (r, path) = self.location(e)?;
-                self.read_projection_value(r, &path)
-            }
+            Kind::Unary(op, pointer) if op == "*" => self.dereference(pointer, e.line),
             Kind::Unary(op, x) if op == "!" => Ok(Symbol::Bool(
                 self.eval(x, Some(&Ty::Bool))?.proposition()?.not(),
             )),

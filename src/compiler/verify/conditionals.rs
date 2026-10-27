@@ -9,6 +9,22 @@ struct BranchView {
     censuses: BTreeMap<Reference, Linear>,
 }
 
+fn array_join_path(a: &[Projection<Linear>], b: &[Projection<Linear>]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    };
+    let Some(offset) = a.iter().zip(b).position(|(a, b)| a != b) else {
+        return false;
+    };
+    matches!(
+        (&a[offset], &b[offset]),
+        (Projection::Index(_), Projection::Index(_))
+    ) && a[offset + 1..] == b[offset + 1..]
+        && a[offset + 1..]
+            .iter()
+            .all(|step| matches!(step, Projection::Field(_)))
+}
+
 impl Context<'_> {
     pub(super) fn eval_conditional(
         &mut self,
@@ -21,15 +37,39 @@ impl Context<'_> {
         let p = self
             .scoped_eval(condition, Some(&Ty::Bool))?
             .proposition()?;
+        self.eval_guarded(
+            p,
+            expected,
+            line,
+            |context, hint| context.scoped_eval(yes, hint),
+            |context, hint| context.scoped_eval(no, hint),
+        )
+    }
+
+    // Source branches and guarded memory operations use the same state fork,
+    // ownership join, and evidence merge. The callbacks execute in their own
+    // guarded state and may not assume the other alternative ran.
+    pub(super) fn eval_guarded<Yes, No>(
+        &mut self,
+        p: Formula,
+        expected: Option<&Ty>,
+        line: usize,
+        yes: Yes,
+        no: No,
+    ) -> Result<Symbol>
+    where
+        Yes: FnOnce(&mut Self, Option<&Ty>) -> Result<Symbol>,
+        No: FnOnce(&mut Self, Option<&Ty>) -> Result<Symbol>,
+    {
         // The declaration already checked both branches. A body recheck can
         // follow an actual, admission-free decision without manufacturing the
         // allocations or ownership states of an unreachable branch.
         if self.execution.rechecking != 0 || self.execution.cleanup_depth != 0 {
             if self.checked_entails(&p)? {
-                return self.scoped_eval(yes, expected);
+                return yes(self, expected);
             }
             if self.checked_entails(&p.clone().not())? {
-                return self.scoped_eval(no, expected);
+                return no(self, expected);
             }
         }
         let base = self.proof.paths.clone();
@@ -60,7 +100,7 @@ impl Context<'_> {
         let mut store = self.branch_view()?;
         self.proof.paths = extend(&base, &p, false, self.session, &mut self.work.value_work)?;
         self.proof.control = Some(control.clone().and(p.clone()));
-        let a = self.scoped_eval(yes, expected)?;
+        let a = yes(self, expected)?;
         let a_paths = self.proof.paths.clone();
         let mut a_store = self.branch_view()?;
         self.proof.claims = claims.clone();
@@ -71,7 +111,7 @@ impl Context<'_> {
         self.locals.places = roots.clone();
         self.restore_branch_view(&store)?;
         self.proof.control = Some(control.clone().and(p.clone().not()));
-        let b = self.scoped_eval(no, Some(&a.ty()))?;
+        let b = no(self, Some(&a.ty()))?;
         let b_paths = self.proof.paths.clone();
         let mut b_store = self.branch_view()?;
         // A deferred input was present before the branch even if only one
@@ -128,7 +168,7 @@ impl Context<'_> {
             }
             match (av, bv) {
                 (Some(av), Some(bv)) if *ag == generation => {
-                    let (joined, left, right) = self.join_value(av, bv, &mut views)?;
+                    let (joined, left, right) = self.join_value(av, bv, &mut views, line)?;
                     self.storage.memory.write(id, joined, false)?;
                     state_a = state_a.and(left);
                     state_b = state_b.and(right);
@@ -167,7 +207,7 @@ impl Context<'_> {
                 self.locals.values.insert(name.clone(), value.clone());
             }
         }
-        let (result, left, right) = self.join_value(&a, &b, &mut views)?;
+        let (result, left, right) = self.join_value(&a, &b, &mut views, line)?;
         let relation_a = state_a.and(left);
         let relation_b = state_b.and(right);
         let mut paths = extend(
@@ -224,6 +264,7 @@ impl Context<'_> {
         a: &Symbol,
         b: &Symbol,
         views: &mut Vec<Symbol>,
+        line: usize,
     ) -> Result<(Symbol, Formula, Formula)> {
         self.charge_value_work(1)?;
         if a == b {
@@ -250,7 +291,8 @@ impl Context<'_> {
                 for index in 0..members.len() {
                     match (&av[index], &bv[index]) {
                         (Some(a), Some(b)) => {
-                            let (joined, a_relation, b_relation) = self.join_value(a, b, views)?;
+                            let (joined, a_relation, b_relation) =
+                                self.join_value(a, b, views, line)?;
                             left = left.and(
                                 equal(ai, &Linear::number(index as i128))?
                                     .not()
@@ -303,6 +345,7 @@ impl Context<'_> {
                     && ar == br
                     && ap.len() == bp.len()
                     && !ap.is_empty()
+                    && array_join_path(ap, bp)
                     && self.history_element(at) =>
             {
                 let offset = ap
@@ -336,13 +379,20 @@ impl Context<'_> {
                 let mut left = Formula::True;
                 let mut right = Formula::True;
                 for (name, value) in a {
-                    let (value, l, r) =
-                        self.join_value(value, b.get(name).ok_or("branch fields differ")?, views)?;
+                    let (value, l, r) = self.join_value(
+                        value,
+                        b.get(name).ok_or("branch fields differ")?,
+                        views,
+                        line,
+                    )?;
                     fields.insert(name.clone(), value);
                     left = left.and(l);
                     right = right.and(r);
                 }
                 Ok((Symbol::Record(an.clone(), fields), left, right))
+            }
+            (a, b) if matches!(a.ty(), Ty::Ref(_)) && matches!(b.ty(), Ty::Ref(_)) => {
+                self.join_references(a, b, line)
             }
             (
                 Symbol::Array {
@@ -366,7 +416,7 @@ impl Context<'_> {
                 let mut left = Formula::True;
                 let mut right = Formula::True;
                 for (a, b) in a.iter().zip(b) {
-                    let (value, l, r) = self.join_value(a, b, views)?;
+                    let (value, l, r) = self.join_value(a, b, views, line)?;
                     values.push(value);
                     left = left.and(l);
                     right = right.and(r);
@@ -460,7 +510,7 @@ impl Context<'_> {
                     // Missing predecessor cells are read lazily under their
                     // history guard, never assumed outside their birth branch.
                     let (value, l, r) = match (a, b) {
-                        (Some(a), Some(b)) => self.join_value(a, b, views)?,
+                        (Some(a), Some(b)) => self.join_value(a, b, views, line)?,
                         (a, b) => {
                             let value = self.arbitrary(element)?;
                             let l = match a {
@@ -516,6 +566,7 @@ impl Context<'_> {
                 .and(b.clone())
                 .or(a.clone().not().and(b.clone().not()))),
             (Symbol::Unit, Symbol::Unit) => Ok(Formula::True),
+            (a, b) if matches!(a.ty(), Ty::Ref(_)) && matches!(b.ty(), Ty::Ref(_)) => guarded_references::identity_equal(a, b),
             (Symbol::Record(an, a), Symbol::Record(bn, b)) if an == bn && a.len() == b.len() => {
                 let mut relation = Formula::True;
                 for (field, value) in a {

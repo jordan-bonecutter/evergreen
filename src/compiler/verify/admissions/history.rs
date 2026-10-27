@@ -3,6 +3,25 @@
 
 use super::*;
 
+fn frame_guard(a: &Formula, b: &Formula) -> Formula {
+    let mut pending = vec![a, b];
+    let mut conditions = BTreeSet::new();
+    while let Some(condition) = pending.pop() {
+        match condition {
+            Formula::False => return Formula::False,
+            Formula::True => {}
+            Formula::And(a, b) => {
+                pending.push(a);
+                pending.push(b);
+            }
+            condition => {
+                conditions.insert(condition.clone());
+            }
+        }
+    }
+    conditions.into_iter().fold(Formula::True, Formula::and)
+}
+
 pub(in crate::compiler::verify) struct RecursiveContext {
     node: evidence::NodeId,
     snapshot: subjects::Snapshot,
@@ -33,7 +52,7 @@ impl Demand {
         self.extend_under(snapshot, &Formula::True);
     }
 
-    fn extend_under(&mut self, snapshot: &subjects::Snapshot, guard: &Formula) {
+    pub(super) fn extend_under(&mut self, snapshot: &subjects::Snapshot, guard: &Formula) {
         for (world, reads) in &snapshot.past {
             self.requests
                 .entry((*world, guard.clone()))
@@ -168,7 +187,11 @@ impl Context<'_> {
             for ((world, guard), seeds) in &before {
                 let (candidates, work) = self.proof.subjects.historical_candidates(*world)?;
                 self.charge_value_work(work)?;
-                for node in candidates.intersection(&self.proof.claims).copied() {
+                let candidates = candidates
+                    .intersection(&self.proof.claims)
+                    .copied()
+                    .collect::<Vec<_>>();
+                for node in candidates {
                     if seen.contains(&(*world, guard.clone(), node)) {
                         continue;
                     }
@@ -190,18 +213,27 @@ impl Context<'_> {
                     if !same_revision && !related_value {
                         continue;
                     }
-                    if !self.proof.subjects.historical(&snapshot, *world)? {
+                    let available = self.proof.subjects.availability(
+                        &snapshot,
+                        &self.storage.memory,
+                        Some(*world),
+                    )?;
+                    if available == Formula::False {
                         continue;
                     }
                     seen.insert((*world, guard.clone(), node));
-                    relevant.push(self.proof.evidence.guard(node, guard)?);
+                    let scope = self
+                        .reference_claim_scope(&snapshot, subjects)?
+                        .and(available);
+                    let effective = frame_guard(guard, &scope);
+                    relevant.push(self.proof.evidence.guard(node, &effective)?);
                     demand
                         .requests
-                        .entry((*world, guard.clone()))
+                        .entry((*world, effective.clone()))
                         .or_default()
                         .values
                         .extend(variables);
-                    demand.extend_under(&snapshot, guard);
+                    demand.extend_under(&snapshot, &effective);
                 }
             }
             if demand.requests == before {
