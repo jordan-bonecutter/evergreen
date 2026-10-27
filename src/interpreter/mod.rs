@@ -591,6 +591,11 @@ impl Evaluator<'_> {
             .roots
             .get(&root_name(target)?)
             .is_none_or(|id| self.memory.get(*id).is_ok());
+        let old = if old_live {
+            self.storage(target, env)?
+        } else {
+            old
+        };
         if old_live && self.value_is_move_only(&old) {
             let old_copy = copy_value(&old, &mut self.fuel)?;
             self.drop_value(old_copy)?;

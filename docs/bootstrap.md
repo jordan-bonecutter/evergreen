@@ -1109,7 +1109,12 @@ initialization and replacement set them. Branch joins retain possibly live
 bindings, and cleanup checks the runtime flag before calling a destructor.
 Function, block, and iteration scopes use the same cleanup implementation.
 Replacement checks the flag after evaluating its right-hand side, which may
-have moved the previous value. Flags are frame metadata and do not change type
+have moved or replaced the previous value. Cleanup reads the current value at
+the saved destination after the RHS, so nested replacement cannot destroy the
+original twice or skip an intermediate value. The computed replacement remains
+an owner while cleanup runs; its allocations can receive permitted destructor
+writes before installation. `examples/replacement_rhs.evg` proves exact cleanup
+through nested assignments. Flags are frame metadata and do not change type
 sizes, field offsets, heap layouts, or the argument ABI. They count toward the
 private stack budget. `examples/conditional_rc_drop.evg` exercises early and late
 cleanup through a source Rc helper. Native tests compare destructor counts and

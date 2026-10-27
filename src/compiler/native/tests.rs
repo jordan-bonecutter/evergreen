@@ -171,6 +171,11 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/rc.evg"),
         include_str!("../../../examples/rc_drop.evg"),
         include_str!("../../../examples/conditional_rc_drop.evg"),
+        include_str!("../../../examples/replacement_rhs.evg"),
+        "type Resource struct {data: plane(usize), target: &usize} impl Drop for Resource {fn drop(self) modifies(self.target) {*self.target = 42;}} fn main() -> usize {let ignored: usize = 0; let replacement: plane(usize) = alloc(7); let value = Resource {data: alloc(0), target: &*replacement}; value = Resource {data: replacement, target: &ignored}; *value.data}",
+        "type Resource struct {data: plane(usize)} impl Drop for Resource {fn drop(self) {}} fn main() -> usize {let value = Resource {data: alloc(7)}; let header = &value.data; value = {value = Resource {data: alloc(8)}; Resource {data: alloc(42)}}; **header}",
+        "type Resource struct {data: plane(usize)} impl Drop for Resource {fn drop(self) {}} type Holder struct {value: Resource} fn main() -> usize {let holder = Holder {value: Resource {data: alloc(7)}}; holder.value = {holder.value = Resource {data: alloc(8)}; Resource {data: alloc(42)}}; *holder.value.data}",
+        "fn main() -> usize {let value = rc::new(7); value = {value = rc::new(8); rc::new(42)}; *value.value()}",
         "fn consume(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {drop(value);} else {}} fn main() -> usize {let unique: plane(usize) = alloc(7); consume(share_owner(unique), false); 42}",
         "fn consume(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {drop(value);} else {}} fn main() -> usize {let unique: plane(usize) = alloc(7); consume(share_owner(unique), true); 42}",
         "fn consume(value: owner(usize), flag: bool) -> usize where owners(value) == 1 {let view = &*value; if flag {drop(value);} else {} if flag {42} else {*view}} fn main() -> usize {let unique: plane(usize) = alloc(42); consume(share_owner(unique), false)}",
@@ -545,6 +550,10 @@ fn native_execution_agrees_with_the_interpreter() {
     cases.push("fn signed(data: &[usize; 2], index: isize) -> &usize where(index >= 0 && index < 2) borrows(&(*data)[index]) {&(*data)[index]} fn main() -> usize {let a: [usize; 2] = [7, 42]; *signed(&a, 1)}".into());
     cases.push("fn change(data: [bool; 2], i: usize, j: usize) -> bool where(i < 2 && j < 2) ensures(i == j => result) {let a = &data[i]; let b = &data[j]; *a = true; *b} fn main() -> bool {change([false, false], 0, 0)}".into());
     let declarations = "type Resource struct {tag: usize} where (tag == 7); impl Drop for Resource {fn drop(self){}} fn make() -> Resource {Resource {tag: 7}} fn consume(r: Resource) -> usize {r.tag}";
+    cases.push(
+        include_str!("../../../examples/replacement_rhs.evg")
+            .replace("    value = {", "    drop(value);\n    value = {"),
+    );
     for choice in ["false", "true"] {
         for body in [
             "if flag {drop(r);} else {} 42",

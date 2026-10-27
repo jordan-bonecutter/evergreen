@@ -18,23 +18,12 @@ impl Emitter<'_> {
         let pointer_ty = Type::Ref(Box::new(ty.clone()));
         let pointer = self.allocate(&pointer_ty)?;
         self.copy_frame(pointer, &pointer_ty)?;
-        let old =
-            if self.has_drop(&ty) && owner.as_ref().is_some_and(|name| self.alive.contains(name)) {
-                let home = self.allocate(&ty)?;
-                if !layout::aggregate(&ty) {
-                    self.load_scalar(&ty)?;
-                }
-                self.copy_frame(home, &ty)?;
-                Some(home)
-            } else {
-                None
-            };
         self.expr(value, Some(&ty))?;
         if self.has_drop(&ty) {
             let new_value = self.allocate(&ty)?;
             self.copy_frame(new_value, &ty)?;
-            if let (Some(old), Some(owner)) = (old, owner) {
-                self.cleanup_replaced_value(&owner, old, &ty)?;
+            if let Some(owner) = owner {
+                self.cleanup_replaced_place(&owner, pointer, &ty)?;
             }
             self.frame_address(new_value);
             if !layout::aggregate(&ty) {

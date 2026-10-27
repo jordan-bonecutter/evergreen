@@ -60,19 +60,28 @@ impl Emitter<'_> {
         self.finish_drop_guard(skip)
     }
 
-    pub(super) fn cleanup_replaced_value(
+    pub(super) fn cleanup_replaced_place(
         &mut self,
         root: &str,
-        offset: i32,
+        pointer: i32,
         ty: &Type,
     ) -> Result<()> {
         if !self.alive.contains(root) {
             return Ok(());
         }
         let skip = self.skip_dead_binding(root);
+        // Read the value left by the RHS, not a snapshot taken before it ran.
+        // A moved slot is skipped before any such read.
+        self.code.extend([0x48, 0x8b, 0x85]);
+        self.code.extend(pointer.to_le_bytes());
+        let home = self.allocate(ty)?;
+        if !layout::aggregate(ty) {
+            self.load_scalar(ty)?;
+        }
+        self.copy_frame(home, ty)?;
         // Replacing a field does not consume its enclosing record. A whole
         // binding assignment sets its flag after installing the new value.
-        self.drop_frame(ty, offset)?;
+        self.drop_frame(ty, home)?;
         self.finish_drop_guard(skip)
     }
 }

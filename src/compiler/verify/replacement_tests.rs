@@ -3,6 +3,30 @@ use super::*;
 pub(crate) const OLD_SLOT_DURING_DROP: &str = "type Resource struct {data: plane(usize), slot: &plane(usize), seen: &usize} impl Drop for Resource {fn drop(self) modifies(self.seen) ensures *self.seen == old(**self.slot) {*self.seen = **self.slot;}} fn main() -> usize {let seen: usize = 0; let original: plane(usize) = alloc(7); let replacement: plane(usize) = alloc(42); let resource = Resource {data: alloc(7), slot: &original, seen: &seen}; resource.slot = &resource.data; let header = &resource.data; resource = Resource {data: alloc(42), slot: &replacement, seen: &seen}; if seen == 7 && **header == 42 {42} else {1}}";
 
 #[test]
+fn replacement_cleans_the_value_left_by_the_right_hand_side() {
+    let example = include_str!("../../../examples/replacement_rhs.evg");
+    let revived = example.replace("    value = {", "    drop(value);\n    value = {");
+    for source in [
+        example,
+        revived.as_str(),
+        "type Resource struct {data: plane(usize)} impl Drop for Resource {fn drop(self) {}} fn main() -> usize {let value = Resource {data: alloc(7)}; let header = &value.data; value = {value = Resource {data: alloc(8)}; Resource {data: alloc(42)}}; **header}",
+        "type Resource struct {data: plane(usize)} impl Drop for Resource {fn drop(self) {}} type Holder struct {value: Resource} fn main() -> usize {let holder = Holder {value: Resource {data: alloc(7)}}; holder.value = {holder.value = Resource {data: alloc(8)}; Resource {data: alloc(42)}}; *holder.value.data}",
+        "fn main() -> usize {let value = rc::new(7); value = {value = rc::new(8); rc::new(42)}; *value.value()}",
+        "type Resource struct {data: plane(usize), target: &usize} impl Drop for Resource {fn drop(self) modifies(self.target) {*self.target = 42;}} fn main() -> usize {let ignored: usize = 0; let replacement: plane(usize) = alloc(7); let value = Resource {data: alloc(0), target: &*replacement}; value = Resource {data: replacement, target: &ignored}; proof updated: *value.data == 42; *value.data}",
+    ] {
+        let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
+    }
+    let wrong = example.replace(
+        "proof released_once: counter == 94;",
+        "proof released_once: counter == 95;",
+    );
+    assert!(verify(&wrong).unwrap_err().contains("proof released_once"));
+}
+
+#[test]
 fn replacing_an_owned_record_destroys_its_old_payload_before_installing_the_new_one() {
     for source in [
         "type Resource struct {data: plane(usize)} impl Drop for Resource {fn drop(self) {}} fn main() -> usize {let value = Resource {data: alloc(7)}; value = Resource {data: alloc(42)}; *value.data}",
