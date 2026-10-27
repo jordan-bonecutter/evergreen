@@ -34,7 +34,7 @@ fn native_rejects_unsupported_layouts_and_entry_assumptions() {
 
 #[test]
 fn native_emits_path_dependent_local_cleanup() {
-    let source = "fn consume(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {drop(value);} else {}} fn main() -> usize {let unique: plane(usize) = alloc(7); consume(share_owner(unique), false); 42}";
+    let source = "fn consume(value: shared(usize), flag: bool) where owner_count(value) == 1 {if flag {let final: unique(usize) = move(value); drop(final);} else {}} fn main() -> usize {let unique: unique(usize) = alloc(7); consume(unique, false); 42}";
     let program = verify(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(emit(&program).is_ok());
@@ -156,10 +156,10 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/loop.evg"),
         include_str!("../../../examples/match.evg"),
         include_str!("../../../examples/match_blocks.evg"),
-        "type Guard struct {target: &usize} impl Drop for Guard {fn drop(self) modifies(self.target) ensures *self.target == 42 {*self.target = 42;}} fn main() -> usize {let owner = {let local: plane(usize) = alloc(7); let guard = Guard {target: &*local}; local}; *owner}",
+        "type Guard struct {target: &usize} impl Drop for Guard {fn drop(self) modifies(self.target) ensures *self.target == 42 {*self.target = 42;}} fn main() -> usize {let owner = {let local: unique(usize) = alloc(7); let guard = Guard {target: &*local}; local}; *owner}",
         "type Resource struct {tag: usize} impl Drop for Resource {fn drop(self) {}} fn read(a: &Resource, b: usize) -> usize where b <= 35 && a.tag == 7 {a.tag + b} fn main() -> usize {read(&{let item = Resource {tag: 7}; item}, {let value: usize = 35; value})}",
         "fn main() -> usize {let value: usize = 0; if true {let answer: usize = 42; value = answer;} value}",
-        "fn main() -> usize {let owner: plane(usize) = alloc(42); let moved = match false {true => {let selected = owner; selected}, false => {let selected = owner; selected}}; *moved}",
+        "fn main() -> usize {let owner: unique(usize) = alloc(42); let moved = match false {true => {let selected = owner; selected}, false => {let selected = owner; selected}}; *moved}",
         include_str!("../../../examples/conditional_planes.evg"),
         include_str!("../../../examples/conditional_stores.evg"),
         include_str!("../../../examples/conditional_store_order.evg"),
@@ -167,39 +167,44 @@ fn native_execution_agrees_with_the_interpreter() {
         "fn choose(flag: &bool, a: &usize, b: &usize) -> &usize modifies(flag) borrows(a) when *flag else borrows(b) ensures *flag == !old(*flag) {let selected = *flag; *flag = !*flag; if selected {a} else {b}} fn main() -> usize {let flag = true; let a: usize = 42; let b: usize = 7; *choose(&flag, &a, &b)}",
         include_str!("../../../examples/sparse_arrays.evg"),
         include_str!("../../../examples/owning_references.evg"),
+        "fn main() -> usize {let first: shared(usize) = alloc(42); let items = [first, first]; let other = items; leak(other); let selected = items[0]; leak(selected); leak(items); let final: unique(usize) = move(first); *final}",
+        "type Handle struct {data: shared(usize)} impl Copy for Handle {} fn main() -> usize {let first: shared(usize) = alloc(42); let original = Handle {data: first}; let other = original; leak(other); leak(original); let final: unique(usize) = move(first); *final}",
+        "fn copy(value: &shared(usize)) -> shared(usize) {*value} fn main() -> usize {let first: shared(usize) = alloc(42); let view = &*copy(&first); first; let final: unique(usize) = move(first); *view}",
+        "type Resource struct {value: usize} impl Drop for Resource {fn drop(self) {}} fn main() -> usize {let first: shared(Resource) = alloc(Resource {value: 42}); let second = first; leak(first); let final: unique(Resource) = move(second); final.value}",
+        "fn share_owner(x: usize) -> usize {x} fn duplicate_owner(x: usize) -> usize {share_owner(x)} fn release_owner(x: usize) -> usize {duplicate_owner(x)} fn recover_owner(x: usize) -> usize {release_owner(x)} fn main() -> usize {recover_owner(42)}",
         include_str!("../../../examples/allocation_credits.evg"),
         include_str!("../../../examples/rc.evg"),
         include_str!("../../../examples/rc_drop.evg"),
         include_str!("../../../examples/conditional_rc_drop.evg"),
         include_str!("../../../examples/replacement_rhs.evg"),
-        "type Resource struct {data: plane(usize), target: &usize} impl Drop for Resource {fn drop(self) modifies(self.target) {*self.target = 42;}} fn main() -> usize {let ignored: usize = 0; let replacement: plane(usize) = alloc(7); let value = Resource {data: alloc(0), target: &*replacement}; value = Resource {data: replacement, target: &ignored}; *value.data}",
-        "type Resource struct {data: plane(usize)} impl Drop for Resource {fn drop(self) {}} fn main() -> usize {let value = Resource {data: alloc(7)}; let header = &value.data; value = {value = Resource {data: alloc(8)}; Resource {data: alloc(42)}}; **header}",
-        "type Resource struct {data: plane(usize)} impl Drop for Resource {fn drop(self) {}} type Holder struct {value: Resource} fn main() -> usize {let holder = Holder {value: Resource {data: alloc(7)}}; holder.value = {holder.value = Resource {data: alloc(8)}; Resource {data: alloc(42)}}; *holder.value.data}",
+        "type Resource struct {data: unique(usize), target: &usize} impl Drop for Resource {fn drop(self) modifies(self.target) {*self.target = 42;}} fn main() -> usize {let ignored: usize = 0; let replacement: unique(usize) = alloc(7); let value = Resource {data: alloc(0), target: &*replacement}; value = Resource {data: replacement, target: &ignored}; *value.data}",
+        "type Resource struct {data: unique(usize)} impl Drop for Resource {fn drop(self) {}} fn main() -> usize {let value = Resource {data: alloc(7)}; let header = &value.data; value = {value = Resource {data: alloc(8)}; Resource {data: alloc(42)}}; **header}",
+        "type Resource struct {data: unique(usize)} impl Drop for Resource {fn drop(self) {}} type Holder struct {value: Resource} fn main() -> usize {let holder = Holder {value: Resource {data: alloc(7)}}; holder.value = {holder.value = Resource {data: alloc(8)}; Resource {data: alloc(42)}}; *holder.value.data}",
         "fn main() -> usize {let value = rc::new(7); value = {value = rc::new(8); rc::new(42)}; *value.value()}",
-        "fn consume(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {drop(value);} else {}} fn main() -> usize {let unique: plane(usize) = alloc(7); consume(share_owner(unique), false); 42}",
-        "fn consume(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {drop(value);} else {}} fn main() -> usize {let unique: plane(usize) = alloc(7); consume(share_owner(unique), true); 42}",
-        "fn consume(value: owner(usize), flag: bool) -> usize where owners(value) == 1 {let view = &*value; if flag {drop(value);} else {} if flag {42} else {*view}} fn main() -> usize {let unique: plane(usize) = alloc(42); consume(share_owner(unique), false)}",
+        "fn consume(value: shared(usize), flag: bool) where owner_count(value) == 1 {if flag {let final: unique(usize) = move(value); drop(final);} else {}} fn main() -> usize {let unique: unique(usize) = alloc(7); consume(unique, false); 42}",
+        "fn consume(value: shared(usize), flag: bool) where owner_count(value) == 1 {if flag {let final: unique(usize) = move(value); drop(final);} else {}} fn main() -> usize {let unique: unique(usize) = alloc(7); consume(unique, true); 42}",
+        "fn consume(value: shared(usize), flag: bool) -> usize where owner_count(value) == 1 {let view = &*value; if flag {let final: unique(usize) = move(value); drop(final);} else {} if flag {42} else {*view}} fn main() -> usize {let unique: unique(usize) = alloc(42); consume(unique, false)}",
         "fn main() -> usize {let first = rc::new(42); let group = [first.clone(), first.clone()]; drop(group); if first.strong_count() == 1 {*first.value()} else {1}}",
         "fn replace(value: rc::Rc) -> rc::Rc where value.strong_count() < usize::MAX {let next = value.clone(); next} fn main() -> usize {let first = rc::new(42); let view = first.value(); let second = replace(first); if second.strong_count() == 1 {*view} else {1}}",
-        "fn duplicate(value: &owner(usize), flag: bool) -> owner(usize) {if flag {duplicate_owner(value)} else {duplicate_owner(value)}} fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate(&first, false); release_owner(second); *first}",
+        "fn duplicate(value: &shared(usize), flag: bool) -> shared(usize) {if flag {*value} else {*value}} fn main() -> usize {let unique: unique(usize) = alloc(42); let first: shared(usize) = move(unique); let second = duplicate(&first, false); leak(second); *first}",
         include_str!("../../../examples/conditional_ownership.evg"),
-        "fn release(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {let unique = recover_owner(value); drop(unique);} else {let unique = recover_owner(value); drop(unique);}} fn main() -> usize {let unique: plane(usize) = alloc(7); let value = share_owner(unique); release(value, false); 42}",
+        "fn release(value: shared(usize), flag: bool) where owner_count(value) == 1 {if flag {let unique: unique(usize) = move(value); drop(unique);} else {let unique: unique(usize) = move(value); drop(unique);}} fn main() -> usize {let unique: unique(usize) = alloc(7); let value: shared(usize) = move(unique); release(move(value), false); 42}",
         "fn main() -> usize {let items = [rc::new(42)]; let view = items[0].value(); let second = items[0].clone(); second.release_nonfinal(); *view}",
         "type Holder struct {shared: rc::Rc} fn main() -> usize {let holder = Holder {shared: rc::new(7)}; let view = holder.shared.value(); let second = holder.shared.clone(); *view = 42; second.release_nonfinal(); *holder.shared.value()}",
-        "type Resource struct {value: usize} where value == 42; impl Drop for Resource {fn drop(self) {proof valid: self.value == 42;}} fn main() -> usize {let unique: plane(Resource) = alloc(Resource {value: 42}); let first = share_owner(unique); let second = duplicate_owner(&first); release_owner(first); second.value}",
-        "fn duplicate(value: &owner(usize)) -> owner(usize) ensures owners(result) == old(owners(value)) + 1 {duplicate_owner(value)} fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate(&first); release_owner(first); *second}",
+        "type Resource struct {value: usize} where value == 42; impl Drop for Resource {fn drop(self) {proof valid: self.value == 42;}} fn main() -> usize {let unique: unique(Resource) = alloc(Resource {value: 42}); let first: shared(Resource) = move(unique); let second = first; leak(first); second.value}",
+        "fn duplicate(value: &shared(usize)) -> shared(usize) ensures owner_count(result) == old(owner_count(value)) + 1 {*value} fn main() -> usize {let unique: unique(usize) = alloc(42); let first: shared(usize) = move(unique); let second = duplicate(&first); leak(first); *second}",
         r#"fn main() -> usize {let bytes = ""; let text = utf8::Text::from_bytes(&bytes); if text.len() == 0 {42} else {1}}"#,
         r#"fn main() -> usize {let bytes = "a"; let text = utf8::Text::from_bytes(&bytes); bytes[0] = 98; if text.byte(0) == 98 {42} else {1}}"#,
         "type Resource struct {value: usize} fn consume(value: Resource) -> usize {value.value} impl Drop for Resource {fn drop(self) {mark(self.value);}} fn mark(value: usize) {} fn main() -> usize {consume(Resource {value: 42})}",
         "fn needs_bound(n: usize) -> usize where n < usize::MAX {n + 1} type Coupled struct {left: &usize, right: &usize} where left == right; impl Drop for Coupled {fn drop(self) {let next = needs_bound(*self.left);}} fn main() -> usize {let value: usize = 41; let coupled = Coupled {left: &value, right: &value}; 42}",
-        r#"fn consume(value: [u8; 0]) -> usize {42} fn main() -> usize {let value: [u8; 0] | bool = ""; consume(value)}"#,
+        r#"fn consume(value: [u8; 0]) -> usize {42} fn main() -> usize {let value: [u8; 0] | bool = ""; consume(move(value))}"#,
         include_str!("../../../examples/raw_union.evg"),
         include_str!("../../../examples/raw_union_drop.evg"),
         include_str!("../../../examples/raw_union_owner.evg"),
         include_str!("../../../examples/raw_union_borrow.evg"),
         include_str!("../../../examples/raw_union_owner_paths.evg"),
         include_str!("../../../examples/raw_union_owner_drop.evg"),
-        "fn read(v: &(plane(u8) | bool)) -> u8 where typeof(*v) == plane(u8) {**v} fn dispose(v: plane(u8)) {} fn main() -> u8 {let p: plane(u8) = alloc(42); let v: plane(u8) | bool = p; let n = read(&v); dispose(v); n}",
+        "fn read(v: &(unique(u8) | bool)) -> u8 where typeof(*v) == unique(u8) {**v} fn dispose(v: unique(u8)) {} fn main() -> u8 {let p: unique(u8) = alloc(42); let v: unique(u8) | bool = p; let n = read(&v); dispose(v); n}",
         "fn view(value: &(usize | bool)) -> usize where typeof(*value) == usize {*value} fn main() -> usize {let value: usize | bool = 42; let n = view(&value); let consumed: usize = value; n}",
         "fn first(value: [u8; 2]) -> u8 {value[0]} fn main() -> u8 {let payload: [u8; 2] | bool = [42, 7]; first(payload)}",
         "fn extract(value: i8 | usize) -> i8 where typeof(value) == i8 {let n: i8 = value; n} fn main() -> usize {if extract(i8(-42)) == -42 {42} else {1}}",
@@ -231,22 +236,22 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/field_access.evg"),
         "type Item struct {value: usize} fn choose(count: &usize, item: &Item) -> &Item where(*count < usize::MAX) modifies(count) borrows(item) ensures(*count == old(*count) + 1) {*count = *count + 1; item} fn main() -> usize {let n: usize = 0; let item = Item {value: 42}; let chosen = choose(&n, &item).value; if n == 1 {chosen} else {0}}",
         "type Size struct {len: usize} fn first(size: &Size, data: linear_plane(usize, size.len)) -> usize where(size.len > 0) {(*data)[0]} fn main() -> usize {let size = Size {len: 1}; let data: array(usize, 1) = [42]; first(&size, &data)}",
-        "type Inner struct {value: usize} type Outer struct {inner: plane(Inner)} fn main() -> usize {let outer = alloc(Outer {inner: alloc(Inner {value: 41})}); let a = &outer; let b = &a; b.inner.value = 42; b.inner.value}",
+        "type Inner struct {value: usize} type Outer struct {inner: unique(Inner)} fn main() -> usize {let outer = alloc(Outer {inner: alloc(Inner {value: 41})}); let a = &outer; let b = &a; b.inner.value = 42; b.inner.value}",
         include_str!("../../../examples/vec.evg"),
         crate::compiler::verify::replacement_tests::OLD_SLOT_DURING_DROP,
         "fn main() -> usize {let values = vec::Vec::new(0); let header = &values; values = values.reallocate(4); proof grown: header.capacity() == 4; values.push(42); values = values.reallocate(8); proof grown_again: header.capacity() == 8; values.pop()}",
         "fn main() -> usize {let values = vec::Vec::new(1); values.push(42); let removed = values.pop(); values = values.reallocate(0); values = values.reallocate(0); proof empty: values.capacity() == 0; removed}",
-        "fn main() -> usize {let a: plane(usize, 9000) = alloc(9000, 42); (*a)[8999]}",
+        "fn main() -> usize {let a: unique(usize, 9000) = alloc(9000, 42); (*a)[8999]}",
         "fn main() -> usize {let v = vec::new(9000); vec::push(&v, 42); vec::pop(&v)}",
-        "fn consume(owner: plane(usize, count), count: usize) -> usize where(count > 0) {(*owner)[0]} fn main() -> usize {let count: usize = 7; let owner: plane(usize, 2) = alloc(2, 42); consume(owner, 2)}",
+        "fn consume(owner: unique(usize, count), count: usize) -> usize where(count > 0) {(*owner)[0]} fn main() -> usize {let count: usize = 7; let owner: unique(usize, 2) = alloc(2, 42); consume(owner, 2)}",
         "fn main() -> usize {let v = vec::new(0); v = vec::reallocate(&v, 2); vec::push(&v, 42); let p = vec::get(&v, 0); vec::push(&v, 7); *p}",
         include_str!("../../../examples/runtime_planes.evg"),
-        "fn main() -> usize {let a: plane(usize, 0) = alloc(0, 7); let b: plane(usize, 0) = alloc(0, 9); if &*a != &*b {42} else {1}}",
+        "fn main() -> usize {let a: unique(usize, 0) = alloc(0, 7); let b: unique(usize, 0) = alloc(0, 9); if &*a != &*b {42} else {1}}",
         "fn first(n: usize, data: linear_plane(u8, n), fixed: array(u16, 2)) -> u8 where(n > 0) {(*data)[0]} fn main() -> u8 {let data: array(u8, 1) = [42]; first(1, &data, [7, 9])}",
-        "fn make(n: usize) -> plane(u8, n) where(n > 0 && n <= 65536) {alloc(n, 255)} fn main() -> usize {let data = make(7); if (*data)[0] == 255 && (*data)[6] == 255 {42} else {1}}",
-        "fn main() -> usize {let data: plane(i8, 3) = alloc(3, -128); (*data)[1] = -42; if (*data)[0] == -128 && (*data)[1] == -42 && (*data)[2] == -128 {42} else {1}}",
-        "type Pair struct {a: u8, b: u16, c: bool} impl Copy for Pair {} fn main() -> usize {let data: plane(Pair, 3) = alloc(3, Pair {a: 255, b: 65535, c: true}); (*data)[1].b = 42; if (*data)[0].b == 65535 && (*data)[1].a == 255 && (*data)[1].b == 42 && (*data)[2].c {42} else {1}}",
-        "fn tick(n: &usize) -> usize where(*n < usize::MAX) modifies(n) ensures(*n == old(*n) + 1 && result == 7) {*n = *n + 1; 7} fn main() -> usize {let n: usize = 3; let before = n; let data: plane(usize, before) = alloc(n, tick(&n)); if n == 4 && (*data)[2] == 7 {42} else {1}}",
+        "fn make(n: usize) -> unique(u8, n) where(n > 0 && n <= 65536) {alloc(n, 255)} fn main() -> usize {let data = make(7); if (*data)[0] == 255 && (*data)[6] == 255 {42} else {1}}",
+        "fn main() -> usize {let data: unique(i8, 3) = alloc(3, -128); (*data)[1] = -42; if (*data)[0] == -128 && (*data)[1] == -42 && (*data)[2] == -128 {42} else {1}}",
+        "type Pair struct {a: u8, b: u16, c: bool} impl Copy for Pair {} fn main() -> usize {let data: unique(Pair, 3) = alloc(3, Pair {a: 255, b: 65535, c: true}); (*data)[1].b = 42; if (*data)[0].b == 65535 && (*data)[1].a == 255 && (*data)[1].b == 42 && (*data)[2].c {42} else {1}}",
+        "fn tick(n: &usize) -> usize where(*n < usize::MAX) modifies(n) ensures(*n == old(*n) + 1 && result == 7) {*n = *n + 1; 7} fn main() -> usize {let n: usize = 3; let before = n; let data: unique(usize, before) = alloc(n, tick(&n)); if n == 4 && (*data)[2] == 7 {42} else {1}}",
         "fn sum(ideal n: nat, a: &[u8; n], ideal m: nat, b: &[u8; m]) -> u16 where(n > 0 && m > 0) {u16((*a)[0]) + u16((*b)[0])} fn main() -> u16 {let a: [u8; 1] = [40]; let b: [u8; 2] = [2, 3]; sum(&a, &b)}",
         "fn main() -> usize {let data: [usize; 2] = [7, 1]; arrays::set(&data, 1, 42); data[1]}",
         include_str!("../../../examples/owned_return_cleanup.evg"),
@@ -288,18 +293,18 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/owned_planes.evg"),
         include_str!("../../../examples/owned_result_views.evg"),
         include_str!("../../../examples/heap_updates.evg"),
-        "fn main() -> usize {let p: plane(usize) = alloc(42); *p}",
-        "fn forward(p: plane(usize)) -> plane(usize) {p} fn main() -> usize {let p = forward(alloc(42)); *p}",
-        "type Owner struct {data: plane([usize; 2])} fn main() -> usize {let owner = Owner {data: alloc([7, 42])}; (*owner.data)[1]}",
-        "fn main() -> usize {let p: plane(usize) = alloc(1); drop(p); p = alloc(42); *p}",
+        "fn main() -> usize {let p: unique(usize) = alloc(42); *p}",
+        "fn forward(p: unique(usize)) -> unique(usize) {p} fn main() -> usize {let p = forward(alloc(42)); *p}",
+        "type Owner struct {data: unique([usize; 2])} fn main() -> usize {let owner = Owner {data: alloc([7, 42])}; (*owner.data)[1]}",
+        "fn main() -> usize {let p: unique(usize) = alloc(1); drop(p); p = alloc(42); *p}",
         "fn main() -> isize {*alloc(42)}",
         "type Resource struct {n: usize} impl Drop for Resource {fn drop(self){}} fn main() -> usize {(*alloc(Resource {n: 42})).n}",
-        "fn main() -> usize {let p: plane([usize; 2]) = alloc([7, 42]); (*p)[1]}",
-        "fn main() -> usize {let p: plane(plane(usize)) = alloc(alloc(42)); **p}",
-        "fn main() -> usize {let p: plane([plane(usize); 2]) = alloc([alloc(7), alloc(42)]); *(*p)[1]}",
-        "fn main() -> usize {let p: plane(usize) = alloc(41); let view = &*p; let nested = alloc(p); *view = 42; *view}",
-        "type Holder struct {owner: plane(usize)} fn main() -> usize {let p: plane(usize) = alloc(42); let view = &*p; let h = Holder {owner: p}; let Holder {owner: q} = h; *view}",
-        "type Child struct {n: usize} impl Drop for Child {fn drop(self){}} type Parent struct {child: plane(Child)} impl Drop for Parent {fn drop(self){}} fn main() -> usize {let p = alloc(Parent {child: alloc(Child {n: 42})}); (*(*p).child).n}",
+        "fn main() -> usize {let p: unique([usize; 2]) = alloc([7, 42]); (*p)[1]}",
+        "fn main() -> usize {let p: unique(unique(usize)) = alloc(alloc(42)); **p}",
+        "fn main() -> usize {let p: unique([unique(usize); 2]) = alloc([alloc(7), alloc(42)]); *(*p)[1]}",
+        "fn main() -> usize {let p: unique(usize) = alloc(41); let view = &*p; let nested = alloc(p); *view = 42; *view}",
+        "type Holder struct {owner: unique(usize)} fn main() -> usize {let p: unique(usize) = alloc(42); let view = &*p; let h = Holder {owner: p}; let Holder {owner: q} = h; *view}",
+        "type Child struct {n: usize} impl Drop for Child {fn drop(self){}} type Parent struct {child: unique(Child)} impl Drop for Parent {fn drop(self){}} fn main() -> usize {let p = alloc(Parent {child: alloc(Child {n: 42})}); (*(*p).child).n}",
         "type Empty struct {} fn main() -> usize {let a = alloc(Empty {}); let b = alloc(Empty {}); if &*a != &*b {42} else {0}}",
         include_str!("../../../examples/borrowed_view.evg"),
         include_str!("../../../examples/borrowed_array.evg"),
@@ -532,7 +537,7 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/compare_exchange.evg")
     ));
     cases.push(format!("{atomic} fn main() -> usize {{let data: [usize; 2] = [7, usize::MAX]; let old = x86_64_atomics::compare_exchange(&data[1], usize::MAX, 42); if old == usize::MAX && data[0] == 7 && data[1] == 42 {{42}} else {{1}}}}"));
-    cases.push(format!("{atomic} fn main() -> usize {{let owner: plane(usize) = alloc(7); let old = x86_64_atomics::compare_exchange(&*owner, 7, 42); if old == 7 {{*owner}} else {{1}}}}"));
+    cases.push(format!("{atomic} fn main() -> usize {{let owner: unique(usize) = alloc(7); let old = x86_64_atomics::compare_exchange(&*owner, 7, 42); if old == 7 {{*owner}} else {{1}}}}"));
     cases.push("extern compare_exchange64 fn cas(value: &isize, expected: isize, desired: isize) -> isize modifies(value); proof {trustme} fn main() -> usize {let value: isize = isize::MIN; let old = cas(&value, isize::MIN, -42); if old == isize::MIN && value == -42 {42} else {1}}".into());
     let indexed = include_str!("../../../examples/indexed_borrows.evg")
         .split("fn main")
@@ -565,7 +570,7 @@ fn native_execution_agrees_with_the_interpreter() {
         ] {
             cases.push(format!("{declarations} fn act(r: Resource, flag: bool) -> usize {{{body}}} fn main() -> usize {{act(make(), {choice})}}"));
         }
-        cases.push(format!("{declarations} fn act(r: plane(Resource), flag: bool) -> usize {{if flag {{drop(r);}} else {{}} 42}} fn main() -> usize {{act(alloc(make()), {choice})}}"));
+        cases.push(format!("{declarations} fn act(r: unique(Resource), flag: bool) -> usize {{if flag {{drop(r);}} else {{}} 42}} fn main() -> usize {{act(alloc(make()), {choice})}}"));
         cases.push(format!("{declarations} fn act(r: [Resource; 2], flag: bool) -> usize {{if flag {{drop(r);}} else {{}} 42}} fn main() -> usize {{act([make(), make()], {choice})}}"));
         cases.push(format!("type Left struct {{}} impl Drop for Left {{fn drop(self) {{}}}} type Right struct {{}} impl Drop for Right {{fn drop(self) {{}}}} fn act(left: Left, right: Right, flag: bool) {{if flag {{drop(left);}} else {{drop(right);}}}} fn main() -> usize {{act(Left {{}}, Right {{}}, {choice}); 42}}"));
     }
@@ -655,7 +660,7 @@ fn native_execution_agrees_with_the_interpreter() {
     );
     // The library copy loop must not consume a native recursive activation for
     // each element. This length exceeds the recursion guard by a wide margin.
-    let copied = "fn main() -> usize {let source: plane(usize, 4096) = alloc(4096, 42); let target: plane(usize, 4096) = alloc(4096, 0); vec::copy_prefix(&*source, &*target, 4096, 0); if (*target)[0] == 42 && (*target)[2048] == 42 && (*target)[4095] == 42 {42} else {1}}";
+    let copied = "fn main() -> usize {let source: unique(usize, 4096) = alloc(4096, 42); let target: unique(usize, 4096) = alloc(4096, 0); vec::copy_prefix(&*source, &*target, 4096, 0); if (*target)[0] == 42 && (*target)[2048] == 42 && (*target)[4095] == 42 {42} else {1}}";
     let program = verify(copied).unwrap();
     assert!(program.trusted_assumptions().is_empty());
     let binary = emit(&program).unwrap();
@@ -730,7 +735,7 @@ fn native_syscalls_write_exact_bytes_and_preserve_results() {
 #[test]
 fn native_heap_storage_is_independent_of_inline_and_interpreter_budgets() {
     let source =
-        "fn main() -> u8 {let a: plane(u8, 17825792) = alloc(17825792, 42); (*a)[17825791]}";
+        "fn main() -> u8 {let a: unique(u8, 17825792) = alloc(17825792, 42); (*a)[17825791]}";
     let program = verify(source).unwrap();
     assert!(program.run().unwrap_err().contains("before allocation"));
     let path = std::env::temp_dir().join(format!("evergreen-large-heap-{}", std::process::id()));

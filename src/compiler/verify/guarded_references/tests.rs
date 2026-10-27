@@ -52,7 +52,7 @@ fn guarded_assignment_evaluates_address_index_and_value_once_in_order() {
 fn guarded_places_keep_lifetimes_opacity_and_invariant_checks() {
     for source in [
         "fn wrong(a: &usize, b: &usize, flag: bool) modifies(a) {let selected = if flag {a} else {b}; *selected = 42;}",
-        "fn wrong(flag: bool) {let a: plane(usize) = alloc(7); let b: plane(usize) = alloc(9); let selected = if flag {&*a} else {&*b}; drop(a); let replacement: plane(usize) = alloc(1); *selected = 42;}",
+        "fn wrong(flag: bool) {let a: unique(usize) = alloc(7); let b: unique(usize) = alloc(9); let selected = if flag {&*a} else {&*b}; drop(a); let replacement: unique(usize) = alloc(1); *selected = 42;}",
         "type Positive struct {value: usize} where self.value > 0; fn wrong(flag: bool) {let a = Positive {value: 7}; let b = Positive {value: 9}; let selected = if flag {&a} else {&b}; selected.value = 0;}",
         "module hidden {opaque type Item struct {value: usize} fn make() -> Item {Item {value: 7}}} fn wrong(flag: bool) {let a = hidden::make(); let b = hidden::make(); let selected = if flag {&a} else {&b}; let leaked = &selected.value;}",
     ] {assert!(verify(source).is_err(), "accepted {source}");}
@@ -123,9 +123,9 @@ fn selected_value_admissions_stay_in_the_selected_data_flow() {
 
 #[test]
 fn conditional_reference_liveness_follows_the_selected_generation() {
-    check("fn choose(flag: bool) -> usize {let a: plane(usize) = alloc(7); let b: plane(usize) = alloc(42); let selected = if flag {&*a} else {&*b}; drop(a); if flag {0} else {*selected}} fn main() -> usize {choose(false)}", "42");
+    check("fn choose(flag: bool) -> usize {let a: unique(usize) = alloc(7); let b: unique(usize) = alloc(42); let selected = if flag {&*a} else {&*b}; drop(a); if flag {0} else {*selected}} fn main() -> usize {choose(false)}", "42");
     for proof in ["", "proof wrong: !flag by {trustme};"] {
-        let source = format!("fn wrong(flag: bool) -> usize {{let a: plane(usize) = alloc(7); let b: plane(usize) = alloc(42); let selected = if flag {{&*a}} else {{&*b}}; drop(a); let replacement: plane(usize) = alloc(99); {proof} *selected}}");
+        let source = format!("fn wrong(flag: bool) -> usize {{let a: unique(usize) = alloc(7); let b: unique(usize) = alloc(42); let selected = if flag {{&*a}} else {{&*b}}; drop(a); let replacement: unique(usize) = alloc(99); {proof} *selected}}");
         let error = verify(&source).unwrap_err();
         assert!(error.contains("never"), "{error}\n{source}");
     }

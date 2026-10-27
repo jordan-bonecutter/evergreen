@@ -281,11 +281,11 @@ impl Context<'_> {
                         limit,
                     )?;
                 }
-                Symbol::Owner(pointee, owner) => {
+                Symbol::Shared(pointee, owner) => {
                     let reference = ctx.storage.memory.borrow_owned(*owner)?;
                     visit(
                         ctx,
-                        &Symbol::Plane(pointee.clone(), reference),
+                        &Symbol::Unique(pointee.clone(), reference),
                         origin,
                         mode.clone(),
                         inputs,
@@ -293,7 +293,7 @@ impl Context<'_> {
                         limit,
                     )?;
                 }
-                Symbol::Plane(pointee, reference) => {
+                Symbol::Unique(pointee, reference) => {
                     if borrowed {
                         inputs.push(InputReference {
                             origin: origin.clone(),

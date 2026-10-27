@@ -1,5 +1,6 @@
 //! Explicit Copy declarations. Copy is structural permission to duplicate a
-//! value; it cannot hide ownership, move-only proof resources, or destructor work.
+//! value; move-only resources and custom destruction cannot be duplicated.
+//! Shared-pointer copies additionally check census effects in the verifier.
 
 use crate::syntax::{Program, Struct};
 use std::collections::{BTreeMap, BTreeSet};

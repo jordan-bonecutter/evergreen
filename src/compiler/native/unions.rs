@@ -28,6 +28,13 @@ impl Emitter<'_> {
         if Self::compatible(&got, expected)? {
             return Ok(expected.clone());
         }
+        if let (Type::Unique(inner), Type::Shared(target))
+        | (Type::Shared(inner), Type::Unique(target)) = (&got, expected)
+        {
+            if Self::compatible(inner, target)? {
+                return Ok(expected.clone());
+            }
+        }
         if let Type::Union(members) = expected {
             if members.iter().try_fold(false, |found, member| {
                 Ok::<_, String>(found || Self::compatible(&got, member)?)

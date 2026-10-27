@@ -100,8 +100,8 @@ pub(crate) fn same_type(a: &Type, b: &Type) -> Result<bool> {
             same_type(a, b)? && array_length(al)? == array_length(bl)?
         }
         (Type::Ref(a), Type::Ref(b))
-        | (Type::Plane(a), Type::Plane(b))
-        | (Type::Owner(a), Type::Owner(b))
+        | (Type::Unique(a), Type::Unique(b))
+        | (Type::Shared(a), Type::Shared(b))
         | (Type::Shape(a), Type::Shape(b)) => same_type(a, b)?,
         _ => a == b,
     })
@@ -158,8 +158,8 @@ pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
             | Type::Bool
             | Type::Unit
             | Type::Ref(_)
-            | Type::Plane(_)
-            | Type::Owner(_) => {
+            | Type::Unique(_)
+            | Type::Shared(_) => {
                 let scalar = target.scalar(ty)?;
                 align = scalar.align;
                 scalar.size

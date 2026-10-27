@@ -44,7 +44,7 @@ impl Emitter<'_> {
         let count = self.allocate(&count_type)?;
         self.copy_frame(count, &count_type)?;
         let hint = match expected {
-            Some(Type::Plane(inner)) => match inner.as_ref() {
+            Some(Type::Unique(inner) | Type::Shared(inner)) => match inner.as_ref() {
                 Type::Array(element, _) => Some(element.as_ref()),
                 _ => None,
             },
@@ -64,7 +64,7 @@ impl Emitter<'_> {
         self.code.extend([0x48, 0x85, 0xc0, 0x75, 10]); // preserve empty-object identity
         self.immediate(layout.align as u64);
         self.map_payload();
-        let result = Type::Plane(Box::new(Type::Array(
+        let result = Type::Unique(Box::new(Type::Array(
             Box::new(element.clone()),
             Box::new(args[0].clone()),
         )));

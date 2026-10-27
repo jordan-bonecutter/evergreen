@@ -45,6 +45,7 @@ pub(super) fn verify(
                 verification
                     .structs
                     .insert(record.name.clone(), record.clone());
+                check_record_copy(record, verification.declarations(), session)?;
             }
             crate::compiler::declarations::Declaration::Function(index) => {
                 let function = &mut functions[index];
@@ -124,6 +125,28 @@ fn check_record(s: &Struct, declarations: Declarations<'_>, session: &mut Sessio
     if let Some(p) = &s.invariant {
         ctx.proposition(p)?;
     }
+    Ok(())
+}
+
+fn check_record_copy(
+    record: &Struct,
+    declarations: Declarations<'_>,
+    session: &mut Session,
+) -> Result<()> {
+    if !record.copy || record.ideal {
+        return Ok(());
+    }
+    let mut ctx = Context::new(declarations, session);
+    ctx.locals.module = record.module.clone();
+    ctx.locals.declaring = Some(record.name.clone());
+    let value = ctx.arbitrary(&Ty::Record(record.name.clone()))?;
+    ctx.locals.values.insert("self".into(), value.clone());
+    ctx.copy_pointer_read(value, record.line).map_err(|error| {
+        format!(
+            "line {}: Copy must preserve {}'s invariant: {error}",
+            record.line, record.name
+        )
+    })?;
     Ok(())
 }
 
@@ -242,17 +265,14 @@ impl Verification {
                 f.name.rsplit("::").next().unwrap_or(&f.name),
                 "move"
                     | "drop"
+                    | "leak"
                     | "alloc"
                     | "integer"
                     | "nat"
                     | "old"
                     | "typeof"
                     | "shape"
-                    | "owners"
-                    | "share_owner"
-                    | "duplicate_owner"
-                    | "release_owner"
-                    | "recover_owner"
+                    | "owner_count"
             )
         {
             return Err(format!("line {}: {} is a reserved builtin", f.line, f.name));

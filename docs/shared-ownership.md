@@ -4,10 +4,10 @@ Rc and Arc must be Evergreen libraries. The compiler should understand generic
 resource ownership, invariant framing, and primitive machine operations. It
 must not recognize an Rc type, count field, clone function, or destructor.
 
-This document records the next implementation boundary, not a claim that Rc or
-Arc is implemented. Unique `plane(T)` ownership and generic `owner(T)` lifetime
-claims work today. Source counter protocols still need guarded token joins and
-invariant-opening support for those transitions.
+This document records concurrency and resource-model obligations. Unique
+`unique(T)` ownership, generic `shared(T)` lifetime claims, and a sequential
+[source Rc](rc.md) work today. Arc and verified concurrent interference remain
+unimplemented.
 
 ## Counted resources, including intermediate operations
 
@@ -56,7 +56,7 @@ an owning pointer carries that responsibility and is move-only. Both can have th
 same address representation. An allocator may own the backing memory while a
 library owns responsibility for one allocated plane inside it.
 
-The compiler ideal primitive `owners(p)` reports the number of live
+The compiler ideal primitive `owner_count(p)` reports the number of live
 owning references to the relevant plane. Ordinary borrows do not count. This
 must be compiler-maintained semantic state, not a user-supplied number or a scan
 of the bindings visible in the current function. Hidden caller references,
@@ -126,19 +126,19 @@ and a current count-one observation for that exact plane. An observation alone
 grants no ownership. The source checker now connects owning references to these
 identities, with a separate symbolic total for unknown caller-held claims.
 
-The low-level host store permits releasing the last token without reclamation;
-that operation leaks and never manufactures a uniqueness right. The source API
-is stricter: `release_owner` must prove another claim remains, while implicit
-cleanup or `recover_owner` must prove sole ownership. Raw owning values cannot
-silently lose the last allocation responsibility.
+The host store and source `leak(handle)` both permit relinquishing the last
+shared claim without reclamation. Shared scope exit also leaks. Destroying a
+payload requires consuming a live shared handle and proving current uniqueness
+to obtain `unique(T)`; an observation alone cannot provide that authority.
 
 See [`owning-references.md`](owning-references.md) for the source capability API,
 its native erasure, and checked examples. Incoming owner counts are symbolic and
 include opaque caller ownership; they are not the number of handles visible in
 the callee. Actual heap calls recheck resource transitions against caller storage.
 
-The next Rc work is guarded ownership joins and opening its accounting invariant
-around a source counter update plus a generic claim transition. Numeric credits
+The sequential Rc now uses source counter updates, ordinary shared-pointer
+copies, and checked final promotion. General payload types and concurrent
+interference remain open work. Numeric credits
 are retained as generic ideal-resource tests, not as Rc's allocation authority.
 Independent kernel checking of the resource-state rules and native preservation
 also remains unfinished. The capability tests do not establish a complete Rc or

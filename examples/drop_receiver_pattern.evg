@@ -7,7 +7,7 @@ impl Drop for Child {
     }
 }
 
-type Resource struct {data: plane(usize), child: Child}
+type Resource struct {data: unique(usize), child: Child}
 where(*data == 42);
 impl Drop for Resource {
     fn drop(self)

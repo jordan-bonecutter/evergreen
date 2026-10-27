@@ -1,7 +1,7 @@
 // The credits are backed by this allocation, unlike standalone numeric budgets.
 // No runtime reference counter is implemented by this example or the compiler.
 fn main() -> usize {
-    let allocation: plane(usize) = alloc(42);
+    let allocation: unique(usize) = alloc(42);
     let view = &*allocation;
     let first = allocation_credits::attach(allocation);
     let second = allocation_credits::duplicate(&first);

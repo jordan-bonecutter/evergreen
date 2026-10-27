@@ -70,8 +70,8 @@ enum Ty {
     Bool,
     Unit,
     Ref(Box<Ty>),
-    Plane(Box<Ty>),
-    Owner(Box<Ty>),
+    Unique(Box<Ty>),
+    Shared(Box<Ty>),
     Machine(MachineInt),
     Array(Box<Ty>, Linear),
     Record(String),
@@ -105,8 +105,8 @@ enum Symbol {
     Unit,
     Ref(Box<Ty>, Reference, Vec<Projection<Linear>>),
     RefCases(Box<Ty>, Vec<guarded_references::Case>),
-    Plane(Box<Ty>, Reference),
-    Owner(Box<Ty>, crate::shared::planes::OwnedReference),
+    Unique(Box<Ty>, Reference),
+    Shared(Box<Ty>, crate::shared::planes::OwnedReference),
 }
 
 impl Symbol {
@@ -122,8 +122,8 @@ impl Symbol {
             Self::Unit => Ty::Unit,
             Self::Ref(t, _, _) => Ty::Ref(t.clone()),
             Self::RefCases(t, _) => Ty::Ref(t.clone()),
-            Self::Plane(t, _) => Ty::Plane(t.clone()),
-            Self::Owner(t, _) => Ty::Owner(t.clone()),
+            Self::Unique(t, _) => Ty::Unique(t.clone()),
+            Self::Shared(t, _) => Ty::Shared(t.clone()),
         }
     }
 
@@ -190,7 +190,7 @@ fn symbol_weight(value: &Symbol) -> Result<usize> {
             }
             Node::Value(Symbol::Shape(inner), depth) => pending.push(Node::Type(inner, depth + 1)),
             Node::Type(
-                Ty::Ref(inner) | Ty::Plane(inner) | Ty::Owner(inner) | Ty::Shape(inner),
+                Ty::Ref(inner) | Ty::Unique(inner) | Ty::Shared(inner) | Ty::Shape(inner),
                 depth,
             ) => pending.push(Node::Type(inner, depth + 1)),
             Node::Type(Ty::Union(members), depth) => {
@@ -334,7 +334,7 @@ fn project_mut<'a>(value: &'a mut Symbol, path: &[Projection<Linear>]) -> Result
 
 fn type_has_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match t {
-        Type::Ref(_) | Type::Plane(_) | Type::Owner(_) => true,
+        Type::Ref(_) | Type::Unique(_) | Type::Shared(_) => true,
         Type::Union(members) => members.iter().any(|ty| type_has_reference(ty, structs)),
         Type::Shape(_) => false,
         Type::Array(t, _) => type_has_reference(t, structs),
@@ -348,7 +348,7 @@ fn type_has_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
 fn type_has_borrowed_reference(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match t {
         Type::Ref(_) => true,
-        Type::Plane(inner) | Type::Owner(inner) | Type::Array(inner, _) => {
+        Type::Unique(inner) | Type::Shared(inner) | Type::Array(inner, _) => {
             type_has_borrowed_reference(inner, structs)
         }
         Type::Shape(_) => false,
@@ -386,7 +386,7 @@ fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
             .get(n)
             .is_some_and(|s| !s.ideal && s.runtime_fields().all(|(_, t)| runtime_type(t, structs))),
         Type::Union(members) => members.iter().all(|ty| runtime_type(ty, structs)),
-        Type::Array(t, _) | Type::Ref(t) | Type::Plane(t) | Type::Owner(t) | Type::Shape(t) => {
+        Type::Array(t, _) | Type::Ref(t) | Type::Unique(t) | Type::Shared(t) | Type::Shape(t) => {
             runtime_type(t, structs)
         }
         _ => true,
@@ -397,7 +397,7 @@ fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
 // boundary; their provenance and liveness use the ordinary reference rules.
 fn erased_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match t {
-        Type::Plane(_) | Type::Owner(_) => false,
+        Type::Unique(_) | Type::Shared(_) => false,
         Type::Ref(_) => true,
         Type::Named(name) => structs
             .get(name)
@@ -590,7 +590,7 @@ fn needs_old_memory(function: &Function) -> bool {
 
     fn ty(t: &Type) -> bool {
         match t {
-            Type::Ref(t) | Type::Plane(t) | Type::Owner(t) | Type::Shape(t) => ty(t),
+            Type::Ref(t) | Type::Unique(t) | Type::Shared(t) | Type::Shape(t) => ty(t),
             Type::Union(members) => members.iter().any(ty),
             Type::Array(t, n) => ty(t) || expression(n),
             _ => false,
@@ -691,7 +691,7 @@ impl<'a> Context<'a> {
     fn erased_value(&self, value: &Symbol) -> bool {
         match value.ty() {
             Ty::Union(members) => members.iter().all(|ty| self.proof_storage(ty)),
-            Ty::Plane(_) | Ty::Owner(_) => false,
+            Ty::Unique(_) | Ty::Shared(_) => false,
             Ty::Record(name) => erased_type(&Type::Named(name), self.declarations.structs),
             Ty::Array(element, _) => self.erased_ty(&element),
             Ty::Ref(_) => true,
@@ -714,7 +714,7 @@ impl<'a> Context<'a> {
     fn erased_ty(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Union(members) => members.iter().all(|ty| self.proof_storage(ty)),
-            Ty::Plane(_) | Ty::Owner(_) => false,
+            Ty::Unique(_) | Ty::Shared(_) => false,
             Ty::Record(name) => erased_type(&Type::Named(name.clone()), self.declarations.structs),
             Ty::Array(element, _) => self.erased_ty(element),
             Ty::Ref(_) => true,
@@ -974,9 +974,9 @@ impl<'a> Context<'a> {
                 .try_fold(0usize, |cost, value| -> Result<usize> {
                     let extra = if let Symbol::Ref(_, reference, fields) = value {
                         symbol_weight(project(self.storage.memory.read(*reference)?, fields)?)?
-                    } else if let Symbol::Plane(_, reference) = value {
+                    } else if let Symbol::Unique(_, reference) = value {
                         symbol_weight(self.storage.memory.read(*reference)?)?
-                    } else if let Symbol::Owner(_, owner) = value {
+                    } else if let Symbol::Shared(_, owner) = value {
                         symbol_weight(self.storage.memory.read(owner.reference())?)?
                     } else {
                         0
@@ -993,9 +993,9 @@ impl<'a> Context<'a> {
                 targets.push((name.clone(), *reference, fields.clone()));
             } else if matches!(value, Symbol::RefCases(..)) {
                 conditional_targets.push((name.clone(), value.clone()));
-            } else if let Symbol::Plane(_, reference) = value {
+            } else if let Symbol::Unique(_, reference) = value {
                 targets.push((name.clone(), *reference, Vec::new()));
-            } else if let Symbol::Owner(_, owner) = value {
+            } else if let Symbol::Shared(_, owner) = value {
                 targets.push((name.clone(), owner.reference(), Vec::new()));
             }
         }
@@ -1029,7 +1029,7 @@ impl<'a> Context<'a> {
         match &expression.kind {
             Kind::Call(name, args) => {
                 let observed_call = MachineInt::parse(name).is_some()
-                    || matches!(name.as_str(), "integer" | "nat" | "owners")
+                    || matches!(name.as_str(), "integer" | "nat" | "owner_count")
                     || self
                         .declarations
                         .functions
@@ -1231,19 +1231,19 @@ impl<'a> Context<'a> {
             Type::Machine(t) => Ok(Ty::Machine(*t)),
             Type::Unit => Ok(Ty::Unit),
             Type::Ref(t) => Ok(Ty::Ref(Box::new(self.resolve(t)?))),
-            Type::Plane(t) => {
+            Type::Unique(t) => {
                 if !runtime_type(t, self.declarations.structs) || !heap::payload_type(t, self.declarations.structs) {
                     return Err("owned planes require runtime payloads without borrowed references".into());
                 }
                 heap::payload_layout(t, self.declarations.structs)?;
-                Ok(Ty::Plane(Box::new(self.resolve(t)?)))
+                Ok(Ty::Unique(Box::new(self.resolve(t)?)))
             }
-            Type::Owner(t) => {
+            Type::Shared(t) => {
                 if !runtime_type(t, self.declarations.structs) || !heap::payload_type(t, self.declarations.structs) {
                     return Err("owning references require runtime payloads without borrowed references".into());
                 }
                 heap::payload_layout(t, self.declarations.structs)?;
-                Ok(Ty::Owner(Box::new(self.resolve(t)?)))
+                Ok(Ty::Shared(Box::new(self.resolve(t)?)))
             }
             Type::Named(n) => {
                 if !self.declarations.structs.contains_key(n) {
@@ -1272,12 +1272,12 @@ impl<'a> Context<'a> {
             Type::Ref(inner) => Ok(self
                 .literal_element_hint(inner)?
                 .map(|t| Ty::Ref(Box::new(t)))),
-            Type::Plane(inner) => Ok(self
+            Type::Unique(inner) => Ok(self
                 .literal_element_hint(inner)?
-                .map(|t| Ty::Plane(Box::new(t)))),
-            Type::Owner(inner) => Ok(self
+                .map(|t| Ty::Unique(Box::new(t)))),
+            Type::Shared(inner) => Ok(self
                 .literal_element_hint(inner)?
-                .map(|t| Ty::Owner(Box::new(t)))),
+                .map(|t| Ty::Shared(Box::new(t)))),
             _ => self.resolve(t).map(Some),
         }
     }
@@ -1292,8 +1292,8 @@ impl<'a> Context<'a> {
             | (Ty::Bool, Ty::Bool)
             | (Ty::Unit, Ty::Unit) => Ok(()),
             (Ty::Ref(a), Ty::Ref(b)) => self.compatible(a, b, line),
-            (Ty::Plane(a), Ty::Plane(b)) => self.compatible(a, b, line),
-            (Ty::Owner(a), Ty::Owner(b)) => self.compatible(a, b, line),
+            (Ty::Unique(a), Ty::Unique(b)) => self.compatible(a, b, line),
+            (Ty::Shared(a), Ty::Shared(b)) => self.compatible(a, b, line),
             (Ty::Machine(a), Ty::Machine(b)) if a == b => Ok(()),
             (Ty::Record(a), Ty::Record(b)) if a == b => Ok(()),
             (Ty::Array(a, n), Ty::Array(b, m)) => {
@@ -1330,8 +1330,8 @@ impl<'a> Context<'a> {
                 Ok(Symbol::Number(Ty::Machine(*t), n))
             }
             Ty::Unit => Ok(Symbol::Unit),
-            Ty::Owner(t) => self.arbitrary_owner(t),
-            Ty::Plane(t) => {
+            Ty::Shared(t) => self.arbitrary_owner(t),
+            Ty::Unique(t) => {
                 if let Ty::Array(element, length) = t.as_ref() {
                     let syntax = heap::syntax_type(element, 0)?;
                     let stride =
@@ -1345,7 +1345,10 @@ impl<'a> Context<'a> {
                 }
                 let value = self.arbitrary(t)?;
                 let plane = self.allocate_symbol(value)?;
-                Ok(Symbol::Plane(t.clone(), self.storage.memory.borrow(plane)?))
+                Ok(Symbol::Unique(
+                    t.clone(),
+                    self.storage.memory.borrow(plane)?,
+                ))
             }
             Ty::Ref(t) => {
                 let v = self.arbitrary(t)?;
@@ -1743,7 +1746,7 @@ impl<'a> Context<'a> {
                 // it during cleanup invalidates every loan into that slot.
                 self.storage
                     .temporaries
-                    .push((Symbol::Plane(Box::new(ty), reference), e.line));
+                    .push((Symbol::Unique(Box::new(ty), reference), e.line));
                 Ok((reference, Vec::new()))
             }
             _ => Err(format!("line {}: expected a referenceable place", e.line)),
@@ -1759,8 +1762,8 @@ impl<'a> Context<'a> {
             Type::Machine(t) => Some(Ty::Machine(*t)),
             Type::Named(n) => Some(Ty::Record(n.clone())),
             Type::Ref(t) => Self::declared_hint(t).map(|t| Ty::Ref(Box::new(t))),
-            Type::Plane(t) => Self::declared_hint(t).map(|t| Ty::Plane(Box::new(t))),
-            Type::Owner(t) => Self::declared_hint(t).map(|t| Ty::Owner(Box::new(t))),
+            Type::Unique(t) => Self::declared_hint(t).map(|t| Ty::Unique(Box::new(t))),
+            Type::Shared(t) => Self::declared_hint(t).map(|t| Ty::Shared(Box::new(t))),
             Type::Array(element, count) => Some(Ty::Array(
                 Box::new(Self::declared_hint(element)?),
                 Linear::number(crate::compiler::layout::array_length(count).ok()? as i128),
@@ -1797,8 +1800,8 @@ impl<'a> Context<'a> {
                 Symbol::Ref(_, reference, path) => {
                     project(self.storage.memory.read(*reference).ok()?, path).ok()
                 }
-                Symbol::Plane(_, reference) => self.storage.memory.read(*reference).ok(),
-                Symbol::Owner(_, owner) => self
+                Symbol::Unique(_, reference) => self.storage.memory.read(*reference).ok(),
+                Symbol::Shared(_, owner) => self
                     .storage
                     .memory
                     .borrow_owned(*owner)
@@ -1843,30 +1846,10 @@ impl<'a> Context<'a> {
                 MachineInt::parse(name).map(Ty::Machine)
             }
             Kind::Call(name, _) if name == "nat" => Some(Ty::Nat),
-            Kind::Call(name, _) if name == "owners" => Some(Ty::Nat),
-            Kind::Call(name, args)
-                if args.len() == 1
-                    && matches!(
-                        name.as_str(),
-                        "share_owner" | "duplicate_owner" | "release_owner" | "recover_owner"
-                    ) =>
-            {
-                let ty = self.hint(&args[0])?;
-                match (name.as_str(), ty) {
-                    ("share_owner", Ty::Plane(inner)) => Some(Ty::Owner(inner)),
-                    ("recover_owner", Ty::Owner(inner)) => Some(Ty::Plane(inner)),
-                    ("duplicate_owner", Ty::Ref(inner))
-                        if matches!(inner.as_ref(), Ty::Owner(_)) =>
-                    {
-                        Some(*inner)
-                    }
-                    ("release_owner", Ty::Owner(_)) => Some(Ty::Unit),
-                    _ => None,
-                }
-            }
+            Kind::Call(name, _) if name == "owner_count" => Some(Ty::Nat),
             Kind::Call(name, _) if name == "integer" => Some(Ty::Int),
             Kind::Call(name, args) if name == "alloc" && args.len() == 1 => {
-                self.hint(&args[0]).map(|t| Ty::Plane(Box::new(t)))
+                self.hint(&args[0]).map(|t| Ty::Unique(Box::new(t)))
             }
             Kind::Constant(t, _) => Some(Ty::Machine(*t)),
             Kind::Name(n) => self.locals.values.get(n).map(Symbol::ty),
@@ -1875,7 +1858,7 @@ impl<'a> Context<'a> {
             Kind::Unary(op, x) if op == "*" => {
                 let pointer = self.hint(x)?;
                 match pointer.pointer_member()? {
-                    Ty::Ref(t) | Ty::Plane(t) | Ty::Owner(t) => Some(*t.clone()),
+                    Ty::Ref(t) | Ty::Unique(t) | Ty::Shared(t) => Some(*t.clone()),
                     _ => None,
                 }
             }
@@ -1977,6 +1960,7 @@ impl<'a> Context<'a> {
                 format!("line {}: {s}", e.line)
             }
         })?;
+        let value = self.coerce_pointer(value, expected, e.line)?;
         let value = self.union_coercion(value, expected, e.line, Some(e))?;
         self.charge_value_work(symbol_weight(&value)?)
             .map_err(|error| format!("line {}: {error}", e.line))?;
@@ -2013,7 +1997,8 @@ impl<'a> Context<'a> {
     fn symbol_is_move_only(&self, value: &Symbol) -> bool {
         match value {
             Symbol::Union { .. } | Symbol::Shape(_) => true,
-            Symbol::Plane(..) | Symbol::Owner(..) => true,
+            Symbol::Unique(..) => true,
+            Symbol::Shared(..) => self.ty_is_move_only(&value.ty()),
             Symbol::Record(n, _) => is_move_only(
                 &Type::Named(n.clone()),
                 self.declarations.structs,
@@ -2033,7 +2018,9 @@ impl<'a> Context<'a> {
     fn ty_is_move_only(&self, t: &Ty) -> bool {
         match t {
             Ty::Union(_) | Ty::Shape(_) => true,
-            Ty::Plane(_) | Ty::Owner(_) => true,
+            Ty::Unique(_) => true,
+            Ty::Shared(_) => !crate::shared::target::native()
+                .is_ok_and(|target| target.is_copy(&Type::Shared(Box::new(Type::Unit)))),
             Ty::Record(n) => is_move_only(
                 &Type::Named(n.clone()),
                 self.declarations.structs,
@@ -2066,14 +2053,14 @@ impl<'a> Context<'a> {
                 Type::Named(name) => structs.get(name).is_some_and(|definition| {
                     definition.fields.iter().all(|(_, ty)| fields(ty, structs))
                 }),
-                Type::Ref(_) | Type::Plane(_) | Type::Owner(_) | Type::Array(..) => false,
+                Type::Ref(_) | Type::Unique(_) | Type::Shared(_) | Type::Array(..) => false,
                 _ => true,
             }
         }
         match t {
             Ty::Union(_) | Ty::Shape(_) | Ty::Type => false,
             Ty::Record(name) => fields(&Type::Named(name.clone()), self.declarations.structs),
-            Ty::Ref(_) | Ty::Plane(_) | Ty::Owner(_) | Ty::Array(..) => false,
+            Ty::Ref(_) | Ty::Unique(_) | Ty::Shared(_) | Ty::Array(..) => false,
             _ => true,
         }
     }
@@ -2084,7 +2071,7 @@ impl<'a> Context<'a> {
 
     fn ty_has_reference(&self, t: &Ty) -> bool {
         match t {
-            Ty::Ref(_) | Ty::Plane(_) | Ty::Owner(_) => true,
+            Ty::Ref(_) | Ty::Unique(_) | Ty::Shared(_) => true,
             Ty::Union(members) => members.iter().any(|ty| self.ty_has_reference(ty)),
             Ty::Array(element, _) => self.ty_has_reference(element),
             Ty::Record(name) => {
@@ -2327,7 +2314,8 @@ impl<'a> Context<'a> {
             }
             _ => {
                 let value = self.eval(e, None)?;
-                if self.execution.phase != Phase::Specification && self.symbol_is_move_only(&value)
+                if self.execution.phase != Phase::Specification
+                    && (self.symbol_is_move_only(&value) || self.contains_shared(&value))
                 {
                     self.storage.temporaries.push((value.clone(), e.line));
                 }
@@ -2464,21 +2452,15 @@ impl<'a> Context<'a> {
                     let id = self.storage.memory.plane(r)?;
                     self.take_symbol(id)?;
                 }
-                Ok(selected)
-            }
-            Kind::Field(base, name) => {
-                if places::through_pointer(e) {
-                    let reference = self.place_reference(e)?;
-                    return self.read_reference(&reference, e.line);
+                if self.symbol_is_move_only(&value) {
+                    Ok(selected)
+                } else {
+                    self.copy_pointer_read(selected, e.line)
                 }
-                let Symbol::Record(typename, fields) = self.storage(base)? else {
-                    return Err("field access requires a struct".into());
-                };
-                self.field_access(&typename, name, e.line)?;
-                fields
-                    .get(name)
-                    .cloned()
-                    .ok_or_else(|| format!("unknown field {name}"))
+            }
+            Kind::Field(..) | Kind::Index(..) => {
+                let value = self.storage(e)?;
+                self.copy_pointer_read(value, e.line)
             }
             Kind::Record(name, entries) => {
                 self.representation_access(name, e.line)?;
@@ -2534,7 +2516,7 @@ impl<'a> Context<'a> {
                             value,
                             Some(&Ty::Array(Box::new(element), Linear::number(0))),
                         )?
-                    } else if matches!(ty, Type::Plane(_) | Type::Union(_) | Type::Shape(_)) {
+                    } else if matches!(ty, Type::Unique(_) | Type::Union(_) | Type::Shape(_)) {
                         // Dependent field types refer to preceding record fields,
                         // while initializer expressions still use the caller's scope.
                         let caller = self.clone_env()?;
@@ -2560,7 +2542,10 @@ impl<'a> Context<'a> {
                 self.validate_argument(&borrowed, e.line)?;
                 Ok(borrowed)
             }
-            Kind::Unary(op, pointer) if op == "*" => self.dereference(pointer, e.line),
+            Kind::Unary(op, pointer) if op == "*" => {
+                let value = self.dereference(pointer, e.line)?;
+                self.copy_pointer_read(value, e.line)
+            }
             Kind::Unary(op, x) if op == "!" => Ok(Symbol::Bool(
                 self.eval(x, Some(&Ty::Bool))?.proposition()?.not(),
             )),
@@ -2680,48 +2665,6 @@ impl<'a> Context<'a> {
                     cells: BTreeMap::new(),
                     identity: self.fresh_name(),
                 })
-            }
-            Kind::Index(array, index) => {
-                if places::through_pointer(e) {
-                    let reference = self.place_reference(e)?;
-                    return self.read_reference(&reference, e.line);
-                }
-                let array = self.eval(array, None)?;
-                let index = self.nonnegative(index, "nonnegative array index")?;
-                let Symbol::Array {
-                    element,
-                    len,
-                    items,
-                    cells,
-                    identity,
-                } = array
-                else {
-                    return Err("indexing requires an array".into());
-                };
-                self.prove(
-                    &Formula::Ge(len.sub(&index)?.add(&Linear::number(-1))?),
-                    "array index < length",
-                    e.line,
-                )?;
-                if self.history_element(&element) {
-                    return self.read_array(&element, &identity, &index, items.as_deref(), &cells);
-                }
-                if index.terms.is_empty() {
-                    if let Some(value) = items
-                        .as_ref()
-                        .and_then(|v| usize::try_from(index.constant).ok().and_then(|i| v.get(i)))
-                    {
-                        return Ok(value.clone());
-                    }
-                }
-                if index.terms.is_empty() {
-                    if let Ok(i) = usize::try_from(index.constant) {
-                        if let Some(value) = cells.get(&Linear::number(i as i128)) {
-                            return Ok(value.clone());
-                        }
-                    }
-                }
-                self.read_array(&element, &identity, &index, items.as_deref(), &cells)
             }
             Kind::Call(name, args) => self.eval_call(name, args, expected, e.line),
             Kind::If(condition, yes, no) => self.eval_conditional(e, condition, yes, no, expected),
@@ -2864,9 +2807,11 @@ fn check_type_expansion(structs: &[Struct]) -> Result<()> {
     fn cost(t: &Type, known: &BTreeMap<String, (usize, usize)>) -> (usize, usize) {
         let (nodes, depth) = match t {
             Type::Named(n) => known.get(n).copied().unwrap_or((1, 1)),
-            Type::Ref(t) | Type::Plane(t) | Type::Owner(t) | Type::Array(t, _) | Type::Shape(t) => {
-                cost(t, known)
-            }
+            Type::Ref(t)
+            | Type::Unique(t)
+            | Type::Shared(t)
+            | Type::Array(t, _)
+            | Type::Shape(t) => cost(t, known),
             Type::Union(members) => members.iter().fold((0usize, 0usize), |(nodes, depth), ty| {
                 let (child_nodes, child_depth) = cost(ty, known);
                 (nodes.saturating_add(child_nodes), depth.max(child_depth))

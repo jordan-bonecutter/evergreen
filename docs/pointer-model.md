@@ -1,10 +1,12 @@
-# Pointer authority: proposed replacement
+# Pointer authority and sequential credit design
 
-This records the current design discussion. These names and conversion rules
-are not implemented yet. The bootstrap still uses `plane(T)`, `owner(T)`, and
-the `share_owner`/`duplicate_owner`/`release_owner`/`recover_owner` intrinsics.
-Wrapping those intrinsics in library functions would leave their trusted rules
-unchanged; the intended replacement is ordinary pointer semantics.
+The bootstrap now implements `unique(T)`, `shared(T)`, and `owner_count(pointer)`.
+Ordinary shared-pointer copies create census claims, moves transfer claims, and
+contextual conversion to unique authority requires a current sole-owner proof.
+The special owner-operation intrinsics have been removed. See
+[owning-references.md](owning-references.md) for executable syntax and cleanup.
+The loan-scoped reservation model below remains a proposal; the current source
+Rc uses credits which already hold owning pointers.
 
 ## Pointer kinds
 
@@ -19,17 +21,16 @@ address stay unchanged. A stale count observation cannot authorize promotion.
 Moving a handle transfers its claim without changing the census.
 
 Weakening unique authority to shared authority consumes the unique handle and
-retains one claim. Copying a shared pointer creates another claim. Whether
-`shared(T)` implements `Copy` for ordinary rvalue use is still being discussed;
-the compiler must not confuse a copy with a move or an observation.
+retains one claim. Copying a shared pointer creates another claim. The current target grants pointer Copy permission explicitly, which
+includes `shared(T)`. A copy differs from a move or specification observation.
 
 `&T` remains a non-owning borrow. It adds no owner. A borrow plus a count-one
 fact does not manufacture an owning handle. Reads still require the original
 plane generation to remain live. Destroying an allocation expires its views.
 
 Destroying shared storage requires promotion first. Abandoning a pointer without
-destroying its allocation is a leak; the exact source spelling and scope-exit
-behavior still need definition. Neither route may retain a usable copy of a
+destroying its allocation uses `leak(handle)`. Shared scope exit relinquishes
+the claim without reclaiming the allocation; unique scope exit destroys it. Neither route may retain a usable copy of a
 consumed handle or create authority from raw address equality.
 
 ## Sequential Rc credits

@@ -168,7 +168,7 @@ fn writing_through_an_alias_expires_the_referents_subject() {
 
 #[test]
 fn moving_an_owner_slot_preserves_the_payload_subject_until_drop() {
-    let source = "fn main() -> usize {let owner: plane(usize) = alloc(43); proof a: *owner == 42 by {trustme}; let moved = owner; drop(moved); 0}";
+    let source = "fn main() -> usize {let owner: unique(usize) = alloc(43); proof a: *owner == 42 by {trustme}; let moved = owner; drop(moved); 0}";
     with_source(source, |ctx, body| {
         for statement in &body[..2] {
             ctx.statement(statement).unwrap();

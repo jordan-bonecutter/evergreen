@@ -7,14 +7,14 @@ impl Copy for Zero {}
 opaque type Vec struct {
     cap: usize,
     len: usize,
-    data: Zero | plane(usize, cap)
+    data: Zero | unique(usize, cap)
 } where (
     fact length_fits = len <= cap;
     fact storage_matches_capacity = (cap == 0) == (typeof(data) == Zero);
     length_fits && storage_matches_capacity
 );
 
-fn allocate_buffer(capacity: usize) -> plane(usize, capacity)
+fn allocate_buffer(capacity: usize) -> unique(usize, capacity)
 where(capacity > 0 && integer(capacity) * 8 <= integer(isize::MAX)) {
     alloc(capacity, 0)
 }
@@ -22,14 +22,14 @@ where(capacity > 0 && integer(capacity) * 8 <= integer(isize::MAX)) {
 fn new(capacity: usize) -> Vec
 where(integer(capacity) * 8 <= integer(isize::MAX))
 ensures(result.len == 0 && result.cap == capacity) {
-    let data: Zero | plane(usize, capacity) = if capacity == 0 {
+    let data: Zero | unique(usize, capacity) = if capacity == 0 {
         Zero {word: 0}
     } else {allocate_buffer(capacity)};
     Vec {cap: capacity, len: 0, data: data}
 }
 
 fn discard_zero(value: Zero) {}
-fn discard_buffer(ideal n: nat, value: plane(usize, n)) {}
+fn discard_buffer(ideal n: nat, value: unique(usize, n)) {}
 
 impl Drop for Vec {
     fn drop(self) {
@@ -142,7 +142,7 @@ impl Vec {
 
     // Complete consumption transfers the live allocation; an empty vector has
     // no allocated plane to return.
-    method into_data() -> plane(usize, self.cap) where self.cap > 0 {
+    method into_data() -> unique(usize, self.cap) where self.cap > 0 {
         let Vec {cap, len, data} = self;
         data
     }

@@ -4,8 +4,8 @@ impl Drop for Guard {
         *self.target = self.value;
     }
 }
-fn finish() -> plane(usize) ensures(*result == 42) {
-    let owner: plane(usize) = alloc(7);
+fn finish() -> unique(usize) ensures(*result == 42) {
+    let owner: unique(usize) = alloc(7);
     let guard = Guard {target: &*owner, value: 42};
     owner
 }

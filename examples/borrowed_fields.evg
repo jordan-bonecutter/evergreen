@@ -13,8 +13,8 @@ borrows(data: y, data2: z) {
 }
 
 fn main() -> usize ensures result == 42 {
-    let first: plane(usize) = alloc(7);
-    let second: plane(usize) = alloc(42);
+    let first: unique(usize) = alloc(7);
+    let second: unique(usize) = alloc(42);
     let bar = foo(&*first, &*second);
     proof first_plane: bar.data == &*first;
     proof second_plane: bar.data2 == &*second;

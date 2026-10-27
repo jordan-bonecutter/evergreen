@@ -8,13 +8,13 @@ impl Drop for Resource {
 }
 
 type MaybeOwner struct {
-    data: plane(Resource) | shape(plane(Resource)),
+    data: unique(Resource) | shape(unique(Resource)),
     present: bool,
-} where present == (typeof(data) == plane(Resource));
+} where present == (typeof(data) == unique(Resource));
 
 // Empty unit functions dispose their parameters through checked scope cleanup.
-fn discard_owner(value: plane(Resource)) {}
-fn discard_empty(value: shape(plane(Resource))) {}
+fn discard_owner(value: unique(Resource)) {}
+fn discard_empty(value: shape(unique(Resource))) {}
 
 impl MaybeOwner {
     fn some(n: usize) -> Self ensures result.present {
@@ -22,7 +22,7 @@ impl MaybeOwner {
     }
 
     fn none() -> Self ensures !result.present {
-        Self {data: shape(plane(Resource)), present: false}
+        Self {data: shape(unique(Resource)), present: false}
     }
 
     method& get() -> usize where self.present {

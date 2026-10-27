@@ -77,12 +77,12 @@ impl Context<'_> {
                     let Some(value) = value else { return Ok(None) };
                     let selected = match value {
                         Symbol::Ref(..) | Symbol::RefCases(..) => guarded_references::cases(value)?,
-                        Symbol::Plane(_, reference) => vec![guarded_references::Case {
+                        Symbol::Unique(_, reference) => vec![guarded_references::Case {
                             guard: Formula::True,
                             reference: *reference,
                             path: vec![],
                         }],
-                        Symbol::Owner(_, owner) => vec![guarded_references::Case {
+                        Symbol::Shared(_, owner) => vec![guarded_references::Case {
                             guard: Formula::True,
                             reference: self.storage.memory.borrow_owned(*owner)?,
                             path: vec![],
@@ -173,8 +173,8 @@ impl Context<'_> {
                             Some(Symbol::Ref(_, reference, path)) => {
                                 Some((*reference, path.clone()))
                             }
-                            Some(Symbol::Plane(_, reference)) => Some((*reference, vec![])),
-                            Some(Symbol::Owner(_, owner)) => Some((owner.reference(), vec![])),
+                            Some(Symbol::Unique(_, reference)) => Some((*reference, vec![])),
+                            Some(Symbol::Shared(_, owner)) => Some((owner.reference(), vec![])),
                             _ => None,
                         });
                     }
@@ -202,11 +202,11 @@ impl Context<'_> {
                     other => other,
                 };
                 match pointer {
-                    Some(Symbol::Owner(_, owner)) => {
+                    Some(Symbol::Shared(_, owner)) => {
                         Ok(Some((self.storage.memory.borrow_owned(*owner)?, vec![])))
                     }
                     Some(Symbol::Ref(_, reference, path)) => Ok(Some((*reference, path.clone()))),
-                    Some(Symbol::Plane(_, reference)) => Ok(Some((*reference, vec![]))),
+                    Some(Symbol::Unique(_, reference)) => Ok(Some((*reference, vec![]))),
                     _ => Ok(None),
                 }
             }

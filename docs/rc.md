@@ -2,7 +2,7 @@
 
 [`stdlib/rc/rc.evg`](../stdlib/rc/rc.evg) implements sequential counted ownership
 of a `usize` payload. The allocation contains a runtime `count` and `value`.
-Each opaque `Rc` contains one ordinary `owner(Data)` claim. Its checked facts
+Each opaque `Rc` contains one ordinary `shared(Data)` claim. Its checked facts
 require the runtime count to equal the ideal total of live claims, and zero to
 imply no claims. The compiler has no Rc counter, type rule, or release algorithm.
 
@@ -28,7 +28,7 @@ Caller invariants are checked at the call boundary. This is sequential reasoning
 it establishes no atomicity under concurrent interference.
 
 The credit is an actual allocation-backed claim, not an arithmetic allowance.
-Claims include hidden caller handles. This specialization stores `owner(Data)`;
+Claims include hidden caller handles. This specialization stores `shared(Data)`;
 type generics are needed to share its wrapper with the standalone
 [`allocation_credits`](allocation-credits.md) library.
 

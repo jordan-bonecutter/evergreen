@@ -113,7 +113,7 @@ fn inline_array_and_runtime_plane_spellings_are_distinct() {
             .unwrap_err()
             .contains("compile-time extent")
     );
-    assert!(parse("fn main() {let owner: plane(u8, 3) = alloc(3, 0);}").is_ok());
+    assert!(parse("fn main() {let owner: unique(u8, 3) = alloc(3, 0);}").is_ok());
 }
 
 #[test]

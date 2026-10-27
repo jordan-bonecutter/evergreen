@@ -315,7 +315,7 @@ Not yet supported: non-record patterns, complete Rc/Arc protocols, general C FFI
 layouts. Unsupported syntax
 is rejected. No memory safety claim is made for these unimplemented features.
 
-Unique heap ownership uses `plane(T)` and `alloc(value)`. An owner is move-only and
+Unique heap ownership uses `unique(T)` and `alloc(value)`. An owner is move-only and
 owns a separately allocated, stable data plane. Moving the owner invalidates its
 old binding but preserves borrows of the data. `*owner` reads its payload;
 `&*owner` borrows it. Dropping an owner or replacing it runs payload cleanup and
@@ -323,9 +323,10 @@ frees the allocation. Old data borrows become `never`; a later allocation or
 owner restoration cannot revive them. A borrow of the owner *slot* observes a
 same-layout replacement of that slot and then refers to its new owner value.
 
-Generic `owner(T)` values can share lifetime responsibility without adding a
-runtime counter to the compiler. Releasing a nonfinal claim and recovering the
-sole owner require checked census conditions. See
+Generic `shared(T)` values can share lifetime responsibility without adding a
+runtime counter to the compiler. Copies create claims, moves transfer them, and promotion to unique authority
+requires a current sole-owner proof. Raw shared cleanup leaks rather than
+destroying the payload. See
 [`owning-references.md`](owning-references.md) for the operations, proof-state
 behavior, and remaining protocol restrictions.
 
@@ -333,7 +334,7 @@ Payloads currently require fixed runtime layouts and cannot contain borrowed
 references, including erased borrowed fields. Nested owned planes, fixed arrays,
 runtime records, and reference-free proof fields are supported. Owning payload
 fields remain subject to the existing complete-pattern and partial-move rules.
-`&plane(T)` borrows an owner without receiving its allocation authority. A
+`&unique(T)` borrows an owner without receiving its allocation authority. A
 function writing through it declares a footprint such as `modifies(&**owner)`;
 it cannot move or drop the borrowed owner. Calls involving owned-plane types
 recheck the actual body and memory, preserving transfers and frees across the
@@ -1253,10 +1254,10 @@ extend the lifetime of its borrowed storage.
 A returned owner can anchor a companion view with `result` on the right:
 
 ```evergreen
-type Packet struct {owner: plane(usize), view: &usize}
+type Packet struct {owner: unique(usize), view: &usize}
 fn make(value: usize) -> Packet
 borrows(view: &*result.owner) {
-    let owner: plane(usize) = alloc(value);
+    let owner: unique(usize) = alloc(value);
     let view = &*owner;
     Packet {owner: owner, view: view}
 }
@@ -1392,7 +1393,7 @@ with a numeric ledger: exact accounting is lifted, while
 `count == 0 => owners == 0` remains required after every store. A proof of that
 weaker fact works during the update; claiming exact accounting before restoring
 it or setting count to zero while an owner remains is rejected. The ledger is
-a language-rule test, not an implementation of `owners(plane)` or `Rc`.
+a language-rule test, not an implementation of `owner_count(plane)` or `Rc`.
 
 Dynamic scalar array borrows carry a symbolic index snapshot in their plane
 projection. For example, `borrows(&(*data)[index])` checks both bounds and the
@@ -1458,7 +1459,7 @@ credits while conserving their total quantity. The client proof in
 `proofs/opaque_credits.evg` uses only that API and the public split-result record.
 Check both files together. Clients cannot manufacture a new credit from a number
 or duplicate an existing credit. This abstract quantity is not yet connected to
-a physical allocation, `owners(plane)`, or atomic operations.
+a physical allocation, `owner_count(plane)`, or atomic operations.
 
 `allocation_credits::Credit` instead carries a real allocation-backed lifetime
 claim, using an opaque source wrapper around the generic ownership primitives.
@@ -1512,7 +1513,7 @@ remain valid erased metadata. Erased arguments may contain ideal records
 and arrays with borrowed references. Runtime owners cannot be constructed or consumed by ideal execution,
 and erased calls must be ideal code or checked pure scalar helpers. Thus
 erasure cannot silently skip a runtime write, move, drop, or owner-producing
-operation. This still does not supply allocation authority or `owners(plane)`.
+operation. This still does not supply allocation authority or `owner_count(plane)`.
 
 Ideal functions that return references or reference-bearing resources use the
 same exact `borrows` contracts as runtime functions: every reference leaf must
@@ -1928,7 +1929,7 @@ that inline value. `linear_plane(T, n)` is a pointer type bounded by the value
 that needs its extent during execution passes the delineator separately.
 The older bracket/reference spellings remain accepted during bootstrap.
 
-`plane(T, n)` is the owning pointer form. `alloc(count, initial)` allocates a
+`unique(T, n)` is the owning pointer form. `alloc(count, initial)` allocates a
 runtime-sized plane and initializes each element with the given copyable value;
 `alloc(value)` retains its original single-payload meaning. Count is evaluated
 before the initial value, and the initial expression executes once. The current
@@ -1970,7 +1971,7 @@ for uninitialized generic element storage or arbitrary resizing in place.
 ### Owned machine-word vector
 
 `stdlib/vec/vec.evg` supplies an initial `vec::Vec` with an opaque three-word
-representation: capacity, length, and `Zero | plane(usize, cap)`. `Zero` is a
+representation: capacity, length, and `Zero | unique(usize, cap)`. `Zero` is a
 source-defined, machine-word-sized record constrained to zero. The invariant
 selects `Zero` exactly when capacity is zero; otherwise the pointer's extent
 depends on capacity. The raw union has no runtime discriminator.
@@ -2019,7 +2020,7 @@ was added.
 
 Field access automatically follows built-in references and owning planes until
 it reaches a record. `person.age` therefore works for `Person`, `&Person`,
-`plane(Person)`, and references to those pointer types. Nested paths such as
+`unique(Person)`, and references to those pointer types. Nested paths such as
 `outer.inner.value` follow pointers at each field boundary. No user-defined
 `Deref` protocol or automatic method dispatch is introduced.
 

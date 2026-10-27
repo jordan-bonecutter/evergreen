@@ -1,5 +1,5 @@
 fn main() -> usize {
-    let owner: plane(usize) = alloc(42);
+    let owner: unique(usize) = alloc(42);
     let moved = owner;
     let duplicate = owner;
     *moved

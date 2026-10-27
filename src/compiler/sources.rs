@@ -107,7 +107,7 @@ impl Names {
             Type::Named(name) => {
                 self.0.insert(name.clone());
             }
-            Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) | Type::Shape(inner) => {
+            Type::Ref(inner) | Type::Unique(inner) | Type::Shared(inner) | Type::Shape(inner) => {
                 self.ty(inner)
             }
             Type::Union(members) => {

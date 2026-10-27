@@ -140,7 +140,7 @@ impl Target {
             }
             Type::Bool => "bool".into(),
             Type::Unit => "unit".into(),
-            Type::Ref(_) => "pointer".into(),
+            Type::Ref(_) | Type::Shared(_) => "pointer".into(),
             _ => return false,
         };
         self.copy_types.contains(&name)
@@ -153,7 +153,7 @@ impl Target {
             }
             Type::Bool => "bool".into(),
             Type::Unit => "unit".into(),
-            Type::Ref(_) | Type::Plane(_) | Type::Owner(_) => "pointer".into(),
+            Type::Ref(_) | Type::Unique(_) | Type::Shared(_) => "pointer".into(),
             _ => return Err("aggregate or ideal type requested as a target scalar".into()),
         };
         self.layouts
@@ -265,7 +265,7 @@ mod copy_tests {
         assert!(!target.is_copy(&Type::Ref(Box::new(Type::Unit))));
         let target = Target::decode(X86_64).unwrap();
         assert!(target.is_copy(&Type::Ref(Box::new(Type::Unit))));
-        assert!(!target.is_copy(&Type::Plane(Box::new(Type::Unit))));
+        assert!(!target.is_copy(&Type::Unique(Box::new(Type::Unit))));
         let source = X86_64.replace("impl Copy for bool {}", "");
         assert!(!Target::decode(&source).unwrap().is_copy(&Type::Bool));
     }

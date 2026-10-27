@@ -76,8 +76,8 @@ impl Context<'_> {
             (Symbol::Number(_, _), Symbol::Number(_, _))
             | (Symbol::Bool(_), Symbol::Bool(_))
             | (Symbol::Ref(..), Symbol::Ref(..))
-            | (Symbol::Plane(..), Symbol::Plane(..))
-            | (Symbol::Owner(..), Symbol::Owner(..))
+            | (Symbol::Unique(..), Symbol::Unique(..))
+            | (Symbol::Shared(..), Symbol::Shared(..))
             | (Symbol::Unit, Symbol::Unit) => Ok(true),
             (a, b) if matches!(a.ty(), Ty::Ref(_)) && matches!(b.ty(), Ty::Ref(_)) => Ok(true),
             _ => Ok(false),
@@ -95,9 +95,9 @@ fn same_union_storage(a: &[Ty], b: &[Ty]) -> bool {
 
 fn same_type_storage(a: &Ty, b: &Ty) -> bool {
     match (a, b) {
-        (Ty::Plane(_), Ty::Plane(_)) | (Ty::Owner(_), Ty::Owner(_)) | (Ty::Ref(_), Ty::Ref(_)) => {
-            true
-        }
+        (Ty::Unique(_), Ty::Unique(_))
+        | (Ty::Shared(_), Ty::Shared(_))
+        | (Ty::Ref(_), Ty::Ref(_)) => true,
         (Ty::Shape(a), Ty::Shape(b)) => same_type_storage(a, b),
         (Ty::Array(a, n), Ty::Array(b, m)) => n == m && same_type_storage(a, b),
         (Ty::Union(a), Ty::Union(b)) => same_union_storage(a, b),
@@ -113,7 +113,7 @@ mod tests {
     fn union_storage_checks_both_member_sets_and_keeps_inline_extents() {
         let byte = Ty::Machine(MachineInt::parse("u8").unwrap());
         let array = |n| Ty::Array(Box::new(byte.clone()), Linear::number(n));
-        let pointer = |n| Ty::Plane(Box::new(array(n)));
+        let pointer = |n| Ty::Unique(Box::new(array(n)));
         let zero = Ty::Record("Zero".into());
         assert!(same_union_storage(
             &[zero.clone(), pointer(2)],

@@ -1,11 +1,11 @@
 module owned_views {
-    opaque type Packet struct {owner: plane(usize), view: &usize}
+    opaque type Packet struct {owner: unique(usize), view: &usize}
     where(view == &*owner);
 
     fn make(value: usize) -> Packet
     borrows(view: &*result.owner)
     ensures(*result.view == value) {
-        let owner: plane(usize) = alloc(value);
+        let owner: unique(usize) = alloc(value);
         let view = &*owner;
         Packet {owner: owner, view: view}
     }

@@ -80,7 +80,7 @@ impl Context<'_> {
                 }
                 complete.then_some(ClaimKey::Record(name.clone(), keys))
             }
-            Kind::Call(name, arguments) if name == "owners" && arguments.len() == 1 => {
+            Kind::Call(name, arguments) if name == "owner_count" && arguments.len() == 1 => {
                 if let Some(reference) = self.owner_subject_reference(&arguments[0]) {
                     let stamp = self.proof.subjects.observe(
                         &self.storage.memory,
@@ -102,8 +102,8 @@ impl Context<'_> {
                             let value = self.entry.values.get(&name).cloned();
                             let place = match value {
                                 Some(Symbol::Ref(_, reference, path)) => Some((reference, path)),
-                                Some(Symbol::Plane(_, reference)) => Some((reference, vec![])),
-                                Some(Symbol::Owner(_, owner)) => Some((owner.reference(), vec![])),
+                                Some(Symbol::Unique(_, reference)) => Some((reference, vec![])),
+                                Some(Symbol::Shared(_, owner)) => Some((owner.reference(), vec![])),
                                 _ => None,
                             };
                             if let Some((reference, path)) = place {

@@ -1,7 +1,7 @@
-fn release(owner: plane(usize)) {}
+fn release(owner: unique(usize)) {}
 
 fn main() -> usize {
-    let owner: plane(usize) = alloc(42);
+    let owner: unique(usize) = alloc(42);
     let view = &*owner;
     release(owner);
     *view

@@ -15,17 +15,17 @@ fn result_borrows_are_anchored_in_surviving_returned_owners() {
         0
     );
     for source in [
-        "type Out struct {owner: plane(usize), view: &usize} fn bad(r: &usize) -> Out borrows(view: &*result.owner) {Out {owner: alloc(42), view: r}}",
-        "type Out struct {owner: plane(usize), view: &usize} fn bad() -> Out borrows(view: &*result.owner) {let other: plane(usize) = alloc(42); let view = &*other; Out {owner: alloc(42), view: view}}",
+        "type Out struct {owner: unique(usize), view: &usize} fn bad(r: &usize) -> Out borrows(view: &*result.owner) {Out {owner: alloc(42), view: r}}",
+        "type Out struct {owner: unique(usize), view: &usize} fn bad() -> Out borrows(view: &*result.owner) {let other: unique(usize) = alloc(42); let view = &*other; Out {owner: alloc(42), view: view}}",
     ] {let error = verify(source).unwrap_err(); assert!(error.contains("returned reference field does not match"), "{error}");}
     for source in [
         "type Out struct {value: usize, view: &usize} fn bad(r: &usize) -> Out borrows(view: &result.value) {Out {value: 42, view: r}}",
-        "type Out struct {owner: &plane(usize), view: &usize} fn bad(r: &plane(usize)) -> Out borrows(owner: r, view: &**result.owner) {Out {owner: r, view: &**r}}",
-        "type Out struct {owner: plane(usize), view: &usize} fn bad(r: &usize) -> Out borrows(view: result.view) {Out {owner: alloc(42), view: r}}",
+        "type Out struct {owner: &unique(usize), view: &usize} fn bad(r: &unique(usize)) -> Out borrows(owner: r, view: &**result.owner) {Out {owner: r, view: &**r}}",
+        "type Out struct {owner: unique(usize), view: &usize} fn bad(r: &usize) -> Out borrows(view: result.view) {Out {owner: alloc(42), view: r}}",
     ] {let error = verify(source).unwrap_err(); assert!(error.contains("result borrows") || error.contains("result anchors"), "{error}");}
-    let library = "type Packet struct {owner: plane(usize), other: plane(usize), view: &usize} where(view == &*owner); fn wrong(p: Packet) -> Packet borrows(view: &*result.other) {p}";
+    let library = "type Packet struct {owner: unique(usize), other: unique(usize), view: &usize} where(view == &*owner); fn wrong(p: Packet) -> Packet borrows(view: &*result.other) {p}";
     assert!(verify(library).is_ok()); // The independent-port configuration is impossible.
-    let call = format!("{library} fn main() -> usize {{let owner: plane(usize) = alloc(42); let view = &*owner; let packet = Packet {{owner: owner, other: alloc(7), view: view}}; let returned = wrong(packet); *returned.view}}");
+    let call = format!("{library} fn main() -> usize {{let owner: unique(usize) = alloc(42); let view = &*owner; let packet = Packet {{owner: owner, other: alloc(7), view: view}}; let returned = wrong(packet); *returned.view}}");
     let error = verify(&call).unwrap_err();
     assert!(
         error.contains("body recheck failed")
@@ -39,7 +39,7 @@ fn result_borrows_are_anchored_in_surviving_returned_owners() {
     assert!(verify(&trusted_call)
         .unwrap_err()
         .contains("returned reference field does not match"));
-    let trusted_body = "type Out struct {owner: plane(usize), view: &usize} fn bad(r: &usize) -> Out borrows(view: &*result.owner) {proof cheat: false by {trustme}; Out {owner: alloc(42), view: r}}";
+    let trusted_body = "type Out struct {owner: unique(usize), view: &usize} fn bad(r: &usize) -> Out borrows(view: &*result.owner) {proof cheat: false by {trustme}; Out {owner: alloc(42), view: r}}";
     assert!(verify(trusted_body)
         .unwrap_err()
         .contains("returned reference field does not match"));
@@ -52,7 +52,7 @@ fn result_borrows_are_anchored_in_surviving_returned_owners() {
 
 #[test]
 fn result_owned_alias_selection_is_checked_after_destructor_effects() {
-    let source = "type Guard struct {target: &usize} impl Drop for Guard {fn drop(self) modifies(self.target) ensures(*self.target == 1) {*self.target = 1;}} type Indexed struct {owner: plane([usize; 2]), index: &usize, view: &usize} fn make(index: &usize) -> Indexed where(*index == 0) modifies(index) borrows(index: index, view: &(*result.owner)[*result.index]) {let owner: plane([usize; 2]) = alloc([7, 42]); let guard = Guard {target: index}; let view = &(*owner)[*index]; Indexed {owner: owner, index: index, view: view}} fn main() -> usize {let index: usize = 0; let packet = make(&index); *packet.view}";
+    let source = "type Guard struct {target: &usize} impl Drop for Guard {fn drop(self) modifies(self.target) ensures(*self.target == 1) {*self.target = 1;}} type Indexed struct {owner: unique([usize; 2]), index: &usize, view: &usize} fn make(index: &usize) -> Indexed where(*index == 0) modifies(index) borrows(index: index, view: &(*result.owner)[*result.index]) {let owner: unique([usize; 2]) = alloc([7, 42]); let guard = Guard {target: index}; let view = &(*owner)[*index]; Indexed {owner: owner, index: index, view: view}} fn main() -> usize {let index: usize = 0; let packet = make(&index); *packet.view}";
     assert!(verify(source)
         .unwrap_err()
         .contains("returned reference field does not match"));
@@ -146,7 +146,7 @@ fn dormant_heap_views_preserve_other_container_requirements() {
     assert!(verify(&observer)
         .unwrap_err()
         .contains("invariant of ledgers::Ledger"));
-    let owner_view = source.replace("ideal fn inspect(ledger:", "ideal fn inspect_owner(owner: &plane(Ledger)) -> nat {(**owner).owners} ideal fn inspect(ledger:")
+    let owner_view = source.replace("ideal fn inspect(ledger:", "ideal fn inspect_owner(owner: &unique(Ledger)) -> nat {(**owner).owners} ideal fn inspect(ledger:")
         .replace("let holder = Holder {allocation: owner};", "let holder = Holder {allocation: owner}; let owner_view = &holder.allocation;")
         .replace("ideal (*holder.allocation).owners = nat(*changed);", "ideal let invalid = ledgers::inspect_owner(owner_view); ideal (*holder.allocation).owners = nat(*changed);");
     assert!(verify(&owner_view)
@@ -183,7 +183,7 @@ fn owned_planes_keep_identity_across_moves_and_cleanup_nested_payloads() {
         0
     );
     assert!(program.trusted_assumptions().is_empty());
-    let through_call = "fn write(owner: plane(usize), view: &usize) -> usize modifies(view) ensures(result == 42) {*view = 42; *view} fn main() -> usize {let owner: plane(usize) = alloc(41); let view = &*owner; write(owner, view); 42}";
+    let through_call = "fn write(owner: unique(usize), view: &usize) -> usize modifies(view) ensures(result == 42) {*view = 42; *view} fn main() -> usize {let owner: unique(usize) = alloc(41); let view = &*owner; write(owner, view); 42}";
     assert_eq!(
         verify(through_call).unwrap().run().unwrap().to_string(),
         "42"
@@ -191,8 +191,8 @@ fn owned_planes_keep_identity_across_moves_and_cleanup_nested_payloads() {
     let observed_after =
         through_call.replace("write(owner, view); 42", "write(owner, view); *view");
     assert!(verify(&observed_after).unwrap_err().contains("never"));
-    let branches = "fn choose(owner: &plane(usize), flag: bool) -> usize modifies(&**owner) ensures(result == **owner && result >= 41 && result <= 42) {let done = if flag {set(owner, 42)} else {set(owner, 41)}; **owner}";
-    let source = format!("fn set(owner: &plane(usize), n: usize) -> usize modifies(&**owner) ensures(**owner == n && result == n) {{**owner = n; n}} {branches} fn main() -> usize {{let p: plane(usize) = alloc(0); choose(&p, true)}}");
+    let branches = "fn choose(owner: &unique(usize), flag: bool) -> usize modifies(&**owner) ensures(result == **owner && result >= 41 && result <= 42) {let done = if flag {set(owner, 42)} else {set(owner, 41)}; **owner}";
+    let source = format!("fn set(owner: &unique(usize), n: usize) -> usize modifies(&**owner) ensures(**owner == n && result == n) {{**owner = n; n}} {branches} fn main() -> usize {{let p: unique(usize) = alloc(0); choose(&p, true)}}");
     assert_eq!(verify(&source).unwrap().run().unwrap().to_string(), "42");
 }
 
@@ -202,14 +202,14 @@ fn heap_ownership_rejects_dangling_duplicates_and_erased_effects() {
         (include_str!("../../../examples/reject_heap_use_after_free.evg"), "never"),
         (include_str!("../../../examples/reject_heap_duplicate_owner.evg"), "shape(T)"),
         (include_str!("../../../examples/reject_heap_borrow_write.evg"), "effect contract"),
-        ("fn main() -> usize {let owner: plane(usize) = alloc(7); let view = &*owner; drop(owner); owner = alloc(42); *view}", "never"),
-        ("fn bad(owner: plane(usize), view: &usize) -> &usize borrows(view) {view} fn main() -> usize {let owner: plane(usize) = alloc(42); let view = &*owner; *bad(owner, view)}", "never"),
-        ("fn change(owner: plane(usize)) -> usize {*owner = 42; 42} fn main() -> usize ensures(result == 42) {let owner: plane(usize) = alloc(7); proof wrong: change(owner) == 42; *owner}", "proof calls must borrow heap owners"),
-        ("fn make() -> plane(usize) {alloc(42)} fn main() {proof wrong: *make() == 42;}", "proof calls must borrow heap owners"),
+        ("fn main() -> usize {let owner: unique(usize) = alloc(7); let view = &*owner; drop(owner); owner = alloc(42); *view}", "never"),
+        ("fn bad(owner: unique(usize), view: &usize) -> &usize borrows(view) {view} fn main() -> usize {let owner: unique(usize) = alloc(42); let view = &*owner; *bad(owner, view)}", "never"),
+        ("fn change(owner: unique(usize)) -> usize {*owner = 42; 42} fn main() -> usize ensures(result == 42) {let owner: unique(usize) = alloc(7); proof wrong: change(owner) == 42; *owner}", "proof calls must borrow heap owners"),
+        ("fn make() -> unique(usize) {alloc(42)} fn main() {proof wrong: *make() == 42;}", "proof calls must borrow heap owners"),
         ("fn main() {ideal let owner = alloc(42);}", "allocation requires runtime"),
-        ("fn bad(owner: plane(usize)) {ideal let stolen = owner;}", "cannot consume runtime ownership"),
+        ("fn bad(owner: unique(usize)) {ideal let stolen = owner;}", "cannot consume runtime ownership"),
         ("fn main() {let n: usize = 42; let owner = alloc(&n);}", "without borrowed references"),
-        ("ideal fn bad(owner: &plane(usize)) modifies(&**owner) {**owner = 42;}", "ideal modifies must target proof storage"),
+        ("ideal fn bad(owner: &unique(usize)) modifies(&**owner) {**owner = 42;}", "ideal modifies must target proof storage"),
         ("fn main() {ideal let n: nat = 42; let owner = alloc(n);}", "ideal parameter"),
     ] {
         let error = verify(source).unwrap_err();
@@ -253,7 +253,7 @@ fn opaque_ideal_effect_regions_forward_and_recheck_aliases() {
         .unwrap_err()
         .contains("modifies targets require"));
     assert!(verify("type Value struct {n: usize} fn observe(r: &Value) modifies(r) {}").is_ok());
-    let runtime_owner = "type Owner struct {n: plane(usize)} fn bad(r: &Owner) modifies(r) {}";
+    let runtime_owner = "type Owner struct {n: unique(usize)} fn bad(r: &Owner) modifies(r) {}";
     assert!(verify(runtime_owner)
         .unwrap_err()
         .contains("modifies targets require"));
@@ -574,8 +574,8 @@ fn erased_borrow_resources_keep_identity_generation_and_cleanup() {
 #[test]
 fn erased_borrows_cannot_supply_runtime_values_or_mutations() {
     for bad in [
-        "fn leak(ideal r: &usize) -> usize {*r}",
-        "fn leak(ideal r: &usize) -> &usize borrows(r) {r}",
+        "fn escaping(ideal r: &usize) -> usize {*r}",
+        "fn escaping(ideal r: &usize) -> &usize borrows(r) {r}",
         "fn write(ideal r: &usize) modifies(r) {*r = 0;}",
         "fn branch(ideal r: &usize) -> usize {if *r == 42 {42} else {0}}",
         "ideal fn write(r: &usize) {*r = 0;}",
@@ -784,7 +784,7 @@ fn update_calls_still_require_permissions_and_ownership_free_bodies() {
     assert!(verify(source)
         .unwrap_err()
         .contains("invariant-independent effects"));
-    let source = "type Pair struct {left: usize, right: usize} where(fact balanced = left == right; balanced); fn main() {let pair = Pair {left: 42, right: 42}; let owner: plane(usize) = alloc(42); update(pair) lifts balanced {let observed = *(if true {owner} else {owner});}}";
+    let source = "type Pair struct {left: usize, right: usize} where(fact balanced = left == right; balanced); fn main() {let pair = Pair {left: 42, right: 42}; let owner: unique(usize) = alloc(42); update(pair) lifts balanced {let observed = *(if true {owner} else {owner});}}";
     assert!(verify(source)
         .unwrap_err()
         .contains("runtime ownership moves are forbidden"));
@@ -1933,7 +1933,7 @@ fn erased_move_only_resources_move_without_runtime_values_or_effects() {
     for bad in [
         "fn duplicate(ideal t: tickets::Ticket) -> usize {let a = consume(t, 0); consume(t, 42)}",
         "fn restore(ideal t: tickets::Ticket) -> usize {let a = consume(t, 0); consume(old(t), 42)}",
-        "fn leak(ideal t: tickets::Ticket) -> usize {t}",
+        "fn escaping(ideal t: tickets::Ticket) -> usize {t}",
         "fn branch(ideal t: tickets::Ticket) -> usize {if t.tag == 1 {42} else {0}}",
     ] {assert!(verify(&format!("{declarations} {bad}")).is_err(), "{bad}");}
     let proof_view = "ideal fn inspect(t: tickets::Ticket) -> nat {1} fn caller(ideal t: tickets::Ticket) -> usize {proof stable: inspect(t) == inspect(t); consume(t, 42)}";
@@ -3212,13 +3212,13 @@ fn cleanup_can_write_live_owned_heap_and_pending_return_allocations() {
         owned_receiver.replace("drop(guard);", "drop(guard); proof stale: *target == 42;");
     assert!(verify(&after_free).is_err());
     let declarations = source.split("fn finish()").next().unwrap();
-    let local = format!("{declarations} fn main() -> usize {{let owner: plane(usize) = alloc(7); let guard = Guard {{target: &*owner, value: 42}}; drop(guard); *owner}}");
+    let local = format!("{declarations} fn main() -> usize {{let owner: unique(usize) = alloc(7); let guard = Guard {{target: &*owner, value: 42}}; drop(guard); *owner}}");
     assert_eq!(verify(&local).unwrap().run().unwrap().to_string(), "42");
-    let borrowed = format!("{declarations} fn finish(owner: &plane(usize)) -> usize {{let guard = Guard {{target: &**owner, value: 42}}; 42}} fn main() -> usize {{let owner: plane(usize) = alloc(7); finish(&owner)}}");
+    let borrowed = format!("{declarations} fn finish(owner: &unique(usize)) -> usize {{let guard = Guard {{target: &**owner, value: 42}}; 42}} fn main() -> usize {{let owner: unique(usize) = alloc(7); finish(&owner)}}");
     assert!(verify(&borrowed).unwrap_err().contains("modifies"));
-    let invalid_payload = format!("{declarations} type Positive struct {{value: usize}} where(value > 0); fn finish() -> plane(Positive) {{let owner: plane(Positive) = alloc(Positive {{value: 7}}); let guard = Guard {{target: &(*owner).value, value: 0}}; owner}} fn main() -> usize {{let owner = finish(); (*owner).value}}");
+    let invalid_payload = format!("{declarations} type Positive struct {{value: usize}} where(value > 0); fn finish() -> unique(Positive) {{let owner: unique(Positive) = alloc(Positive {{value: 7}}); let guard = Guard {{target: &(*owner).value, value: 0}}; owner}} fn main() -> usize {{let owner = finish(); (*owner).value}}");
     assert!(verify(&invalid_payload).is_err());
-    let stale = "type Guard struct {slot: &plane(usize)} impl Drop for Guard {fn drop(self) {fact readable = **self.slot == 7;}} fn finish() -> plane(usize) {let owner: plane(usize) = alloc(7); let guard = Guard {slot: &owner}; owner} fn main() -> usize {let owner = finish(); *owner}";
+    let stale = "type Guard struct {slot: &unique(usize)} impl Drop for Guard {fn drop(self) {fact readable = **self.slot == 7;}} fn finish() -> unique(usize) {let owner: unique(usize) = alloc(7); let guard = Guard {slot: &owner}; owner} fn main() -> usize {let owner = finish(); *owner}";
     assert!(verify(stale).is_err());
 }
 
@@ -3252,20 +3252,20 @@ fn owned_word_vectors_check_capacity_and_reference_lifetimes() {
     ] {
         assert!(verify(source).is_err(), "accepted invalid vector operation: {source}");
     }
-    let source = "type Buffer struct {cap: usize, data: plane(usize, cap)} fn main() -> usize {let cap: usize = 7; let data: plane(usize, 2) = alloc(2, 42); let buffer = Buffer {cap: 2, data: data}; (*buffer.data)[1]}";
+    let source = "type Buffer struct {cap: usize, data: unique(usize, cap)} fn main() -> usize {let cap: usize = 7; let data: unique(usize, 2) = alloc(2, 42); let buffer = Buffer {cap: 2, data: data}; (*buffer.data)[1]}";
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     assert!(verify(&source.replace("Buffer {cap: 2", "Buffer {cap: 3")).is_err());
 }
 
 #[test]
 fn owned_dependent_parameters_resolve_in_the_callee_scope() {
-    let source = "fn consume(count: usize, owner: plane(usize, count)) -> usize where(count > 0) {(*owner)[0]} fn main() -> usize {let count: usize = 7; let owner: plane(usize, 2) = alloc(2, 42); consume(2, owner)}";
+    let source = "fn consume(count: usize, owner: unique(usize, count)) -> usize where(count > 0) {(*owner)[0]} fn main() -> usize {let count: usize = 7; let owner: unique(usize, 2) = alloc(2, 42); consume(2, owner)}";
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     assert!(verify(&source.replace("consume(2, owner)", "consume(3, owner)")).is_err());
     let forward = source
         .replace(
-            "count: usize, owner: plane(usize, count)",
-            "owner: plane(usize, count), count: usize",
+            "count: usize, owner: unique(usize, count)",
+            "owner: unique(usize, count), count: usize",
         )
         .replace("consume(2, owner)", "consume(owner, 2)");
     assert_eq!(verify(&forward).unwrap().run().unwrap().to_string(), "42");
@@ -3296,7 +3296,7 @@ fn field_autoderef_uses_the_existing_ownership_and_effect_checks() {
     );
     assert!(verify("type Person struct {age: usize} fn main() -> usize {let p = alloc(Person {age: 42}); let moved = p; p.age}").is_err());
     assert!(verify("fn main() -> usize {let v = vec::new(2); let r = &v; r.len}").is_err());
-    let nested = "type Inner struct {value: usize} type Outer struct {inner: plane(Inner)} fn main() -> usize {let outer = alloc(Outer {inner: alloc(Inner {value: 42})}); let a = &outer; let b = &a; b.inner.value}";
+    let nested = "type Inner struct {value: usize} type Outer struct {inner: unique(Inner)} fn main() -> usize {let outer = alloc(Outer {inner: alloc(Inner {value: 42})}); let a = &outer; let b = &a; b.inner.value}";
     assert_eq!(verify(nested).unwrap().run().unwrap().to_string(), "42");
     let field_borrow = "type Item struct {value: usize} fn read(x: &Item) -> &usize borrows(&x.value) {*&x.value; &x.value} fn main() -> usize {let x = alloc(Item {value: 42}); *read(&*x)}";
     assert_eq!(
@@ -3466,12 +3466,12 @@ fn records_move_by_default_and_copy_requires_a_checked_explicit_impl() {
     let borrowed = "type Item struct {value: usize} fn value(item: &Item) -> usize ensures(result == item.value) {item.value} fn main() -> usize ensures(result == 42) {let item = Item {value: 21}; let a = value(&item); let b = item.value; a + b}";
     assert_eq!(verify(borrowed).unwrap().run().unwrap().to_string(), "42");
     for bad in [
-        "type Owner struct {data: plane(usize)} impl Copy for Owner {} fn main() {}",
+        "type Owner struct {data: unique(usize)} impl Copy for Owner {} fn main() {}",
         "type Resource struct {value: usize} impl Copy for Resource {} impl Drop for Resource {fn drop(self) {}} fn main() {}",
         "type Inner struct {value: usize} type Outer struct {inner: Inner} impl Copy for Outer {} fn main() {}",
         "type Item struct {value: usize} impl Copy for Item {} impl Copy for Item {} fn main() {}",
         "module items {type Item struct {value: usize}} impl Copy for items::Item {} fn main() {}",
-        "fn main() -> usize {let source: plane(usize) = alloc(42); let moved = source; *source}",
+        "fn main() -> usize {let source: unique(usize) = alloc(42); let moved = source; *source}",
         "type Item struct {value: usize} fn consume(item: Item) {} fn main() {let item = Item {value: 42}; consume(item); consume(item);}",
         "type Item struct {value: usize} fn main() {let items: [Item; 0] = []; let moved = items; let again = items;}",
     ] { assert!(verify(bad).is_err(), "accepted invalid Copy or move: {bad}"); }

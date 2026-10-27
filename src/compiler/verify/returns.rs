@@ -65,7 +65,7 @@ fn check_result_anchor(
                 Ok(inner)
             }
             Kind::Unary(op, base) if op == "*" => {
-                let Type::Plane(inner) = project_type(base, ty, structs, crossed)? else {
+                let Type::Unique(inner) = project_type(base, ty, structs, crossed)? else {
                     return Err(
                         "result anchors may follow owned planes, not borrowed pointers".into(),
                     );

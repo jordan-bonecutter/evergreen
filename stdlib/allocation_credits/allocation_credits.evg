@@ -3,17 +3,17 @@
 // The usize payload is a bootstrap specialization until type generics exist.
 module allocation_credits;
 
-opaque type Credit struct {allocation: owner(usize)}
+opaque type Credit struct {allocation: shared(usize)}
 
-fn attach(allocation: plane(usize)) -> Credit
+fn attach(allocation: unique(usize)) -> Credit
 ensures outstanding(&result) == 1
     && target(&result) == old(&*allocation)
     && *target(&result) == old(*allocation) {
-    Credit {allocation: share_owner(allocation)}
+    Credit {allocation: move(allocation)}
 }
 
 ideal fn outstanding(credit: &Credit) -> nat {
-    owners(&credit.allocation)
+    owner_count(&credit.allocation)
 }
 
 fn target(credit: &Credit) -> &usize
@@ -24,7 +24,7 @@ borrows(&*credit.allocation) {
 fn duplicate(credit: &Credit) -> Credit
 ensures outstanding(&result) == old(outstanding(credit)) + 1
     && target(&result) == old(target(credit)) {
-    Credit {allocation: duplicate_owner(&credit.allocation)}
+    Credit {allocation: credit.allocation}
 }
 
 // Consume two claims to one allocation, return the surviving claim. A credit
@@ -35,14 +35,14 @@ ensures outstanding(&result) + 1 == old(outstanding(&left))
     && target(&result) == old(target(&left)) {
     let Credit {allocation: released} = left;
     let Credit {allocation: retained} = right;
-    release_owner(released);
-    Credit {allocation: retained}
+    leak(released);
+    Credit {allocation: move(retained)}
 }
 
-fn recover(credit: Credit) -> plane(usize)
+fn recover(credit: Credit) -> unique(usize)
 where outstanding(&credit) == 1
 ensures &*result == old(target(&credit))
     && *result == old(*target(&credit)) {
     let Credit {allocation} = credit;
-    recover_owner(allocation)
+    move(allocation)
 }

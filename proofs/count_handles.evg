@@ -1,4 +1,4 @@
-// Borrowed-counter handles. No allocation authority or actual owners(data) model.
+// Borrowed-counter handles. No allocation authority or actual owner_count(data) model.
 module count_handles {
     opaque type Release struct {count: &usize}
 

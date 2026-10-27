@@ -25,8 +25,8 @@ fn source_destructors_dispose_only_the_active_allocation_and_its_payload() {
         .unwrap_err()
         .contains("cannot be dropped implicitly"));
     let allocating = source.replace(
-        "fn discard_owner(value: plane(Resource)) {}",
-        "fn discard_owner(value: plane(Resource)) {let extra: plane(usize) = alloc(0);}",
+        "fn discard_owner(value: unique(Resource)) {}",
+        "fn discard_owner(value: unique(Resource)) {let extra: unique(usize) = alloc(0);}",
     );
     assert!(verify(&allocating)
         .unwrap_err()
@@ -35,7 +35,7 @@ fn source_destructors_dispose_only_the_active_allocation_and_its_payload() {
     assert!(verify(&false_flag)
         .unwrap_err()
         .contains("invariant of MaybeOwner"));
-    let suspended = "type Pair struct {a: usize, b: usize} where (fact balanced = a == b; balanced); fn dispose(value: plane(usize)) {} fn main() {let pair = Pair {a: 0, b: 0}; let owner: plane(usize) = alloc(42); update(pair) lifts balanced {dispose(owner);}}";
+    let suspended = "type Pair struct {a: usize, b: usize} where (fact balanced = a == b; balanced); fn dispose(value: unique(usize)) {} fn main() {let pair = Pair {a: 0, b: 0}; let owner: unique(usize) = alloc(42); update(pair) lifts balanced {dispose(owner);}}";
     assert!(verify(suspended)
         .unwrap_err()
         .contains("invariants are open"));
@@ -61,11 +61,11 @@ fn conditional_owners_survive_calls_and_only_the_active_owner_is_released() {
 #[test]
 fn union_members_cannot_duplicate_owners_or_revive_freed_planes() {
     for source in [
-        "fn bad(v: plane(usize) | shape(plane(usize))) -> usize {let p: plane(usize) = v; *p}",
-        "fn main() {let p: plane(usize) = alloc(42); let v: plane(usize) | bool = p; let a: plane(usize) = v; let b: plane(usize) = v;}",
-        "fn main() -> usize {let p: plane(usize) = alloc(42); let r = &*p; let v: plane(usize) | bool = p; let a: plane(usize) = v; drop(a); *r}",
-        "fn bad(v: &(plane(usize) | bool)) -> usize where typeof(*v) == plane(usize) {let stolen: plane(usize) = *v; *stolen}",
-        "fn drop_owner(v: plane(usize)) {drop(v);} fn keep(v: plane(usize)) {} fn bad(flag: bool, p: plane(usize)) {if flag {drop_owner(p)} else {()}; keep(p);}",
+        "fn bad(v: unique(usize) | shape(unique(usize))) -> usize {let p: unique(usize) = v; *p}",
+        "fn main() {let p: unique(usize) = alloc(42); let v: unique(usize) | bool = p; let a: unique(usize) = v; let b: unique(usize) = v;}",
+        "fn main() -> usize {let p: unique(usize) = alloc(42); let r = &*p; let v: unique(usize) | bool = p; let a: unique(usize) = v; drop(a); *r}",
+        "fn bad(v: &(unique(usize) | bool)) -> usize where typeof(*v) == unique(usize) {let stolen: unique(usize) = *v; *stolen}",
+        "fn drop_owner(v: unique(usize)) {drop(v);} fn keep(v: unique(usize)) {} fn bad(flag: bool, p: unique(usize)) {if flag {drop_owner(p)} else {()}; keep(p);}",
     ] {
         assert!(verify(source).is_err(), "accepted {source}");
     }
@@ -73,7 +73,7 @@ fn union_members_cannot_duplicate_owners_or_revive_freed_planes() {
 
 #[test]
 fn borrowed_union_dereferences_observe_the_existing_allocation_without_moving_it() {
-    let source = "fn read(value: &(plane(usize) | shape(plane(usize)))) -> usize where typeof(*value) == plane(usize) {**value} fn consume(value: plane(usize)) {drop(value);} fn main() -> usize {let owner: plane(usize) = alloc(42); let data: plane(usize) | shape(plane(usize)) = owner; let n = read(&data); consume(data); n}";
+    let source = "fn read(value: &(unique(usize) | shape(unique(usize)))) -> usize where typeof(*value) == unique(usize) {**value} fn consume(value: unique(usize)) {drop(value);} fn main() -> usize {let owner: unique(usize) = alloc(42); let data: unique(usize) | shape(unique(usize)) = owner; let n = read(&data); consume(data); n}";
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.trusted_assumptions().is_empty());
@@ -84,11 +84,11 @@ fn borrowed_union_dereferences_observe_the_existing_allocation_without_moving_it
         0
     );
     assert!(
-        verify(&source.replace("where typeof(*value) == plane(usize)", ""))
+        verify(&source.replace("where typeof(*value) == unique(usize)", ""))
             .unwrap_err()
             .contains("active raw union member")
     );
-    let bad_write = "fn bad(value: &(plane(usize) | bool)) where typeof(*value) == plane(usize) {**value = 42;}";
+    let bad_write = "fn bad(value: &(unique(usize) | bool)) where typeof(*value) == unique(usize) {**value = 42;}";
     assert!(verify(bad_write).unwrap_err().contains("effect contract"));
     let stale = source
         .replace("let n = read(&data);", "let view = &**(&data);")
@@ -98,7 +98,7 @@ fn borrowed_union_dereferences_observe_the_existing_allocation_without_moving_it
 
 #[test]
 fn union_pointer_reads_track_the_pointee_revision_for_admitted_proofs() {
-    let prefix = "fn require42(n: usize) where n == 42 {} fn dispose(value: plane(usize)) {drop(value);} fn main() -> usize {let owner: plane(usize) = alloc(43); let data: plane(usize) | shape(plane(usize)) = owner; let view = &data; proof assumed: **view == 42 by {trustme}; require42(**view);";
+    let prefix = "fn require42(n: usize) where n == 42 {} fn dispose(value: unique(usize)) {drop(value);} fn main() -> usize {let owner: unique(usize) = alloc(43); let data: unique(usize) | shape(unique(usize)) = owner; let view = &data; proof assumed: **view == 42 by {trustme}; require42(**view);";
     let good = format!("{prefix} dispose(data); 42}}");
     let (program, bundle) = prove(&good).unwrap();
     assert_eq!(
@@ -133,7 +133,7 @@ fn active_union_borrow_ports_check_reference_results_and_write_permissions() {
         source.replace("modifies(&**value)", ""),
         source.replace("borrows(&**value)", "borrows(value)"),
         source.replace("let n = *before;", "dispose(data); let n = *before;"),
-        "fn leak(value: plane(usize) | bool) -> &usize where typeof(value) == plane(usize) borrows(&*value) {&*value}".into(),
+        "fn escaping(value: unique(usize) | bool) -> &usize where typeof(value) == unique(usize) borrows(&*value) {&*value}".into(),
     ] {
         assert!(verify(&invalid).is_err(), "accepted {invalid}");
     }
@@ -241,7 +241,7 @@ fn nominal_member_refinements_and_drop_follow_only_the_active_payload() {
 
 #[test]
 fn type_observations_are_ideal_and_follow_consumption() {
-    let source = "fn main() -> usize {let owner = alloc(42); drop(owner); proof gone: typeof(owner) == shape(plane(isize)); let storage = shape(&usize); proof shape_type: shape(&usize) == typeof(storage); let empty = shape(usize); proof no_value: typeof(empty) != usize; 42}";
+    let source = "fn main() -> usize {let owner = alloc(42); drop(owner); proof gone: typeof(owner) == shape(unique(isize)); let storage = shape(&usize); proof shape_type: shape(&usize) == typeof(storage); let empty = shape(usize); proof no_value: typeof(empty) != usize; 42}";
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(

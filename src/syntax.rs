@@ -61,8 +61,8 @@ pub enum Type {
     Bool,
     Unit,
     Ref(Box<Type>),
-    Plane(Box<Type>),
-    Owner(Box<Type>),
+    Unique(Box<Type>),
+    Shared(Box<Type>),
     Machine(MachineInt),
     Named(String),
     Array(Box<Type>, Box<Expr>),
@@ -87,11 +87,11 @@ impl Type {
     /// This selects a type for elaboration; the checker must prove it active.
     pub(crate) fn pointer_member(&self) -> Option<&Type> {
         match self {
-            Self::Ref(_) | Self::Plane(_) | Self::Owner(_) => Some(self),
+            Self::Ref(_) | Self::Unique(_) | Self::Shared(_) => Some(self),
             Self::Union(members) => {
                 let mut pointers = members
                     .iter()
-                    .filter(|ty| matches!(ty, Self::Ref(_) | Self::Plane(_) | Self::Owner(_)));
+                    .filter(|ty| matches!(ty, Self::Ref(_) | Self::Unique(_) | Self::Shared(_)));
                 let pointer = pointers.next()?;
                 pointers.next().is_none().then_some(pointer)
             }
@@ -157,11 +157,11 @@ impl Expr {
             Kind::Call(name, args) if name == "shape" && args.len() == 1 => {
                 args[0].literal_type().map(|ty| Type::Shape(Box::new(ty)))
             }
-            Kind::Call(name, args) if name == "plane" && args.len() == 1 => {
-                args[0].literal_type().map(|ty| Type::Plane(Box::new(ty)))
+            Kind::Call(name, args) if name == "unique" && args.len() == 1 => {
+                args[0].literal_type().map(|ty| Type::Unique(Box::new(ty)))
             }
-            Kind::Call(name, args) if name == "owner" && args.len() == 1 => {
-                args[0].literal_type().map(|ty| Type::Owner(Box::new(ty)))
+            Kind::Call(name, args) if name == "shared" && args.len() == 1 => {
+                args[0].literal_type().map(|ty| Type::Shared(Box::new(ty)))
             }
             _ => None,
         }
@@ -622,10 +622,10 @@ impl Parser {
                 Box::new(element),
                 Box::new(count),
             ))))
-        } else if self.peek() == "plane" || self.peek() == "owner" {
-            let shared = self.eat("owner");
+        } else if matches!(self.peek(), "unique" | "shared") {
+            let shared = self.eat("shared");
             if !shared {
-                self.expect("plane")?;
+                self.expect("unique")?;
             }
             self.expect("(")?;
             let mut inner = self.ty()?;
@@ -635,9 +635,9 @@ impl Parser {
             }
             self.expect(")")?;
             Ok(if shared {
-                Type::Owner(Box::new(inner))
+                Type::Shared(Box::new(inner))
             } else {
-                Type::Plane(Box::new(inner))
+                Type::Unique(Box::new(inner))
             })
         } else if self.eat("(") {
             if self.eat(")") {

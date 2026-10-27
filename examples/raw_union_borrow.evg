@@ -1,12 +1,12 @@
 // Borrow contracts name the active allocation; the union keeps its owner.
-fn view(value: &(plane(usize) | shape(plane(usize)))) -> &usize
-    where typeof(*value) == plane(usize)
+fn view(value: &(unique(usize) | shape(unique(usize)))) -> &usize
+    where typeof(*value) == unique(usize)
     borrows(&**value)
 {
     &**value
 }
-fn exchange(value: &(plane(usize) | shape(plane(usize))), n: usize) -> usize
-    where typeof(*value) == plane(usize)
+fn exchange(value: &(unique(usize) | shape(unique(usize))), n: usize) -> usize
+    where typeof(*value) == unique(usize)
     modifies(&**value)
     ensures result == old(**value) && **value == n
 {
@@ -14,10 +14,10 @@ fn exchange(value: &(plane(usize) | shape(plane(usize))), n: usize) -> usize
     **value = n;
     previous
 }
-fn dispose(value: plane(usize)) {drop(value);}
+fn dispose(value: unique(usize)) {drop(value);}
 fn main() -> usize {
-    let owner: plane(usize) = alloc(7);
-    let data: plane(usize) | shape(plane(usize)) = owner;
+    let owner: unique(usize) = alloc(7);
+    let data: unique(usize) | shape(unique(usize)) = owner;
     let before = view(&data);
     let previous = exchange(&data, 42);
     proof before_write: previous == 7;

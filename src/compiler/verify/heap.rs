@@ -8,7 +8,7 @@ pub(super) fn payload_type(ty: &Type, structs: &BTreeMap<String, Struct>) -> boo
         Type::Ref(_) => false,
         Type::Union(members) => members.iter().all(|ty| payload_type(ty, structs)),
         Type::Shape(_) => true,
-        Type::Plane(inner) | Type::Owner(inner) | Type::Array(inner, _) => {
+        Type::Unique(inner) | Type::Shared(inner) | Type::Array(inner, _) => {
             payload_type(inner, structs)
         }
         Type::Named(name) => structs.get(name).is_some_and(|definition| {
@@ -23,7 +23,7 @@ pub(super) fn payload_type(ty: &Type, structs: &BTreeMap<String, Struct>) -> boo
 
 pub(super) fn owns_planes_type(ty: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match ty {
-        Type::Plane(_) | Type::Owner(_) => true,
+        Type::Unique(_) | Type::Shared(_) => true,
         Type::Union(members) => members.iter().any(|ty| owns_planes_type(ty, structs)),
         Type::Shape(_) => false,
         Type::Array(inner, _) => owns_planes_type(inner, structs),
@@ -43,7 +43,7 @@ pub(super) fn function_uses_planes(
 ) -> bool {
     fn ty(value: &Type, structs: &BTreeMap<String, Struct>) -> bool {
         match value {
-            Type::Plane(_) | Type::Owner(_) => true,
+            Type::Unique(_) | Type::Shared(_) => true,
             Type::Union(members) => members.iter().any(|member| ty(member, structs)),
             Type::Shape(_) => false,
             Type::Ref(inner) | Type::Array(inner, _) => ty(inner, structs),
@@ -119,8 +119,8 @@ pub(super) fn syntax_type(ty: &Ty, line: usize) -> Result<Type> {
         Ty::Unit => Type::Unit,
         Ty::Machine(t) => Type::Machine(*t),
         Ty::Record(name) => Type::Named(name.clone()),
-        Ty::Plane(inner) => Type::Plane(Box::new(syntax_type(inner, line)?)),
-        Ty::Owner(inner) => Type::Owner(Box::new(syntax_type(inner, line)?)),
+        Ty::Unique(inner) => Type::Unique(Box::new(syntax_type(inner, line)?)),
+        Ty::Shared(inner) => Type::Shared(Box::new(syntax_type(inner, line)?)),
         Ty::Ref(inner) => Type::Ref(Box::new(syntax_type(inner, line)?)),
         Ty::Array(inner, len) if len.terms.is_empty() => Type::Array(
             Box::new(syntax_type(inner, line)?),
@@ -163,7 +163,7 @@ impl Context<'_> {
             return Err("alloc expects a payload, or a count and initial element".into());
         }
         let hint = match expected {
-            Some(Ty::Plane(inner)) => Some(inner.as_ref()),
+            Some(Ty::Unique(inner) | Ty::Shared(inner)) => Some(inner.as_ref()),
             _ => None,
         };
         let value = self.eval(&args[0], hint)?;
@@ -177,7 +177,7 @@ impl Context<'_> {
         crate::compiler::layout::of(&syntax, self.declarations.structs)?;
         self.validate_argument(&value, line)?;
         let plane = self.allocate_symbol(value)?;
-        Ok(Symbol::Plane(
+        Ok(Symbol::Unique(
             Box::new(ty),
             self.storage.memory.borrow(plane)?,
         ))
@@ -192,7 +192,7 @@ impl Context<'_> {
         let count_type = Ty::Machine(MachineInt::parse("usize").unwrap());
         let count = self.eval(&args[0], Some(&count_type))?.number()?;
         let hint = match expected {
-            Some(Ty::Plane(inner)) => match inner.as_ref() {
+            Some(Ty::Unique(inner) | Ty::Shared(inner)) => match inner.as_ref() {
                 Ty::Array(element, _) => Some(element.as_ref()),
                 _ => None,
             },
@@ -234,7 +234,7 @@ impl Context<'_> {
             identity,
         };
         let plane = self.allocate_symbol(value)?;
-        Ok(Symbol::Plane(
+        Ok(Symbol::Unique(
             Box::new(Ty::Array(Box::new(element), count)),
             self.storage.memory.borrow(plane)?,
         ))
@@ -281,7 +281,7 @@ impl Context<'_> {
         while let Some((value, guard)) = pending.pop() {
             self.charge_value_work(1usize.saturating_add(guard.storage_weight()?))?;
             match value {
-                Symbol::Owner(_, owner) => {
+                Symbol::Shared(_, owner) => {
                     let reference = self.storage.memory.borrow_owned(owner)?;
                     let owned = self.storage.memory.plane(reference)?;
                     if owned == plane {
@@ -290,7 +290,7 @@ impl Context<'_> {
                     self.charge_value_work(symbol_weight(self.storage.memory.read(reference)?)?)?;
                     pending.push((self.storage.memory.read(reference)?.clone(), guard));
                 }
-                Symbol::Plane(_, reference) => {
+                Symbol::Unique(_, reference) => {
                     let paths = self.proof.paths.clone();
                     if self.checked_impossible(&paths, &guard)? {
                         continue;
@@ -347,11 +347,11 @@ mod filled_tests {
                 .proof_search_count(),
             0
         );
-        let large = "fn main() -> usize {let a: plane(usize, 9000) = alloc(9000, 42); (*a)[8999]}";
+        let large = "fn main() -> usize {let a: unique(usize, 9000) = alloc(9000, 42); (*a)[8999]}";
         assert_eq!(verify(large).unwrap().run().unwrap().to_string(), "42");
         // Verification and replay must depend on observations and stores, not
         // the buffer extent. Never execute this allocation in the test runner.
-        let enormous = "fn main() -> usize {let a: plane(u8, 1000000000) = alloc(1000000000, 0); proof last_initialized: (*a)[999999999] == 0; (*a)[17] = 42; proof stored: (*a)[17] == 42; proof untouched: (*a)[0] == 0 && (*a)[999999999] == 0; 42}";
+        let enormous = "fn main() -> usize {let a: unique(u8, 1000000000) = alloc(1000000000, 0); proof last_initialized: (*a)[999999999] == 0; (*a)[17] = 42; proof stored: (*a)[17] == 42; proof untouched: (*a)[0] == 0 && (*a)[999999999] == 0; 42}";
         let (program, bundle) = prove(enormous).unwrap();
         assert_eq!(
             verify_with_certificate(enormous, &bundle)
@@ -360,21 +360,21 @@ mod filled_tests {
             0
         );
         assert!(program.run().unwrap_err().contains("before allocation"));
-        let empty = "fn main() -> usize {let a: plane(usize, 0) = alloc(0, 7); let b: plane(usize, 0) = alloc(0, 9); if &*a != &*b {42} else {1}}";
+        let empty = "fn main() -> usize {let a: unique(usize, 0) = alloc(0, 7); let b: unique(usize, 0) = alloc(0, 9); if &*a != &*b {42} else {1}}";
         assert_eq!(verify(empty).unwrap().run().unwrap().to_string(), "42");
     }
 
     #[test]
     fn runtime_allocation_checks_bounds_ownership_and_liveness() {
         for source in [
-            "fn make(n: usize) -> plane(usize, n) {alloc(n, 0)} fn main() -> usize {42}",
-            "fn main() -> usize {let a: plane(usize, usize::MAX) = alloc(usize::MAX, 0); 42}",
-            "fn main() -> usize {let a: plane(usize, 2) = alloc(2, 0); (*a)[2]}",
+            "fn make(n: usize) -> unique(usize, n) {alloc(n, 0)} fn main() -> usize {42}",
+            "fn main() -> usize {let a: unique(usize, usize::MAX) = alloc(usize::MAX, 0); 42}",
+            "fn main() -> usize {let a: unique(usize, 2) = alloc(2, 0); (*a)[2]}",
             "fn main() -> usize {let x: usize = 42; let a = alloc(2, &x); 42}",
             "fn main() -> usize {let a = alloc(2, alloc(42)); 42}",
             "type Resource struct {tag: usize} impl Drop for Resource {fn drop(self) {}} fn main() -> usize {let a = alloc(2, Resource {tag: 7}); 42}",
-            "fn main() -> usize {let a: plane(usize, 2) = alloc(2, 0); let view = &*a; drop(a); (*view)[0]}",
-            "fn main() -> usize {let n: usize = 2; let a: plane(usize, n) = alloc(n, 0); let view = &*a; n = 3; (*view)[n - 1]}",
+            "fn main() -> usize {let a: unique(usize, 2) = alloc(2, 0); let view = &*a; drop(a); (*view)[0]}",
+            "fn main() -> usize {let n: usize = 2; let a: unique(usize, n) = alloc(n, 0); let view = &*a; n = 3; (*view)[n - 1]}",
         ] {
             assert!(verify(source).is_err(), "accepted {source}");
         }

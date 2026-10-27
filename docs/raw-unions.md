@@ -56,7 +56,7 @@ eliminates its raw payload by ordinary source-level branches. Both execute nativ
 Option representation or destructor dispatch is involved.
 
 Owning plane members now follow the active selector. `examples/raw_union_owner.evg`
-selects between `plane(usize)` and `shape(plane(usize))`, returns that union through
+selects between `unique(usize)` and `shape(unique(usize))`, returns that union through
 a checked function contract, and consumes the active member in another function.
 Only the active payload grants owner authority. Virtual allocations for inactive
 members do not grant owners, and only admission-free checked reachability can

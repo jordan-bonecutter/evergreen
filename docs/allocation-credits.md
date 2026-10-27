@@ -34,8 +34,10 @@ frontend resource rules remain part of the compiler's trusted boundary.
 Native credits occupy one pointer word. `outstanding` is ideal; claim bookkeeping
 and these observations are erased. No runtime reference counter is added by this
 library or by the compiler. The public API cannot turn an arithmetic budget or a
-borrowed pointer into allocation authority. Copy implementations, forged record
-construction, merging different allocations, and recovery while shared fail.
+borrowed pointer into allocation authority. The wrapper has no Copy implementation; forged record construction, merging
+different allocations, and recovery while shared fail. Dropping this wrapper
+relinquishes its shared claim and leaks the allocation; it does not supply Rc
+cleanup policy. Explicit recovery followed by unique cleanup reclaims it.
 
 The earlier `credits::Credit` conserves an abstract arithmetic quantity and grants
 no allocation authority. This library instead carries actual lifetime claims;

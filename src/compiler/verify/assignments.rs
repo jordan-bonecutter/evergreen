@@ -78,7 +78,7 @@ impl Context<'_> {
         if !fields.is_empty() && !old_live {
             return Err(format!("line {}: field assignment cannot restore shape(T); replace consumed owner {name} as a whole", place.line));
         }
-        let cleaned_old = old_live && self.symbol_is_move_only(&old);
+        let cleaned_old = old_live && self.has_runtime_cleanup(&old.ty());
         if cleaned_old {
             self.validate_argument(&old, place.line)?;
             // The computed replacement remains an owner during old cleanup.

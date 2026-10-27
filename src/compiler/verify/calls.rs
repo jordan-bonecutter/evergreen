@@ -21,11 +21,8 @@ impl<'a> Context<'a> {
         expected: Option<&Ty>,
         line: usize,
     ) -> Result<Symbol> {
-        if matches!(
-            name,
-            "owners" | "share_owner" | "duplicate_owner" | "release_owner" | "recover_owner"
-        ) {
-            return self.owner_operation(name, args, line);
+        if name == "owner_count" {
+            return self.observe_owner_count(args);
         }
         if name == "typeof" || name == "shape" {
             return self.eval_type_operation(name, args, expected, line);
@@ -71,7 +68,7 @@ impl<'a> Context<'a> {
         {
             return Err("recursive calls are forbidden in specifications".into());
         }
-        if name == "move" || name == "drop" {
+        if matches!(name, "move" | "drop" | "leak") {
             return self.eval_ownership_call(name, args, line);
         }
         let function = self.function_for_call(name, line)?;
@@ -117,7 +114,16 @@ impl<'a> Context<'a> {
         self.record_valid(&stored, line)?;
         let value = self.take_symbol(id)?;
         self.validate_argument(&value, line)?;
+        if name == "leak" {
+            self.leak_value(value, line)?;
+            return Ok(Symbol::Unit);
+        }
         if name == "drop" {
+            if matches!(value, Symbol::Shared(..)) {
+                return Err(
+                    "drop requires unique(T); promote the shared pointer or leak it".into(),
+                );
+            }
             self.cleanup_value(value, line)?;
             return Ok(Symbol::Unit);
         }
@@ -213,7 +219,7 @@ impl<'a> Context<'a> {
                 Type::Bool => Some(Ty::Bool),
                 Type::Machine(t) => Some(Ty::Machine(*t)),
                 Type::Union(_) | Type::Shape(_) => Self::declared_hint(t),
-                Type::Plane(_) | Type::Owner(_) => self.literal_element_hint(t)?,
+                Type::Unique(_) | Type::Shared(_) => self.literal_element_hint(t)?,
                 _ => Self::declared_hint(t),
             };
             // A dependent formal may not yet have its length parameter. Select
@@ -223,7 +229,7 @@ impl<'a> Context<'a> {
                 let actual = self.hint(arg)?;
                 let pointer = actual.pointer_member()?;
                 match (t, pointer) {
-                    (Type::Plane(_), Ty::Plane(_)) | (Type::Owner(_), Ty::Owner(_)) => {
+                    (Type::Unique(_), Ty::Unique(_)) | (Type::Shared(_), Ty::Shared(_)) => {
                         Some(pointer.clone())
                     }
                     _ => None,

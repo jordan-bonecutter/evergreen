@@ -216,8 +216,10 @@ impl Context<'_> {
             }
             Kind::Record(..) | Kind::Array(..) | Kind::Block(..) => false,
             Kind::Unary(op, x) if op == "*" => {
-                matches!(self.hint(x), Some(Ty::Ref(_) | Ty::Plane(_) | Ty::Owner(_)))
-                    && self.update_expression(x)
+                matches!(
+                    self.hint(x),
+                    Some(Ty::Ref(_) | Ty::Unique(_) | Ty::Shared(_))
+                ) && self.update_expression(x)
             }
             Kind::Unary(_, x) | Kind::Field(x, _) | Kind::FactAt(x, _) => self.update_expression(x),
             Kind::Binary(_, a, b) | Kind::Index(a, b) => {

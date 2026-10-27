@@ -164,8 +164,8 @@ impl Context<'_> {
     fn deferred_shared_owners(&self, ty: &Ty) -> bool {
         fn contains(ty: &Type, structs: &BTreeMap<String, Struct>) -> bool {
             match ty {
-                Type::Owner(_) => true,
-                Type::Ref(inner) | Type::Plane(inner) | Type::Array(inner, _) => {
+                Type::Shared(_) => true,
+                Type::Ref(inner) | Type::Unique(inner) | Type::Array(inner, _) => {
                     contains(inner, structs)
                 }
                 Type::Named(name) => structs.get(name).is_some_and(|record| {
@@ -195,7 +195,7 @@ impl Context<'_> {
             return self.assume_element_type(value);
         }
         match value {
-            Symbol::Ref(_, reference, _) | Symbol::Plane(_, reference) => {
+            Symbol::Ref(_, reference, _) | Symbol::Unique(_, reference) => {
                 if let Some(initial) = self
                     .arrays
                     .initial_planes
@@ -238,7 +238,7 @@ pub(super) fn contains_reference_array(ty: &Type, structs: &BTreeMap<String, Str
         Type::Array(element, _) => {
             type_has_reference(element, structs) || contains_reference_array(element, structs)
         }
-        Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) => {
+        Type::Ref(inner) | Type::Unique(inner) | Type::Shared(inner) => {
             contains_reference_array(inner, structs)
         }
         Type::Named(name) => structs.get(name).is_some_and(|record| {

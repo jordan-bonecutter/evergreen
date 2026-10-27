@@ -121,11 +121,11 @@ impl Context<'_> {
                 }
                 Ok(())
             }
-            Symbol::Owner(ty, owner) => {
+            Symbol::Shared(ty, owner) => {
                 let reference = self.storage.memory.borrow_owned(*owner)?;
-                self.validate_value(&Symbol::Plane(ty.clone(), reference), line, lifted, mode)
+                self.validate_value(&Symbol::Unique(ty.clone(), reference), line, lifted, mode)
             }
-            Symbol::Plane(_, reference) => {
+            Symbol::Unique(_, reference) => {
                 let selected = if mode == Validation::Retained {
                     self.storage
                         .opened_planes

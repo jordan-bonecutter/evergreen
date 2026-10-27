@@ -131,8 +131,8 @@ impl Context<'_> {
         let value = self.pointer_operand(pointer)?;
         match &value {
             Symbol::Ref(..) | Symbol::RefCases(..) => self.read_reference(&value, line),
-            Symbol::Plane(_, reference) => self.read_projection_value(*reference, &[]),
-            Symbol::Owner(_, owner) => {
+            Symbol::Unique(_, reference) => self.read_projection_value(*reference, &[]),
+            Symbol::Shared(_, owner) => {
                 let reference = self.storage.memory.borrow_owned(*owner)?;
                 self.read_projection_value(reference, &[])
             }

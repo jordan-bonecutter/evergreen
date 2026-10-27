@@ -1,12 +1,64 @@
 use super::*;
 
 #[test]
+fn shared_pointer_values_copy_claims_and_move_to_unique_authority() {
+    for source in [
+        "fn main() -> usize {let first: shared(usize) = alloc(42); let slot = first; slot = first; proof two: owner_count(first) == 2; leak(slot); let final: unique(usize) = move(first); *final}",
+        "fn main() -> usize {let first: shared(usize, 2) = alloc(2, 42); let second = first; leak(second); let final: unique(usize, 2) = move(first); (*final)[1]}",
+        "fn main() -> usize {let first: shared(usize) = alloc(42); let second = first; proof two: owner_count(first) == 2; leak(second); proof one: owner_count(first) == 1; let final: unique(usize) = move(first); *final}",
+        "fn main() -> usize {let first: shared(usize) = alloc(42); let view = &*first; leak(first); proof none: owner_count(view) == 0; *view}",
+        "fn discard(value: shared(usize)) {} fn main() -> usize {let first: shared(usize) = alloc(42); discard(first); proof one: owner_count(first) == 1; let final: unique(usize) = move(first); *final}",
+        "fn main() -> usize {let first: shared(usize) = alloc(42); let items = [first, first]; proof three: owner_count(first) == 3; let other = items; proof five: owner_count(first) == 5; leak(other); leak(items); let final: unique(usize) = move(first); *final}",
+    ] {
+        let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+        assert_eq!(program.run().unwrap().to_string(), "42", "{source}");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
+    }
+    for source in [
+        "fn main() {let first: shared(usize) = alloc(42); let second = first; let final: unique(usize) = move(first);}",
+        "fn main() {let first: shared(usize) = alloc(42); let final: unique(usize) = first;}",
+        "fn main() {let first: shared(usize) = alloc(42); drop(first);}",
+        "fn main() {let first: shared(usize) = alloc(42); let view = &*first; let final: unique(usize) = view;}",
+        "fn main() {let first: shared(usize) = alloc(42); let final: unique(usize) = move(first); let second = first;}",
+    ] {assert!(verify(source).is_err(), "accepted {source}");}
+}
+
+#[test]
+fn aggregate_and_temporary_shared_reads_have_exact_copy_effects() {
+    for source in [
+        "type Handle struct {data: shared(usize)} impl Copy for Handle {} fn main() -> usize {let original: shared(usize) = alloc(42); let handle = Handle {data: original}; let copy = handle; proof three: owner_count(original) == 3; leak(copy); leak(handle); let final: unique(usize) = move(original); *final}",
+        "fn main() -> usize {let original: shared(usize) = alloc(42); let items = [original, original]; let selected = items[0]; proof four: owner_count(original) == 4; leak(selected); leak(items); let final: unique(usize) = move(original); *final}",
+        "fn copy(value: &shared(usize)) -> shared(usize) {*value} fn main() -> usize {let original: shared(usize) = alloc(42); let view = &*copy(&original); proof one: owner_count(original) == 1; original; proof one_again: owner_count(original) == 1; let final: unique(usize) = move(original); *view}",
+    ] {
+        let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
+    }
+    let bad_copy = "type Counted struct {count: usize, data: shared(usize)} where nat(count) == owner_count(data); impl Copy for Counted {} fn main() {}";
+    assert!(verify(bad_copy).unwrap_err().contains("Copy must preserve"));
+}
+
+#[test]
+fn former_owner_operation_names_are_ordinary_source_functions() {
+    let source = "fn share_owner(x: usize) -> usize {x} fn duplicate_owner(x: usize) -> usize {share_owner(x)} fn release_owner(x: usize) -> usize {duplicate_owner(x)} fn recover_owner(x: usize) -> usize {release_owner(x)} fn main() -> usize {recover_owner(42)}";
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+}
+
+#[test]
 fn conditional_owner_releases_join_the_same_remaining_claims() {
     for source in [
-        "fn release(value: owner(usize), flag: bool) where owners(value) > 1 {if flag {release_owner(value);} else {release_owner(value);}} fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate_owner(&first); let view = &*first; release(second, true); proof sole: owners(first) == 1; *view}",
-        "fn release(value: owner(usize), flag: bool) where owners(value) == 1 {if flag {let unique = recover_owner(value); drop(unique);} else {let unique = recover_owner(value); drop(unique);}} fn main() -> usize {let unique: plane(usize) = alloc(7); let value = share_owner(unique); release(value, false); 42}",
-        "fn observe(value: &owner(usize), flag: bool) {if flag {let temporary = duplicate_owner(value); release_owner(temporary);} else {}} fn main() -> usize {let unique: plane(usize) = alloc(42); let value = share_owner(unique); let view = &*value; observe(&value, true); proof sole: owners(value) == 1; *view}",
-        "fn release(value: rc::Rc, flag: bool) where value.strong_count() > 1 {match flag {true => {value.release_nonfinal();}, false => {value.release_nonfinal();}}} fn main() -> usize {let first = rc::new(42); let second = first.clone(); release(second, false); proof sole: first.strong_count() == 1; *first.value()}",
+        "fn release(value: shared(usize), flag: bool) where owner_count(value) > 1 {if flag {leak(value);} else {leak(value);}} fn main() -> usize {let unique: unique(usize) = alloc(42); let first: shared(usize) = move(unique); let second = first; let view = &*first; release(move(second), true); proof sole: owner_count(first) == 1; *view}",
+        "fn release(value: shared(usize), flag: bool) where owner_count(value) == 1 {if flag {let unique: unique(usize) = move(value); drop(unique);} else {let unique: unique(usize) = move(value); drop(unique);}} fn main() -> usize {let unique: unique(usize) = alloc(7); let value: shared(usize) = move(unique); release(move(value), false); 42}",
+        "fn observe(value: &shared(usize), flag: bool) {if flag {let temporary = *value; leak(temporary);} else {}} fn main() -> usize {let unique: unique(usize) = alloc(42); let value: shared(usize) = move(unique); let view = &*value; observe(&value, true); proof sole: owner_count(value) == 1; *view}",
+        "fn release(value: rc::Rc, flag: bool) where value.strong_count() > 1 {match flag {true => {value.release_nonfinal();}, false => {value.release_nonfinal();}}} fn main() -> usize {let first = rc::new(42); let second = first.clone(); release(move(second), false); proof sole: first.strong_count() == 1; *first.value()}",
     ] {
         let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
         assert_eq!(program.run().unwrap().to_string(), "42");
@@ -18,17 +70,17 @@ fn conditional_owner_releases_join_the_same_remaining_claims() {
 #[test]
 fn conditional_owner_transitions_do_not_preserve_admissions_or_invent_tokens() {
     for transition in [
-        "if flag {let temporary = duplicate_owner(&value); release_owner(temporary);} else {}",
-        "if flag {let temporary = duplicate_owner(&value); release_owner(temporary);} else {let temporary = duplicate_owner(&value); release_owner(temporary);}",
+        "if flag {let temporary = value; leak(temporary);} else {}",
+        "if flag {let temporary = value; leak(temporary);} else {let temporary = value; leak(temporary);}",
     ] {
-        let source = format!("fn reclaim(value: owner(usize), flag: bool) -> plane(usize) {{proof admitted: owners(value) == 1 by {{trustme}}; {transition} recover_owner(value)}} fn main() -> usize {{42}}");
+        let source = format!("fn reclaim(value: shared(usize), flag: bool) -> unique(usize) {{proof admitted: owner_count(value) == 1 by {{trustme}}; {transition} move(value)}} fn main() -> usize {{42}}");
         let error = verify(&source).unwrap_err();
         assert!(error.contains("unique owner recovery"), "{error}");
     }
     for source in [
-        "fn bad(first: owner(usize), second: owner(usize), flag: bool) where owners(first) > 1 && owners(second) > 1 {if flag {release_owner(first);} else {release_owner(second);}}",
-        "fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate_owner(&first); if true {release_owner(second);} else {release_owner(second);} *second}",
-        "fn main() -> usize {let unique: plane(usize) = alloc(42); let value = share_owner(unique); let view = &*value; if true {drop(value);} else {drop(value);} *view}",
+        "fn bad(first: shared(usize), second: shared(usize), flag: bool) where owner_count(first) > 1 && owner_count(second) > 1 {if flag {leak(first);} else {leak(second);} proof both_live: owner_count(first) > 0 && owner_count(second) > 0;}",
+        "fn main() -> usize {let unique: unique(usize) = alloc(42); let first: shared(usize) = move(unique); let second = first; if true {leak(second);} else {leak(second);} *second}",
+        "fn main() -> usize {let unique: unique(usize) = alloc(42); let value: shared(usize) = move(unique); let view = &*value; if true {drop(value);} else {drop(value);} *view}",
     ] {
         assert!(verify(source).is_err(), "accepted {source}");
     }
@@ -36,7 +88,7 @@ fn conditional_owner_transitions_do_not_preserve_admissions_or_invent_tokens() {
 
 #[test]
 fn conditional_owner_changes_keep_other_allocations_evidence_separate() {
-    let source = "fn reclaim(value: owner(usize), flag: bool) -> plane(usize) {proof sole: owners(value) == 1 by {trustme}; let unique: plane(usize) = alloc(7); let other = share_owner(unique); if flag {let temporary = duplicate_owner(&other); release_owner(temporary);} else {} drop(other); recover_owner(value)} fn main() -> usize {42}";
+    let source = "fn reclaim(value: shared(usize), flag: bool) -> unique(usize) {proof sole: owner_count(value) == 1 by {trustme}; let unique: unique(usize) = alloc(7); let other: shared(usize) = move(unique); if flag {let temporary = other; leak(temporary);} else {} leak(other); move(value)} fn main() -> usize {42}";
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(
         program
@@ -77,8 +129,8 @@ fn source_rc_rejects_counter_drift_overflow_and_missing_claims() {
     for (from, to, expected) in [
         ("allocation.count = allocation.count + 1;", "", "invariant"),
         (
-            "Credit {data: duplicate_owner(allocation)}",
-            "Credit {data: shape(owner(Data))}",
+            "Credit {data: *allocation}",
+            "Credit {data: shape(shared(Data))}",
             "type mismatch",
         ),
         ("data.count = data.count - 1;", "", "postcondition"),
@@ -120,7 +172,7 @@ fn source_rc_lifetimes_keep_payload_and_handle_planes_distinct() {
         "fn main() {let first = rc::new(42); first.release_nonfinal();}",
         "fn main() -> usize {let first = rc::new(42); let view = first.value(); first.release_last(); *view}",
         "fn main() -> usize {let first = rc::new(42); let second = first.clone(); let handle = &first; first.release_nonfinal(); handle.strong_count()}",
-        "fn main() {let first = rc::new(42); let moved = first; first.strong_count();}",
+        "fn main() {let first = rc::new(42); let moved = move(first); first.strong_count();}",
         "impl Copy for rc::Rc {} fn main() {}",
     ] {assert!(verify(source).is_err(), "accepted {source}");}
 }
@@ -142,14 +194,13 @@ fn source_allocation_credits_preserve_real_authority_and_plane_identity() {
 #[test]
 fn allocation_credits_cannot_be_copied_forged_or_recovered_while_shared() {
     for source in [
-        "fn main() {let credit = allocation_credits::Credit {allocation: share_owner(alloc(42))};}",
+        "fn main() {let credit = allocation_credits::Credit {allocation: alloc(42)};}",
         "impl Copy for allocation_credits::Credit {} fn main() {}",
         "fn main() {let credit = allocation_credits::attach(alloc(42)); let moved = credit; let again = credit;}",
         "fn main() {let first = allocation_credits::attach(alloc(42)); let second = allocation_credits::duplicate(&first); let unique = allocation_credits::recover(first);}",
         "fn main() {let first = allocation_credits::attach(alloc(42)); let second = allocation_credits::duplicate(&first); proof lie: allocation_credits::outstanding(&first) == 1 by {trustme}; let unique = allocation_credits::recover(first);}",
         "fn main() {let first = allocation_credits::attach(alloc(42)); let second = allocation_credits::attach(alloc(7)); let wrong = allocation_credits::merge(first, second);}",
-        "fn main() -> usize {let credit = allocation_credits::attach(alloc(42)); let target = allocation_credits::target(&credit); drop(credit); *target}",
-        "fn main() {let first = allocation_credits::attach(alloc(42)); let second = allocation_credits::duplicate(&first);}",
+        "fn main() -> usize {let credit = allocation_credits::attach(alloc(42)); let target = allocation_credits::target(&credit); let final = allocation_credits::recover(credit); drop(final); *target}",
     ] {assert!(verify(source).is_err(), "accepted {source}");}
 }
 
@@ -172,8 +223,8 @@ fn entry_reference_observations_preserve_identity_and_read_current_contents() {
         "fn wrong(a: &usize, b: &usize) where a != b {ideal let saved = old(&a); a = b; proof changed: *saved == old(a);}",
         "type Point struct {value: usize} fn wrong(point: Point) {ideal let address = old(&point); let moved = point; proof stale: address.value == 42;}",
         "fn change(value: &usize) -> &usize modifies(value) borrows(value) {*value = 42; value} fn wrong(value: &usize) {ideal let saved = old(change(value));}",
-        "fn view(value: &owner(usize)) -> &usize borrows(&**value) {let temporary = duplicate_owner(value); release_owner(temporary); &**value} fn wrong(value: &owner(usize)) {ideal let saved = old(view(value));}",
-        "fn observe(value: &owner(usize)) -> usize {let temporary = duplicate_owner(value); release_owner(temporary); 42} fn wrong(value: &owner(usize)) {ideal let saved = old(observe(value));}",
+        "fn view(value: &shared(usize)) -> &usize borrows(&**value) {let temporary = *value; leak(temporary); &**value} fn wrong(value: &shared(usize)) {ideal let saved = old(view(value));}",
+        "fn observe(value: &shared(usize)) -> usize {let temporary = *value; leak(temporary); 42} fn wrong(value: &shared(usize)) {ideal let saved = old(observe(value));}",
     ] {assert!(verify(source).is_err(), "accepted {source}");}
 }
 
@@ -193,10 +244,11 @@ fn generic_owning_references_count_claims_and_recover_the_same_plane() {
 
 #[test]
 fn a_visible_input_owner_does_not_establish_uniqueness() {
-    let source = "fn reclaim(value: owner(usize)) -> plane(usize) {recover_owner(value)} fn main() -> usize {42}";
+    let source =
+        "fn reclaim(value: shared(usize)) -> unique(usize) {move(value)} fn main() -> usize {42}";
     let error = verify(source).unwrap_err();
     assert!(error.contains("unique owner recovery"), "{error}");
-    let valid = "fn reclaim(value: owner(usize)) -> plane(usize) where owners(value) == 1 {recover_owner(value)} fn main() -> usize {let unique: plane(usize) = alloc(42); let owned = share_owner(unique); let recovered = reclaim(owned); *recovered}";
+    let valid = "fn reclaim(value: shared(usize)) -> unique(usize) where owner_count(value) == 1 {move(value)} fn main() -> usize {let unique: unique(usize) = alloc(42); let owned: shared(usize) = move(unique); let recovered = reclaim(move(owned)); *recovered}";
     let (program, bundle) = prove(valid).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -206,8 +258,8 @@ fn a_visible_input_owner_does_not_establish_uniqueness() {
         0
     );
     let invalid = valid.replace(
-        "let recovered = reclaim(owned);",
-        "let another = duplicate_owner(&owned); let recovered = reclaim(owned);",
+        "let recovered = reclaim(move(owned));",
+        "let another = owned; let recovered = reclaim(move(owned));",
     );
     assert!(verify(&invalid)
         .unwrap_err()
@@ -216,7 +268,7 @@ fn a_visible_input_owner_does_not_establish_uniqueness() {
 
 #[test]
 fn callee_cleanup_releases_only_its_claim_including_hidden_caller_owners() {
-    let source = "fn release(value: owner(usize)) where owners(value) > 1 {release_owner(value);} fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate_owner(&first); release(first); proof sole: owners(second) == 1; let recovered = recover_owner(second); *recovered}";
+    let source = "fn release(value: shared(usize)) where owner_count(value) > 1 {leak(value);} fn main() -> usize {let unique: unique(usize) = alloc(42); let first: shared(usize) = move(unique); let second = first; release(move(first)); proof sole: owner_count(second) == 1; let recovered: unique(usize) = move(second); *recovered}";
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -229,7 +281,7 @@ fn callee_cleanup_releases_only_its_claim_including_hidden_caller_owners() {
 
 #[test]
 fn cloning_and_entry_snapshots_preserve_opaque_caller_counts() {
-    let source = "fn duplicate(value: &owner(usize)) -> owner(usize) ensures owners(result) == old(owners(value)) + 1 {duplicate_owner(value)} fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate(&first); proof shared: owners(first) == 2; release_owner(first); let recovered = recover_owner(second); *recovered}";
+    let source = "fn duplicate(value: &shared(usize)) -> shared(usize) ensures owner_count(result) == old(owner_count(value)) + 1 {*value} fn main() -> usize {let unique: unique(usize) = alloc(42); let first: shared(usize) = move(unique); let second = duplicate(&first); proof shared: owner_count(first) == 2; leak(first); let recovered: unique(usize) = move(second); *recovered}";
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -242,24 +294,21 @@ fn cloning_and_entry_snapshots_preserve_opaque_caller_counts() {
 
 #[test]
 fn borrowed_views_survive_handle_moves_and_expire_after_final_destruction() {
-    let source = "fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let view = &*first; let second = duplicate_owner(&first); let moved = first; release_owner(moved); proof sole: owners(second) == 1; let recovered = recover_owner(second); *view}";
+    let source = "fn main() -> usize {let unique: unique(usize) = alloc(42); let first: shared(usize) = move(unique); let view = &*first; let second = first; let moved = move(first); leak(moved); proof sole: owner_count(second) == 1; let recovered: unique(usize) = move(second); *view}";
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
     let dead = source.replace(
-        "let recovered = recover_owner(second);",
-        "let recovered = recover_owner(second); drop(recovered);",
+        "let recovered: unique(usize) = move(second);",
+        "let recovered: unique(usize) = move(second); drop(recovered);",
     );
     assert!(verify(&dead).is_err());
-    let moved = source.replace("release_owner(moved);", "release_owner(first);");
+    let moved = source.replace("leak(moved);", "leak(first);");
     assert!(verify(&moved).is_err());
 }
 
 #[test]
 fn census_admissions_expire_on_owner_transitions_even_when_the_count_returns() {
-    for transition in [
-        "let other = duplicate_owner(&value);",
-        "let other = duplicate_owner(&value); release_owner(other);",
-    ] {
-        let source = format!("fn reclaim(value: owner(usize)) -> plane(usize) {{proof admitted: owners(value) == 1 by {{trustme}}; {transition} recover_owner(value)}} fn main() -> usize {{42}}");
+    for transition in ["let other = value;", "let other = value; leak(other);"] {
+        let source = format!("fn reclaim(value: shared(usize)) -> unique(usize) {{proof admitted: owner_count(value) == 1 by {{trustme}}; {transition} move(value)}} fn main() -> usize {{42}}");
         let error = verify(&source).unwrap_err();
         assert!(error.contains("unique owner recovery"), "{error}");
     }
@@ -267,9 +316,9 @@ fn census_admissions_expire_on_owner_transitions_even_when_the_count_returns() {
 
 #[test]
 fn ownership_transitions_cannot_silently_break_a_nominal_invariant() {
-    let prefix = "type Counted struct {count: usize, data: owner(usize)} where nat(count) == owners(data); fn duplicate(value: &owner(usize)) -> owner(usize) {duplicate_owner(value)}";
-    for operation in ["duplicate_owner(&value.data)", "duplicate(&value.data)"] {
-        let source = format!("{prefix} fn main() {{let unique: plane(usize) = alloc(42); let value = Counted {{count: 1, data: share_owner(unique)}}; let other = {operation};}}");
+    let prefix = "type Counted struct {count: usize, data: shared(usize)} where nat(count) == owner_count(data); fn duplicate(value: &shared(usize)) -> shared(usize) {*value}";
+    for operation in ["value.data", "duplicate(&value.data)"] {
+        let source = format!("{prefix} fn main() {{let unique: unique(usize) = alloc(42); let value = Counted {{count: 1, data: unique}}; let other = {operation};}}");
         assert!(verify(&source).is_err(), "accepted {operation}");
     }
 }
@@ -277,36 +326,40 @@ fn ownership_transitions_cannot_silently_break_a_nominal_invariant() {
 #[test]
 fn owners_cannot_be_forged_or_consumed_by_erased_execution() {
     for source in [
-        "fn main() {let forged: owner(usize) = 42;}",
-        "fn main() {let unique: plane(usize) = alloc(42); let owned = share_owner(unique); let count = owners(owned);}",
-        "fn main() {let unique: plane(usize) = alloc(42); ideal let owned = share_owner(unique);}",
-        "fn main() {let unique: plane(usize) = alloc(42); let owned = share_owner(unique); let recovered = recover_owner(&owned);}",
+        "fn main() {let forged: shared(usize) = 42;}",
+        "fn main() {let unique: unique(usize) = alloc(42); let owned: shared(usize) = move(unique); let count = owner_count(owned);}",
+        "fn main() {let unique: unique(usize) = alloc(42); ideal let owned: shared(usize) = move(unique);}",
+        "fn main() {let unique: unique(usize) = alloc(42); let owned: shared(usize) = move(unique); let recovered = move(&owned);}",
     ] {assert!(verify(source).is_err(), "accepted {source}");}
 }
 
 #[test]
-fn raw_owners_require_uniqueness_to_drop_and_cannot_release_the_last_claim() {
-    for source in [
-        "fn discard(value: owner(usize)) {}",
-        "fn main() {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let second = duplicate_owner(&first);}",
-        "fn main() {let unique: plane(usize) = alloc(42); let owned = share_owner(unique); release_owner(owned);}",
-    ] {assert!(verify(source).is_err(), "accepted {source}");}
-    let source = "type Resource struct {value: usize} where value == 42; impl Drop for Resource {fn drop(self) {proof valid: self.value == 42;}} fn main() -> usize {let unique: plane(Resource) = alloc(Resource {value: 42}); let first = share_owner(unique); let second = duplicate_owner(&first); release_owner(first); second.value}";
-    let (program, bundle) = prove(source).unwrap();
-    let (value, events) = program.run_with_events().unwrap();
-    assert_eq!(value.to_string(), "42");
-    assert_eq!(events, ["drop Resource"]);
-    assert_eq!(
-        verify_with_certificate(source, &bundle)
-            .unwrap()
-            .proof_search_count(),
-        0
-    );
+fn raw_shared_cleanup_leaks_and_promotion_enables_payload_destruction() {
+    let source = "type Resource struct {value: usize} where value == 42; impl Drop for Resource {fn drop(self) {proof valid: self.value == 42;}} fn main() -> usize {let first: shared(Resource) = alloc(Resource {value: 42}); let view = &*first; let second = first; leak(first); let answer = second.value; CLEANUP answer}";
+    for (cleanup, expected) in [
+        ("leak(second); proof zero: owner_count(view) == 0;", 0),
+        (
+            "let final: unique(Resource) = move(second); drop(final);",
+            1,
+        ),
+    ] {
+        let source = source.replace("CLEANUP", cleanup);
+        let (program, bundle) = prove(&source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+        let (value, events) = program.run_with_events().unwrap();
+        assert_eq!(value.to_string(), "42");
+        assert_eq!(events.len(), expected);
+        assert_eq!(
+            verify_with_certificate(&source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+    }
 }
 
 #[test]
 fn ordinary_borrows_do_not_count_and_keep_the_original_allocation_provenance() {
-    let source = "fn borrow(value: &owner(usize)) -> &usize borrows(&**value) {&**value} fn main() -> usize {let unique: plane(usize) = alloc(42); let first = share_owner(unique); let view = borrow(&first); let another_view = &*first; proof one: owners(first) == 1 && owners(view) == 1 && owners(another_view) == 1; let second = duplicate_owner(&first); release_owner(first); *view}";
+    let source = "fn borrow(value: &shared(usize)) -> &usize borrows(&**value) {&**value} fn main() -> usize {let unique: unique(usize) = alloc(42); let first: shared(usize) = move(unique); let view = borrow(&first); let another_view = &*first; proof one: owner_count(first) == 1 && owner_count(view) == 1 && owner_count(another_view) == 1; let second = first; leak(first); *view}";
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(
@@ -316,15 +369,15 @@ fn ordinary_borrows_do_not_count_and_keep_the_original_allocation_provenance() {
         0
     );
     let invalid = source.replace(
-        "release_owner(first); *view",
-        "release_owner(first); drop(second); *view",
+        "leak(first); *view",
+        "leak(first); let final: unique(usize) = move(second); drop(final); *view",
     );
     assert!(verify(&invalid).is_err());
 }
 
 #[test]
 fn census_evidence_survives_payload_writes_without_gaining_extra_trust() {
-    let source = "fn admitted(value: owner(usize)) -> plane(usize) {proof sole: owners(value) == 1 by {trustme}; *value = 7; recover_owner(value)} fn main() -> usize {42}";
+    let source = "fn admitted(value: shared(usize)) -> unique(usize) {proof sole: owner_count(value) == 1 by {trustme}; *value = 7; move(value)} fn main() -> usize {42}";
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(
         program
@@ -347,7 +400,7 @@ fn census_evidence_survives_payload_writes_without_gaining_extra_trust() {
 
 #[test]
 fn old_owner_views_are_observations_without_recreating_a_consumed_claim() {
-    let source = "fn reclaim(value: owner(usize)) -> usize where owners(value) == 1 {let unique = recover_owner(value); proof entry_value: *old(value) == old(*value); *unique} fn main() -> usize {let unique: plane(usize) = alloc(42); reclaim(share_owner(unique))}";
+    let source = "fn reclaim(value: shared(usize)) -> usize where owner_count(value) == 1 {let unique: unique(usize) = move(value); proof entry_value: *old(value) == old(*value); *unique} fn main() -> usize {let unique: unique(usize) = alloc(42); reclaim(unique)}";
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert_eq!(

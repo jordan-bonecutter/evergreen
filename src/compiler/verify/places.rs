@@ -54,8 +54,8 @@ impl Context<'_> {
             Kind::Unary(op, pointer) if op == "*" => {
                 let value = match self.pointer_operand(pointer)? {
                     value @ (Symbol::Ref(..) | Symbol::RefCases(..)) => value,
-                    Symbol::Plane(ty, reference) => Symbol::Ref(ty, reference, vec![]),
-                    Symbol::Owner(ty, owner) => {
+                    Symbol::Unique(ty, reference) => Symbol::Ref(ty, reference, vec![]),
+                    Symbol::Shared(ty, owner) => {
                         Symbol::Ref(ty, self.storage.memory.borrow_owned(owner)?, vec![])
                     }
                     _ => return Err("dereference requires a live pointer".into()),
@@ -170,8 +170,7 @@ impl Context<'_> {
         }
         let old = project(self.storage.memory.read(reference)?, path)?.clone();
         self.compatible(&value.ty(), &old.ty(), line)?;
-        if self.symbol_is_move_only(&old)
-            && self.has_runtime_cleanup(&old.ty())
+        if self.has_runtime_cleanup(&old.ty())
             && !(self.execution.phase == Phase::Ideal && self.erased_value(&old))
         {
             return Err("overwriting owned fields through references requires ownership effect proofs; unsupported".into());

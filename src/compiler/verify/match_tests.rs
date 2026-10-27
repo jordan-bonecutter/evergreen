@@ -17,9 +17,9 @@ fn match_blocks_preserve_results_and_clean_up_only_arm_locals() {
         "fn main() -> usize {let x: usize = 0; if true {let y: usize = 42; x = y;} x}",
         "fn main() -> usize {let x: usize = 0; if false {x = 1;} else if true {x = 42;} x}",
         "fn main() -> usize {let x = {let y: usize = 42; y}; x}",
-        "fn main() -> usize {let owner: plane(usize) = alloc(42); let moved = match false {true => {let selected = owner; selected}, false => {let selected = owner; selected}}; *moved}",
-        "fn main() -> usize {let owner: plane(usize) = {let local: plane(usize) = alloc(42); local}; *owner}",
-        "type Guard struct {target: &usize} impl Drop for Guard {fn drop(self) modifies(self.target) ensures *self.target == 42 {*self.target = 42;}} fn main() -> usize {let owner = {let local: plane(usize) = alloc(7); let guard = Guard {target: &*local}; local}; *owner}",
+        "fn main() -> usize {let owner: unique(usize) = alloc(42); let moved = match false {true => {let selected = owner; selected}, false => {let selected = owner; selected}}; *moved}",
+        "fn main() -> usize {let owner: unique(usize) = {let local: unique(usize) = alloc(42); local}; *owner}",
+        "type Guard struct {target: &usize} impl Drop for Guard {fn drop(self) modifies(self.target) ensures *self.target == 42 {*self.target = 42;}} fn main() -> usize {let owner = {let local: unique(usize) = alloc(7); let guard = Guard {target: &*local}; local}; *owner}",
         "type Resource struct {tag: usize} impl Drop for Resource {fn drop(self) {}} fn read(a: &Resource, b: usize) -> usize where b <= 35 && a.tag == 7 {a.tag + b} fn main() -> usize {read(&{let item = Resource {tag: 7}; item}, {let value: usize = 35; value})}",
     ] {
         let (program, bundle) = prove(source).unwrap_or_else(|e| panic!("{source}: {e}"));
@@ -116,7 +116,7 @@ fn boolean_matches_share_branch_proofs_effects_and_ownership_rules() {
         "fn main() -> usize {match false {true => 1, _ => 42}}",
         "fn main() -> usize {match true {_ => 42}}",
         "fn main() -> usize {match true {true => {match false {false => 42, _ => 1}}, false => 1}}",
-        "fn main() -> usize {let owner: plane(usize) = alloc(42); match true {true => drop(owner), false => drop(owner)} 42}",
+        "fn main() -> usize {let owner: unique(usize) = alloc(42); match true {true => drop(owner), false => drop(owner)} 42}",
         "fn main() {match true {true => {}, false => {}}}",
     ] {assert!(verify(source).is_ok(), "rejected {source}");}
 }
@@ -132,6 +132,6 @@ fn matching_rejects_missing_duplicate_unreachable_and_ill_typed_cases() {
         "fn main() {match 42 {true => (), false => ()}}",
         "fn main() {match true {1 => (), _ => ()}}",
         "fn main() -> usize {match true {true => 42, false => true}}",
-        "fn main() -> usize {let owner: plane(usize) = alloc(42); match true {true => drop(owner), false => ()}; *owner}",
+        "fn main() -> usize {let owner: unique(usize) = alloc(42); match true {true => drop(owner), false => ()}; *owner}",
     ] {assert!(verify(source).is_err(), "accepted {source}");}
 }

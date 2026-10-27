@@ -34,7 +34,7 @@ module ledgers {
     ensures(result == (*ledger).owners) {(*ledger).owners}
 }
 
-type Holder struct {allocation: plane(ledgers::Ledger)}
+type Holder struct {allocation: unique(ledgers::Ledger)}
 
 fn main() -> usize ensures(result == 42) {
     let owner = alloc(ledgers::Ledger {count: 41, owners: 41});

@@ -17,7 +17,6 @@ mod blocks;
 mod elf;
 mod liveness;
 mod order;
-mod ownership;
 mod program;
 mod storage;
 mod syscall;
@@ -187,7 +186,7 @@ impl Emitter<'_> {
     fn has_drop(&self, ty: &Type) -> bool {
         match ty {
             Type::Union(_) => true,
-            Type::Plane(_) | Type::Owner(_) => true,
+            Type::Unique(_) => true,
             Type::Named(name) => {
                 self.drops.contains(name)
                     || self
@@ -290,11 +289,7 @@ impl Emitter<'_> {
         if !self.has_drop(ty) {
             return Ok(());
         }
-        if let Type::Owner(inner) = ty {
-            // Each implicit cleanup site proved uniqueness in the frontend.
-            return self.drop_frame(&Type::Plane(inner.clone()), offset);
-        }
-        if let Type::Plane(payload) = ty {
+        if let Type::Unique(payload) = ty {
             if self.has_drop(payload) {
                 self.frame_address(offset);
                 self.code.extend([0x48, 0x8b, 0x00]);
@@ -433,8 +428,8 @@ impl Emitter<'_> {
             // Source verification already checked pointee compatibility. The
             // native reference ABI is one address even for dependent pointees.
             (Type::Ref(_), Type::Ref(_))
-            | (Type::Plane(_), Type::Plane(_))
-            | (Type::Owner(_), Type::Owner(_)) => Ok(true),
+            | (Type::Unique(_), Type::Unique(_))
+            | (Type::Shared(_), Type::Shared(_)) => Ok(true),
             (Type::Array(a, al), Type::Array(b, bl)) => {
                 Ok(Self::compatible(a, b)?
                     && layout::array_length(al)? == layout::array_length(bl)?)
@@ -507,7 +502,9 @@ impl Emitter<'_> {
             Kind::Unary(op, _) if op == "!" => Some(Type::Bool),
             Kind::Unary(op, x) if op == "&" => self.hint(x).map(|t| Type::Ref(Box::new(t))),
             Kind::Unary(op, x) if op == "*" => match self.hint(x)?.pointer_member()? {
-                Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) => Some(*inner.clone()),
+                Type::Ref(inner) | Type::Unique(inner) | Type::Shared(inner) => {
+                    Some(*inner.clone())
+                }
                 _ => None,
             },
             Kind::Unary(_, x) => self.hint(x),
@@ -527,15 +524,9 @@ impl Emitter<'_> {
                 args[0].literal_type().map(|ty| Type::Shape(Box::new(ty)))
             }
             Kind::Call(n, args) if n == "alloc" && args.len() == 1 => {
-                self.hint(&args[0]).map(|t| Type::Plane(Box::new(t)))
+                self.hint(&args[0]).map(|t| Type::Unique(Box::new(t)))
             }
-            Kind::Call(n, args) => self.functions.get(n).map(|f| f.ret.clone()).or_else(|| {
-                if args.len() == 1 {
-                    crate::shared::ownership::operation_result(n, &self.hint(&args[0])?)
-                } else {
-                    None
-                }
-            }),
+            Kind::Call(n, _) => self.functions.get(n).map(|f| f.ret.clone()),
             Kind::If(_, a, b) => self.hint(a).or_else(|| self.hint(b)),
             Kind::Block(_, tail) => self.hint(tail),
             _ => None,
@@ -559,7 +550,7 @@ impl Emitter<'_> {
                 Ok(ty.clone())
             }
             Kind::Unary(op, x) if op == "*" => match self.pointer_operand(x)? {
-                Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) => Ok(*inner),
+                Type::Ref(inner) | Type::Unique(inner) | Type::Shared(inner) => Ok(*inner),
                 _ => Err("native place dereference requires a reference".into()),
             },
             Kind::Bytes(_) | Kind::Record(..) | Kind::Call(..) | Kind::If(..) | Kind::Block(..) => {
@@ -683,7 +674,7 @@ impl Emitter<'_> {
             Kind::Unary(op, x) if op == "&" => Type::Ref(Box::new(self.address(x)?)),
             Kind::Unary(op, x) if op == "*" => {
                 let inner = match self.pointer_operand(x)? {
-                    Type::Ref(inner) | Type::Plane(inner) | Type::Owner(inner) => inner,
+                    Type::Ref(inner) | Type::Unique(inner) | Type::Shared(inner) => inner,
                     _ => {
                         return Err("native dereference requires a reference or owned plane".into())
                     }
@@ -805,7 +796,7 @@ impl Emitter<'_> {
                 // the same mathematical value; conversion needs no instruction.
                 target
             }
-            Kind::Call(name, args) if matches!(name.as_str(), "move" | "drop") => {
+            Kind::Call(name, args) if matches!(name.as_str(), "move" | "drop" | "leak") => {
                 if args.len() != 1 {
                     return Err("invalid native move/drop".into());
                 }
@@ -817,24 +808,19 @@ impl Emitter<'_> {
                     self.drop_value(&ty)?;
                     self.immediate(0);
                     Type::Unit
+                } else if name == "leak" {
+                    self.immediate(0);
+                    Type::Unit
                 } else {
                     ty
                 }
-            }
-            Kind::Call(name, args)
-                if matches!(
-                    name.as_str(),
-                    "share_owner" | "duplicate_owner" | "release_owner" | "recover_owner"
-                ) =>
-            {
-                self.owner_operation(name, args)?
             }
             Kind::Call(name, args) if name == "alloc" && args.len() == 2 => {
                 self.allocate_filled(args, expected)?
             }
             Kind::Call(name, args) if name == "alloc" => {
                 let hint = match expected {
-                    Some(Type::Plane(inner)) => Some(inner.as_ref()),
+                    Some(Type::Unique(inner) | Type::Shared(inner)) => Some(inner.as_ref()),
                     _ => None,
                 };
                 let payload = self.expr(&args[0], hint)?;
@@ -843,7 +829,7 @@ impl Emitter<'_> {
                 let size = layout::of(&payload, self.structs)?.size;
                 self.immediate(size as u64);
                 self.map_payload();
-                let home = self.allocate(&Type::Plane(Box::new(payload.clone())))?;
+                let home = self.allocate(&Type::Unique(Box::new(payload.clone())))?;
                 self.copy_frame(home, &Type::Ref(Box::new(payload.clone())))?;
                 self.code.extend([0x48, 0x89, 0xc1]); // destination rcx
                 self.frame_address(saved);
@@ -853,7 +839,7 @@ impl Emitter<'_> {
                 self.copy_address(&payload)?;
                 self.frame_address(home);
                 self.code.extend([0x48, 0x8b, 0x00]);
-                Type::Plane(Box::new(payload))
+                Type::Unique(Box::new(payload))
             }
             Kind::Call(name, args) if name == "shape" => {
                 let ty = Type::Shape(Box::new(

@@ -31,8 +31,8 @@ pub enum Value {
     Record(String, BTreeMap<String, Value>),
     Unit,
     Ref(Box<Type>, Reference, Vec<Projection>),
-    Plane(Box<Type>, Reference),
-    Owner(Box<Type>, crate::shared::planes::OwnedReference),
+    Unique(Box<Type>, Reference),
+    Shared(Box<Type>, crate::shared::planes::OwnedReference),
     Machine(MachineInt, i128),
 }
 
@@ -82,8 +82,8 @@ impl std::fmt::Display for Value {
             Self::Record(n, fields) => write!(f, "{n} {fields:?}"),
             Self::Unit => write!(f, "()"),
             Self::Ref(_, _, _) => write!(f, "<reference>"),
-            Self::Plane(_, _) => write!(f, "<owned plane>"),
-            Self::Owner(_, _) => write!(f, "<owning reference>"),
+            Self::Unique(_, _) => write!(f, "<owned plane>"),
+            Self::Shared(_, _) => write!(f, "<owning reference>"),
         }
     }
 }
@@ -102,8 +102,8 @@ impl Value {
                     .iter()
                     .try_fold(true, |same, value| Ok(same && value.matches_type(element)?))
             }
-            (Self::Plane(actual, _), Type::Plane(expected))
-            | (Self::Owner(actual, _), Type::Owner(expected))
+            (Self::Unique(actual, _), Type::Unique(expected))
+            | (Self::Shared(actual, _), Type::Shared(expected))
             | (Self::Ref(actual, _, _), Type::Ref(expected))
             | (Self::Shape(actual), Type::Shape(expected)) => {
                 type_match::same_runtime_type(actual, expected)
@@ -135,8 +135,8 @@ impl Value {
             Self::Bool(_) => Some(Type::Bool),
             Self::Record(n, _) => Some(Type::Named(n.clone())),
             Self::Ref(t, _, _) => Some(Type::Ref(t.clone())),
-            Self::Plane(t, _) => Some(Type::Plane(t.clone())),
-            Self::Owner(t, _) => Some(Type::Owner(t.clone())),
+            Self::Unique(t, _) => Some(Type::Unique(t.clone())),
+            Self::Shared(t, _) => Some(Type::Shared(t.clone())),
             Self::Unit => Some(Type::Unit),
             Self::Machine(t, _) => Some(Type::Machine(*t)),
             Self::Array(element, items) => Some(Type::Array(
@@ -193,7 +193,7 @@ impl Evaluator<'_> {
             Kind::Record(n, _) => Some(Type::Named(n.clone())),
             Kind::Unary(op, x) if op == "&" => self.hint(x, env).map(|t| Type::Ref(Box::new(t))),
             Kind::Unary(op, x) if op == "*" => match self.hint(x, env)?.pointer_member()? {
-                Type::Ref(t) | Type::Plane(t) | Type::Owner(t) => Some(*t.clone()),
+                Type::Ref(t) | Type::Unique(t) | Type::Shared(t) => Some(*t.clone()),
                 _ => None,
             },
             Kind::Unary(_, x) => self.hint(x, env),
@@ -203,17 +203,8 @@ impl Evaluator<'_> {
             Kind::Call(name, args) if name == "shape" && args.len() == 1 => {
                 args[0].literal_type().map(|ty| Type::Shape(Box::new(ty)))
             }
-            Kind::Call(name, args)
-                if args.len() == 1
-                    && matches!(
-                        name.as_str(),
-                        "share_owner" | "duplicate_owner" | "release_owner" | "recover_owner"
-                    ) =>
-            {
-                crate::shared::ownership::operation_result(name, &self.hint(&args[0], env)?)
-            }
             Kind::Call(name, args) if name == "alloc" && args.len() == 1 => {
-                self.hint(&args[0], env).map(|t| Type::Plane(Box::new(t)))
+                self.hint(&args[0], env).map(|t| Type::Unique(Box::new(t)))
             }
             Kind::Index(base, _) => match self.hint(base, env)? {
                 Type::Array(element, _) => Some(*element),
@@ -440,7 +431,9 @@ impl Evaluator<'_> {
     fn value_is_move_only(&self, value: &Value) -> bool {
         match value {
             Value::Union(_, _) | Value::Shape(_) => true,
-            Value::Plane(..) | Value::Owner(..) => true,
+            Value::Unique(..) => true,
+            Value::Shared(..) => !crate::shared::target::native()
+                .is_ok_and(|target| target.is_copy(&Type::Shared(Box::new(Type::Unit)))),
             Value::Record(n, _) => crate::shared::ownership::is_move_only(
                 &Type::Named(n.clone()),
                 self.structs,
@@ -479,13 +472,10 @@ impl Evaluator<'_> {
 
     fn drop_fields(&mut self, value: Value) -> Result<()> {
         match value {
-            Value::Owner(ty, owner) => {
-                let reference = self.memory.borrow_owned(owner)?;
-                let census = self.memory.owner_census(reference)?;
-                self.memory.recover_unique_owner_at(owner, census)?;
-                self.drop_fields(Value::Plane(ty, reference))?;
+            Value::Shared(_, owner) => {
+                self.memory.release_owner(owner)?;
             }
-            Value::Plane(_, reference) => {
+            Value::Unique(_, reference) => {
                 let plane = self.memory.plane(reference)?;
                 let payload = self.memory.take(plane)?;
                 self.drop_value(payload)?;
@@ -596,7 +586,7 @@ impl Evaluator<'_> {
         } else {
             old
         };
-        if old_live && self.value_is_move_only(&old) {
+        if old_live && (self.value_is_move_only(&old) || Self::contains_shared(&old)) {
             let old_copy = copy_value(&old, &mut self.fuel)?;
             self.drop_value(old_copy)?;
         }
@@ -648,6 +638,7 @@ impl Evaluator<'_> {
         self.fuel -= 1;
         self.expression_depth += 1;
         let result = self.inner(e, env, expected).and_then(|value| {
+            let value = self.coerce_pointer(value, expected)?;
             let value = match (value, expected) {
                 (Value::Union(_, value), Some(expected)) if !matches!(expected, Type::Union(_)) => {
                     if !value.matches_type(expected)? {
@@ -717,16 +708,21 @@ impl Evaluator<'_> {
                     let id = self.memory.plane(r)?;
                     self.memory.take(id)?;
                 }
-                Ok(value)
+                if self.value_is_move_only(&value) {
+                    Ok(value)
+                } else {
+                    self.copy_pointer_read(value)
+                }
             }
             Kind::Field(base, field) => {
                 let Value::Record(_, fields) = self.storage(base, env)? else {
                     return Err("expected struct".into());
                 };
-                fields
+                let value = fields
                     .get(field)
                     .cloned()
-                    .ok_or_else(|| format!("unknown field {field}"))
+                    .ok_or_else(|| format!("unknown field {field}"))?;
+                self.copy_pointer_read(value)
             }
             Kind::Record(name, entries) => {
                 let def = self.structs.get(name).ok_or("unknown struct")?;
@@ -754,7 +750,8 @@ impl Evaluator<'_> {
                     Ok(Value::Ref(Box::new(ty), r, path))
                 } else if op == "*" {
                     let (r, path) = self.location(e, env)?;
-                    project(self.memory.read(r)?, &path).cloned()
+                    let value = project(self.memory.read(r)?, &path)?.clone();
+                    self.copy_pointer_read(value)
                 } else if op == "!" {
                     Ok(Value::Bool(
                         !self.expr(x, env, Some(&Type::Bool))?.boolean()?,
@@ -865,24 +862,11 @@ impl Evaluator<'_> {
                     .collect::<Result<Vec<_>>>()
                     .map(|items| Value::Array(Arc::new(element.unwrap_or(Type::Int)), items))
             }
-            Kind::Index(array, index) => {
-                let array = self.expr(array, env, None)?;
-                let index = self.expr(index, env, Some(&Type::Nat))?.number()?;
-                let Value::Array(_, items) = array else {
-                    return Err("expected array".into());
-                };
-                let i = usize::try_from(index).map_err(|_| "index exceeds evaluator limit")?;
-                items.get(i).cloned().ok_or_else(|| {
-                    "verified index out of bounds: compiler/runtime disagreement".into()
-                })
+            Kind::Index(..) => {
+                let value = self.storage(e, env)?;
+                self.copy_pointer_read(value)
             }
             Kind::Call(name, args) => {
-                if matches!(
-                    name.as_str(),
-                    "share_owner" | "duplicate_owner" | "release_owner" | "recover_owner"
-                ) {
-                    return self.owner_operation(name, args, env);
-                }
                 if name == "shape" {
                     let ty = args[0].literal_type().ok_or("shape requires a type")?;
                     return Ok(Value::Shape(Box::new(ty)));
@@ -905,7 +889,7 @@ impl Evaluator<'_> {
                         usize::try_from(self.expr(&args[0], env, Some(&count_type))?.number()?)
                             .map_err(|_| "invalid allocation count")?;
                     let hint = match expected {
-                        Some(Type::Plane(inner)) => match inner.as_ref() {
+                        Some(Type::Unique(inner) | Type::Shared(inner)) => match inner.as_ref() {
                             Type::Array(element, _) => Some(element.as_ref()),
                             _ => None,
                         },
@@ -944,11 +928,11 @@ impl Evaluator<'_> {
                     let plane = self
                         .memory
                         .allocate(Value::Array(Arc::new(element), items))?;
-                    return Ok(Value::Plane(Box::new(ty), self.memory.borrow(plane)?));
+                    return Ok(Value::Unique(Box::new(ty), self.memory.borrow(plane)?));
                 }
                 if name == "alloc" {
                     let hint = match expected {
-                        Some(Type::Plane(inner)) => Some(inner.as_ref()),
+                        Some(Type::Unique(inner) | Type::Shared(inner)) => Some(inner.as_ref()),
                         _ => None,
                     };
                     let value = self.expr(&args[0], env, hint)?;
@@ -957,16 +941,26 @@ impl Evaluator<'_> {
                         .or_else(|| value.hint())
                         .ok_or("missing allocation payload type")?;
                     let plane = self.memory.allocate(value)?;
-                    return Ok(Value::Plane(Box::new(ty), self.memory.borrow(plane)?));
+                    return Ok(Value::Unique(Box::new(ty), self.memory.borrow(plane)?));
                 }
-                if name == "move" || name == "drop" {
+                if matches!(name.as_str(), "move" | "drop" | "leak") {
                     let (r, path) = self.location(&args[0], env)?;
                     if !path.is_empty() {
                         return Err("cannot move partial plane".into());
                     }
                     let id = self.memory.plane(r)?;
                     let value = self.memory.take(id)?;
+                    if name == "leak" {
+                        self.leak_value(value)?;
+                        return Ok(Value::Unit);
+                    }
                     return if name == "drop" {
+                        if matches!(value, Value::Shared(..)) {
+                            return Err(
+                                "drop requires unique(T); promote the shared pointer or leak it"
+                                    .into(),
+                            );
+                        }
                         self.drop_value(value)?;
                         Ok(Value::Unit)
                     } else {
@@ -1039,8 +1033,8 @@ impl Evaluator<'_> {
                 };
                 let (r, p) = match pointer {
                     Value::Ref(_, r, p) => (r, p),
-                    Value::Plane(_, r) => (r, Vec::new()),
-                    Value::Owner(_, owner) => (self.memory.borrow_owned(owner)?, Vec::new()),
+                    Value::Unique(_, r) => (r, Vec::new()),
+                    Value::Shared(_, owner) => (self.memory.borrow_owned(owner)?, Vec::new()),
                     _ => return Err("expected reference or owned plane".into()),
                 };
                 self.memory.read(r)?;
@@ -1054,7 +1048,8 @@ impl Evaluator<'_> {
                 let ty = value.hint().ok_or("temporary has no type")?;
                 let plane = self.memory.allocate(value)?;
                 let reference = self.memory.borrow(plane)?;
-                self.temporaries.push(Value::Plane(Box::new(ty), reference));
+                self.temporaries
+                    .push(Value::Unique(Box::new(ty), reference));
                 Ok((reference, Vec::new()))
             }
             _ => Err("expected referenceable place".into()),
@@ -1102,7 +1097,7 @@ impl Evaluator<'_> {
             }
             _ => {
                 let value = self.expr(e, env, None)?;
-                if self.value_is_move_only(&value) {
+                if self.value_is_move_only(&value) || Self::contains_shared(&value) {
                     self.temporaries.push(copy_value(&value, &mut self.fuel)?);
                 }
                 Ok(value)
@@ -1136,8 +1131,8 @@ fn same_layout(a: &Value, b: &Value) -> bool {
         | (Value::Nat(_), Value::Nat(_))
         | (Value::Bool(_), Value::Bool(_))
         | (Value::Ref(..), Value::Ref(..))
-        | (Value::Plane(..), Value::Plane(..))
-        | (Value::Owner(..), Value::Owner(..))
+        | (Value::Unique(..), Value::Unique(..))
+        | (Value::Shared(..), Value::Shared(..))
         | (Value::Unit, Value::Unit) => true,
         (Value::Machine(a, _), Value::Machine(b, _)) => a == b,
         _ => false,

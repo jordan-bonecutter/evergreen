@@ -172,7 +172,7 @@ mod tests {
             "extern syscall(39) fn bad() -> u8; proof {trustme}",
             "extern syscall(39) fn bad(a: u8) -> isize; proof {trustme}",
             "extern syscall(39) fn bad(a: [u8; 1]) -> isize; proof {trustme}",
-            "extern syscall(39) fn bad(a: plane(u8)) -> isize; proof {trustme}",
+            "extern syscall(39) fn bad(a: unique(u8)) -> isize; proof {trustme}",
             "extern syscall(39) fn bad(a: &&u8) -> isize; proof {trustme}",
             "extern syscall(39) fn bad(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g: usize) -> isize; proof {trustme}",
             "ideal extern syscall(39) fn bad() -> isize; proof {trustme}",

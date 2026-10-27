@@ -1,7 +1,7 @@
-fn make(count: usize) -> plane(usize, count)
+fn make(count: usize) -> unique(usize, count)
 where(count > 0 && count <= 8192)
 ensures((*result)[0] == 7) {
-    let owner: plane(usize, count) = alloc(count, 7);
+    let owner: unique(usize, count) = alloc(count, 7);
     owner
 }
 fn first(count: usize, data: linear_plane(usize, count)) -> usize

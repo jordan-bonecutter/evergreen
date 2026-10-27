@@ -1,19 +1,19 @@
 type Resource struct {value: usize} where(value == 42);
 impl Drop for Resource {fn drop(self) {proof valid: self.value == 42;}}
 
-fn make(value: usize) -> plane(usize) ensures(*result == value) {alloc(value)}
+fn make(value: usize) -> unique(usize) ensures(*result == value) {alloc(value)}
 
-fn forward(owner: plane(usize)) -> plane(usize)
+fn forward(owner: unique(usize)) -> unique(usize)
 ensures(*result == *owner) {owner}
 
-fn read(owner: &plane(usize)) -> usize ensures(result == **owner) {**owner}
+fn read(owner: &unique(usize)) -> usize ensures(result == **owner) {**owner}
 
-fn borrow(owner: &plane(usize)) -> &usize borrows(&**owner) {&**owner}
+fn borrow(owner: &unique(usize)) -> &usize borrows(&**owner) {&**owner}
 
-fn set(owner: &plane(usize), value: usize)
+fn set(owner: &unique(usize), value: usize)
 modifies(&**owner) ensures(**owner == value) {**owner = value;}
 
-fn advance(owner: plane(usize)) -> plane(usize)
+fn advance(owner: unique(usize)) -> unique(usize)
 where(*owner < usize::MAX)
 ensures(*result == old(*owner) + 1) {
     *owner = *owner + 1;
@@ -29,9 +29,9 @@ fn main() -> usize ensures(result == 42) {
     proof updated: *view == 42;
     let borrowed = borrow(&moved);
     proof still_same: borrowed == view;
-    let resource: plane(Resource) = alloc(Resource {value: 42});
-    let nested: plane(plane(Resource)) = alloc(resource);
-    let replace: plane(usize) = alloc(41);
+    let resource: unique(Resource) = alloc(Resource {value: 42});
+    let nested: unique(unique(Resource)) = alloc(resource);
+    let replace: unique(usize) = alloc(41);
     let slot = &replace;
     replace = alloc(42);
     proof slot_unchanged: **slot == 42;
