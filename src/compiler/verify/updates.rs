@@ -176,7 +176,7 @@ impl Context<'_> {
         for name in scope.bindings.into_iter().rev() {
             let value = if let Some(id) = self.locals.places.remove(&name) {
                 if self.storage.memory.get(id).is_ok() {
-                    Some(self.storage.memory.take(id)?)
+                    Some(self.take_symbol(id)?)
                 } else {
                     None
                 }

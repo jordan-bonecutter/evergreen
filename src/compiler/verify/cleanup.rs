@@ -78,7 +78,7 @@ impl Context<'_> {
             return Err("destructor receiver decomposition requires all of self".into());
         }
         let plane = self.storage.memory.plane(reference)?;
-        self.storage.memory.take(plane)
+        self.take_symbol(plane)
     }
 
     fn cleanup_effects_type(&self, ty: &Type) -> bool {
@@ -156,7 +156,7 @@ impl Context<'_> {
         match value {
             Symbol::Plane(_, reference) => {
                 let plane = self.storage.memory.plane(reference)?;
-                let payload = self.storage.memory.take(plane)?;
+                let payload = self.take_symbol(plane)?;
                 self.cleanup_value(payload, line)?;
             }
             Symbol::Record(name, mut fields) => {

@@ -147,7 +147,7 @@ impl Context<'_> {
         }
         crate::compiler::layout::of(&syntax, self.declarations.structs)?;
         self.validate_argument(&value, line)?;
-        let plane = self.storage.memory.allocate(value)?;
+        let plane = self.allocate_symbol(value)?;
         Ok(Symbol::Plane(
             Box::new(ty),
             self.storage.memory.borrow(plane)?,
@@ -204,7 +204,7 @@ impl Context<'_> {
             cells: BTreeMap::new(),
             identity,
         };
-        let plane = self.storage.memory.allocate(value)?;
+        let plane = self.allocate_symbol(value)?;
         Ok(Symbol::Plane(
             Box::new(Ty::Array(Box::new(element), count)),
             self.storage.memory.borrow(plane)?,

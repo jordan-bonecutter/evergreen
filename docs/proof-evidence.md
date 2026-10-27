@@ -105,7 +105,27 @@ imply admission-free evidence. Scoped hypotheses additionally need explicit
 discharge metadata before the DAG can serve as independently checkable proof
 evidence.
 
-State-version tracking, admission isolation, and dependency-aware call summaries
-remain to be integrated. Existing acceptance of contradictions through global
-`trustme` assumptions is a known gap, not the intended semantics. The new graph
-records explicit logical dependencies; it does not yet change that behavior.
+Explicit proof declarations now store state-subject snapshots separately from
+arithmetic formulas. Canonical claim keys retain operator structure and replace
+storage reads with projection/epoch stamps. Different subjects or different
+statements cannot become the same key merely because arithmetic simplifies to
+the same constant expression. Named facts are expanded when the proof is checked.
+
+The epoch tracker is connected to direct and indirect assignments, declared call
+writes, allocation, and ownership takes. Alias writes share the referent's epoch;
+sibling fields and distinct constant indices stay independent. Unknown indices
+conservatively overlap. Same-value writes advance the epoch. Liveness generations
+and allocation notifications prevent a dropped or reused slot from reviving old
+snapshots. Moving an owner slot preserves subjects on its separate payload plane.
+
+Subject capture currently resolves existing places and literal/name indices
+without evaluating user code again. Call results, conditional subjects, named
+type facts, and more complex index expressions remain incomplete. Argument-value
+origins across parameter renaming are pending. Epochs conservatively include
+writes from either symbolic branch; precise availability within branches and
+joined claims still needs integration.
+
+Admission isolation and dependency-aware call summaries remain to be integrated.
+The stored subjects are not yet used to authorize admission reuse or retract
+assumptions. Existing acceptance of contradictions through global `trustme`
+assumptions is a known gap, not the intended semantics.

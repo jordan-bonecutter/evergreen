@@ -45,6 +45,7 @@ impl Context<'_> {
             let mut root = self.storage.memory.read(write.reference)?.clone();
             self.preserve_views(project(&root, &write.path)?, &mut value)?;
             self.replace_projection(&mut root, &write.path, value)?;
+            self.note_state_write(id, &write.path)?;
             self.storage.memory.write(id, root, false)?;
         }
         let value = self.arbitrary(result)?;

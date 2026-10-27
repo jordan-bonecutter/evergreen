@@ -32,6 +32,7 @@ mod program;
 mod proofs;
 mod references;
 mod returns;
+mod subjects;
 mod updates;
 mod validation;
 
@@ -1464,12 +1465,12 @@ impl<'a> Context<'a> {
                     ))?;
                 }
                 let value = self.arbitrary(t)?;
-                let plane = self.storage.memory.allocate(value)?;
+                let plane = self.allocate_symbol(value)?;
                 Ok(Symbol::Plane(t.clone(), self.storage.memory.borrow(plane)?))
             }
             Ty::Ref(t) => {
                 let v = self.arbitrary(t)?;
-                let id = self.storage.memory.allocate(v)?;
+                let id = self.allocate_symbol(v)?;
                 Ok(Symbol::Ref(
                     t.clone(),
                     self.storage.memory.borrow(id)?,
@@ -1586,6 +1587,7 @@ impl<'a> Context<'a> {
                 .unwrap_or_default();
             // Validate against the resulting store: a field reference may point
             // back into this very root. Failure rejects the whole verification.
+            self.note_state_write(id, &fields)?;
             self.storage.memory.write(id, root.clone(), replace_plane)?;
             self.retained_valid_with(&root, place.line, &lifted)?;
             for (n, plane) in &self.locals.places {
@@ -1687,10 +1689,14 @@ impl<'a> Context<'a> {
             .and_then(|plane| self.storage.opened_planes.get(plane))
             .cloned()
             .unwrap_or_default();
-        if let Some(id) = self.locals.places.get(&name) {
-            self.storage
-                .memory
-                .write(*id, root.clone(), replace_plane)?;
+        if let Some(id) = self.locals.places.get(&name).copied() {
+            let projections = fields
+                .iter()
+                .cloned()
+                .map(Projection::Field)
+                .collect::<Vec<_>>();
+            self.note_state_write(id, &projections)?;
+            self.storage.memory.write(id, root.clone(), replace_plane)?;
         }
         self.retained_valid_with(&root, place.line, &lifted)?;
         self.locals.values.insert(name, root);
@@ -1869,13 +1875,19 @@ impl<'a> Context<'a> {
                 if name != "_" {
                     self.fresh_binding(name, proposition.line)?;
                 }
+                let subjects = self.claim_subjects(proposition)?;
                 let p = self.proposition(proposition)?;
+                debug_assert!(
+                    !subjects.complete
+                        || self.proof.subjects.current(&subjects, &self.storage.memory)
+                );
                 let label = if name == "_" {
                     "anonymous proof".into()
                 } else {
                     format!("proof {name}")
                 };
                 let evidence = self.proof_script(&p, &label, proposition.line, steps)?;
+                self.proof.evidence.record_subjects(evidence, subjects)?;
                 self.assume_from(&p, paths::Origin::Evidence(evidence))?;
                 if name != "_" {
                     self.proof.witnesses.insert(name.clone(), evidence);
@@ -2031,7 +2043,7 @@ impl<'a> Context<'a> {
                         .get(n)
                         .cloned()
                         .ok_or_else(|| format!("unknown place {n}"))?;
-                    let id = self.storage.memory.allocate(v)?;
+                    let id = self.allocate_symbol(v)?;
                     self.locals.places.insert(n.clone(), id);
                     id
                 };
@@ -2107,7 +2119,7 @@ impl<'a> Context<'a> {
                     return Err("temporary borrows require a record value".into());
                 }
                 let ty = value.ty();
-                let plane = self.storage.memory.allocate(value)?;
+                let plane = self.allocate_symbol(value)?;
                 let reference = self.storage.memory.borrow(plane)?;
                 // Own the temporary slot until this statement finishes. Taking
                 // it during cleanup invalidates every loan into that slot.
@@ -2452,7 +2464,7 @@ impl<'a> Context<'a> {
                 if self.symbol_is_move_only(&before) {
                     self.validate_argument(&before, f.result.line)?;
                 }
-                self.storage.memory.take(id)?
+                self.take_symbol(id)?
             } else {
                 let value = self
                     .locals
@@ -2754,7 +2766,7 @@ impl<'a> Context<'a> {
                     }
                     let (r, _) = self.location(e)?;
                     let id = self.storage.memory.plane(r)?;
-                    self.storage.memory.take(id)?;
+                    self.take_symbol(id)?;
                 }
                 Ok(value)
             }

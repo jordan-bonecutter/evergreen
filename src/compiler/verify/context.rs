@@ -26,6 +26,7 @@ pub(super) struct ProofState {
     pub(super) facts: BTreeMap<String, Expr>,
     pub(super) witnesses: BTreeMap<String, evidence::NodeId>,
     pub(super) evidence: evidence::Evidence,
+    pub(super) subjects: subjects::Subjects,
     pub(super) paths: paths::Paths,
 }
 

@@ -19,9 +19,8 @@ impl Context<'_> {
         // Give caller bindings stable storage identities before forking.
         for (name, value) in self.clone_env()? {
             if !self.locals.places.contains_key(&name) {
-                self.locals
-                    .places
-                    .insert(name, self.storage.memory.allocate(value)?);
+                let plane = self.allocate_symbol(value)?;
+                self.locals.places.insert(name, plane);
             }
         }
         let env = self.clone_env()?;
@@ -73,7 +72,7 @@ impl Context<'_> {
                         return Err("conditional storage generation cannot be joined".into());
                     }
                     if original.is_some() {
-                        self.storage.memory.take(id)?;
+                        self.take_symbol(id)?;
                     }
                 }
                 _ => {

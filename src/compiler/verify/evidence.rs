@@ -19,6 +19,7 @@ struct Node {
     parents: Vec<NodeId>,
     admission: bool,
     unresolved_context: bool,
+    subjects: Option<subjects::Snapshot>,
 }
 
 #[derive(Default, Debug)]
@@ -72,8 +73,30 @@ impl Evidence {
             parents,
             admission,
             unresolved_context: false,
+            subjects: None,
         });
         Ok(id)
+    }
+
+    pub(super) fn record_subjects(
+        &mut self,
+        node: NodeId,
+        snapshot: subjects::Snapshot,
+    ) -> Result<()> {
+        if self.nodes[node.0].subjects.is_some() {
+            return Err("proof node already has state subjects".into());
+        }
+        if snapshot.reads.len() > MAX_VALUE_WORK.saturating_sub(self.claim_weight) {
+            return Err("proof evidence subject storage limit reached".into());
+        }
+        self.claim_weight += snapshot.reads.len();
+        self.nodes[node.0].subjects = Some(snapshot);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn subjects(&self, node: NodeId) -> Option<&subjects::Snapshot> {
+        self.nodes[node.0].subjects.as_ref()
     }
 
     pub(super) fn arithmetic(&mut self, claim: Formula, support: paths::Support) -> Result<NodeId> {
@@ -95,6 +118,9 @@ impl Evidence {
             }
             let node = &self.nodes[id.0];
             complete &= !node.unresolved_context;
+            if let Some(subjects) = &node.subjects {
+                complete &= subjects.complete;
+            }
             if node.admission {
                 admissions.insert(id);
             }

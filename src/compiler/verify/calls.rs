@@ -96,7 +96,7 @@ impl<'a> Context<'a> {
         }
         let stored = self.storage.memory.read(r)?.clone();
         self.record_valid(&stored, line)?;
-        let value = self.storage.memory.take(id)?;
+        let value = self.take_symbol(id)?;
         self.validate_argument(&value, line)?;
         if name == "drop" {
             self.cleanup_value(value, line)?;
@@ -322,6 +322,7 @@ impl<'a> Context<'a> {
                 let mut root = self.storage.memory.read(write.reference)?.clone();
                 self.preserve_views(project(&root, &write.path)?, &mut new)?;
                 self.replace_projection(&mut root, &write.path, new)?;
+                self.note_state_write(id, &write.path)?;
                 self.storage.memory.write(id, root, false)?;
             }
             for input in inputs.iter().filter(|_| !f.modifies.is_empty()) {
