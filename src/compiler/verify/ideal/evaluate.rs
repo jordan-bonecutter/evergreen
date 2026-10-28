@@ -5,8 +5,8 @@ use super::*;
 
 struct Frame<'a> {
     function: &'a Function,
-    locals: BTreeMap<String, Value>,
-    entry: BTreeMap<String, Value>,
+    locals: BTreeMap<String, Value<'a>>,
+    entry: BTreeMap<String, Value<'a>>,
 }
 
 enum Task<'a> {
@@ -24,12 +24,12 @@ enum Task<'a> {
     Return(usize),
 }
 
-pub(super) fn run(
-    context: &Context<'_>,
+pub(super) fn run<'a>(
+    context: &'a Context<'_>,
     function: &Function,
-    arguments: BTreeMap<String, Value>,
+    arguments: BTreeMap<String, Value<'a>>,
     budget: &mut Budget,
-) -> Result<Option<Value>> {
+) -> Result<Option<Value<'a>>> {
     let function = context
         .declarations
         .functions
@@ -63,7 +63,7 @@ struct Machine<'a, 'c, 'b> {
     budget: &'b mut Budget,
     frames: Vec<Frame<'a>>,
     pending: Vec<Task<'a>>,
-    values: Vec<Value>,
+    values: Vec<Value<'a>>,
 }
 
 impl<'a> Machine<'a, '_, '_> {
@@ -138,26 +138,24 @@ impl<'a> Machine<'a, '_, '_> {
                 }
                 let index =
                     usize::try_from(index.number()?).map_err(|_| "invalid ideal array index")?;
-                let Value::Array(_, array) = pop(&mut self.values)? else {
+                let Value::Array(array) = pop(&mut self.values)? else {
                     return Ok(false);
                 };
-                self.values.push(
-                    array
-                        .get(index)
-                        .ok_or("ideal definition evaluation indexed out of bounds")?
-                        .clone(),
-                );
+                let Some(value) = aggregate::select(self.context, self.budget, array, index)?
+                else {
+                    return Ok(false);
+                };
+                self.values.push(value);
             }
             Task::Field(name) => {
                 let Value::Record(_, fields) = pop(&mut self.values)? else {
                     return Ok(false);
                 };
-                self.values.push(
-                    fields
-                        .get(name)
-                        .ok_or("missing ideal record field")?
-                        .clone(),
-                );
+                let source = fields.get(name).ok_or("missing ideal record field")?;
+                let Some(value) = Importer::new(self.context, self.budget).value(source, 0)? else {
+                    return Ok(false);
+                };
+                self.values.push(value);
             }
             Task::Invoke(function, names) => return self.invoke(function, names),
             Task::Expression(expression, frame, expected, entry) => {
@@ -254,13 +252,19 @@ impl<'a> Machine<'a, '_, '_> {
             let Some(first) = candidates.first() else {
                 return Ok(false);
             };
-            if !first.terms.is_empty() || candidates.iter().any(|n| n != first) {
+            if candidates.iter().any(|n| n != first) {
                 return Ok(false);
             }
             let Some(ty) = Context::declared_hint(ty) else {
                 return Ok(false);
             };
-            arguments.insert(name.clone(), Value::checked_number(ty, first.constant)?);
+            self.budget.spend(first.terms.len().saturating_add(1))?;
+            let value = if first.terms.is_empty() {
+                Value::checked_number(ty, first.constant)?
+            } else {
+                Value::SymbolicNumber(ty, std::sync::Arc::new(first.clone()))
+            };
+            arguments.insert(name.clone(), value);
         }
         if self.frames.len() >= 8192 {
             return Err("ideal definition evaluation frame limit reached (8192)".into());
@@ -310,19 +314,9 @@ impl<'a> Machine<'a, '_, '_> {
                 .push(Value::checked_number(Ty::Machine(*ty), *n)?),
             Kind::Bool(b) => self.values.push(Value::Bool(*b)),
             Kind::Unit => self.values.push(Value::Unit),
-            Kind::Bytes(bytes) => {
-                let element = Ty::Machine(MachineInt {
-                    signed: false,
-                    bits: 8,
-                    domain: crate::syntax::IntegerDomain::Full,
-                });
-                let mut array = Vec::with_capacity(bytes.len());
-                for &byte in bytes {
-                    self.budget.tick()?;
-                    array.push(Value::Number(element.clone(), i128::from(byte)));
-                }
-                self.values.push(Value::Array(element, array.into()));
-            }
+            Kind::Bytes(bytes) => self
+                .values
+                .push(Value::Array(aggregate::Array::Bytes(bytes))),
             Kind::Field(base, name) => {
                 self.pending.extend([
                     Task::Field(name),
@@ -419,13 +413,17 @@ impl<'a> Machine<'a, '_, '_> {
     }
 }
 
-fn pop(values: &mut Vec<Value>) -> Result<Value> {
+fn pop<'a>(values: &mut Vec<Value<'a>>) -> Result<Value<'a>> {
     values
         .pop()
         .ok_or_else(|| "ideal evaluation value stack underflow".into())
 }
 
-fn hint(expression: &Expr, locals: &BTreeMap<String, Value>, context: &Context<'_>) -> Option<Ty> {
+fn hint(
+    expression: &Expr,
+    locals: &BTreeMap<String, Value<'_>>,
+    context: &Context<'_>,
+) -> Option<Ty> {
     match &expression.kind {
         Kind::Name(name) => locals.get(name).map(Value::ty),
         Kind::Constant(ty, _) => Some(Ty::Machine(*ty)),
@@ -473,7 +471,12 @@ fn hint(expression: &Expr, locals: &BTreeMap<String, Value>, context: &Context<'
     }
 }
 
-fn binary(op: &str, a: Value, b: Value, budget: &mut Budget) -> Result<Option<Value>> {
+fn binary<'a>(
+    op: &str,
+    a: Value<'a>,
+    b: Value<'a>,
+    budget: &mut Budget,
+) -> Result<Option<Value<'a>>> {
     if symbolic::is_symbolic(&a) || symbolic::is_symbolic(&b) {
         return symbolic::binary(op, a, b, budget);
     }

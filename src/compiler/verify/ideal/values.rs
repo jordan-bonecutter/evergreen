@@ -2,28 +2,25 @@ use super::*;
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub(super) enum Value {
+pub(super) enum Value<'a> {
     Number(Ty, i128),
     Bool(bool),
     SymbolicNumber(Ty, Arc<Linear>),
     SymbolicBool(Arc<Formula>),
     Unit,
-    Array(Ty, Arc<[Value]>),
-    Record(String, Arc<BTreeMap<String, Value>>),
-    Reference(Box<Ty>, Reference, Vec<Projection<Linear>>, Arc<Value>),
+    Array(aggregate::Array<'a>),
+    Record(&'a str, &'a BTreeMap<String, Symbol>),
+    Reference(Box<Ty>, Reference, Vec<Projection<Linear>>, Arc<Value<'a>>),
 }
 
-impl Value {
+impl Value<'_> {
     pub(super) fn ty(&self) -> Ty {
         match self {
             Self::Number(ty, _) | Self::SymbolicNumber(ty, _) => ty.clone(),
             Self::Bool(_) | Self::SymbolicBool(_) => Ty::Bool,
             Self::Unit => Ty::Unit,
-            Self::Array(element, values) => Ty::Array(
-                Box::new(element.clone()),
-                Linear::number(values.len() as i128),
-            ),
-            Self::Record(name, _) => Ty::Record(name.clone()),
+            Self::Array(array) => array.ty(),
+            Self::Record(name, _) => Ty::Record((*name).to_owned()),
             Self::Reference(ty, ..) => Ty::Ref(ty.clone()),
         }
     }
@@ -95,15 +92,15 @@ impl Budget {
     }
 }
 
-pub(super) struct Importer<'a, 'c> {
+pub(super) struct Importer<'a, 'c, 'b> {
     context: &'a Context<'c>,
-    budget: &'a mut Budget,
-    references: BTreeMap<(Reference, Vec<Projection<Linear>>), Arc<Value>>,
+    budget: &'b mut Budget,
+    references: BTreeMap<(Reference, Vec<Projection<Linear>>), Arc<Value<'a>>>,
     visiting: BTreeSet<(Reference, Vec<Projection<Linear>>)>,
 }
 
-impl<'a, 'c> Importer<'a, 'c> {
-    pub(super) fn new(context: &'a Context<'c>, budget: &'a mut Budget) -> Self {
+impl<'a, 'c, 'b> Importer<'a, 'c, 'b> {
+    pub(super) fn new(context: &'a Context<'c>, budget: &'b mut Budget) -> Self {
         Self {
             context,
             budget,
@@ -112,7 +109,7 @@ impl<'a, 'c> Importer<'a, 'c> {
         }
     }
 
-    pub(super) fn value(&mut self, value: &Symbol, depth: usize) -> Result<Option<Value>> {
+    pub(super) fn value(&mut self, value: &'a Symbol, depth: usize) -> Result<Option<Value<'a>>> {
         self.budget.tick()?;
         if depth >= 128 {
             return Ok(None);
@@ -133,44 +130,8 @@ impl<'a, 'c> Importer<'a, 'c> {
                 }
             },
             Symbol::Unit => Value::Unit,
-            Symbol::Array {
-                element,
-                len,
-                items,
-                cells,
-                ..
-            } if len.terms.is_empty() => {
-                let length =
-                    usize::try_from(len.constant).map_err(|_| "invalid ideal array extent")?;
-                if length > MAX_VALUE_NODES {
-                    return Ok(None);
-                }
-                let mut values = Vec::with_capacity(length);
-                for i in 0..length {
-                    let source = items
-                        .as_ref()
-                        .and_then(|items| items.get(i))
-                        .or_else(|| cells.get(&Linear::number(i as i128)));
-                    let Some(source) = source else {
-                        return Ok(None);
-                    };
-                    let Some(value) = self.value(source, depth + 1)? else {
-                        return Ok(None);
-                    };
-                    values.push(value);
-                }
-                Value::Array(*element.clone(), values.into())
-            }
-            Symbol::Record(name, fields) => {
-                let mut values = BTreeMap::new();
-                for (name, source) in fields {
-                    let Some(value) = self.value(source, depth + 1)? else {
-                        return Ok(None);
-                    };
-                    values.insert(name.clone(), value);
-                }
-                Value::Record(name.clone(), Arc::new(values))
-            }
+            Symbol::Array { .. } => Value::Array(aggregate::Array::Stored(value)),
+            Symbol::Record(name, fields) => Value::Record(name, fields),
             Symbol::Ref(ty, reference, path) => {
                 if path
                     .iter()

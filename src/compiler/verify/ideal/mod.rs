@@ -5,6 +5,7 @@
 
 use super::*;
 
+mod aggregate;
 mod applications;
 mod evaluate;
 mod symbolic;
@@ -62,13 +63,14 @@ impl Context<'_> {
             } else {
                 None
             };
-            (value, budget.spent)
+            if let Some(value) = &value {
+                budget.spend(symbolic::weight(value)?)?;
+            }
+            // Aggregate views borrow the immutable call state only during
+            // reduction. Export an owned scalar before restoring mutable access.
+            (value.and_then(Value::scalar), budget.spent)
         };
         self.charge_value_work(spent)?;
-        if let Some(value) = &value {
-            self.charge_value_work(symbolic::weight(value)?)?;
-        }
-        let value = value.and_then(Value::scalar);
         if let (Some(key), Some(value)) = (application, value.as_ref()) {
             self.applications.computed.insert(key, value.clone());
         }

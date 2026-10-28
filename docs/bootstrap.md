@@ -2468,3 +2468,34 @@ inside quantified expressions remain rejected; this reducer does not hide bound
 arguments inside opaque scalar identities. String literals still have their
 existing byte-array representation; ideal Unicode strings and encoding APIs are
 separate unfinished work.
+
+
+### Demand-driven ideal aggregate reads
+
+The read-only ideal evaluator borrows immutable array and record views. It imports
+only a selected element or field, and views of byte literals borrow their existing
+bytes. Neither a missing unobserved cell nor a sibling field that the evaluator cannot
+reduce blocks an observation of known data. The views cannot escape reduction: its exported
+result is an owned scalar expression, and Rust borrowing prevents mutation of the
+observed verifier state while those views are in use.
+
+For a known index and extent, a selection uses explicit contents or follows the
+array's immutable fill/store history. Definite stores override the prior value;
+definitely distinct stores preserve it. Unknown alias relationships, symbolic
+bounds/indices, and unresolved branch choices fall back to the ordinary checked
+contract/model. The reducer does not consult branch-local cached reads, invent
+values for empty slots, or replay caller assumptions as timeless computation.
+Normal ownership, borrow, and precondition checks still run before reduction.
+
+[`lazy_ideal_reads.evg`](../examples/lazy_ideal_reads.evg) checks the final slot of
+a billion-byte filled buffer, including its value after writes, without creating
+a billion proof nodes. Its `main` executes only the small buffer. Regression tests
+compare reduction work for eight and a billion slots and check identical proof
+obligation/certificate counts for the two capacities. Symbolic lengths can pass
+through ideal helpers without importing elements, but general symbolic sequence
+selection and UTF-8 concatenation proofs remain unfinished.
+
+The source UTF-8 validator also benefits from demand-driven reads: a known invalid
+leading byte proves rejection without importing an unknown tail, even for a
+billion-byte input. A known ASCII first byte does not prove anything about that
+tail's validity. The tests check both sides of this distinction.

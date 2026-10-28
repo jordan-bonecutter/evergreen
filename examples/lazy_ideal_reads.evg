@@ -1,0 +1,29 @@
+// Reduction reads the requested slot from the immutable array contents.
+ideal fn last(
+    ideal count: nat,
+    data: &[u8; count]
+) -> u8
+    where
+        count > 0
+{
+    (*data)[count - 1]
+}
+
+// This function is verified and compiled, but main does not call it or make
+// this allocation. Checking its proofs does not enumerate a billion bytes.
+fn check_large() {
+    let data: unique(u8, 1000000000) = alloc(1000000000, 42);
+    proof initial: last(&*data) == 42;
+    (*data)[0] = 7;
+    proof distant_unchanged: last(&*data) == 42;
+    (*data)[999999999] = 9;
+    proof updated: last(&*data) == 9;
+}
+
+fn main() -> usize {
+    let data: unique(u8, 8) = alloc(8, 42);
+    proof initial: last(&*data) == 42;
+    (*data)[7] = 9;
+    proof updated: last(&*data) == 9;
+    42
+}

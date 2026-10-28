@@ -8,11 +8,11 @@ use std::sync::Arc;
 #[cfg(test)]
 mod tests;
 
-pub(super) fn is_symbolic(value: &Value) -> bool {
+pub(super) fn is_symbolic(value: &Value<'_>) -> bool {
     matches!(value, Value::SymbolicNumber(..) | Value::SymbolicBool(_))
 }
 
-pub(super) fn weight(value: &Value) -> Result<usize> {
+pub(super) fn weight(value: &Value<'_>) -> Result<usize> {
     Ok(match value {
         Value::SymbolicNumber(_, n) => n.terms.len().saturating_add(1),
         Value::SymbolicBool(p) => p.storage_weight()?,
@@ -20,7 +20,7 @@ pub(super) fn weight(value: &Value) -> Result<usize> {
     })
 }
 
-fn number(ty: Ty, n: Linear) -> Result<Value> {
+fn number(ty: Ty, n: Linear) -> Result<Value<'static>> {
     if n.terms.is_empty() {
         Value::checked_number(ty, n.constant)
     } else {
@@ -28,14 +28,14 @@ fn number(ty: Ty, n: Linear) -> Result<Value> {
     }
 }
 
-fn boolean(p: Formula) -> Value {
+fn boolean(p: Formula) -> Value<'static> {
     match values::closed_boolean(&p) {
         Some(b) => Value::Bool(b),
         None => Value::SymbolicBool(Arc::new(p)),
     }
 }
 
-fn term(value: Value) -> Result<(Ty, Linear)> {
+fn term(value: Value<'_>) -> Result<(Ty, Linear)> {
     match value {
         Value::Number(ty, n) => Ok((ty, Linear::number(n))),
         Value::SymbolicNumber(ty, n) => Ok((ty, Arc::unwrap_or_clone(n))),
@@ -43,7 +43,7 @@ fn term(value: Value) -> Result<(Ty, Linear)> {
     }
 }
 
-fn proposition(value: Value) -> Result<Formula> {
+fn proposition(value: Value<'_>) -> Result<Formula> {
     match value {
         Value::Bool(b) => Ok(if b { Formula::True } else { Formula::False }),
         Value::SymbolicBool(p) => Ok(Arc::unwrap_or_clone(p)),
@@ -51,7 +51,11 @@ fn proposition(value: Value) -> Result<Formula> {
     }
 }
 
-pub(super) fn unary(op: &str, value: Value, budget: &mut Budget) -> Result<Option<Value>> {
+pub(super) fn unary(
+    op: &str,
+    value: Value<'_>,
+    budget: &mut Budget,
+) -> Result<Option<Value<'static>>> {
     budget.spend(weight(&value)?.saturating_mul(2))?;
     match op {
         "!" => Ok(Some(boolean(proposition(value)?.not()))),
@@ -66,7 +70,7 @@ pub(super) fn unary(op: &str, value: Value, budget: &mut Budget) -> Result<Optio
     }
 }
 
-pub(super) fn convert(ty: Ty, value: Value) -> Result<Option<Value>> {
+pub(super) fn convert(ty: Ty, value: Value<'_>) -> Result<Option<Value<'static>>> {
     if let Value::Number(_, n) = value {
         return Value::checked_number(ty, n).map(Some);
     }
@@ -87,7 +91,12 @@ pub(super) fn convert(ty: Ty, value: Value) -> Result<Option<Value>> {
     Ok(exact.then_some(Value::SymbolicNumber(ty, n)))
 }
 
-pub(super) fn binary(op: &str, a: Value, b: Value, budget: &mut Budget) -> Result<Option<Value>> {
+pub(super) fn binary(
+    op: &str,
+    a: Value<'_>,
+    b: Value<'_>,
+    budget: &mut Budget,
+) -> Result<Option<Value<'static>>> {
     // Boolean equality duplicates both operands; charge those copies up front.
     budget.spend(weight(&a)?.saturating_add(weight(&b)?).saturating_mul(4))?;
     if matches!(a, Value::Bool(_) | Value::SymbolicBool(_)) {
