@@ -24,12 +24,15 @@ ensures result.data.count == 1 {
 // The projected loans expose no Rc view whose accuracy fact could be used
 // between these steps. The caller's complete invariant is restored at return.
 fn reserve<T = usize>(allocation: &shared(Data<T>)) -> Credit<T>
-where allocation.count < usize::MAX
-    && nat(allocation.count) == owner_count(allocation)
-modifies(&allocation.count)
-ensures owner_count(result.data) == old(owner_count(allocation)) + 1
-    && result.data.count == old(allocation.count) + 1
-    && &*result.data == &**allocation {
+    where
+        allocation.count < usize::MAX &&
+        nat(allocation.count) == owner_count(allocation)
+    modifies(&allocation.count)
+    ensures
+        owner_count(result.data) == old(owner_count(allocation)) + 1 &&
+        result.data.count == old(allocation.count) + 1 &&
+        &*result.data == &**allocation
+{
     allocation.count = allocation.count + 1;
     Credit::<T> {data: *allocation}
 }
