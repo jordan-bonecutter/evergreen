@@ -336,7 +336,12 @@ impl Context<'_> {
         if let Some(pre) = &f.pre {
             self.execution.phase = Phase::Specification;
             let p = self.eval(pre, Some(&Ty::Bool))?.proposition()?;
-            self.assume(&p)?;
+            if p.is_arithmetic() {
+                self.assume(&p)?;
+            } else {
+                let snapshot = self.claim_subjects(pre)?;
+                self.import_logical_contract(p, snapshot, self.proof.contract_parents.clone())?;
+            }
             self.execution.phase = execution;
         }
         Ok(())

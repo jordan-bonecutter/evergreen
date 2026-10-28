@@ -101,8 +101,9 @@ predicate atoms. They remain scoped witnesses: `intro all` introduces such a
 premise, `specialize all(index)` exposes a checked instance, and `cases` exposes
 the parts of conjunctions and disjunctions. Only arithmetic hypotheses become
 solver rows. Leaving the proof scope removes its local witnesses and restores
-the arithmetic context. This supports reusable range-restriction theorems;
-function and loop imports of universal contracts remain unfinished.
+the arithmetic context. This supports reusable range-restriction theorems.
+Functions and loops also retain universal contract clauses as logical evidence,
+with the import boundary and remaining storage limitations described below.
 The rule checker validates connective shape and premise/conclusion agreement
 before inserting a derived node. Tactics cannot insert arbitrary logical edges.
 An admitted claim is a distinct node, not a proved constraint in the execution
@@ -369,10 +370,35 @@ change its identity or confuse it with a plane read. Specialization preserves
 these subjects; admitted theorems cannot be applied after their dependent plane
 changes, or transferred to another plane merely because its value is equal.
 
-Universal theorems currently require explicit named-proof use. They are not
-inserted into arithmetic paths or the historical arithmetic candidate index.
-Using universal assumptions in function/type contracts, quantified domains,
-and range loop invariants remains unfinished.
+Universal proofs, including anonymous ones, are indexed by their state subjects.
+They are excluded from arithmetic paths and historical arithmetic searches.
+Functions can require and advertise universal propositions; loops can combine
+them with scalar invariant clauses. A matching live guarantee can discharge the
+whole proposition. Otherwise implicit contract checking uses the same universal
+introduction and conjunction rules as source proofs. It never samples a range.
+
+Inside a body, `proof bounds: forall(...) {...} by {assumption};` names an
+imported guarantee for explicit `specialize bounds(index)` use. Arithmetic
+consequences require that specialization and a proof of its domain. Mixed
+contracts publish their scalar and logical clauses separately. Unchanged
+logical guarantees can be retained through a loop's ordinary storage frame.
+See [universal_contracts.evg](../examples/universal_contracts.evg).
+
+Logical imports retain their original plane and revision subjects. Scalar
+return guarantees transfer into the receiving binding; same-value overwrites
+still expire an admission. Discarded results and argument-result receipts do not
+transfer to a surrounding call's result. Actual body checking exports that
+function's own advertised guarantee. A branch receipt can transfer only when
+its execution condition is established without admissions; merging conditional
+result guarantees remains conservative. These rules prevent equal scalar values
+from giving an unrelated result another call's guarantee.
+
+Function and loop contract instantiation remains an explicitly unresolved
+frontend import, just as scalar contract instantiation does. Logical clauses
+retain their actual admission parents and do not become arithmetic assumptions.
+Complete independent certification of these state substitutions remains pending.
+Universal nominal type invariants, quantified domains, unknown input-union
+selectors, and resource range loop frames remain unfinished.
 Generalization through declaration summaries or imported trust with untraced
 context dependencies is rejected. User predicate calls and indexed payload reads
 inside quantifiers remain rejected: opaque frontend identities must not hide a
@@ -416,6 +442,9 @@ claims remain unfinished. Explicit specialization into a nested or restricted
 universal works. Operational reads, empty-buffer narrowing, and destruction still
 perform their own ownership and current-state checks; a false admitted range
 does not erase an initialized owner. See [sparse_ranges.evg](../examples/sparse_ranges.evg).
+Its generic allocator now advertises the initial empty range as a checked
+postcondition. The caller reuses that guarantee, and its later writes still
+expire the old range. No allocation-capacity enumeration is involved.
 
 Explicit proof declarations now store state-subject snapshots separately from
 arithmetic formulas. Canonical claim keys retain operator structure and replace

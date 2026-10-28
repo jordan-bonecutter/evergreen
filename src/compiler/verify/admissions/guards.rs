@@ -4,7 +4,7 @@
 use super::*;
 
 impl Context<'_> {
-    pub(super) fn reference_claim_scope(
+    pub(in crate::compiler::verify) fn reference_claim_scope(
         &mut self,
         snapshot: &subjects::Snapshot,
         goal: Option<&subjects::Snapshot>,

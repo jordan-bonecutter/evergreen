@@ -41,6 +41,7 @@ mod heap;
 mod ideal;
 mod layout_queries;
 mod literals;
+mod logical_contracts;
 mod loops;
 #[cfg(test)]
 mod match_tests;
@@ -1691,11 +1692,14 @@ impl<'a> Context<'a> {
             } => self.update(places, lifts, body, *line),
             Statement::Assign { target, value } => self.assign(target, value),
             Statement::Effect(e) => {
+                let start = self.proof.results.len();
                 let value = self.eval(e, None)?;
                 if self.symbol_is_move_only(&value) {
                     self.validate_argument(&value, e.line)?;
                 }
-                self.cleanup_value(value, e.line)
+                self.cleanup_value(value, e.line)?;
+                self.proof.results.truncate(start);
+                Ok(())
             }
             Statement::Let { name, ty, value } => {
                 self.fresh_binding(name, value.line)?;
@@ -1742,10 +1746,11 @@ impl<'a> Context<'a> {
                 };
                 let evidence =
                     self.proof_script_for(&p, &label, proposition.line, steps, Some(&subjects))?;
-                if p.contains_quantifier() {
-                    // Keep universal theorems for explicit logical use. Arithmetic
-                    // paths cannot yet specialize them or frame indexed reads.
-                    self.proof.evidence.record_subjects(evidence, subjects)?;
+                if !p.is_arithmetic() {
+                    // Logical theorems remain state-indexed candidates. They
+                    // cannot become arithmetic assumptions without elimination.
+                    self.publish_evidence(evidence, subjects)?;
+                    self.proof.claims.insert(evidence);
                 } else {
                     self.publish_evidence(evidence, subjects)?;
                     let dependencies = self.evidence_dependencies(evidence)?;

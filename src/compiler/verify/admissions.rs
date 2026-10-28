@@ -47,6 +47,9 @@ impl Context<'_> {
             self.proof.claims.clone()
         };
         for node in candidates {
+            if !self.proof.evidence.claim(node)?.is_arithmetic() {
+                continue;
+            }
             let Some(snapshot) = self.proof.evidence.subjects(node) else {
                 continue;
             };
@@ -186,6 +189,12 @@ impl Context<'_> {
         label: &str,
         line: usize,
     ) -> Result<evidence::NodeId> {
+        if !goal.is_arithmetic() {
+            let node = self.prove_logical_contract(goal, subjects, label, line)?;
+            self.proof.evidence.check_closed(node)?;
+            self.proof.uses.push(node);
+            return Ok(node);
+        }
         let support = self.arithmetic_support_for(goal, subjects, label, line)?;
         let node = self.proof.evidence.arithmetic(goal.clone(), support)?;
         self.proof.evidence.check_closed(node)?;

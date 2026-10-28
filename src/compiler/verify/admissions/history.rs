@@ -192,6 +192,9 @@ impl Context<'_> {
                     .copied()
                     .collect::<Vec<_>>();
                 for node in candidates {
+                    if !self.proof.evidence.claim(node)?.is_arithmetic() {
+                        continue;
+                    }
                     if seen.contains(&(*world, guard.clone(), node)) {
                         continue;
                     }

@@ -92,7 +92,7 @@ impl Context<'_> {
         Ok(a.normalized().alpha_equal(&b.normalized()))
     }
 
-    fn witness_matches(
+    pub(super) fn witness_matches(
         &mut self,
         node: evidence::NodeId,
         claim: &Formula,
@@ -200,6 +200,11 @@ impl Context<'_> {
         let step = script.take()?;
         match step {
             "omega" | "rfl" | "simp_all" | "decide" => {
+                if !goal.is_arithmetic() {
+                    if let Some(node) = self.logical_assumption(goal, subjects)? {
+                        return self.proof.evidence.derive(goal.clone(), Rule::Reuse(node));
+                    }
+                }
                 if let Some(proven) = self.prove_indexed_predicate(goal, subjects, label, line)? {
                     return Ok(proven);
                 }
@@ -207,18 +212,12 @@ impl Context<'_> {
                 self.proof.evidence.arithmetic(goal.clone(), parents)
             }
             "assumption" => {
-                let names = self.proof.witnesses.keys().cloned().collect::<Vec<_>>();
-                self.charge_value_work(names.len())?;
-                for name in names {
-                    let node = self.proof.witnesses[&name];
-                    let candidate = self.proof.evidence.claim(node)?.clone();
-                    if self.witness_matches(node, &candidate, goal, subjects)? {
-                        self.work.obligations += 1;
-                        return self.proof.evidence.derive(goal.clone(), Rule::Reuse(node));
-                    }
+                if let Some(node) = self.logical_assumption(goal, subjects)? {
+                    self.work.obligations += 1;
+                    return self.proof.evidence.derive(goal.clone(), Rule::Reuse(node));
                 }
                 Err(format!(
-                    "line {line}: assumption found no checked proof of this proposition"
+                    "line {line}: cannot prove {label}: assumption found no checked proof of this proposition"
                 ))
             }
             "constructor" => {

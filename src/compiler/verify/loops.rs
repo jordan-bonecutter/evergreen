@@ -282,6 +282,9 @@ impl Context<'_> {
         subjects: subjects::Snapshot,
         parents: Vec<evidence::NodeId>,
     ) -> Result<()> {
+        if !proposition.is_arithmetic() {
+            return self.import_logical_contract(proposition.clone(), subjects, parents);
+        }
         let node = self.proof.evidence.contract(proposition.clone(), parents)?;
         if self.evidence_dependencies(node)?.admissions.is_empty() {
             self.assume_from(proposition, paths::Origin::Evidence(node))

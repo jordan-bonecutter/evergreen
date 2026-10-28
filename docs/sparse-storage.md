@@ -90,6 +90,12 @@ theorem cannot describe the changed buffer. These proofs erase completely in
 native code. The selector's correspondence to storage is checked by the frontend;
 the kernel checks definitions and arithmetic, rather than a complete memory model.
 
+The generic `new_buffer<T>` in that example advertises its initial empty range
+as an `ensures(forall(...))` contract. Callers can name that guarantee with
+`by {assumption}`. The exported theorem retains the allocated plane's contents
+identity and is invalidated by later writes. This works from the allocator's
+known empty default; arbitrary input-union arrays still need selector summaries.
+
 An active slot also supports a contextual member borrow:
 
 ```evg

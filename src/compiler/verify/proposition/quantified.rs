@@ -105,22 +105,6 @@ impl Formula {
         }
         true
     }
-    pub(in crate::compiler::verify) fn contains_quantifier(&self) -> bool {
-        let mut pending = vec![self];
-        while let Some(part) = pending.pop() {
-            match part {
-                Self::Forall { .. } => return true,
-                Self::Not(p) => pending.push(p),
-                Self::And(a, b) | Self::Or(a, b) | Self::Implies(a, b) => {
-                    pending.push(a);
-                    pending.push(b);
-                }
-                _ => {}
-            }
-        }
-        false
-    }
-
     pub(in crate::compiler::verify) fn is_arithmetic(&self) -> bool {
         let mut pending = vec![self];
         while let Some(part) = pending.pop() {

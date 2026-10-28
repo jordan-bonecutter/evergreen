@@ -3,6 +3,8 @@
 
 use super::*;
 
+mod contracts;
+
 struct ArgumentOrigin {
     subjects: subjects::Snapshot,
     world: state::WorldId,
@@ -75,7 +77,11 @@ impl<'a> Context<'a> {
             return self.eval_ownership_call(name, args, expected, line);
         }
         let function = self.function_for_call(name, line)?;
+        let results = self.proof.results.len();
         let actuals = self.evaluate_arguments(function, args, line)?;
+        // Argument guarantees remain available for checking this call. Their
+        // result receipts belong to the arguments, not to the callee's result.
+        self.proof.results.truncate(results);
         self.apply_call(name, function, actuals, line)
     }
 
@@ -381,6 +387,7 @@ impl<'a> Context<'a> {
         self.bind_arguments(f, actuals.values, line)?;
         self.capture_old(f)?;
         let mut call_dependencies = Vec::new();
+        let mut logical_precondition = None;
         if let Some(pre) = &f.pre {
             let subjects = self.call_subjects(pre, &actuals.subjects, line, false)?;
             let p = self.proposition(pre)?;
@@ -392,6 +399,9 @@ impl<'a> Context<'a> {
             )?;
             if !self.evidence_dependencies(evidence)?.admissions.is_empty() {
                 call_dependencies.push(evidence);
+            }
+            if !p.is_arithmetic() {
+                logical_precondition = Some((p, self.claim_subjects(pre)?));
             }
         }
         let inherited_contracts = self.proof.contract_parents.clone();
@@ -479,7 +489,7 @@ impl<'a> Context<'a> {
             } else {
                 "writes while invariants are open"
             };
-            self.check_actual_body(f, &ret, writes, inputs)
+            self.check_actual_body(f, &ret, writes, inputs, logical_precondition)
                 .map_err(|error| {
                     format!(
                         "line {}: call to {name} {reason}; body recheck failed: {error}",
@@ -530,38 +540,13 @@ impl<'a> Context<'a> {
             }
             self.locals.values.insert("result".into(), value.clone());
             if let Some(post) = &f.post {
-                if call_dependencies.is_empty() {
-                    let p = self.proposition(post)?;
-                    self.assume(&p)?;
-                } else {
-                    let paths = self.proof.paths.clone();
-                    let subjects = self.call_subjects(post, &actuals.subjects, line, true)?;
-                    let p = self.proposition(post)?;
-                    self.proof.paths = paths;
-                    let node = self.proof.evidence.contract(p, call_dependencies.clone())?;
-                    if self.evidence_dependencies(node)?.admissions.is_empty() {
-                        if let Some(snapshot) = subjects {
-                            self.record_recursive_context(node, snapshot)?;
-                        }
-                        let p = self.proof.evidence.claim(node)?.clone();
-                        self.assume_from(&p, paths::Origin::Evidence(node))?;
-                    } else {
-                        let clauses = self.contract_clauses(node, subjects.unwrap_or_default())?;
-                        let origin = self.claim_subjects(&Expr {
-                            kind: Kind::Name("result".into()),
-                            line,
-                        })?;
-                        for proof in clauses {
-                            self.proof.claims.insert(proof);
-                            self.charge_value_work(symbol_weight(&value)?)?;
-                            self.proof.results.push(value_evidence::CallResult {
-                                value: value.clone(),
-                                proof,
-                                origin: origin.clone(),
-                            });
-                        }
-                    }
-                }
+                self.apply_postcondition(
+                    post,
+                    &actuals.subjects,
+                    &call_dependencies,
+                    &value,
+                    line,
+                )?;
             }
             // Alias contracts describe entry storage. After applying the
             // checked postcondition, revalidate the saved reference and its

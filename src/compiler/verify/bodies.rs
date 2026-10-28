@@ -10,6 +10,7 @@ impl Context<'_> {
         result_type: &Ty,
         writes: Vec<WritePlace>,
         inputs: Vec<InputReference>,
+        logical_precondition: Option<(Formula, subjects::Snapshot)>,
     ) -> Result<Symbol> {
         self.execution.rechecking += 1;
         // The caller has already bound arguments, checked preconditions and
@@ -37,8 +38,16 @@ impl Context<'_> {
             Phase::Runtime
         };
         let phase = std::mem::replace(&mut self.execution.phase, execution);
+        let results = self.proof.results.len();
         let mut returned_claims = Vec::new();
         let checked = (|| {
+            if let Some((proposition, subjects)) = logical_precondition {
+                self.import_logical_contract(
+                    proposition,
+                    subjects,
+                    self.proof.contract_parents.clone(),
+                )?;
+            }
             if let Some(decreases) = &function.decreases {
                 self.execution.phase = Phase::Specification;
                 self.execution.measure =
@@ -47,16 +56,22 @@ impl Context<'_> {
             }
             let inputs = self.storage.inputs.clone();
             let (value, post) = self.check_function_body(function, result_type, &inputs, false)?;
+            // Only this function's advertised postcondition crosses its call
+            // boundary. Inner calls cannot masquerade as its returned value.
+            self.proof.results.truncate(results);
             if let Some(proposition) = post {
                 let mut parents = self.proof.contract_parents.clone();
                 parents.extend(self.proof.contract_uses.iter().copied());
                 let node = self.proof.evidence.contract(proposition.clone(), parents)?;
-                if self.evidence_dependencies(node)?.admissions.is_empty() {
+                if proposition.is_arithmetic()
+                    && self.evidence_dependencies(node)?.admissions.is_empty()
+                {
                     self.assume_from(&proposition, paths::Origin::Evidence(node))?;
                 } else {
                     if let Some(post) = &function.post {
                         let snapshot = self.claim_subjects(post)?;
-                        returned_claims.extend(self.contract_clauses(node, snapshot)?);
+                        returned_claims
+                            .extend(self.publish_call_contract(node, snapshot, &value, post.line)?);
                     }
                 }
             }

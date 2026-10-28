@@ -49,7 +49,9 @@ are now available independently of Vec; see
 uninitialized storage and empty-buffer conversion are also implemented; see
 [sparse-storage.md](sparse-storage.md). Typed member borrowing now retains each
 slot's real plane and rechecks its active type on use. Range initialization
-contracts and cleanup of a dynamically initialized prefix remain unfinished.
+postconditions can now describe the known-empty result of a source allocator.
+Unknown input-union selector summaries, resource range loop frames, and cleanup
+of a dynamically initialized prefix remain unfinished.
 
 Run [vec_generic.evg](../examples/vec_generic.evg) with:
 
