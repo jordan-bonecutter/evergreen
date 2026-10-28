@@ -7,7 +7,7 @@ mod cases;
 mod negative;
 
 impl Context<'_> {
-    pub(super) fn reduce_selector_formula(
+    pub(in crate::compiler::verify) fn reduce_selector_formula(
         &mut self,
         goal: &Formula,
         depth: usize,

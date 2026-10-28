@@ -1,0 +1,28 @@
+// One symbolic index proof covers the entire array, regardless of its extent.
+fn equal_indices<const N: usize>(
+    data: &[u8; N]
+) {
+    proof same_value: forall(i: integer) where (0 <= i && i < integer::from(N)) {
+        forall(j: integer) where (j == i) {(*data)[i] == (*data)[j]}
+    }
+    by {
+        intro i;
+        intro j;
+        omega
+    };
+}
+
+// This function is verified, but main does not execute its large allocation.
+fn verify_large_fill() {
+    let data: unique(u8, 1000000000) = alloc(1000000000, 7);
+    proof all_seven: forall(i: integer) where (0 <= i && i < 1000000000) {(*data)[i] == 7} by {
+        intro i;
+        omega
+    };
+}
+
+fn main() -> usize {
+    let data: [u8; 3] = [7, 9, 11];
+    equal_indices(&data);
+    42
+}

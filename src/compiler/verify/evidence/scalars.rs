@@ -22,9 +22,7 @@ pub(super) struct Definitions {
 }
 
 impl Evidence {
-    // Source indexed-payload elaboration will register these recipes.
-    #[allow(dead_code)]
-    pub(super) fn define_scalar_equality(
+    pub(in crate::compiler::verify) fn define_scalar_equality(
         &mut self,
         symbol: String,
         parameters: Vec<String>,

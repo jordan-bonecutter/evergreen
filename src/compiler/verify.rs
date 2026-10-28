@@ -16,6 +16,7 @@ mod admissions;
 mod array_history;
 mod array_ports;
 mod array_predicates;
+mod array_values;
 mod assignments;
 mod diagnostics;
 mod uninitialized_arrays;
@@ -2587,6 +2588,11 @@ impl<'a> Context<'a> {
             }
         }
         match &e.kind {
+            Kind::Binary(_, _, _)
+                if self.locals.quantified_evaluation != 0 && array_values::parts(e).is_some() =>
+            {
+                self.eval_indexed_value_equality(e)
+            }
             Kind::Binary(_, _, _)
                 if self
                     .locals

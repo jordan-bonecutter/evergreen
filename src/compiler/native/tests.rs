@@ -246,6 +246,7 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/lazy_ideal_reads.evg"),
         include_str!("../../../examples/quantified_calls.evg"),
         include_str!("../../../examples/quantified_preconditions.evg"),
+        include_str!("../../../examples/quantified_array_values.evg"),
         include_str!("../../../examples/string_bytes.evg"),
         include_str!("../../../examples/utf8_literal.evg"),
         include_str!("../../../examples/utf8_view.evg"),

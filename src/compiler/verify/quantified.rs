@@ -174,6 +174,17 @@ impl Context<'_> {
             }
             return Ok(());
         }
+        if let Some((a, b, _)) = array_values::parts(expression) {
+            for operand in [a, b] {
+                if let Kind::Index(base, index) = &operand.kind {
+                    self.check_quantified_place(base)?;
+                    self.check_quantified_expression(index, depth + 1)?;
+                } else {
+                    self.check_quantified_expression(operand, depth + 1)?;
+                }
+            }
+            return Ok(());
+        }
         let error = || {
             format!("line {}: quantified propositions currently support total scalar arithmetic; indexed reads and opaque computations need structured bound-dependent terms", expression.line)
         };

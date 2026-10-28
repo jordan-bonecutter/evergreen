@@ -486,11 +486,10 @@ explicit work budget. Regression tests exercise a 4,000-level shared DAG without
 expanding it into a tree, and reject arithmetic certificates after changing a
 contents version or index.
 
-This scalar term layer is kernel groundwork, not yet source-level indexed
-payload support. The frontend still uses named affine rows. Connecting structured
-terms to typed array-read interpretations and quantified source elaboration
-remains required. A bare
-application supplies no truth, bounds, memory access, or ownership authority.
+Source quantified numeric array equalities now use this scalar term layer.
+General arithmetic still uses named affine rows; indexed arithmetic and ordering
+need further integration. A bare application supplies no truth, bounds, memory
+access, or ownership authority.
 
 Structured arithmetic queries now use the existing proof-artifact recording and
 replay path. Their commitments describe the reachable term DAG with distinct
@@ -506,8 +505,7 @@ nodes. All rows in one query share a traversal, and later observations of a cach
 root need no descendant traversal. Tests replay structured queries after creating
 their terms in a fresh arena in a different order, reject changed contents versions
 and indices, and reject forged weights. The existing named-row artifact encoding
-is unchanged; structured queries have a distinct digest domain. Source-level
-payload reads still need the frontend integration described above.
+is unchanged; structured queries have a distinct digest domain.
 
 Scalar equality recipes now connect those terms to the existing evidence DAG.
 Registration names every free integer as an explicit predicate parameter,
@@ -525,7 +523,27 @@ applications compose. Every used hypothesis and admission remains a dependency;
 unrelated admissions do not enter the result. Changed contents-version symbols,
 missing argument proofs, and attempts to generalize an admitted bound instance
 are rejected. These rules establish equality, not memory access or a declaration's
-safety. Source-level indexed payload elaboration is still pending.
+safety.
+
+The source frontend elaborates direct numeric array comparisons inside `forall`
+into equality recipes. Each unknown read has an immutable contents-version symbol
+and an explicit index argument. Reflexivity and checked index equality can prove
+equal reads of the same contents version. A fill, or an untouched uniform array
+literal, can instead reduce to its captured scalar value. Observed cells and store
+histories are never mistaken for a uniform definition of the whole array.
+
+Every index must satisfy bounds over its quantified domain, including for fact
+declarations and admitted proofs. Element types remain checked, and resource,
+union, and shaped elements require their separate typed observation rules. Proof
+subjects retain the array plane/revision and the bound index. Writes invalidate
+admitted claims even if they store the same value. No bound cell is materialized
+and no ownership is created. Tests compare small and billion-element fills with
+the same obligation and certificate counts, and replay without proof search.
+
+This first source slice covers direct `==` and `!=` comparisons. General payload
+arithmetic, ordering, read-over-write reductions, and transporting these recipes
+to ordinary single-cell observations remain unfinished. An unknown equality
+does not become true merely because its predicate was declared.
 
 Atoms establish no truth by their construction and have no built-in memory or
 ownership meaning. They cannot enter arithmetic paths as fresh Boolean variables.

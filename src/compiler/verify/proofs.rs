@@ -230,6 +230,9 @@ impl Context<'_> {
                         return Ok(node);
                     }
                 }
+                if let Some(proven) = self.prove_indexed_value_equality(goal)? {
+                    return Ok(proven);
+                }
                 if let Some(proven) = self.prove_indexed_predicate(goal, subjects, label, line)? {
                     return Ok(proven);
                 }

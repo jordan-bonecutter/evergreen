@@ -2482,7 +2482,8 @@ results and no trusted safety dependency. It computes the body
 without importing its postcondition, including a postcondition marked `trustme`.
 Unknown branches, nonlinear symbolic computation, and other opaque results are
 rejected here instead of falling back to an ordinary call model. General
-bound-dependent array payload reads remain unsupported.
+bound-dependent array payload computations remain unsupported; direct numeric
+equalities have the separate path described below.
 
 [`quantified_preconditions.evg`](../examples/quantified_preconditions.evg) uses a
 helper with a `where` clause. Its precondition must reduce to an explicit
@@ -2493,6 +2494,29 @@ and lexical bindings; they never enumerate the range. Calls in the domain itself
 must be valid for every value of that binder, using only enclosing domains and
 the caller's existing facts. A domain cannot justify its own calls. Boolean
 connectives do not introduce additional domains for these checks.
+
+### Numeric array values in universal proofs
+
+[`quantified_array_values.evg`](../examples/quantified_array_values.evg) proves
+that equal indices select equal numeric values from the same immutable array
+contents. The checker retains each index as an explicit argument, so a proof
+cannot generalize an observation at just one index to the whole array. Bounds
+must hold for every index in the domain, even for reflexive equalities and
+`trustme` proofs.
+
+An unchanged fill or uniform array literal exposes its captured value. A billion
+elements need the same number of obligations as eight; the example verifies a
+large allocation in an uncalled function and executes only a small array.
+Writes create a new contents version and invalidate old admitted claims. Unknown
+values stay unknown: filling an array with `usize::MAX + 1` cannot establish that
+every element is zero.
+
+This path supports direct numeric `==` and `!=` propositions inside `forall`.
+Known uniform values use arithmetic proofs; unknown reads use checked reflexivity
+or congruence, or an explicit logical premise. Arbitrary indexed arithmetic,
+ordering, proofs of payloads after stores, and reuse as ordinary single-cell
+observations still need more support. Resource and raw-union arrays continue to
+use their typed observation rules.
 
 Precondition reduction uses the actual scalar arguments without importing helper
 postconditions or changing the caller's bindings. Opaque preconditions remain

@@ -56,9 +56,7 @@ pub(in crate::compiler::verify) enum Rule {
         source: NodeId,
         equalities: Vec<NodeId>,
     },
-    #[allow(dead_code)]
     ScalarReflexivity,
-    #[allow(dead_code)]
     ScalarCongruence {
         equalities: Vec<NodeId>,
     },

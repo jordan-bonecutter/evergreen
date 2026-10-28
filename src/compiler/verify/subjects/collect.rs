@@ -26,6 +26,19 @@ impl Context<'_> {
             return Ok(None);
         }
         let key = match &expression.kind {
+            Kind::Index(base, index)
+                if self
+                    .locals
+                    .logical_bindings
+                    .iter()
+                    .any(|binding| binding.quantified) =>
+            {
+                let base = self.collect_subjects(base, snapshot, depth + 1)?;
+                let index = self.collect_subjects(index, snapshot, depth + 1)?;
+                base.zip(index).map(|(base, index)| {
+                    ClaimKey::Binary("index".into(), Box::new(base), Box::new(index))
+                })
+            }
             Kind::Call(name, arguments)
                 if name == "typeof"
                     && arguments.len() == 1
