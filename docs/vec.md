@@ -46,12 +46,13 @@ snapshots, so the specification describes the values being copied. The older
 `vec::copy_prefix` API remains available for existing callers.
 
 [`record_collections.evg`](../examples/record_collections.evg) proves record
-copy/fill results and Vec push/pop results, then proves a record read from the
-grown buffer equals the original record. It also checks the subsequent pop.
-The native and interpreter tests both exercise it. The example names the new
-vector separately and observes its element before popping: automatic contract
-transport through replacement assignment and through an immediately following
-owning body recheck still needs work.
+copy/fill results and Vec push/pop results, replaces the vector with its grown
+buffer, and immediately pops and proves the original record value. Body rechecks
+retain checked storage candidates, so an extra element observation is no longer
+needed before the pop. Admissions are not inherited by that automatic lookup;
+writes and cleanup still invalidate the affected storage facts. The native and
+interpreter tests both exercise this sequence. Repeated growth without observing
+the intermediate buffer still needs composition of historical range relations.
 Sparse range proofs over nested records verify at a billion-element capacity
 with the same obligation and certificate counts as small arrays; tests do not
 allocate the large buffer.

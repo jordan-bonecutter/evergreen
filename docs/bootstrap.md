@@ -2695,8 +2695,13 @@ produce incomplete snapshots and cannot silently become independent facts.
 
 Verified call applications retain their precondition evidence, declaration trust
 summary, and free claim/control variables for universal freshness checking.
-Actual-body rechecks export the checked postcondition proof. Opaque frontend
-contracts, unresolved recursion, and imported trust remain excluded from
+Actual-body rechecks export the checked postcondition proof. They retain closed,
+admission-free caller storage candidates while isolating lexical fact and proof
+names. Each use still checks the original branch and projection revisions, so a
+write through an alias invalidates the old range. This permits an owned read or
+an immediate Vec pop to observe a previously proved element value. Inner call
+results cannot masquerade as the enclosing function's returned guarantee.
+Opaque frontend contracts, unresolved recursion, and imported trust remain excluded from
 automatic universal introduction where their context cannot be traced. These
 changes do not make the whole frontend formally verified.
 

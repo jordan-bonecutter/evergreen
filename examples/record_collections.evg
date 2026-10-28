@@ -15,9 +15,8 @@ fn main() -> usize {
     let popped = v.pop();
     proof _: same_value(popped, wanted);
     v.push(popped);
-    let grown = v.reallocate_filled(5, initial);
-    proof _: same_value(*grown.get(0), wanted);
-    let after = grown.pop();
+    v = v.reallocate_filled(5, initial);
+    let after = v.pop();
     proof _: same_value(after, wanted);
     if after.x == 42 && after.valid {42} else {1}
 }
