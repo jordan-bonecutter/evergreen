@@ -470,6 +470,28 @@ every argument. Predicate congruence requires the same symbol and a checked
 equality for each corresponding argument; it preserves all premise hypotheses
 and admissions. Changing a symbol cannot be justified by equal indices.
 
+The arithmetic kernel also supports immutable scalar application terms in
+`src/compiler/kernel/terms.rs`. Terms are interned DAG nodes, with explicit
+function symbols and argument IDs. Variables and applications have distinct
+representations; applications from different contents versions or with different
+indices cannot alias merely because of a printed spelling. Affine operations
+normalize sums using checked arithmetic, and the existing arithmetic certificate
+checker works over these atom IDs as well as the frontend's current named rows.
+
+Free-variable collection and simultaneous substitution follow application
+arguments iteratively and visit shared nodes once. Rewriting preserves existing
+nodes. IDs carry an arena identity and cannot be used in another arena; they are
+local references, not portable proof-artifact identities. Operations accept an
+explicit work budget. Regression tests exercise a 4,000-level shared DAG without
+expanding it into a tree, and reject arithmetic certificates after changing a
+contents version or index.
+
+This scalar term layer is kernel groundwork, not yet source-level indexed
+payload support. The frontend still uses named affine rows. Connecting structured
+terms to propositions, portable artifacts, typed array-read interpretations,
+congruence evidence, and quantified source elaboration remains required. A bare
+application supplies no truth, bounds, memory access, or ownership authority.
+
 Atoms establish no truth by their construction and have no built-in memory or
 ownership meaning. They cannot enter arithmetic paths as fresh Boolean variables.
 The kernel also checks closed predicate definitions. Every free integer is an

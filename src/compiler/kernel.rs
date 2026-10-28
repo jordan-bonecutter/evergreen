@@ -8,13 +8,28 @@ use std::collections::BTreeMap;
 
 pub type ArithmeticResult<T> = Result<T, String>;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Linear {
+pub mod terms;
+
+/// Existing frontend rows use names; structured terms use immutable atom IDs.
+/// Arithmetic certificates depend only on atom equality, never their spelling.
+pub type Linear = Affine<String>;
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Affine<V> {
     pub constant: i128,
-    pub terms: BTreeMap<String, i128>,
+    pub terms: BTreeMap<V, i128>,
 }
 
-impl Linear {
+impl<V> Default for Affine<V> {
+    fn default() -> Self {
+        Self {
+            constant: 0,
+            terms: BTreeMap::new(),
+        }
+    }
+}
+
+impl<V: Ord + Clone> Affine<V> {
     pub fn number(constant: i128) -> Self {
         Self {
             constant,
@@ -22,7 +37,7 @@ impl Linear {
         }
     }
 
-    pub fn variable(name: impl Into<String>) -> Self {
+    pub fn variable(name: impl Into<V>) -> Self {
         Self {
             constant: 0,
             terms: BTreeMap::from([(name.into(), 1)]),
@@ -89,8 +104,11 @@ impl Certificate {
 }
 
 /// Check a contradiction certificate independently of the search algorithm.
-pub fn check(assumptions: &[Linear], certificate: &Certificate) -> ArithmeticResult<()> {
-    let mut sum = Linear::default();
+pub fn check<V: Ord + Clone>(
+    assumptions: &[Affine<V>],
+    certificate: &Certificate,
+) -> ArithmeticResult<()> {
+    let mut sum = Affine::default();
     for (&index, &weight) in &certificate.weights {
         if weight < 0 {
             return Err("negative certificate weight".into());
@@ -107,12 +125,12 @@ pub fn check(assumptions: &[Linear], certificate: &Certificate) -> ArithmeticRes
 }
 
 #[derive(Clone)]
-struct Derived {
-    value: Linear,
+struct Derived<V> {
+    value: Affine<V>,
     certificate: Certificate,
 }
 
-impl Derived {
+impl<V: Ord + Clone> Derived<V> {
     fn combine(&self, a: i128, other: &Self, b: i128) -> ArithmeticResult<Self> {
         if a <= 0 || b <= 0 {
             return Err("invalid elimination weights".into());
@@ -142,13 +160,13 @@ impl Derived {
 
 /// Bounded Fourier–Motzkin search. Incomplete for integers; failure is an error,
 /// never evidence that a program is safe. All returned certificates are checked.
-pub fn solve(assumptions: &[Linear]) -> ArithmeticResult<Certificate> {
+pub fn solve<V: Ord + Clone>(assumptions: &[Affine<V>]) -> ArithmeticResult<Certificate> {
     const MAX_CONSTRAINTS: usize = 2048;
     const MAX_VARIABLES: usize = 64;
     if assumptions.len() > MAX_CONSTRAINTS {
         return Err("proof search constraint limit reached".into());
     }
-    let mut rows: Vec<Derived> = assumptions
+    let mut rows: Vec<Derived<V>> = assumptions
         .iter()
         .enumerate()
         .map(|(i, value)| Derived {
@@ -169,7 +187,7 @@ pub fn solve(assumptions: &[Linear]) -> ArithmeticResult<Certificate> {
         // An equality lets us substitute once into every row, rather than
         // forming every positive/negative pair. Search remains untrusted:
         // the same independent checker validates the resulting certificate.
-        let lookup: BTreeMap<Linear, usize> = rows
+        let lookup: BTreeMap<Affine<V>, usize> = rows
             .iter()
             .enumerate()
             .map(|(i, r)| (r.value.clone(), i))
@@ -232,7 +250,7 @@ pub fn solve(assumptions: &[Linear]) -> ArithmeticResult<Certificate> {
             continue;
         }
         // Eliminate the cheapest variable to keep common bounds proofs small.
-        let mut variables = BTreeMap::<String, (usize, usize)>::new();
+        let mut variables = BTreeMap::<V, (usize, usize)>::new();
         for row in &rows {
             for (name, coeff) in &row.value.terms {
                 let entry = variables.entry(name.clone()).or_default();
@@ -267,7 +285,7 @@ pub fn solve(assumptions: &[Linear]) -> ArithmeticResult<Certificate> {
         {
             return Err("proof search constraint limit reached".into());
         }
-        let mut seen: std::collections::BTreeSet<Linear> =
+        let mut seen: std::collections::BTreeSet<Affine<V>> =
             next.iter().map(|r| r.value.clone()).collect();
         for p in &positive {
             for n in &negative {
