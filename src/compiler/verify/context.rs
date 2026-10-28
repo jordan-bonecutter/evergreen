@@ -106,8 +106,9 @@ pub(super) struct EntryState {
 
 #[derive(Default)]
 pub(super) struct Arrays {
-    pub(super) value_equalities: BTreeMap<(Option<String>, Option<String>), String>,
-    pub(super) value_equality_origins: BTreeMap<String, (Option<String>, Option<String>)>,
+    pub(super) value_equalities: BTreeMap<array_values::Key, array_values::Equality>,
+    pub(super) value_equality_origins: BTreeMap<String, array_values::Key>,
+    pub(super) value_literals: BTreeMap<String, Vec<Linear>>,
     pub(super) type_predicates: BTreeMap<(String, Ty), array_predicates::Selector>,
     pub(super) predicate_definitions: BTreeMap<String, evidence::DefinitionId>,
     pub(super) reads: BTreeMap<(String, Linear), Symbol>,

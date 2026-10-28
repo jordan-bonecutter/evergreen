@@ -77,10 +77,7 @@ fn quantified_payload_writes_do_not_keep_uniform_contents_or_admitted_revisions(
         };
         let source = format!("fn main() {{ {construction} {place}[1] = 9; proof _: forall(i: integer) where(0 <= i && i < 3) {{{place}[i] == 7}} by {{intro i; omega}}; }}");
         let error = verify(&source).unwrap_err();
-        assert!(
-            error.contains("predicate atoms require logical proof rules"),
-            "{source}\n{error}"
-        );
+        assert!(error.contains("cannot prove"), "{source}\n{error}");
     }
     let before = "fn check(data: &[u8; 8]) modifies(&(*data)[0]) {proof external: forall(i: integer) where(0 <= i && i < 8) {(*data)[i] == 7} by {trustme}; proof again: forall(j: integer) where(0 <= j && j < 8) {(*data)[j] == 7} by {exact external};}";
     let (program, bundle) = prove(before).unwrap();

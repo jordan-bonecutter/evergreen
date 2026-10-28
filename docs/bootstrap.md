@@ -2514,9 +2514,18 @@ every element is zero.
 This path supports direct numeric `==` and `!=` propositions inside `forall`.
 Known uniform values use arithmetic proofs; unknown reads use checked reflexivity
 or congruence, or an explicit logical premise. Arbitrary indexed arithmetic,
-ordering, proofs of payloads after stores, and reuse as ordinary single-cell
-observations still need more support. Resource and raw-union arrays continue to
-use their typed observation rules.
+ordering, and reuse as ordinary single-cell observations still need more support.
+Resource and raw-union arrays continue to use their typed observation rules.
+
+[`array_value_store.evg`](../examples/array_value_store.evg) gives a generic byte
+replacement function a quantified contract: the selected index has the new value,
+and every other index equals its value in `old(*data)`. The body proves both
+clauses; callers can reuse them as quantified guarantees. Fill, literal, store,
+and conditional histories supply guarded equality definitions. They keep the
+values and indices captured at the write, even after their source variables are
+reassigned, and cannot infer values in an unrelated array. This also supports
+`!=` proofs against overwritten values. No range is enumerated and no
+`trustme` is needed.
 
 Precondition reduction uses the actual scalar arguments without importing helper
 postconditions or changing the caller's bindings. Opaque preconditions remain

@@ -5,8 +5,21 @@ use super::*;
 use crate::compiler::kernel::terms::{Terms, Work};
 use std::sync::Arc;
 
+mod histories;
+
+#[cfg(test)]
+mod history_tests;
 #[cfg(test)]
 mod tests;
+
+// Each side is either an immutable contents identity (indexed by its argument)
+// or a scalar argument. Runtime observations never define an unknown identity.
+pub(super) type Key = (Option<String>, Option<String>);
+
+pub(super) struct Equality {
+    symbol: String,
+    captures: Vec<String>,
+}
 
 pub(super) fn parts(expression: &Expr) -> Option<(&Expr, &Expr, bool)> {
     let Kind::Binary(op, a, b) = &expression.kind else {
@@ -34,16 +47,8 @@ impl Context<'_> {
         let a = self.indexed_equality_operand(a, hint.as_ref())?;
         let b = self.indexed_equality_operand(b, Some(&a.ty))?;
         self.compatible(&a.ty, &b.ty, expression.line)?;
-        let proposition = if a.contents.is_none() && b.contents.is_none() {
-            equal(&a.argument, &b.argument)?
-        } else {
-            let key = (a.contents, b.contents);
-            let symbol = self.value_equality_symbol(&key)?;
-            Formula::Predicate {
-                symbol,
-                arguments: vec![a.argument, b.argument],
-            }
-        };
+        let proposition =
+            self.value_equality(&(a.contents, b.contents), &a.argument, &b.argument, 0)?;
         Ok(Symbol::Bool(if negated {
             proposition.not()
         } else {
@@ -67,6 +72,7 @@ impl Context<'_> {
         let index = self.eval(index, Some(&Ty::Int))?.number()?;
         let array = self.storage(base)?;
         self.charge_value_work(symbol_weight(&array)?)?;
+        self.remember_numeric_literal(&array)?;
         let Symbol::Array {
             element,
             len,
@@ -109,10 +115,7 @@ impl Context<'_> {
         })
     }
 
-    fn value_equality_symbol(&mut self, key: &(Option<String>, Option<String>)) -> Result<String> {
-        if let Some(symbol) = self.arrays.value_equalities.get(key) {
-            return Ok(symbol.clone());
-        }
+    fn declare_value_equality(&mut self, key: &Key) -> Result<Equality> {
         let mut terms = Terms::new()?;
         let mut work = Work::new(MAX_VALUE_WORK.saturating_sub(self.work.value_work));
         let mut roots = Vec::new();
@@ -135,12 +138,12 @@ impl Context<'_> {
             roots[1],
         )?;
         self.arrays
-            .value_equalities
-            .insert(key.clone(), symbol.clone());
-        self.arrays
             .value_equality_origins
             .insert(symbol.clone(), key.clone());
-        Ok(symbol)
+        Ok(Equality {
+            symbol,
+            captures: Vec::new(),
+        })
     }
 
     pub(super) fn prove_indexed_value_equality(

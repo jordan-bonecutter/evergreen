@@ -939,6 +939,7 @@ impl<'a> Context<'a> {
             *value = new;
             return Ok(());
         }
+        self.remember_numeric_literal(value)?;
         if let (
             Projection::Index(target),
             Symbol::Array {

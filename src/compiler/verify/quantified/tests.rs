@@ -103,7 +103,7 @@ fn source_universals_reject_single_index_proofs_wrong_instances_and_effects() {
         ("fn main() -> usize {proof bad: forall(i: integer) {i == 0} by {intro i; omega}; 0}", "cannot prove"),
         ("fn main() -> usize {proof p: forall(i: integer) where(i >= 0) {i >= 0} by {intro i; omega}; proof bad: -1 >= 0 by {specialize p(-1); omega}; 0}", "cannot prove"),
         ("fn main() -> usize {proof p: forall(i: integer) where(i >= 0) {i >= 0} by {intro i; omega}; proof bad: 1 == 0 by {specialize p(1); omega}; 0}", "different proposition"),
-        ("fn main() -> usize {let data: [usize; 2] = [7, 9]; proof bad: forall(i: integer) where(i >= 0 && i < 2) {data[i] == 7} by {intro i; omega}; 0}", "predicate atoms require logical proof rules"),
+        ("fn main() -> usize {let data: [usize; 2] = [7, 9]; proof bad: forall(i: integer) where(i >= 0 && i < 2) {data[i] == 7} by {intro i; omega}; 0}", "cannot prove"),
         ("fn main() -> usize {let bad = forall(i: integer) {i == i}; 0}", "proof-only"),
         ("fn main() -> usize {let n: usize = 1; fact bad = forall(i: integer) {n + 1 >= n}; 0}", "quantified arithmetic uses integer"),
         ("fn main() -> usize {fact bad = forall(i: integer) where(forall(j: integer) {true}) {true}; 0}", "unquantified scalar proposition"),

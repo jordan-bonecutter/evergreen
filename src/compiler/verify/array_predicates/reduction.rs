@@ -62,6 +62,9 @@ impl Context<'_> {
         if let Some(node) = self.logical_assumption(goal, None)? {
             return Ok(Some(node));
         }
+        if let Some(node) = self.prove_indexed_value_equality(goal)? {
+            return Ok(Some(node));
+        }
         match goal {
             Formula::And(a, b) => {
                 let Some(left) = self.reduce_selector_formula(a, depth + 1)? else {

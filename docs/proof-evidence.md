@@ -540,10 +540,26 @@ admitted claims even if they store the same value. No bound cell is materialized
 and no ownership is created. Tests compare small and billion-element fills with
 the same obligation and certificate counts, and replay without proof search.
 
-This first source slice covers direct `==` and `!=` comparisons. General payload
-arithmetic, ordering, read-over-write reductions, and transporting these recipes
-to ordinary single-cell observations remain unfinished. An unknown equality
-does not become true merely because its predicate was declared.
+Numeric histories also have closed equality definitions. A store selects its
+captured value when the index equals the written index, and otherwise refers to
+the previous contents version. Joins retain both histories under their original
+guard. Literal snapshots record only explicit initializer values; cached cell
+observations never define the remainder of an unknown input array. Definitions
+are created on demand and shared by contents identities, with every free stored
+index, value, and guard passed as an explicit parameter. The existing checked
+unfolding and logical case rules prove these relations without a new kernel axiom.
+
+`examples/array_value_store.evg` publishes both the new value and equality with
+`old(*data)[i]` at untouched indices in a generic function contract. Source
+proofs and contract replay retain state dependencies. Tests reject the wrong old
+plane, stale last-write values, reassigned index/value captures, and assertions
+about a branch's write without its guard. A billion-slot fill with a write needs
+the same number of obligations and certificates as its small counterpart.
+
+This source slice covers direct `==` and `!=` comparisons. General payload
+arithmetic, ordering, and transporting these recipes to ordinary single-cell
+observations remain unfinished. An unknown equality does not become true merely
+because its predicate was declared.
 
 Atoms establish no truth by their construction and have no built-in memory or
 ownership meaning. They cannot enter arithmetic paths as fresh Boolean variables.

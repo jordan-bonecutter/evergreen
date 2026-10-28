@@ -76,7 +76,7 @@ fn member(value: &Symbol, target: &Ty) -> Result<Formula> {
     }
 }
 
-fn combine(mut parts: Vec<Formula>, conjunction: bool) -> Formula {
+pub(super) fn combine(mut parts: Vec<Formula>, conjunction: bool) -> Formula {
     if parts.is_empty() {
         return if conjunction {
             Formula::True
