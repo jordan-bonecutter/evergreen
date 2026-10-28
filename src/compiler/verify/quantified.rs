@@ -176,7 +176,7 @@ impl Context<'_> {
         }
         if let Some((a, b, _)) = array_values::parts(expression) {
             for operand in [a, b] {
-                if let Kind::Index(base, index) = &operand.kind {
+                if let Some((base, index)) = array_values::indexed_base(operand) {
                     self.check_quantified_place(base)?;
                     self.check_quantified_expression(index, depth + 1)?;
                 } else {

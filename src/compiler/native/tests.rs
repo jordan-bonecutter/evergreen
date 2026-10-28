@@ -251,6 +251,7 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/array_fill_range.evg"),
         include_str!("../../../examples/array_copy_range.evg"),
         include_str!("../../../examples/boolean_array_proofs.evg"),
+        include_str!("../../../examples/array_field_proofs.evg"),
         "fn main() -> u8 ensures result == 42 {let data: [u8; 3] = [7, 42, 11]; arrays::copy_range(&data, &data, 0, 3); data[1]}",
         include_str!("../../../examples/string_bytes.evg"),
         include_str!("../../../examples/utf8_literal.evg"),

@@ -1,0 +1,46 @@
+type Point struct {x: usize, y: usize}
+type Sample struct {point: Point, valid: bool}
+impl Copy for Point {}
+impl Copy for Sample {}
+
+// Each field keeps its own identity within an immutable array version.
+fn set_x(
+    data: &[Sample; 2],
+    at: usize,
+    value: usize
+)
+    where
+        at < 2
+    modifies(&(*data)[at].point.x)
+    ensures
+        (forall(i: integer) where (i == integer::from(at)) {(*data)[i].point.x == value}) &&
+        (forall(i: integer) where (0 <= i &&
+        i < 2) {(*data)[i].point.y == old(*data)[i].point.y}) &&
+        (forall(i: integer) where (0 <= i &&
+        i < 2 &&
+        i != integer::from(at)) {(*data)[i].point.x == old(*data)[i].point.x}) &&
+        (forall(i: integer) where (0 <= i &&
+        i < 2) {(*data)[i].valid == old(*data)[i].valid})
+{
+    (*data)[at].point.x = value;
+}
+
+fn main() -> usize
+    ensures
+        result == 42
+{
+    let data: [Sample; 2] = [
+        Sample {
+            point: Point {x: 7, y: 9},
+            valid: false
+        },
+        Sample {
+            point: Point {x: 11, y: 13},
+            valid: true
+        }
+    ];
+    set_x(&data, 1, 42);
+    proof _: data[0].point.x == 7 && data[0].point.y == 9 && !data[0].valid;
+    proof _: data[1].point.y == 13 && data[1].valid;
+    data[1].point.x
+}

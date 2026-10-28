@@ -22,9 +22,22 @@ impl Context<'_> {
         {
             return Ok(());
         }
-        if !scalar(&value.ty()) {
-            return Ok(());
+        for (fields, value) in self.scalar_leaves(value)? {
+            let contents = Contents {
+                identity: identity.into(),
+                fields,
+            };
+            self.bind_scalar_leaf(&contents, index, value)?;
         }
+        Ok(())
+    }
+
+    fn bind_scalar_leaf(
+        &mut self,
+        contents: &Contents,
+        index: &Linear,
+        value: &Symbol,
+    ) -> Result<()> {
         let scalars::Argument::Word(value) = self.scalar_argument(value)? else {
             return Err("new scalar array reads require a registered word".into());
         };
@@ -42,11 +55,7 @@ impl Context<'_> {
             let scaled = terms.scale(variable, *coefficient, &mut work)?;
             argument = terms.add(argument, scaled, &mut work)?;
         }
-        let read = terms.application(
-            &format!("array_contents:{identity}"),
-            &[argument],
-            &mut work,
-        )?;
+        let read = contents.term(&mut terms, argument, &mut work)?;
         self.charge_value_work(work.spent())?;
         let definition = self
             .proof
@@ -54,7 +63,7 @@ impl Context<'_> {
             .define_scalar_binding(name.clone(), terms, read)?;
         self.arrays
             .scalar_bindings
-            .entry(identity.to_owned())
+            .entry(contents.clone())
             .or_default()
             .insert(
                 index.clone(),

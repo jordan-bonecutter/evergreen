@@ -109,7 +109,8 @@ pub(super) struct Arrays {
     // Only words allocated as Booleans belong here; arbitrary numeric equalities
     // with one must never be mistaken for a Boolean representation.
     pub(super) boolean_words: BTreeMap<Formula, Linear>,
-    pub(super) scalar_bindings: BTreeMap<String, BTreeMap<Linear, array_values::ReadBinding>>,
+    pub(super) scalar_bindings:
+        BTreeMap<array_values::Contents, BTreeMap<Linear, array_values::ReadBinding>>,
     pub(super) value_equalities: BTreeMap<array_values::Key, array_values::Equality>,
     pub(super) value_equality_origins: BTreeMap<String, array_values::Key>,
     pub(super) value_literals: BTreeMap<String, Vec<Symbol>>,

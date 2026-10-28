@@ -17,7 +17,7 @@ impl Context<'_> {
         else {
             return Ok(());
         };
-        if !scalar(element)
+        if !self.history_element(element)
             || self.arrays.value_literals.contains_key(identity)
             || self.arrays.history.contains_key(identity)
         {
@@ -104,7 +104,8 @@ impl Context<'_> {
         depth: usize,
     ) -> Result<Option<Formula>> {
         for (side, contents) in [&key.0, &key.1].into_iter().enumerate() {
-            let Some(identity) = contents else { continue };
+            let Some(contents) = contents else { continue };
+            let identity = &contents.identity;
             let history = self.arrays.history.get(identity);
             if let Some(history) = history {
                 let cost = match history {
@@ -120,7 +121,7 @@ impl Context<'_> {
             }
             let history = self.arrays.history.get(identity).cloned();
             let selected = if side == 0 { left } else { right };
-            let compare = |ctx: &mut Self, contents: Option<String>, value: &Linear| {
+            let compare = |ctx: &mut Self, contents: Option<Contents>, value: &Linear| {
                 if side == 0 {
                     ctx.value_equality(&(contents, key.1.clone()), value, right, depth + 1)
                 } else {
@@ -128,7 +129,7 @@ impl Context<'_> {
                 }
             };
             let compare_scalar = |ctx: &mut Self, value: &Symbol| {
-                let argument = ctx.scalar_argument(value)?;
+                let argument = ctx.scalar_argument(contents.project(value)?)?;
                 ctx.scalar_argument_cases(&argument, |ctx, word| compare(ctx, None, word))
             };
             let body = match history {
@@ -136,7 +137,7 @@ impl Context<'_> {
                 Some(ArrayHistory::Store { base, index, value }) => {
                     let same = equal(selected, &index)?;
                     let stored = compare_scalar(self, &value)?;
-                    let previous = compare(self, Some(base), selected)?;
+                    let previous = compare(self, Some(contents.with_identity(base)), selected)?;
                     same.clone().and(stored).or(same.not().and(previous))
                 }
                 Some(ArrayHistory::Choice {
@@ -144,8 +145,8 @@ impl Context<'_> {
                     left,
                     right,
                 }) => {
-                    let a = compare(self, Some(left), selected)?;
-                    let b = compare(self, Some(right), selected)?;
+                    let a = compare(self, Some(contents.with_identity(left)), selected)?;
+                    let b = compare(self, Some(contents.with_identity(right)), selected)?;
                     condition.clone().and(a).or(condition.not().and(b))
                 }
                 Some(ArrayHistory::Uninitialized(_)) => {

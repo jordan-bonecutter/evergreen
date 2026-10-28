@@ -2614,6 +2614,25 @@ sparse for billion-element inputs. Vec still uses its existing copy helper;
 general Copy-record equality is needed before that path can adopt these stronger
 contracts for all of its supported types.
 
+[`array_field_proofs.evg`](../examples/array_field_proofs.evg) extends these proofs
+to explicit numeric and Boolean fields of reference-free records without runtime
+cleanup. A claim such as `data[i].point.x == old(*data)[i].point.x` keeps its array
+revision, index, and structural field path. Sibling fields and different nesting
+paths are distinct. Fill, literal, store, and conditional histories preserve
+these projections; observed fields can also be related to saved local scalars.
+Field privacy, type compatibility, and universal index bounds still apply.
+
+Quantified field claims observe the entire array revision rather than recording a
+concrete storage location for the bound variable. Ordinary reads can specialize
+current checked contracts, including compound Boolean field formulas. A write
+invalidates earlier claims unless their preservation is proved again. The same
+field-store proof over eight and a billion elements needs the same number of
+obligations and certificates. An observed record currently materializes its scalar
+fields; this does not yet provide demand-driven storage for individual fields of
+large records. Combining compound Boolean fields with branching histories can
+still exhaust the bounded path-normalization work budget and needs simplification.
+Whole-record source equality and generic record copy contracts remain unfinished.
+
 ### Demand-driven ideal aggregate reads
 
 The read-only ideal evaluator borrows immutable array and record views. It imports

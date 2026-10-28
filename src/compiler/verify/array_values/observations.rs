@@ -35,12 +35,25 @@ impl Context<'_> {
         index: &Linear,
         value: &Symbol,
     ) -> Result<()> {
-        if !scalar(&value.ty()) {
-            return Ok(());
-        }
         if self.arrays.value_equality_origins.is_empty() {
             return Ok(());
         }
+        for (fields, value) in self.scalar_leaves(value)? {
+            let contents = Contents {
+                identity: identity.into(),
+                fields,
+            };
+            self.observe_scalar_leaf(&contents, index, value)?;
+        }
+        Ok(())
+    }
+
+    fn observe_scalar_leaf(
+        &mut self,
+        identity: &Contents,
+        index: &Linear,
+        value: &Symbol,
+    ) -> Result<()> {
         let candidates = self
             .proof
             .claims
@@ -76,7 +89,7 @@ impl Context<'_> {
                     continue;
                 };
                 for (side, contents) in [&key.0, &key.1].into_iter().enumerate() {
-                    if contents.as_deref() != Some(identity) {
+                    if contents.as_ref() != Some(identity) {
                         continue;
                     };
                     let Some(term) =
@@ -180,8 +193,12 @@ impl Context<'_> {
         Ok(Some(if negated { equality.not() } else { equality }))
     }
 
-    fn captured_scalar_value(&mut self, identity: &str, index: &Linear) -> Result<Option<Symbol>> {
-        let mut identity = identity.to_owned();
+    fn captured_scalar_value(
+        &mut self,
+        contents: &Contents,
+        index: &Linear,
+    ) -> Result<Option<Symbol>> {
+        let mut identity = contents.identity.clone();
         loop {
             self.charge_value_work(
                 identity
@@ -193,19 +210,18 @@ impl Context<'_> {
                 .arrays
                 .reads
                 .get(&(identity.clone(), index.clone()))
-                .filter(|value| scalar(&value.ty()))
                 .or_else(|| {
                     constant_index(index)
                         .and_then(|index| self.arrays.value_literals.get(&identity)?.get(index))
                 });
             if let Some(value) = known {
-                let value = value.clone();
+                let value = contents.project(value)?.clone();
                 self.charge_value_work(symbol_weight(&value)?)?;
                 return Ok(Some(value));
             }
             match self.arrays.history.get(&identity) {
-                Some(ArrayHistory::Fill(value)) if scalar(&value.ty()) => {
-                    let value = value.clone();
+                Some(ArrayHistory::Fill(value)) => {
+                    let value = contents.project(value)?.clone();
                     self.charge_value_work(symbol_weight(&value)?)?;
                     return Ok(Some(value));
                 }
@@ -215,10 +231,7 @@ impl Context<'_> {
                     value,
                 }) => {
                     if written == index {
-                        if !scalar(&value.ty()) {
-                            return Ok(None);
-                        }
-                        let value = value.clone();
+                        let value = contents.project(value)?.clone();
                         self.charge_value_work(symbol_weight(&value)?)?;
                         return Ok(Some(value));
                     }

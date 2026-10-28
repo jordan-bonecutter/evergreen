@@ -7,8 +7,10 @@ use std::sync::Arc;
 
 mod histories;
 mod observations;
+mod projections;
 mod reads;
 mod scalars;
+pub(super) use projections::Contents;
 pub(super) use reads::ReadBinding;
 
 #[cfg(test)]
@@ -18,13 +20,15 @@ mod history_tests;
 #[cfg(test)]
 mod observation_tests;
 #[cfg(test)]
+mod projection_tests;
+#[cfg(test)]
 mod read_tests;
 #[cfg(test)]
 mod tests;
 
 // Each side is either an immutable contents identity (indexed by its argument)
 // or a scalar argument. Runtime observations never define an unknown identity.
-pub(super) type Key = (Option<String>, Option<String>);
+pub(super) type Key = (Option<Contents>, Option<Contents>);
 
 pub(super) struct Equality {
     symbol: String,
@@ -35,14 +39,23 @@ pub(super) fn parts(expression: &Expr) -> Option<(&Expr, &Expr, bool)> {
     let Kind::Binary(op, a, b) = &expression.kind else {
         return None;
     };
-    (matches!(op.as_str(), "==" | "!=")
-        && (matches!(a.kind, Kind::Index(..)) || matches!(b.kind, Kind::Index(..))))
-    .then_some((a, b, op == "!="))
+    (matches!(op.as_str(), "==" | "!=") && (indexed_base(a).is_some() || indexed_base(b).is_some()))
+        .then_some((a, b, op == "!="))
+}
+
+pub(super) fn indexed_base(mut expression: &Expr) -> Option<(&Expr, &Expr)> {
+    while let Kind::Field(base, _) = &expression.kind {
+        expression = base;
+    }
+    match &expression.kind {
+        Kind::Index(base, index) => Some((base, index)),
+        _ => None,
+    }
 }
 
 struct Operand {
     ty: Ty,
-    contents: Option<String>,
+    contents: Option<Contents>,
     argument: scalars::Argument,
 }
 
@@ -74,7 +87,7 @@ impl Context<'_> {
         expression: &Expr,
         expected: Option<&Ty>,
     ) -> Result<Operand> {
-        let Kind::Index(base, index) = &expression.kind else {
+        let Some((base, index, fields)) = projections::indexed_parts(expression) else {
             let value = self.eval(expression, expected)?;
             return Ok(Operand {
                 ty: value.ty(),
@@ -96,7 +109,8 @@ impl Context<'_> {
         else {
             return Err("indexed value equalities require array storage".into());
         };
-        if !scalar(element) {
+        let ty = self.scalar_projection_type((**element).clone(), &fields, expression.line)?;
+        if !self.history_element(element) || !scalar(&ty) {
             return Err("quantified payload equalities require initialized numeric or Boolean elements; resource, union, and shaped slots need their typed observation rules".into());
         }
         self.defer_quantified_check(
@@ -104,6 +118,10 @@ impl Context<'_> {
             "quantified array index bounds".into(),
             expression.line,
         )?;
+        let contents = Contents {
+            identity: identity.clone(),
+            fields,
+        };
         // Only context-independent contents justify a uniform value. A branch's
         // observed cell is not a definition of the unobserved remainder.
         let uniform = match self.arrays.history.get(identity) {
@@ -116,14 +134,14 @@ impl Context<'_> {
         };
         if let Some(value) = uniform {
             return Ok(Operand {
-                ty: (**element).clone(),
+                ty,
                 contents: None,
-                argument: self.scalar_argument(value)?,
+                argument: self.scalar_argument(contents.project(value)?)?,
             });
         }
         Ok(Operand {
-            ty: (**element).clone(),
-            contents: Some(identity.clone()),
+            ty,
+            contents: Some(contents),
             argument: scalars::Argument::Word(index),
         })
     }
@@ -135,9 +153,7 @@ impl Context<'_> {
         for (parameter, contents) in [("left", &key.0), ("right", &key.1)] {
             let value = terms.variable(parameter, &mut work)?;
             roots.push(match contents {
-                Some(identity) => {
-                    terms.application(&format!("array_contents:{identity}"), &[value], &mut work)?
-                }
+                Some(contents) => contents.term(&mut terms, value, &mut work)?,
                 None => value,
             });
         }
@@ -180,6 +196,25 @@ impl Context<'_> {
                 .proof
                 .evidence
                 .derive(goal.clone(), evidence::Rule::ScalarReflexivity)
+                .map(Some);
+        }
+        let contents = left.as_ref().expect("same nonempty contents");
+        if !contents.fields.is_empty() {
+            let mut parent = contents.clone();
+            parent.fields.pop();
+            let premise = self.value_equality(&(Some(parent.clone()), Some(parent)), a, b, 0)?;
+            let Some(premise) = self.prove_indexed_value_equality(&premise)? else {
+                return Ok(None);
+            };
+            return self
+                .proof
+                .evidence
+                .derive(
+                    goal.clone(),
+                    evidence::Rule::ScalarCongruence {
+                        equalities: vec![premise],
+                    },
+                )
                 .map(Some);
         }
         let Some(indices) = self.reduce_selector_formula(&equal(a, b)?, 0)? else {

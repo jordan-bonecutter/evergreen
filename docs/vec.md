@@ -42,6 +42,9 @@ element values and preservation for numeric and Boolean arrays, including
 compound Boolean values. Vec's existing copy helper remains in place until
 general Copy-record equality is available, so its reallocation contract still
 guarantees length and capacity rather than preservation of every element value.
+Quantified claims about explicit record fields now work, as shown in
+[`array_field_proofs.evg`](../examples/array_field_proofs.evg). They provide part
+of the proof machinery needed for records without defining whole-record equality.
 
 This is a precursor to the README's vector, not its full implementation. Repeated
 initialization requires actual Copy permission; pointers with unique authority

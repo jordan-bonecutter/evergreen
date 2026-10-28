@@ -26,6 +26,19 @@ impl Context<'_> {
             return Ok(None);
         }
         let key = match &expression.kind {
+            Kind::Field(base, field)
+                if array_values::indexed_base(expression).is_some()
+                    && self
+                        .locals
+                        .logical_bindings
+                        .iter()
+                        .any(|binding| binding.quantified) =>
+            {
+                // The bound index is a logical argument, not a concrete memory
+                // projection. Retain the entire array revision and field path.
+                self.collect_subjects(base, snapshot, depth + 1)?
+                    .map(|base| ClaimKey::Unary(format!("field:{field}"), Box::new(base)))
+            }
             Kind::Index(base, index)
                 if self
                     .locals

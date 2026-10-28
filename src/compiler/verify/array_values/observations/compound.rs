@@ -9,7 +9,7 @@ impl Context<'_> {
         theorem: evidence::NodeId,
         variable: &str,
         body: &Formula,
-        identity: &str,
+        identity: &Contents,
         index: &Linear,
         observed: &Symbol,
     ) -> Result<()> {
@@ -38,7 +38,7 @@ impl Context<'_> {
                         continue;
                     };
                     for (side, contents) in [&key.0, &key.1].into_iter().enumerate() {
-                        if contents.as_deref() == Some(identity) {
+                        if contents.as_ref() == Some(identity) {
                             if let Some(term) = array_predicates::specialization_index(
                                 &arguments[side],
                                 index,
@@ -79,7 +79,7 @@ impl Context<'_> {
     fn interpret_value_formula(
         &mut self,
         formula: &Formula,
-        identity: &str,
+        identity: &Contents,
         index: &Linear,
         observed: &Symbol,
         depth: usize,
@@ -98,7 +98,7 @@ impl Context<'_> {
                     return Ok(None);
                 };
                 for (side, contents) in [&key.0, &key.1].into_iter().enumerate() {
-                    if contents.as_deref() == Some(identity) && arguments.get(side) == Some(index) {
+                    if contents.as_ref() == Some(identity) && arguments.get(side) == Some(index) {
                         return self.observed_scalar_equality(formula, &key, side, index, observed);
                     }
                 }
