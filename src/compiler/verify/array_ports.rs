@@ -64,6 +64,24 @@ impl Context<'_> {
                 }
                 if self.arrays.inputs.contains(identity) {
                     inputs.extend(cells.values().cloned());
+                } else if let Some(origin) = self.array_input_origin(identity)? {
+                    // New views of a stored input version still describe
+                    // immutable input symbols. Replay their initial bounds,
+                    // never nominal invariants of replacement values which
+                    // may currently be part of an open update.
+                    let cost = self
+                        .arrays
+                        .ports
+                        .get(&origin)
+                        .map(|cells| values_weight(cells.values()))
+                        .transpose()?
+                        .unwrap_or(0);
+                    self.charge_value_work(cost)?;
+                    inputs.extend(
+                        self.observed_input_ports(&origin)
+                            .into_iter()
+                            .map(|(_, value)| value),
+                    );
                 }
                 Ok(Symbol::Array {
                     element: element.clone(),
@@ -123,6 +141,61 @@ impl Context<'_> {
             };
         }
         Some(value)
+    }
+
+    /// Stores keep the same physical input slots while assigning each contents
+    /// version its own selector. Resolve identities against that input census.
+    pub(super) fn array_input_origin(&mut self, identity: &str) -> Result<Option<String>> {
+        let mut current = identity.to_owned();
+        loop {
+            self.charge_value_work(1 + current.len())?;
+            if self.arrays.inputs.contains(&current) {
+                return Ok(Some(current));
+            }
+            match self.arrays.history.get(&current) {
+                Some(ArrayHistory::Store { base, .. }) => current = base.clone(),
+                _ => return Ok(None),
+            }
+        }
+    }
+
+    pub(super) fn read_resource_version(
+        &mut self,
+        element: &Ty,
+        identity: &str,
+        index: &Linear,
+    ) -> Result<Symbol> {
+        let mut current = identity.to_owned();
+        loop {
+            self.charge_value_work(1 + current.len())?;
+            match self.arrays.history.get(&current) {
+                Some(ArrayHistory::Store {
+                    index: at, value, ..
+                }) => {
+                    self.charge_value_work(at.terms.len() + symbol_weight(value)?)?;
+                    let ArrayHistory::Store {
+                        base,
+                        index: at,
+                        value,
+                    } = self.arrays.history[&current].clone()
+                    else {
+                        return Err("missing resource array store recipe".into());
+                    };
+                    let same = equal(index, &at)?;
+                    if index == &at || self.checked_entails(&same)? {
+                        return Ok(value);
+                    }
+                    if !self.checked_entails(&same.not())? {
+                        return Err(
+                            "resource store selection needs proven index equality or separation"
+                                .into(),
+                        );
+                    }
+                    current = base;
+                }
+                _ => return self.input_array_port(element, &current, index),
+            }
+        }
     }
 
     /// Demanded input cells share one identity whenever their indices are

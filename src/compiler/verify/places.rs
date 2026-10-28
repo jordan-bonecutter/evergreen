@@ -120,11 +120,15 @@ impl Context<'_> {
         else {
             return Err("reference index requires array storage".into());
         };
-        let canonical;
-        let index = if self.arrays.inputs.contains(&identity)
-            && (matches!(element.as_ref(), Ty::Union(_)) || self.ty_has_reference(&element))
+        let origin = if matches!(element.as_ref(), Ty::Union(_)) || self.ty_has_reference(&element)
         {
-            canonical = self.input_array_index(&identity, index)?;
+            self.array_input_origin(&identity)?
+        } else {
+            None
+        };
+        let canonical;
+        let index = if let Some(origin) = &origin {
+            canonical = self.input_array_index(origin, index)?;
             &canonical
         } else {
             index
@@ -143,8 +147,7 @@ impl Context<'_> {
         }
         let literal =
             constant_index(index).and_then(|i| items.as_ref().and_then(|items| items.get(i)));
-        let input_union =
-            self.arrays.inputs.contains(&identity) && matches!(element.as_ref(), Ty::Union(_));
+        let input_union = origin.is_some() && matches!(element.as_ref(), Ty::Union(_));
         if input_union
             || !cells.contains_key(index) && (literal.is_none() || self.history_element(&element))
         {

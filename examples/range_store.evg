@@ -1,0 +1,94 @@
+fn push<T, const N: usize>(data: &[T | shape(T); N], length: usize, value: T)
+where(length < N && (forall(i: integer) where(0 <= i && i < integer(length) && i < integer(N)) {
+    typeof((*data)[i]) == T
+}) && (forall(i: integer) where(0 <= i && integer(length) <= i && i < integer(N)) {
+    typeof((*data)[i]) == shape(T)
+}))
+modifies(&(*data)[length])
+ensures((forall(i: integer) where(0 <= i && i < integer(length) + 1 && i < integer(N)) {
+    typeof((*data)[i]) == T
+}) && (forall(i: integer) where(0 <= i && integer(length) + 1 <= i && i < integer(N)) {
+    typeof((*data)[i]) == shape(T)
+})) {
+    proof initialized: forall(i: integer) where(0 <= i && i < integer(length) && i < integer(N)) {
+        typeof((*data)[i]) == T
+    } by {assumption};
+    proof vacant: forall(i: integer) where(0 <= i && integer(length) <= i && i < integer(N)) {
+        typeof((*data)[i]) == shape(T)
+    } by {assumption};
+    (*data)[length] = value;
+    proof frame: (forall(i: integer) where(0 <= i && i < integer(length) && i < integer(N)) {
+        typeof(old(*data)[i]) == T
+    }) => (forall(i: integer) where(0 <= i && i < integer(length) + 1 && i < integer(N)) {
+        typeof((*data)[i]) == T
+    }) by {intro prior; intro i; omega};
+    proof prefix: forall(i: integer) where(0 <= i && i < integer(length) + 1 && i < integer(N)) {
+        typeof((*data)[i]) == T
+    } by {apply frame; exact initialized};
+    proof empty_frame: (forall(i: integer) where(0 <= i && integer(length) <= i && i < integer(N)) {
+        typeof(old(*data)[i]) == shape(T)
+    }) => (forall(i: integer) where(0 <= i && integer(length) + 1 <= i && i < integer(N)) {
+        typeof((*data)[i]) == shape(T)
+    }) by {intro prior; intro i; omega};
+    proof suffix: forall(i: integer) where(0 <= i && integer(length) + 1 <= i && i < integer(N)) {
+        typeof((*data)[i]) == shape(T)
+    } by {apply empty_frame; exact vacant};
+}
+
+fn take_last<T, const N: usize>(data: &[T | shape(T); N], length: usize) -> T
+where(0 < length && length <= N && (forall(i: integer)
+    where(0 <= i && i < integer(length) && i < integer(N)) {
+        typeof((*data)[i]) == T
+    }) && (forall(i: integer) where(0 <= i && integer(length) <= i && i < integer(N)) {
+        typeof((*data)[i]) == shape(T)
+    }))
+modifies(&(*data)[length - 1])
+ensures(forall(i: integer) where(0 <= i && i < integer(length) - 1 && i < integer(N)) {
+    typeof((*data)[i]) == T
+} && (forall(i: integer) where(0 <= i && integer(length) - 1 <= i && i < integer(N)) {
+    typeof((*data)[i]) == shape(T)
+})) {
+    proof initialized: forall(i: integer)
+        where(0 <= i && i < integer(length) && i < integer(N)) {
+            typeof((*data)[i]) == T
+        } by {assumption};
+    proof vacant: forall(i: integer) where(0 <= i && integer(length) <= i && i < integer(N)) {
+        typeof((*data)[i]) == shape(T)
+    } by {assumption};
+    let value: T = move((*data)[length - 1]);
+    proof frame: (forall(i: integer)
+        where(0 <= i && i < integer(length) && i < integer(N)) {
+            typeof(old(*data)[i]) == T
+        }) => (forall(i: integer)
+        where(0 <= i && i < integer(length) - 1 && i < integer(N)) {
+            typeof((*data)[i]) == T
+        }) by {intro prior; intro i; omega};
+    proof prefix: forall(i: integer)
+        where(0 <= i && i < integer(length) - 1 && i < integer(N)) {
+            typeof((*data)[i]) == T
+        } by {apply frame; exact initialized};
+    proof empty_frame: (forall(i: integer) where(0 <= i && integer(length) <= i && i < integer(N)) {
+        typeof(old(*data)[i]) == shape(T)
+    }) => (forall(i: integer) where(0 <= i && integer(length) - 1 <= i && i < integer(N)) {
+        typeof((*data)[i]) == shape(T)
+    }) by {intro prior; intro i; omega};
+    proof suffix: forall(i: integer) where(0 <= i && integer(length) - 1 <= i && i < integer(N)) {
+        typeof((*data)[i]) == shape(T)
+    } by {apply empty_frame; exact vacant};
+    if length > 1 {
+        let survivor: &T = &(*data)[0];
+    }
+    value
+}
+
+fn main() -> usize {
+    let data: unique(unique(usize) | shape(unique(usize)), 8) =
+        alloc(8, shape(unique(usize)));
+    push::<unique(usize), 8>(&*data, 0, alloc(7));
+    push::<unique(usize), 8>(&*data, 1, alloc(42));
+    let last = take_last::<unique(usize), 8>(&*data, 2);
+    let first = take_last::<unique(usize), 8>(&*data, 1);
+    let empty: unique(shape(unique(usize)), 8) = data;
+    drop(empty);
+    *last
+}

@@ -14,7 +14,7 @@ fn atom(formula: &Formula) -> Option<(&str, &[Linear], bool)> {
     }
 }
 
-fn specialization_term(
+pub(super) fn specialization_term(
     pattern: &Formula,
     goal: &Formula,
     variable: &str,

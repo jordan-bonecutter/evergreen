@@ -491,8 +491,7 @@ slot, extracts its real owner, and frees the now-empty backing buffer. A
 reference into the extracted payload survives; a typed slot view cannot read
 a cleared slot. Mutating a condition used by a range invalidates that
 guarantee's subjects; an explicit proof may derive a guarantee independent of
-that condition before
-it changes. Deferred payload planes retain their active-member presence guard,
+that condition before it changes. Deferred payload planes retain their active-member presence guard,
 independently of the branch that first observes them.
 
 Runtime indices now select deferred input cells as well; see
@@ -506,8 +505,36 @@ to alias and liveness checks even when it has no named source footprint; it
 grants no nested write authority. Actual calls still recheck borrowed payload
 aliases: different array slots can contain references to the same pointee.
 
-General store/join summaries and conditional input-cell identities remain
-unfinished. Explicit specialization into a nested or restricted universal
+Input stores now define a fresh selector whose body distinguishes the changed
+index from the earlier contents version. Stored member tests use the actual
+replacement tag; other indices refer to the earlier selector. These closed,
+acyclic definitions retain all captured indices and extents. Operational resource
+reads follow the same store chain, resolving equality or separation against the
+original input cell recipes rather than inventing new owners. When a branch
+first observes an input cell through a stored version, the join replays primitive
+bounds and scalar invariants of its immutable input recipe. It does not assume
+nominal invariants about replacement values or changed live pointees.
+
+[range_store.evg](../examples/range_store.evg) implements generic push and pop
+on an initialized prefix followed by empty storage. Each operation names its
+entry guarantee, changes one slot, proves a general frame implication from a
+local range hypothesis, then applies that implication to the saved guarantee.
+`typeof(old(*data)[i])` observes the entry selector; it does not copy or materialize
+an owning array. A missing application does not automatically carry an input
+range across the write. A later write creates another selector and expires the
+new guarantee in turn.
+
+Selector reduction builds kernel-checked conjunctions, disjunctions, negations,
+universal specialization, and predicate unfolding. An undecided arithmetic
+index guard can split into two local hypotheses; the guard-or-negation
+disjunction has its own arithmetic certificate, and `OrElim` discharges both
+branches. Local arithmetic hypotheses are preferred over unrelated ambient
+storage imports. No predicate becomes an arithmetic Boolean or an assumed truth.
+The negative type-test variants erase to identical native code. The billion-slot
+variant retains the same obligation and certificate counts.
+
+General joins, conditional input-cell identities, and resource loop frames
+remain unfinished. Explicit specialization into a nested or restricted universal
 works. Operational reads, empty-buffer narrowing, and destruction still
 perform their own ownership and current-state checks; a false admitted range
 does not erase an initialized owner. See [sparse_ranges.evg](../examples/sparse_ranges.evg).

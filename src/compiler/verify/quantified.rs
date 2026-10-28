@@ -210,6 +210,9 @@ impl Context<'_> {
                 Ok(())
             }
             Kind::Field(base, _) => self.check_quantified_place(base),
+            Kind::Call(name, args) if name == "old" && args.len() == 1 => {
+                self.check_quantified_place(&args[0])
+            }
             Kind::Unary(op, base) if op == "*" => self.check_quantified_place(base),
             _ => Err(format!(
                 "line {}: quantified memory reads must be independent of the bound index",

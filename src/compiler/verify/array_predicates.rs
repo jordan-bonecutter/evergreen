@@ -3,12 +3,16 @@
 
 use super::*;
 
+mod definitions;
 mod observations;
+mod reduction;
 
 #[cfg(test)]
 mod input_tests;
 #[cfg(test)]
 mod observation_tests;
+#[cfg(test)]
+mod store_tests;
 #[cfg(test)]
 mod tests;
 
@@ -104,14 +108,7 @@ impl Context<'_> {
         let index = self.eval(index, Some(&Ty::Int))?.number()?;
         let array = self.storage(base)?;
         self.charge_value_work(symbol_weight(&array)?)?;
-        let Symbol::Array {
-            element,
-            len,
-            items,
-            cells,
-            identity,
-        } = &array
-        else {
+        let Symbol::Array { len, identity, .. } = &array else {
             return Err("indexed type predicates require array storage".into());
         };
         let bounds =
@@ -121,91 +118,8 @@ impl Context<'_> {
             .last_mut()
             .ok_or("indexed type predicates require an arithmetic quantifier domain")?
             .push(bounds);
+        self.ensure_type_selector(&array, &target, 0)?;
         let key = (identity.clone(), target.clone());
-        if !self.arrays.type_predicates.contains_key(&key)
-            && self.arrays.inputs.contains(identity)
-            && matches!(element.as_ref(), Ty::Union(_))
-            && items.is_none()
-        {
-            // An input array has no uniform default. Give its immutable
-            // version an uninterpreted selector, never an invented type fact.
-            // Sparse observations cannot define its unobserved remainder.
-            let symbol = self.fresh_name();
-            self.proof
-                .evidence
-                .declare_predicate(symbol.clone(), vec!["index".into()])?;
-            self.arrays.type_predicates.insert(
-                key.clone(),
-                Selector {
-                    symbol,
-                    captures: Vec::new(),
-                },
-            );
-        }
-        if !self.arrays.type_predicates.contains_key(&key) {
-            let initial = match self.arrays.history.get(identity) {
-                Some(ArrayHistory::Uninitialized(value) | ArrayHistory::Fill(value)) => {
-                    Some(member(value, &target)?)
-                }
-                _ if !matches!(element.as_ref(), Ty::Union(_)) => {
-                    Some(unions::type_equal(element, &target)?)
-                }
-                _ => None,
-            };
-            let variable = "evg_selector_index";
-            let input = Linear::variable(variable);
-            let mut exclusions = Vec::new();
-            let mut alternatives = Vec::new();
-            let mut visit = |at: &Linear, value: &Symbol| -> Result<()> {
-                let matches = member(value, &target)?;
-                // Read observations matching the uniform default add no exception.
-                if initial.as_ref() == Some(&matches) {
-                    return Ok(());
-                }
-                let same = equal(&input, at)?;
-                exclusions.push(same.clone().not());
-                alternatives.push(same.and(matches));
-                Ok(())
-            };
-            if let Some(items) = items {
-                // Literal elements are already explicit data; no capacity is enumerated.
-                for (i, value) in items.iter().enumerate() {
-                    visit(&Linear::number(i as i128), value)?;
-                }
-            }
-            for (at, value) in cells {
-                visit(at, value)?;
-            }
-            let default = match initial {
-                Some(initial) => initial,
-                None if items.is_some() => Formula::False,
-                None => return Err("indexed union predicates need a known default or explicit literal elements; input and store summaries remain unfinished".into()),
-            };
-            alternatives.push(default.and(combine(exclusions, true)));
-            let body = Formula::Ge(input.clone())
-                .and(Formula::Ge(len.sub(&input)?.add(&Linear::number(-1))?))
-                .and(combine(alternatives, false));
-            self.charge_value_work(body.storage_weight()?)?;
-            let captures = body
-                .free_variables()?
-                .into_iter()
-                .filter(|name| name != variable)
-                .collect::<Vec<_>>();
-            let parameters = std::iter::once(variable.to_owned())
-                .chain(captures.iter().cloned())
-                .collect();
-            let symbol = self.fresh_name();
-            let definition =
-                self.proof
-                    .evidence
-                    .define_predicate(symbol.clone(), parameters, body)?;
-            self.arrays
-                .predicate_definitions
-                .insert(symbol.clone(), definition);
-            self.arrays
-                .type_predicates
-                .insert(key.clone(), Selector { symbol, captures });
-        }
         let selector = &self.arrays.type_predicates[&key];
         let arguments = std::iter::once(index)
             .chain(selector.captures.iter().map(Linear::variable))
@@ -252,8 +166,19 @@ impl Context<'_> {
         } else {
             body.clone()
         };
-        let support = self.arithmetic_support_for(&wanted, subjects, label, line)?;
-        let proven = self.proof.evidence.arithmetic(wanted, support)?;
+        let proven = if wanted.is_arithmetic() {
+            if let Some(node) = self.reduce_selector_formula(&wanted, 0)? {
+                node
+            } else {
+                let support = self.arithmetic_support_for(&wanted, subjects, label, line)?;
+                self.proof.evidence.arithmetic(wanted, support)?
+            }
+        } else {
+            let Some(node) = self.reduce_selector_formula(&wanted, 0)? else {
+                return Err(format!("line {line}: cannot prove {label}: selector reduction needs a checked premise for its earlier contents version"));
+            };
+            node
+        };
         let implication = if negated {
             Formula::Implies(Box::new(atom.clone()), Box::new(body.clone()))
         } else {
@@ -287,13 +212,7 @@ impl Context<'_> {
                 argument: premise,
             },
         )?;
-        let contradiction = self.proof.evidence.derive(
-            Formula::False,
-            evidence::Rule::ImpElim {
-                theorem: proven,
-                argument: body,
-            },
-        )?;
+        let contradiction = self.selector_contradiction(proven, body)?;
         self.proof
             .evidence
             .derive(

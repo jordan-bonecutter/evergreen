@@ -993,6 +993,25 @@ impl<'a> Context<'a> {
                 *identity = next;
                 return Ok(());
             }
+            if self.array_input_origin(identity)?.is_some() {
+                let mut replacement = cells
+                    .get(target)
+                    .cloned()
+                    .ok_or("missing resource array write view")?;
+                self.replace_projection(&mut replacement, &path[1..], new)?;
+                let next = self.fresh_name();
+                self.arrays.history.insert(
+                    next.clone(),
+                    ArrayHistory::Store {
+                        base: identity.clone(),
+                        index: target.clone(),
+                        value: replacement.clone(),
+                    },
+                );
+                cells.insert(target.clone(), replacement);
+                *identity = next;
+                return Ok(());
+            }
             let empty = match self.arrays.history.get(identity) {
                 Some(ArrayHistory::Uninitialized(initial)) => Some(initial.clone()),
                 _ => None,
@@ -2278,11 +2297,14 @@ impl<'a> Context<'a> {
         items: Option<&[Symbol]>,
         cells: &BTreeMap<Linear, Symbol>,
     ) -> Result<Symbol> {
+        let origin = if matches!(element, Ty::Union(_)) || self.ty_has_reference(element) {
+            self.array_input_origin(identity)?
+        } else {
+            None
+        };
         let canonical;
-        let index = if self.arrays.inputs.contains(identity)
-            && (matches!(element, Ty::Union(_)) || self.ty_has_reference(element))
-        {
-            canonical = self.input_array_index(identity, index)?;
+        let index = if let Some(origin) = &origin {
+            canonical = self.input_array_index(origin, index)?;
             &canonical
         } else {
             index
@@ -2293,12 +2315,12 @@ impl<'a> Context<'a> {
         ) {
             return self.read_uninitialized_array(identity, index, cells);
         }
-        if self.arrays.inputs.contains(identity) && matches!(element, Ty::Union(_)) {
+        if origin.is_some() {
             let value = if let Some(value) = cells.get(index) {
                 self.charge_value_work(symbol_weight(value)?)?;
                 value.clone()
             } else {
-                self.input_array_port(element, identity, index)?
+                self.read_resource_version(element, identity, index)?
             };
             self.observe_input_slot_types(identity, index, &value)?;
             return Ok(value);

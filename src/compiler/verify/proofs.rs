@@ -139,12 +139,12 @@ impl Context<'_> {
         Ok(())
     }
 
-    fn with_proof_hypotheses(
+    pub(super) fn with_proof_hypotheses<T>(
         &mut self,
         hypotheses: &[(&str, evidence::NodeId)],
         line: usize,
-        check: impl FnOnce(&mut Self) -> Result<evidence::NodeId>,
-    ) -> Result<evidence::NodeId> {
+        check: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
         let mut names = BTreeSet::new();
         for (name, node) in hypotheses {
             self.fresh_binding(name, line)?;

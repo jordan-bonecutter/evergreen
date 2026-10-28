@@ -60,7 +60,12 @@ resource range loop frames, and cleanup of a dynamically initialized prefix
 remain unfinished. Range promises can also live in nominal type invariants;
 [range_type.evg](../examples/range_type.evg) demonstrates a generic initialized
 slot with typed borrowing and complete consumption. Vec still needs conditional
-capacity observations and preservation of its initialized prefix across stores.
+capacity observations, resource loop frames, and destruction of exactly its
+initialized prefix. Generic single-slot prefix/suffix transitions now work in
+[range_store.evg](../examples/range_store.evg): push initializes the boundary,
+pop extracts the last owner, and explicit frame proofs preserve the untouched
+ranges. These are general source-level storage operations; the existing Vec
+implementation has not yet switched to that representation.
 
 Run [vec_generic.evg](../examples/vec_generic.evg) with:
 

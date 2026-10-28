@@ -157,6 +157,15 @@ quantified invariant transport across different record roots remains conservativ
 this example's range refers to the actual backing plane. General prefix cleanup
 in Drop bodies is still unfinished.
 
+[range_store.evg](../examples/range_store.evg) proves initialized-prefix and
+empty-suffix transitions for generic push and pop. A fresh store selector records
+the changed slot and refers to the prior selector elsewhere. Explicit frame proofs
+carry the two range guarantees across that write; they do not carry by default.
+A surviving initialized slot can then be borrowed using the new prefix proof.
+The same rules work with negative type tests and remain sparse at a billion
+slots. Resource reads through successive input versions reuse the original
+cell identities with checked index equality or separation.
+
 Resource range loop frames, conditional input-cell identities, and cleanup of
 a dynamically initialized prefix remain unfinished. The general
 move-only Vec still needs those rules. Sparse resource arrays currently separate
