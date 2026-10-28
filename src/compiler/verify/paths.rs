@@ -208,6 +208,9 @@ fn extend_normalized(
                 "quantified propositions require universal proof rules before arithmetic".into(),
             )
         }
+        Formula::Predicate { .. } => {
+            return Err("predicate atoms require logical proof rules before arithmetic".into())
+        }
         Formula::Not(p) => return extend_normalized(paths, p, !negated, origin, session, work),
         Formula::Implies(a, b) => {
             if negated {

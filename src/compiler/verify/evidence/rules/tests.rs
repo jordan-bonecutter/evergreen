@@ -263,6 +263,9 @@ fn accepted_inferences_have_no_counterexample_in_two_atom_truth_tables() {
             Formula::Not(a) => !truth(a, assignment),
             Formula::Implies(a, b) => !truth(a, assignment) || truth(b, assignment),
             Formula::Forall { .. } => panic!("unexpected quantifier in propositional truth table"),
+            Formula::Predicate { .. } => {
+                panic!("unexpected structured predicate in propositional truth table")
+            }
         }
     }
     let p = atom("p");

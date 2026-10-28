@@ -363,6 +363,20 @@ quantifiers are also rejected: opaque frontend identities must not hide a bound
 argument. Those expressions need structured substitution and immutable memory
 dependencies before these rules can describe initialized resource ranges in Vec.
 
+The kernel now has structured predicate atoms as groundwork for those memory
+claims. An atom retains an uninterpreted symbol and its integer arguments.
+Universal substitution, free-variable checks, and bound-variable renaming visit
+every argument. Predicate congruence requires the same symbol and a checked
+equality for each corresponding argument; it preserves all premise hypotheses
+and admissions. Changing a symbol cannot be justified by equal indices.
+
+Atoms establish no truth by their construction and have no built-in memory or
+ownership meaning. They cannot enter arithmetic paths as fresh Boolean variables.
+The source indexed-memory elaborator still needs to associate observation symbols
+with immutable array contents, retain their plane subjects, and justify selector
+facts from checked storage transitions. Predicate calls inside source quantifiers
+remain rejected until that elaboration is implemented.
+
 Explicit proof declarations now store state-subject snapshots separately from
 arithmetic formulas. Canonical claim keys retain operator structure and replace
 storage reads with projection/revision stamps. Different subjects or different

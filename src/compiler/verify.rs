@@ -229,6 +229,16 @@ fn symbol_weight(value: &Symbol) -> Result<usize> {
                 }
             }
             Node::Formula(Formula::Ge(n), _) => weight = weight.saturating_add(n.terms.len()),
+            Node::Formula(Formula::Predicate { symbol, arguments }, _) => {
+                if symbol.is_empty() {
+                    return Err("predicate symbols must be nonempty".into());
+                }
+                weight = arguments
+                    .iter()
+                    .fold(weight.saturating_add(symbol.len()), |cost, argument| {
+                        cost.saturating_add(1 + argument.terms.len())
+                    });
+            }
             Node::Formula(Formula::Not(p), depth) => pending.push(Node::Formula(p, depth + 1)),
             Node::Formula(
                 Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b),

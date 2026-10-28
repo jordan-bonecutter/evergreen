@@ -5,6 +5,8 @@
 use super::*;
 
 #[cfg(test)]
+mod predicate_tests;
+#[cfg(test)]
 mod quantified_tests;
 #[cfg(test)]
 mod tests;
@@ -48,6 +50,12 @@ pub(in crate::compiler::verify) enum Rule {
         domain: NodeId,
         term: Linear,
     },
+    // Source indexed-memory elaboration will construct this congruence step.
+    #[allow(dead_code)]
+    PredicateCongruence {
+        source: NodeId,
+        equalities: Vec<NodeId>,
+    },
 }
 
 impl Rule {
@@ -81,6 +89,12 @@ impl Rule {
             Self::ForallElim {
                 theorem, domain, ..
             } => vec![theorem, domain],
+            Self::PredicateCongruence {
+                source,
+                ref equalities,
+            } => std::iter::once(source)
+                .chain(equalities.iter().copied())
+                .collect(),
         }
     }
 
@@ -91,6 +105,7 @@ impl Rule {
                 .terms
                 .keys()
                 .fold(1usize, |cost, name| cost.saturating_add(1 + name.len())),
+            Self::PredicateCongruence { equalities, .. } => equalities.len(),
             _ => 0,
         }
     }
@@ -219,6 +234,28 @@ impl Rule {
                 } => {
                     same(claim(domain)?, &bounds.substitute(variable, term)?)
                         && same(goal, &body.substitute(variable, term)?)
+                }
+                _ => false,
+            },
+            Self::PredicateCongruence {
+                source,
+                ref equalities,
+            } => match (claim(source)?, goal) {
+                (
+                    Formula::Predicate {
+                        symbol: a,
+                        arguments: aa,
+                    },
+                    Formula::Predicate {
+                        symbol: b,
+                        arguments: ba,
+                    },
+                ) if a == b && aa.len() == ba.len() && aa.len() == equalities.len() => {
+                    let mut valid = true;
+                    for ((from, to), proof) in aa.iter().zip(ba).zip(equalities) {
+                        valid &= same(claim(*proof)?, &equal(from, to)?);
+                    }
+                    valid
                 }
                 _ => false,
             },

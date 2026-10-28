@@ -10,6 +10,12 @@ pub(super) enum Formula {
     True,
     False,
     Ge(Linear),
+    // The indexed-memory elaborator will supply immutable observation symbols.
+    #[allow(dead_code)]
+    Predicate {
+        symbol: String,
+        arguments: Vec<Linear>,
+    },
     And(Box<Self>, Box<Self>),
     Or(Box<Self>, Box<Self>),
     Not(Box<Self>),
@@ -28,13 +34,7 @@ impl Formula {
             Self::False => out.push(1),
             Self::Ge(row) => {
                 out.push(2);
-                out.extend(row.constant.to_le_bytes());
-                out.extend((row.terms.len() as u64).to_le_bytes());
-                for (name, coefficient) in &row.terms {
-                    out.extend((name.len() as u64).to_le_bytes());
-                    out.extend(name.as_bytes());
-                    out.extend(coefficient.to_le_bytes());
-                }
+                encode_linear(row, out);
             }
             Self::And(a, b) | Self::Or(a, b) => {
                 out.push(if matches!(self, Self::And(..)) { 3 } else { 4 });
@@ -60,6 +60,15 @@ impl Formula {
                 out.extend(variable.as_bytes());
                 domain.encode(out);
                 body.encode(out);
+            }
+            Self::Predicate { symbol, arguments } => {
+                out.push(8);
+                out.extend((symbol.len() as u64).to_le_bytes());
+                out.extend(symbol.as_bytes());
+                out.extend((arguments.len() as u64).to_le_bytes());
+                for argument in arguments {
+                    encode_linear(argument, out);
+                }
             }
         }
     }
@@ -126,6 +135,16 @@ impl Formula {
             weight = weight.saturating_add(1);
             match part {
                 Formula::Ge(row) => weight = weight.saturating_add(row.terms.len()),
+                Formula::Predicate { symbol, arguments } => {
+                    if symbol.is_empty() {
+                        return Err("predicate symbols must be nonempty".into());
+                    }
+                    weight = arguments
+                        .iter()
+                        .fold(weight.saturating_add(symbol.len()), |cost, argument| {
+                            cost.saturating_add(1 + argument.terms.len())
+                        });
+                }
                 Formula::Not(p) => pending.push((p, depth + 1)),
                 Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b) => {
                     pending.push((a, depth + 1));
@@ -150,5 +169,15 @@ impl Formula {
             }
         }
         Ok(weight)
+    }
+}
+
+fn encode_linear(row: &Linear, out: &mut Vec<u8>) {
+    out.extend(row.constant.to_le_bytes());
+    out.extend((row.terms.len() as u64).to_le_bytes());
+    for (name, coefficient) in &row.terms {
+        out.extend((name.len() as u64).to_le_bytes());
+        out.extend(name.as_bytes());
+        out.extend(coefficient.to_le_bytes());
     }
 }
