@@ -120,6 +120,15 @@ impl Context<'_> {
         else {
             return Err("reference index requires array storage".into());
         };
+        let canonical;
+        let index = if self.arrays.inputs.contains(&identity)
+            && (matches!(element.as_ref(), Ty::Union(_)) || self.ty_has_reference(&element))
+        {
+            canonical = self.input_array_index(&identity, index)?;
+            &canonical
+        } else {
+            index
+        };
         self.prove(
             &Formula::Ge(len.sub(index)?.add(&Linear::number(-1))?),
             "reference index < length",

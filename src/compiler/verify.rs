@@ -592,7 +592,9 @@ struct WritePlace {
 
 #[derive(Clone)]
 struct InputReference {
-    origin: String,
+    // None retains physical alias/liveness checks without granting a named
+    // nested source footprint for a symbolic array element.
+    origin: Option<String>,
     guard: Formula,
     reference: Reference,
     path: Vec<Projection<Linear>>,
@@ -2278,6 +2280,15 @@ impl<'a> Context<'a> {
         items: Option<&[Symbol]>,
         cells: &BTreeMap<Linear, Symbol>,
     ) -> Result<Symbol> {
+        let canonical;
+        let index = if self.arrays.inputs.contains(identity)
+            && (matches!(element, Ty::Union(_)) || self.ty_has_reference(element))
+        {
+            canonical = self.input_array_index(identity, index)?;
+            &canonical
+        } else {
+            index
+        };
         if matches!(
             self.arrays.history.get(identity),
             Some(ArrayHistory::Uninitialized(_))

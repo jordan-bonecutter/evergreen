@@ -97,7 +97,7 @@ identity and is invalidated by later writes. This works from the allocator's
 known empty default. Arbitrary input-union arrays can now carry and forward
 opaque range guarantees without materializing their elements; see
 [input_ranges.evg](../examples/input_ranges.evg). The checker does not infer any
-slot type from the mere existence of such a selector. A demanded constant cell
+slot type from the mere existence of such a selector. A demanded cell
 can use a live, closed range proof with no admissions or pending summaries to
 establish its current member interpretation. Its domain must hold at that
 point; writes use fresh contents identities.
@@ -108,8 +108,16 @@ requires the declared write authority and leaves the actual slot as a shape.
 The billion-slot variant has the same obligation and certificate count;
 unobserved cells are never materialized. The selector-to-cell correspondence
 remains an explicit frontend import, rather than an independent kernel memory
-proof. Symbolic resource input selection remains rejected until potentially
-aliased indices have a shared conditional plane model.
+proof.
+
+[range_index.evg](../examples/range_index.evg) selects a runtime index. Equal
+indices reuse the same cell recipe, and a new recipe requires separation from
+all existing observations. Every demand rechecks these relations using current
+facts without admissions. Uncertain aliases and recipes that overlap in a
+different branch still require a conditional plane model and are rejected.
+The billion-slot variant retains the same obligation and certificate count.
+Symbolic nested payload ports participate in alias and liveness checks without
+implicitly granting source write footprints.
 
 An active slot also supports a contextual member borrow:
 
@@ -140,7 +148,7 @@ freeing the buffer, until the extracted payload owner is released. Moving a
 non-Copy owner out through a typed member reference remains rejected; extraction
 uses the raw union slot and its checked shape transition.
 
-Resource range loop frames, symbolic resource input identities, and cleanup of
+Resource range loop frames, conditional input-cell identities, and cleanup of
 a dynamically initialized prefix remain unfinished. The general
 move-only Vec still needs those rules. Sparse resource arrays currently separate
 incompatible branch states rather than merging them into a universal range

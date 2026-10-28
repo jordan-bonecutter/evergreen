@@ -5,6 +5,8 @@
 use super::*;
 
 #[cfg(test)]
+mod symbolic_tests;
+#[cfg(test)]
 mod tests;
 
 impl Context<'_> {
@@ -123,18 +125,45 @@ impl Context<'_> {
         Some(value)
     }
 
+    /// Demanded input cells share one identity whenever their indices are
+    /// provably equal. Distinct recipes require a current, admission-free
+    /// separation proof; uncertain aliasing cannot manufacture another owner.
+    pub(super) fn input_array_index(&mut self, identity: &str, index: &Linear) -> Result<Linear> {
+        let cost = self.arrays.ports.get(identity).map_or(1, |cells| {
+            cells
+                .keys()
+                .fold(1, |cost: usize, at| cost.saturating_add(1 + at.terms.len()))
+        });
+        self.charge_value_work(cost.saturating_add(index.terms.len()))?;
+        let indices = self
+            .arrays
+            .ports
+            .get(identity)
+            .map(|cells| cells.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let mut selected = None;
+        for at in indices {
+            let same = equal(index, &at)?;
+            if index == &at || self.checked_entails(&same)? {
+                if selected.replace(at).is_some() {
+                    return Err("input cell recipes overlap in this state; conditional plane identities are required".into());
+                }
+            } else if !self.checked_entails(&same.not())? {
+                return Err("input indices may alias; prove equality or separation before observing another cell".into());
+            }
+        }
+        Ok(selected.unwrap_or_else(|| index.clone()))
+    }
+
     pub(super) fn input_array_port(
         &mut self,
         element: &Ty,
         identity: &str,
         index: &Linear,
     ) -> Result<Symbol> {
-        if constant_index(index).is_none() {
-            return Err("symbolic selection of reference-bearing elements needs a conditional plane identity or alias contract".into());
-        }
         if !self.arrays.inputs.contains(identity) {
             return Err(
-                "reference array selection requires a known cell or a deferred input".into(),
+                "reference array selection requires a known cell, a deferred input, or an alias contract".into(),
             );
         }
         if let Some(value) = self

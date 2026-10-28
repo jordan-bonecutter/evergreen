@@ -108,7 +108,7 @@ impl Context<'_> {
             self.charge_value_work(inputs.len() + case.path.len() + case.guard.storage_weight()?)?;
             let mut available = Formula::False;
             for input in inputs.iter().filter(|input| {
-                input.origin == origin
+                input.origin.as_ref() == Some(&origin)
                     && input.reference == case.reference
                     && input.path.len() <= case.path.len()
             }) {

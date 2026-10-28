@@ -147,7 +147,7 @@ impl Context<'_> {
         // carried in ideal data. Origin coverage was checked above.
         let mut erased = None;
         for input in inputs.iter().filter(|input| {
-            input.origin == place.origin
+            input.origin.as_ref() == Some(&place.origin)
                 && input.reference == place.reference
                 && input.path.len() <= place.path.len()
         }) {

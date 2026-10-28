@@ -1,0 +1,28 @@
+fn get<T, const N: usize>(data: &[T | shape(T); N], index: usize) -> &T
+where(index < N && (forall(i: integer) where(0 <= i && i < integer(N) && i == integer(index)) {
+    typeof((*data)[i]) == T
+}))
+borrows(&(*data)[index]) {
+    &(*data)[index]
+}
+
+fn take<T, const N: usize>(data: &[T | shape(T); N], index: usize) -> T
+where(index < N && (forall(i: integer) where(0 <= i && i < integer(N) && i == integer(index)) {
+    typeof((*data)[i]) == T
+}))
+modifies(&(*data)[index])
+ensures(typeof((*data)[index]) == shape(T)) {
+    move((*data)[index])
+}
+
+fn main() -> usize {
+    let data: unique(unique(usize) | shape(unique(usize)), 8) =
+        alloc(8, shape(unique(usize)));
+    (*data)[3] = alloc(42);
+    let view = get::<unique(usize), 8>(&*data, 3);
+    let payload = &**view;
+    let value = take::<unique(usize), 8>(&*data, 3);
+    let empty: unique(shape(unique(usize)), 8) = data;
+    drop(empty);
+    *payload
+}

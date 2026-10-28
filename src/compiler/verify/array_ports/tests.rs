@@ -1,6 +1,6 @@
 use super::*;
 
-fn check(source: &str) {
+pub(super) fn check(source: &str) {
     let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
     assert!(program.trusted_assumptions().is_empty());
     assert_eq!(

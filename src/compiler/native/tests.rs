@@ -149,14 +149,21 @@ fn native_range_slot_loans_follow_extracted_payloads() {
         std::process::id(),
     ));
     fs::create_dir(&directory).unwrap();
-    let source = include_str!("../../../examples/range_slots.evg");
-    let program = verify(source).unwrap();
-    let status = execute_test_binary(
-        &directory.join("range_slots"),
-        &emit(&program).unwrap(),
-        source,
-    );
-    assert_eq!(status.code(), Some(42));
+    for (index, source) in [
+        include_str!("../../../examples/range_slots.evg"),
+        include_str!("../../../examples/range_index.evg"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let program = verify(source).unwrap();
+        let status = execute_test_binary(
+            &directory.join(index.to_string()),
+            &emit(&program).unwrap(),
+            source,
+        );
+        assert_eq!(status.code(), Some(42));
+    }
     fs::remove_dir_all(directory).unwrap();
 }
 

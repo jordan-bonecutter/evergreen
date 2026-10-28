@@ -220,14 +220,14 @@ impl Context<'_> {
         fn visit(
             ctx: &mut Context<'_>,
             value: &Symbol,
-            origin: String,
+            origin: Option<String>,
             mode: (bool, Formula),
             inputs: &mut Vec<InputReference>,
             work: &mut usize,
             limit: usize,
         ) -> Result<()> {
             let borrowed = mode.0;
-            *work = work.saturating_add(1 + origin.len() / 32);
+            *work = work.saturating_add(1 + origin.as_ref().map_or(0, |origin| origin.len() / 32));
             if *work > limit {
                 return Err(
                     "symbolic value work limit reached while checking incoming references".into(),
@@ -299,7 +299,7 @@ impl Context<'_> {
                     visit(
                         ctx,
                         &target,
-                        format!("(*{origin})"),
+                        origin.as_ref().map(|origin| format!("(*{origin})")),
                         (true, mode.1.clone()),
                         inputs,
                         work,
@@ -334,7 +334,7 @@ impl Context<'_> {
                     visit(
                         ctx,
                         &target,
-                        format!("(*{origin})"),
+                        origin.as_ref().map(|origin| format!("(*{origin})")),
                         mode.clone(),
                         inputs,
                         work,
@@ -373,7 +373,7 @@ impl Context<'_> {
                         visit(
                             ctx,
                             value,
-                            format!("{origin}.{name}"),
+                            origin.as_ref().map(|origin| format!("{origin}.{name}")),
                             mode.clone(),
                             inputs,
                             work,
@@ -393,7 +393,7 @@ impl Context<'_> {
                             visit(
                                 ctx,
                                 value,
-                                format!("{origin}[{index}]"),
+                                origin.as_ref().map(|origin| format!("{origin}[{index}]")),
                                 mode.clone(),
                                 inputs,
                                 work,
@@ -407,15 +407,20 @@ impl Context<'_> {
                         .chain(ctx.observed_input_ports(identity))
                         .collect::<BTreeMap<_, _>>();
                     for (index, value) in observed {
-                        let index = constant_index(&index)
-                            .ok_or("incoming reference port needs a fixed element identity")?;
-                        if items.as_ref().is_some_and(|items| index < items.len()) {
+                        let literal = constant_index(&index);
+                        if items
+                            .as_ref()
+                            .is_some_and(|items| literal.is_some_and(|index| index < items.len()))
+                        {
                             continue;
                         }
                         visit(
                             ctx,
                             &value,
-                            format!("{origin}[{index}]"),
+                            origin
+                                .as_ref()
+                                .zip(literal)
+                                .map(|(origin, index)| format!("{origin}[{index}]")),
                             mode.clone(),
                             inputs,
                             work,
@@ -443,7 +448,7 @@ impl Context<'_> {
                 visit(
                     self,
                     &value,
-                    name.clone(),
+                    Some(name.clone()),
                     (false, Formula::True),
                     &mut inputs,
                     &mut work,
