@@ -397,8 +397,8 @@ Function and loop contract instantiation remains an explicitly unresolved
 frontend import, just as scalar contract instantiation does. Logical clauses
 retain their actual admission parents and do not become arithmetic assumptions.
 Complete independent certification of these state substitutions remains pending.
-Universal nominal type invariants, quantified domains, unknown input-union
-selectors, and resource range loop frames remain unfinished.
+Universal nominal type invariants, quantified domains, operational reads from
+unknown input-union selectors, and resource range loop frames remain unfinished.
 Generalization through declaration summaries or imported trust with untraced
 context dependencies is rejected. User predicate calls and indexed payload reads
 inside quantifiers remain rejected: opaque frontend identities must not hide a
@@ -415,12 +415,16 @@ Atoms establish no truth by their construction and have no built-in memory or
 ownership meaning. They cannot enter arithmetic paths as fresh Boolean variables.
 The kernel also checks closed predicate definitions. Every free integer is an
 explicit parameter, including captured array extents, stored indices, and type
-selectors. Definitions can only refer to earlier definitions, cannot be
+selectors. Definitions can only refer to earlier declared predicates, cannot be
 redefined, and unfold by a checked implication in either direction. Arguments
 substitute simultaneously; a replacement containing another parameter's name is
 not rewritten again. Capture, arithmetic overflow, and work limits are checked
 before expanded rows are retained. Defining a predicate provides no proof that
-the predicate is true.
+the predicate is true. An opaque predicate declaration registers a fresh symbol
+and its arity with no body and no evidence node. It cannot be unfolded or later
+redefined. Closed definitions can refer to such earlier opaque predicates while
+retaining their integer arguments; unfolding the wrapper does not prove its
+opaque dependency.
 
 Inside source universals, `typeof(array[i]) == T` and `!= T` retain the bound
 index and the immutable array contents identity. The frontend builds a balanced
@@ -436,9 +440,22 @@ fresh contents identities, preventing reuse of an earlier range theorem.
 The mapping from verified storage to a selector definition remains a frontend
 trust boundary, like the existing scalar and union observation model. These
 definitions do not independently certify memory transitions or native execution.
-Unknown input-union arrays, general store/join summaries, direct specialization
-into ordinary pointwise `typeof` queries, and typed resource borrowing from range
-claims remain unfinished. Explicit specialization into a nested or restricted
+Unknown input-union arrays now use an opaque selector for each immutable array
+identity and target member type. Their ranges require checked premises; neither
+the declaration nor existing sparse observations invent an empty default. The
+checker can forward these range contracts and apply a separately proved
+restriction theorem. This creates no element views or payload owners. See
+[input_ranges.evg](../examples/input_ranges.evg); its billion-slot variant retains
+the same obligation and certificate count as the eight-slot variant.
+Empty domains use a checked arithmetic contradiction followed by the kernel's
+false-elimination rule. The domain hypothesis is discharged by universal
+introduction; it cannot establish a slot type outside that domain or escape
+into the surrounding state.
+
+General store/join summaries, connecting an opaque selector to an observed cell,
+direct specialization into ordinary pointwise `typeof` queries, and typed
+resource borrowing from range claims remain unfinished. Explicit specialization
+into a nested or restricted
 universal works. Operational reads, empty-buffer narrowing, and destruction still
 perform their own ownership and current-state checks; a false admitted range
 does not erase an initialized owner. See [sparse_ranges.evg](../examples/sparse_ranges.evg).

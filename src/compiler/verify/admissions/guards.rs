@@ -31,7 +31,7 @@ impl Context<'_> {
         Ok(scope)
     }
 
-    fn probe_guard(
+    pub(in crate::compiler::verify) fn probe_guard(
         &mut self,
         paths: &paths::Paths,
         guard: &Formula,

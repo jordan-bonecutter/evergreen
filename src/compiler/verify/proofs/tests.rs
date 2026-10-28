@@ -146,6 +146,26 @@ fn closing_a_local_false_hypothesis_does_not_poison_the_outer_context() {
 }
 
 #[test]
+fn opaque_conclusions_from_local_contradictions_discharge_only_local_hypotheses() {
+    with_context(&mut Session::search(), |ctx| {
+        let predicate = Formula::Predicate {
+            symbol: "unknown".into(),
+            arguments: vec![Linear::number(7)],
+        };
+        let before = ctx.proof.paths.clone();
+        let goal = Formula::Implies(Box::new(Formula::False), Box::new(predicate.clone()));
+        let root = script(ctx, &goal, &["intro impossible", "omega"]);
+        ctx.proof.evidence.check_closed(root).unwrap();
+        assert!(ctx.proof.evidence.admissions(root).admissions.is_empty());
+        assert_eq!(ctx.proof.paths, before);
+        assert!(ctx.proof.witnesses.is_empty());
+        assert!(ctx
+            .proof_script(&predicate, "outside hypothesis", 1, &["omega".into()])
+            .is_err());
+    });
+}
+
+#[test]
 fn introduction_preserves_claim_and_does_not_admit_its_hypothesis() {
     with_context(&mut Session::search(), |ctx| {
         let premise = Formula::Ge(Linear::variable("p"));

@@ -94,7 +94,11 @@ The generic `new_buffer<T>` in that example advertises its initial empty range
 as an `ensures(forall(...))` contract. Callers can name that guarantee with
 `by {assumption}`. The exported theorem retains the allocated plane's contents
 identity and is invalidated by later writes. This works from the allocator's
-known empty default; arbitrary input-union arrays still need selector summaries.
+known empty default. Arbitrary input-union arrays can now carry and forward
+opaque range guarantees without materializing their elements; see
+[input_ranges.evg](../examples/input_ranges.evg). The checker does not infer any
+slot type from the mere existence of such a selector. Connecting these promises
+to operational cell observations remains unfinished.
 
 An active slot also supports a contextual member borrow:
 
@@ -125,9 +129,8 @@ freeing the buffer, until the extracted payload owner is released. Moving a
 non-Copy owner out through a typed member reference remains rejected; extraction
 uses the raw union slot and its checked shape transition.
 
-Resource range loop frames, unknown input-union selector summaries, and cleanup
-of a dynamically initialized prefix remain unfinished. The general move-only
-Vec still needs those rules.
-Sparse resource arrays currently separate
+Resource range loop frames, operational input-union selector observations, and
+cleanup of a dynamically initialized prefix remain unfinished. The general
+move-only Vec still needs those rules. Sparse resource arrays currently separate
 incompatible branch states rather than merging them into a universal range
 summary. Proof and case work remain bounded by the bootstrap's general budgets.

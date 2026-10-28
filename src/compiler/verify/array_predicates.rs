@@ -4,6 +4,8 @@
 use super::*;
 
 #[cfg(test)]
+mod input_tests;
+#[cfg(test)]
 mod tests;
 
 pub(super) struct Selector {
@@ -116,6 +118,26 @@ impl Context<'_> {
             .ok_or("indexed type predicates require an arithmetic quantifier domain")?
             .push(bounds);
         let key = (identity.clone(), target.clone());
+        if !self.arrays.type_predicates.contains_key(&key)
+            && self.arrays.inputs.contains(identity)
+            && matches!(element.as_ref(), Ty::Union(_))
+            && items.is_none()
+        {
+            // An input array has no uniform default. Give its immutable
+            // version an uninterpreted selector, never an invented type fact.
+            // Sparse observations cannot define its unobserved remainder.
+            let symbol = self.fresh_name();
+            self.proof
+                .evidence
+                .declare_predicate(symbol.clone(), vec!["index".into()])?;
+            self.arrays.type_predicates.insert(
+                key.clone(),
+                Selector {
+                    symbol,
+                    captures: Vec::new(),
+                },
+            );
+        }
         if !self.arrays.type_predicates.contains_key(&key) {
             let initial = match self.arrays.history.get(identity) {
                 Some(ArrayHistory::Uninitialized(value) | ArrayHistory::Fill(value)) => {

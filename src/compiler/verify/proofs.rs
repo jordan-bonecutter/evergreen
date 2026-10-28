@@ -182,6 +182,28 @@ impl Context<'_> {
         result
     }
 
+    fn unreachable_logical_goal(&mut self, goal: &Formula) -> Result<Option<evidence::NodeId>> {
+        let paths = self.proof.paths.clone();
+        let Some(support) = self.probe_guard(&paths, &Formula::False)? else {
+            return Ok(None);
+        };
+        for &parent in &support.parents {
+            let dependencies = self.evidence_dependencies(parent)?;
+            if !dependencies.admissions.is_empty() || !dependencies.pending_summaries.is_empty() {
+                return Ok(None);
+            }
+        }
+        // Empty quantified domains need no facts about an arbitrary slot.
+        // Keep local hypotheses open until the enclosing introduction rule
+        // discharges them; runtime reachability checks require closed proofs.
+        self.work.obligations += 1;
+        let contradiction = self.proof.evidence.arithmetic(Formula::False, support)?;
+        self.proof
+            .evidence
+            .derive(goal.clone(), Rule::FalseElim(contradiction))
+            .map(Some)
+    }
+
     fn proof_goal(
         &mut self,
         goal: &Formula,
@@ -203,6 +225,9 @@ impl Context<'_> {
                 if !goal.is_arithmetic() {
                     if let Some(node) = self.logical_assumption(goal, subjects)? {
                         return self.proof.evidence.derive(goal.clone(), Rule::Reuse(node));
+                    }
+                    if let Some(node) = self.unreachable_logical_goal(goal)? {
+                        return Ok(node);
                     }
                 }
                 if let Some(proven) = self.prove_indexed_predicate(goal, subjects, label, line)? {

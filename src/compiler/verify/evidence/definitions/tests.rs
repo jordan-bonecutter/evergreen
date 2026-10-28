@@ -8,6 +8,62 @@ fn atom(symbol: &str, arguments: Vec<Linear>) -> Formula {
 }
 
 #[test]
+fn opaque_declarations_have_arity_and_grant_no_unfolding_or_truth() {
+    let mut graph = Evidence::default();
+    let opaque = graph
+        .declare_predicate("input_type".into(), vec!["index".into()])
+        .unwrap();
+    assert!(graph.nodes.is_empty());
+    let selected = atom("input_type", vec![Linear::number(7)]);
+    for reverse in [false, true] {
+        let (from, to) = if reverse {
+            (Formula::True, selected.clone())
+        } else {
+            (selected.clone(), Formula::True)
+        };
+        let error = graph
+            .derive(
+                Formula::Implies(Box::new(from), Box::new(to)),
+                Rule::UnfoldPredicate {
+                    definition: opaque,
+                    reverse,
+                },
+            )
+            .unwrap_err();
+        assert!(error.contains("no body"), "{error}");
+        assert!(graph.nodes.is_empty());
+    }
+    assert!(graph
+        .define_predicate("input_type".into(), vec!["index".into()], Formula::True)
+        .is_err());
+    assert!(graph
+        .define_predicate("bad_arity".into(), vec![], atom("input_type", vec![]))
+        .is_err());
+
+    let body = atom("input_type", vec![Linear::variable("index")])
+        .and(Formula::Ge(Linear::variable("index")));
+    let bounded = graph
+        .define_predicate("bounded_input_type".into(), vec!["index".into()], body)
+        .unwrap();
+    let application = atom("bounded_input_type", vec![Linear::number(7)]);
+    let unfolded = graph
+        .predicate_definition(bounded, &application, &mut 0, MAX_VALUE_WORK)
+        .unwrap();
+    assert_eq!(unfolded, selected.and(Formula::Ge(Linear::number(7))));
+    let implication = graph
+        .derive(
+            Formula::Implies(Box::new(application), Box::new(unfolded)),
+            Rule::UnfoldPredicate {
+                definition: bounded,
+                reverse: false,
+            },
+        )
+        .unwrap();
+    graph.check_closed(implication).unwrap();
+    assert!(graph.admissions(implication).admissions.is_empty());
+}
+
+#[test]
 fn unfolding_is_a_closed_definition_and_not_a_proof_of_its_predicate() {
     let mut graph = Evidence::default();
     let definition = graph

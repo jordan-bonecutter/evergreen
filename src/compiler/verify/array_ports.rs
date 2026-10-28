@@ -93,6 +93,12 @@ impl Context<'_> {
     ) -> Option<&'a Symbol> {
         for step in path {
             value = match (value, step) {
+                (
+                    Symbol::Union {
+                        members, payloads, ..
+                    },
+                    Projection::Member { index, expected },
+                ) if members.get(*index) == Some(expected) => payloads.get(*index)?.as_ref()?,
                 (Symbol::Record(_, fields), Projection::Field(name)) => fields.get(name)?,
                 (
                     Symbol::Array {

@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn member_view_proof_subjects_follow_the_separate_payload_plane() {
+    let source = "fn process(value: &usize) where(*value == 7) {} fn main() -> usize {let slot: unique(usize) | shape(unique(usize)) = alloc(42); let view: &unique(usize) = &slot; proof admitted: **view == 7 by {trustme}; let payload = &**view; let value: unique(usize) = slot; process(payload); *value}";
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(program.trusted_assumptions().len(), 1);
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let changed = source.replace("process(payload)", "*payload = 99; process(payload)");
+    assert!(verify(&changed).is_err());
+    let unrelated = source.replace(
+        "process(payload)",
+        "let other = alloc(42); process(&*other)",
+    );
+    assert!(verify(&unrelated).is_err());
+}
+
+#[test]
 fn typed_member_borrows_preserve_the_existing_slot_and_function_provenance() {
     let source = "fn payload<T>(slot: &(T | shape(T))) -> &T where(typeof(*slot) == T) borrows(slot) {slot} fn main() -> usize {let slot: usize | shape(usize) = 42; let view: &usize = &slot; proof value: *view == 42; let other = payload::<usize>(&slot); let seen = *other; let moved: usize = slot; seen + moved - 42}";
     let (program, bundle) = prove(source).unwrap();

@@ -13,7 +13,7 @@ pub(in crate::compiler::verify) struct DefinitionId(usize);
 struct Definition {
     symbol: String,
     parameters: Vec<String>,
-    body: Formula,
+    body: Option<Formula>,
 }
 
 #[derive(Debug, Default)]
@@ -23,14 +23,35 @@ pub(super) struct Definitions {
 }
 
 impl Evidence {
+    pub(in crate::compiler::verify) fn declare_predicate(
+        &mut self,
+        symbol: String,
+        parameters: Vec<String>,
+    ) -> Result<DefinitionId> {
+        self.insert_predicate(symbol, parameters, None)
+    }
+
     pub(in crate::compiler::verify) fn define_predicate(
         &mut self,
         symbol: String,
         parameters: Vec<String>,
         body: Formula,
     ) -> Result<DefinitionId> {
+        self.insert_predicate(symbol, parameters, Some(body))
+    }
+
+    fn insert_predicate(
+        &mut self,
+        symbol: String,
+        parameters: Vec<String>,
+        body: Option<Formula>,
+    ) -> Result<DefinitionId> {
         let weight = parameters.iter().fold(
-            body.storage_weight()?.saturating_add(symbol.len()),
+            body.as_ref()
+                .map(Formula::storage_weight)
+                .transpose()?
+                .unwrap_or(0)
+                .saturating_add(symbol.len()),
             |weight, name| weight.saturating_add(1 + name.len()),
         );
         if symbol.is_empty() || self.definitions.symbols.contains_key(&symbol) {
@@ -48,16 +69,18 @@ impl Evidence {
         {
             return Err("predicate parameters must have distinct valid names".into());
         }
-        if body
-            .free_variables()?
-            .iter()
-            .any(|name| !names.contains(name.as_str()))
-        {
-            return Err(
-                "predicate definitions must name every free variable as a parameter".into(),
-            );
+        if let Some(body) = &body {
+            if body
+                .free_variables()?
+                .iter()
+                .any(|name| !names.contains(name.as_str()))
+            {
+                return Err(
+                    "predicate definitions must name every free variable as a parameter".into(),
+                );
+            }
         }
-        let mut pending = vec![&body];
+        let mut pending = body.iter().collect::<Vec<_>>();
         while let Some(part) = pending.pop() {
             match part {
                 Formula::Predicate { symbol, arguments } => {
@@ -124,6 +147,10 @@ impl Evidence {
             .zip(arguments)
             .map(|(name, value)| (name.as_str(), value))
             .collect();
-        definition.body.substitute_counted(&bindings, work, limit)
+        definition
+            .body
+            .as_ref()
+            .ok_or("opaque predicate declarations have no body to unfold")?
+            .substitute_counted(&bindings, work, limit)
     }
 }
