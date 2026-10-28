@@ -52,6 +52,29 @@ impl Evaluator<'_> {
         expected: Option<&Type>,
     ) -> Result<Value> {
         match (value, expected) {
+            (Value::Ref(source, reference, mut path), Some(Type::Ref(target)))
+                if matches!(source.as_ref(), Type::Union(_))
+                    && source.as_ref() != target.as_ref() =>
+            {
+                let Value::Union(members, payload) = project(self.memory.read(reference)?, &path)?
+                else {
+                    return Err("member borrows require current union storage".into());
+                };
+                let index = members
+                    .iter()
+                    .position(|member| {
+                        type_match::same_runtime_type(member, target).unwrap_or(false)
+                    })
+                    .ok_or("reference target is not a raw union member")?;
+                if !payload.matches_member_type(target)? {
+                    return Err("borrowing an inactive raw union member".into());
+                }
+                path.push(Projection::Member {
+                    index,
+                    expected: members[index].clone(),
+                });
+                Ok(Value::Ref(target.clone(), reference, path))
+            }
             (Value::Unique(source, reference), Some(Type::Unique(target)))
                 if Self::empty_array_target(&source, target)? =>
             {

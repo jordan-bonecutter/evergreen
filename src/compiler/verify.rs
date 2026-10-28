@@ -4,12 +4,13 @@ use crate::shared::ownership::is_move_only;
 use crate::{
     compiler::certificate::{ProofBundle, Session},
     compiler::kernel::Linear,
-    shared::planes::{Memory, PlaneId, Projection, Reference},
+    shared::planes::{Memory, PlaneId, Projection as PlaneProjection, Reference},
     syntax::{self, Expr, Function, Kind, MachineInt, Statement, Struct, Type},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
+type Projection<I = Linear> = PlaneProjection<I, Ty>;
 
 mod admissions;
 mod array_history;
@@ -61,6 +62,7 @@ mod state;
 mod storage_layout;
 mod subjects;
 mod summaries;
+mod union_borrows;
 mod union_moves;
 mod unions;
 mod updates;
@@ -221,11 +223,23 @@ fn symbol_weight(value: &Symbol) -> Result<usize> {
                 weight = weight.saturating_add(name.len() / 32);
                 pending.extend(fields.values().map(|v| Node::Value(v, depth + 1)));
             }
-            Node::Value(Symbol::Ref(_, _, path), _) => weight = weight.saturating_add(path.len()),
+            Node::Value(Symbol::Ref(_, _, path), depth) => {
+                weight = weight.saturating_add(path.len());
+                for step in path {
+                    if let Projection::Member { expected, .. } = step {
+                        pending.push(Node::Type(expected, depth + 1));
+                    }
+                }
+            }
             Node::Value(Symbol::RefCases(ty, cases), depth) => {
                 pending.push(Node::Type(ty, depth + 1));
                 for case in cases {
                     weight = weight.saturating_add(case.path.len() + 1);
+                    for step in &case.path {
+                        if let Projection::Member { expected, .. } = step {
+                            pending.push(Node::Type(expected, depth + 1));
+                        }
+                    }
                     pending.push(Node::Formula(&case.guard, depth + 1));
                 }
             }
@@ -304,6 +318,15 @@ fn project<'a>(value: &'a Symbol, path: &[Projection<Linear>]) -> Result<&'a Sym
         return Ok(value);
     }
     let value = match (&path[0], value) {
+        (
+            Projection::Member { index, expected },
+            Symbol::Union {
+                members, payloads, ..
+            },
+        ) if members.get(*index) == Some(expected) => payloads
+            .get(*index)
+            .and_then(Option::as_ref)
+            .ok_or("union member has no accessible payload")?,
         (Projection::Field(n), Symbol::Record(_, fields)) => {
             fields.get(n).ok_or("unknown reference field")?
         }
@@ -335,6 +358,20 @@ fn project_mut<'a>(value: &'a mut Symbol, path: &[Projection<Linear>]) -> Result
         return Ok(value);
     }
     let child = match (&path[0], value) {
+        (
+            Projection::Member { index, expected },
+            Symbol::Union {
+                members, payloads, ..
+            },
+        ) => {
+            if members.get(*index) != Some(expected) {
+                return Err("union member interpretation type changed".into());
+            }
+            payloads
+                .get_mut(*index)
+                .and_then(Option::as_mut)
+                .ok_or("union member has no accessible payload")?
+        }
         (Projection::Field(n), Symbol::Record(_, fields)) => {
             fields.get_mut(n).ok_or("unknown reference field")?
         }
@@ -964,6 +1001,20 @@ impl<'a> Context<'a> {
             }
         }
         let child = match (&path[0], value) {
+            (
+                Projection::Member { index, expected },
+                Symbol::Union {
+                    members, payloads, ..
+                },
+            ) => {
+                if members.get(*index) != Some(expected) {
+                    return Err("union member interpretation type changed".into());
+                }
+                payloads
+                    .get_mut(*index)
+                    .and_then(Option::as_mut)
+                    .ok_or("union member has no accessible payload")?
+            }
             (Projection::Field(name), Symbol::Record(_, fields)) => {
                 fields.get_mut(name).ok_or("unknown reference field")?
             }
@@ -1051,7 +1102,7 @@ impl<'a> Context<'a> {
             }
         }
         for (name, reference, fields) in targets {
-            let target = self.read_projection_value(reference, &fields)?;
+            let target = self.read_projection_value(reference, &fields, function.line)?;
             self.entry.values.insert(format!("*{name}"), target);
         }
         for (name, value) in conditional_targets {

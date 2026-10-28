@@ -44,7 +44,9 @@ impl Context<'_> {
         &mut self,
         reference: Reference,
         path: &[Projection<Linear>],
+        line: usize,
     ) -> Result<Symbol> {
+        self.validate_member_path(reference, path, line)?;
         self.charge_value_work(symbol_weight(self.storage.memory.read(reference)?)?)?;
         let root = self.storage.memory.read(reference)?;
         let value = project(root, path)?.clone();

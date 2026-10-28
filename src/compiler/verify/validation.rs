@@ -18,6 +18,9 @@ impl Context<'_> {
         if self.storage.memory.read(reference).is_err() {
             return Ok(());
         }
+        if self.dormant_member_path(reference, path)? {
+            return Ok(());
+        }
         if path.is_empty()
             && self
                 .storage
@@ -248,6 +251,7 @@ impl Context<'_> {
         path: &[Projection<Linear>],
         line: usize,
     ) -> Result<()> {
+        self.validate_member_path(reference, path, line)?;
         self.charge_value_work(symbol_weight(project(
             self.storage.memory.read(reference)?,
             path,
@@ -283,6 +287,7 @@ impl Context<'_> {
         path: &[Projection<Linear>],
         line: usize,
     ) -> Result<()> {
+        self.validate_member_path(reference, path, line)?;
         let selected = if path.is_empty() {
             self.storage
                 .opened_planes

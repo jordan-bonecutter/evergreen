@@ -135,6 +135,11 @@ impl Context<'_> {
         expected: Option<&Ty>,
         line: usize,
     ) -> Result<Symbol> {
+        if let (Ty::Ref(source), Some(Ty::Ref(target))) = (value.ty(), expected) {
+            if matches!(source.as_ref(), Ty::Union(members) if members.contains(target)) {
+                return self.borrow_union_member(value, target, line);
+            }
+        }
         match (value, expected) {
             (Symbol::Unique(source, reference), Some(Ty::Unique(target)))
                 if Self::empty_array_target(&source, target) =>
@@ -336,7 +341,11 @@ impl Context<'_> {
         let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
         let value = self.eval(&args[0], None);
         self.execution.phase = phase;
-        let reference = self.owning_reference(&value?)?;
+        let value = value?;
+        if matches!(value, Symbol::Ref(..) | Symbol::RefCases(..)) {
+            self.validate_reference_addresses(&value)?;
+        }
+        let reference = self.owning_reference(&value)?;
         Ok(Symbol::Number(Ty::Nat, self.census_value(reference)?))
     }
 }

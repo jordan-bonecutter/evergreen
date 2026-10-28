@@ -69,6 +69,16 @@ pub(super) fn paths_equal(a: &[Projection<Linear>], b: &[Projection<Linear>]) ->
         same = same.and(match (a, b) {
             (Projection::Field(a), Projection::Field(b)) if a == b => Formula::True,
             (Projection::Index(a), Projection::Index(b)) => equal(a, b)?,
+            (
+                Projection::Member {
+                    index: a,
+                    expected: at,
+                },
+                Projection::Member {
+                    index: b,
+                    expected: bt,
+                },
+            ) if a == b && at == bt => Formula::True,
             _ => Formula::False,
         });
     }
@@ -131,10 +141,10 @@ impl Context<'_> {
         let value = self.pointer_operand(pointer)?;
         match &value {
             Symbol::Ref(..) | Symbol::RefCases(..) => self.read_reference(&value, line),
-            Symbol::Unique(_, reference) => self.read_projection_value(*reference, &[]),
+            Symbol::Unique(_, reference) => self.read_projection_value(*reference, &[], line),
             Symbol::Shared(_, owner) => {
                 let reference = self.storage.memory.borrow_owned(*owner)?;
-                self.read_projection_value(reference, &[])
+                self.read_projection_value(reference, &[], line)
             }
             _ => Err("dereference requires a reference or owning pointer".into()),
         }
@@ -210,24 +220,24 @@ impl Context<'_> {
             return Err("read requires a reference".into());
         };
         if let Symbol::Ref(_, reference, path) = value {
-            return self.read_projection_value(*reference, path);
+            return self.read_projection_value(*reference, path, line);
         }
         let mut reachable = Vec::new();
         for case in cases(value)? {
             if self.checked_entails(&case.guard)? {
-                return self.read_projection_value(case.reference, &case.path);
+                return self.read_projection_value(case.reference, &case.path, line);
             }
             if !self.checked_entails(&case.guard.clone().not())? {
                 reachable.push(case);
             }
         }
         if self.history_element(&ty) || matches!(*ty, Ty::Ref(_)) {
-            return self.read_reference_values(&reachable, &ty);
+            return self.read_reference_values(&reachable, &ty, line);
         }
         self.read_reference_cases(&reachable, &ty, line)
     }
 
-    fn read_reference_values(&mut self, cases: &[Case], ty: &Ty) -> Result<Symbol> {
+    fn read_reference_values(&mut self, cases: &[Case], ty: &Ty, line: usize) -> Result<Symbol> {
         let mut stamps = Vec::new();
         for case in cases {
             stamps.push((
@@ -252,7 +262,7 @@ impl Context<'_> {
                 self.session,
                 &mut self.work.value_work,
             )?;
-            let value = self.read_projection_value(case.reference, &case.path);
+            let value = self.read_projection_value(case.reference, &case.path, line);
             paths.extend(self.proof.paths.clone());
             self.proof.paths = base.clone();
             observed.push((case, value?));
@@ -292,7 +302,7 @@ impl Context<'_> {
             return Err("conditional reference has no reachable target".into());
         };
         if self.checked_entails(&first.guard)? {
-            return self.read_projection_value(first.reference, &first.path);
+            return self.read_projection_value(first.reference, &first.path, line);
         }
         if self.checked_entails(&first.guard.clone().not())? {
             return self.read_reference_cases(remaining, ty, line);
@@ -304,7 +314,7 @@ impl Context<'_> {
             first.guard.clone(),
             Some(ty),
             line,
-            |context, _| context.read_projection_value(first.reference, &first.path),
+            |context, _| context.read_projection_value(first.reference, &first.path, line),
             |context, _| context.read_reference_cases(remaining, ty, line),
         )
     }

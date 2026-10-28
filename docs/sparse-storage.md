@@ -90,9 +90,38 @@ theorem cannot describe the changed buffer. These proofs erase completely in
 native code. The selector's correspondence to storage is checked by the frontend;
 the kernel checks definitions and arithmetic, rather than a complete memory model.
 
-Typed borrowing of an active arbitrary member, resource range loop frames,
-unknown input-union selector summaries, and cleanup of a dynamically initialized
-prefix remain unfinished. The general move-only Vec still needs those rules.
+An active slot also supports a contextual member borrow:
+
+```evg
+fn as_ref<T>(slot: &(T | shape(T))) -> &T
+where typeof(*slot) == T
+borrows(slot) {
+    slot
+}
+```
+
+The returned reference retains the slot's plane and generation. Its checked
+interpretation names the member type; it creates no payload copy or ownership
+claim. Every read, projected address, and write requires that member to be active
+at the time of use. Writes recheck after evaluating the right-hand side. Mutating
+through a member view expires facts about the overlapping union slot.
+
+Extraction makes the slot view dormant. Keeping that reference is allowed;
+reading it while the slot is a shape is rejected. Reinitializing the same slot
+with the same member makes it readable again, using the new contents and facts.
+An empty-buffer conversion can erase the union interpretation altogether; such
+an old member view remains dormant and cannot read the narrowed shape array.
+
+[member_borrows.evg](../examples/member_borrows.evg) demonstrates the difference
+between a view of an owning slot and a view into the separate allocation it
+owns. Extraction invalidates the former. The latter remains readable after
+freeing the buffer, until the extracted payload owner is released. Moving a
+non-Copy owner out through a typed member reference remains rejected; extraction
+uses the raw union slot and its checked shape transition.
+
+Resource range loop frames, unknown input-union selector summaries, and cleanup
+of a dynamically initialized prefix remain unfinished. The general move-only
+Vec still needs those rules.
 Sparse resource arrays currently separate
 incompatible branch states rather than merging them into a universal range
 summary. Proof and case work remain bounded by the bootstrap's general budgets.

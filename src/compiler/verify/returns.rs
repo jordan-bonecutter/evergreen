@@ -271,6 +271,7 @@ impl Context<'_> {
                     _ => return Err("return alias requires a known inline field or element".into()),
                 };
             }
+            let expected = self.coerce_pointer(expected, Some(&actual.ty()), line)?;
             let same = if let (Symbol::Ref(a_ty, a, a_path), Symbol::Ref(b_ty, b, b_path)) =
                 (actual, &expected)
             {
@@ -300,6 +301,7 @@ impl Context<'_> {
         ty: &Ty,
         path: &mut Vec<ReturnProjection>,
         aliases: &Aliases,
+        line: usize,
     ) -> Result<Symbol> {
         self.charge_value_work(1)?;
         if !self.ty_has_reference(ty) {
@@ -307,7 +309,9 @@ impl Context<'_> {
         }
         match ty {
             Ty::Ref(_) => match aliases.get(path) {
-                Some(AliasTarget::Incoming(value)) => Ok(value.clone()),
+                Some(AliasTarget::Incoming(value)) => {
+                    self.coerce_pointer(value.clone(), Some(ty), line)
+                }
                 Some(AliasTarget::Result(_)) => {
                     Err("result-owned borrows require actual storage checking".into())
                 }
@@ -333,7 +337,7 @@ impl Context<'_> {
                     }
                     let ty = self.resolve(&ty)?;
                     path.push(ReturnProjection::Field(field.clone()));
-                    let value = self.return_shape(&ty, path, aliases)?;
+                    let value = self.return_shape(&ty, path, aliases, line)?;
                     self.execution.phase = phase;
                     path.pop();
                     self.locals.values.insert(field.clone(), value.clone());
@@ -361,7 +365,7 @@ impl Context<'_> {
                     path.push(ReturnProjection::Index(index));
                     cells.insert(
                         Linear::number(index as i128),
-                        self.return_shape(element, path, aliases)?,
+                        self.return_shape(element, path, aliases, line)?,
                     );
                     path.pop();
                 }

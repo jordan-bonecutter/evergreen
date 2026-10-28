@@ -46,9 +46,14 @@ impl PlaneId {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Projection<I = usize> {
+pub enum Projection<I = usize, M = ()> {
     Field(String),
     Index(I),
+    /// A checked interpretation at offset zero, not a separately owned plane.
+    Member {
+        index: usize,
+        expected: M,
+    },
     /// Logical ownership state, never an addressable runtime field.
     Owners,
 }

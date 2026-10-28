@@ -96,6 +96,16 @@ impl Subjects {
             equal_path = equal_path.and(match (a, b) {
                 (Projection::Field(a), Projection::Field(b)) if a == b => Formula::True,
                 (Projection::Index(a), Projection::Index(b)) => equal(a, b)?,
+                (
+                    Projection::Member {
+                        index: a,
+                        expected: at,
+                    },
+                    Projection::Member {
+                        index: b,
+                        expected: bt,
+                    },
+                ) if a == b && at == bt => Formula::True,
                 _ => Formula::False,
             });
         }
@@ -357,6 +367,12 @@ impl Context<'_> {
     ) -> Result<()> {
         self.charge_value_work(1usize.saturating_add(path.len()))?;
         self.check_loop_write(plane, path)?;
+        // A union interpretation overlaps its entire slot. Preserve no field
+        // fact across a write through any of that slot's member views.
+        let path = path
+            .iter()
+            .position(|step| matches!(step, Projection::Member { .. }))
+            .map_or(path, |index| &path[..index]);
         self.proof.subjects.write(plane, path)
     }
 

@@ -498,7 +498,7 @@ impl<'a> Context<'a> {
                 value
             } else if !f.borrows.is_empty() {
                 let aliases = self.return_aliases(f, None)?;
-                self.return_shape(&ret, &mut Vec::new(), &aliases)?
+                self.return_shape(&ret, &mut Vec::new(), &aliases, line)?
             } else {
                 self.arbitrary(&ret)?
             };

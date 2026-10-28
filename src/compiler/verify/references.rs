@@ -17,11 +17,14 @@ impl Context<'_> {
             let checked = if self.checked_impossible(&paths, &Formula::True)? {
                 Ok(())
             } else {
-                self.storage
-                    .memory
-                    .read(case.reference)
-                    .and_then(|root| project(root, &case.path))
-                    .map(|_| ())
+                (|| {
+                    self.validate_member_path(case.reference, &case.path, 0)?;
+                    self.storage
+                        .memory
+                        .read(case.reference)
+                        .and_then(|root| project(root, &case.path))
+                        .map(|_| ())
+                })()
             };
             self.proof.paths = base.clone();
             checked?;
@@ -40,6 +43,8 @@ impl Context<'_> {
             return Err("reference equality requires reference operands".into());
         };
         // Identity comparisons do not make stale generations observable again.
+        self.validate_member_path(*a, a_path, 0)?;
+        self.validate_member_path(*b, b_path, 0)?;
         project(self.storage.memory.read(*a)?, a_path)?;
         project(self.storage.memory.read(*b)?, b_path)?;
         self.charge_value_work(a_path.len().saturating_add(b_path.len()))?;
@@ -51,6 +56,16 @@ impl Context<'_> {
             let component = match (a, b) {
                 (Projection::Field(a), Projection::Field(b)) if a == b => Formula::True,
                 (Projection::Index(a), Projection::Index(b)) => equal(a, b)?,
+                (
+                    Projection::Member {
+                        index: a,
+                        expected: at,
+                    },
+                    Projection::Member {
+                        index: b,
+                        expected: bt,
+                    },
+                ) if a == b && at == bt => Formula::True,
                 _ => return Ok(Formula::False),
             };
             same = same.and(component);
@@ -151,6 +166,13 @@ impl Context<'_> {
                 // fail. Never replace its generation or allocate new storage.
                 if let Ok(root) = self.storage.memory.read(*reference) {
                     if project(root, path).is_err() {
+                        if path
+                            .iter()
+                            .any(|step| matches!(step, Projection::Member { .. }))
+                            && self.dormant_member_path(*reference, path)?
+                        {
+                            return Ok(());
+                        }
                         self.materialize_joined_reference(value, line)?;
                     }
                 }
@@ -246,6 +268,9 @@ impl Context<'_> {
                             1 + match step {
                                 Projection::Field(name) => name.len() / 32,
                                 Projection::Index(index) => index.terms.len(),
+                                Projection::Member { expected, .. } => {
+                                    symbol_weight(&Symbol::Shape(Box::new(expected.clone())))?
+                                }
                                 Projection::Owners => {
                                     return Err(
                                         "owner census regions are not runtime reference ports"

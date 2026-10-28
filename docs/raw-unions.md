@@ -136,6 +136,15 @@ result cannot bypass the existing restriction on moving ordinary owning fields.
 separate checked states, and empty-buffer conversion proves that no initialized
 member remains before ordinary deallocation. See [sparse-storage.md](sparse-storage.md).
 
+Contextual `&(T | shape(T))` to `&T` borrowing proves the current active member
+and retains a checked interpretation at the same address. The reference cannot
+read an extracted or differently initialized member. It grants no authority to
+move a non-Copy payload. Generic accessors can return that view with the original
+slot as their `borrows` origin; conditional origins retain each real plane.
+The interpreter checks the actual member independently. Native member views
+need no tag, pointer adjustment, or additional runtime metadata. See
+[member_borrows.evg](../examples/member_borrows.evg).
+
 Borrowed-reference members remain rejected until return-plane contracts and
 conditional borrow footprints describe their provenance. Joining two different
 allocations in the same member, initialized-member replacement through a borrowed

@@ -70,6 +70,7 @@ impl Context<'_> {
                     None,
                     expression.line,
                     &|ctx, case| {
+                        ctx.validate_member_path(case.reference, &case.path, expression.line)?;
                         let root = ctx.storage.memory.read(case.reference)?;
                         let Symbol::Record(typename, _) = project(root, &case.path)? else {
                             return Err("field reference requires a record".into());
@@ -106,6 +107,7 @@ impl Context<'_> {
         index: &Linear,
         line: usize,
     ) -> Result<Symbol> {
+        self.validate_member_path(case.reference, &case.path, line)?;
         self.charge_value_work(symbol_weight(self.storage.memory.read(case.reference)?)?)?;
         let mut root = self.storage.memory.read(case.reference)?.clone();
         let Symbol::Array {
@@ -175,6 +177,7 @@ impl Context<'_> {
         value: Symbol,
         line: usize,
     ) -> Result<()> {
+        self.validate_member_path(reference, path, line)?;
         let old = project(self.storage.memory.read(reference)?, path)?.clone();
         if self.has_runtime_cleanup(&old.ty())
             && !(self.execution.phase == Phase::Ideal && self.erased_value(&old))
@@ -194,6 +197,7 @@ impl Context<'_> {
         mut value: Symbol,
         line: usize,
     ) -> Result<()> {
+        self.validate_member_path(reference, path, line)?;
         let id = self.storage.memory.plane(reference)?;
         let owned = self.owns_plane(id)?;
         if !self.write_permitted(reference, path, owned)? {

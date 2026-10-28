@@ -2,7 +2,7 @@
 
 use crate::{
     compiler::verify::VerifiedProgram,
-    shared::planes::{Memory, PlaneId, Projection, Reference},
+    shared::planes::{Memory, PlaneId, Projection as PlaneProjection, Reference},
     syntax::{Expr, External, Function, Kind, MachineInt, Statement, Struct, Type},
 };
 use std::{
@@ -19,6 +19,7 @@ mod uninitialized_arrays;
 mod union_moves;
 
 type Result<T> = std::result::Result<T, String>;
+type Projection = PlaneProjection<usize, Type>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -91,6 +92,11 @@ impl std::fmt::Display for Value {
 }
 
 impl Value {
+    fn matches_member_type(&self, expected: &Type) -> Result<bool> {
+        self.hint()
+            .map(|actual| type_match::same_runtime_type(&actual, expected))
+            .unwrap_or(Ok(false))
+    }
     fn matches_type(&self, expected: &Type) -> Result<bool> {
         match (self, expected) {
             (Self::Array(actual, items), Type::Array(element, count)) => {
@@ -1199,6 +1205,15 @@ fn project<'a>(value: &'a Value, path: &[Projection]) -> Result<&'a Value> {
         return Ok(value);
     }
     let value = match (&path[0], value) {
+        (Projection::Member { index, expected }, Value::Union(members, payload)) => {
+            if !members.get(*index).is_some_and(|member| {
+                type_match::same_runtime_type(member, expected).unwrap_or(false)
+            }) || !payload.matches_member_type(expected)?
+            {
+                return Err("union member view no longer has its required type".into());
+            }
+            payload
+        }
         (Projection::Field(n), Value::Record(_, fields)) => fields.get(n).ok_or("unknown field")?,
         (Projection::Index(i), Value::Array(_, items)) => {
             items.get(*i).ok_or("index out of bounds")?
@@ -1214,6 +1229,15 @@ fn replace_projection(value: &mut Value, path: &[Projection], new: Value) -> Res
         return Ok(());
     }
     let value = match (&path[0], value) {
+        (Projection::Member { index, expected }, Value::Union(members, payload)) => {
+            if !members.get(*index).is_some_and(|member| {
+                type_match::same_runtime_type(member, expected).unwrap_or(false)
+            }) || !payload.matches_member_type(expected)?
+            {
+                return Err("union member view no longer has its required type".into());
+            }
+            payload
+        }
         (Projection::Field(n), Value::Record(_, fields)) => {
             fields.get_mut(n).ok_or("unknown field")?
         }

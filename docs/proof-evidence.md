@@ -14,6 +14,14 @@ proof of type elaboration or machine-code preservation. Owning pointer members
 now use guarded footprints and allocation-presence checks. Borrowed-reference
 members still need conditional provenance contracts.
 
+Borrowing an active member through union storage retains a zero-offset
+interpretation in the original reference path. The interpretation records both
+the member index and its exact type. Operational reads, projected addresses,
+and stores prove the current selector before using that path; a store checks
+again after right-hand-side effects. Such stores invalidate the whole union
+slot's proof region. These are frontend memory rules, not additional kernel
+axioms or independent certificates of machine-code preservation.
+
 Read-only ideal definitions can reduce concrete scalar results using bounded,
 explicit evaluation stacks. Argument references are imported as immutable value
 snapshots with their existing identities; the evaluator cannot write caller
