@@ -57,7 +57,10 @@ for typed member loans and checked extraction; see
 [range_index.evg](../examples/range_index.evg). Runtime indices require proven
 equality or separation from existing observations. Conditional cell identities,
 resource range loop frames, and cleanup of a dynamically initialized prefix
-remain unfinished.
+remain unfinished. Range promises can also live in nominal type invariants;
+[range_type.evg](../examples/range_type.evg) demonstrates a generic initialized
+slot with typed borrowing and complete consumption. Vec still needs conditional
+capacity observations and preservation of its initialized prefix across stores.
 
 Run [vec_generic.evg](../examples/vec_generic.evg) with:
 

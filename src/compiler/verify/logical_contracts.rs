@@ -5,8 +5,20 @@ use super::*;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod type_tests;
 
 impl Context<'_> {
+    pub(super) fn assume_declared_invariant(&mut self, expression: &Expr) -> Result<()> {
+        let proposition = self.proposition(expression)?;
+        if proposition.is_arithmetic() {
+            self.assume(&proposition)
+        } else {
+            let subjects = self.claim_subjects(expression)?;
+            self.import_logical_contract(proposition, subjects, self.proof.contract_parents.clone())
+        }
+    }
+
     pub(super) fn import_logical_contract(
         &mut self,
         proposition: Formula,

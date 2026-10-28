@@ -399,12 +399,30 @@ its execution condition is established without admissions; merging conditional
 result guarantees remains conservative. These rules prevent equal scalar values
 from giving an unrelated result another call's guarantee.
 
+Nominal declarations can now retain universal invariant clauses as logical
+imports, rather than forcing them into arithmetic rows. Constructors still
+prove the declared proposition, and retained-value checks recheck it after
+writes. [range_type.evg](../examples/range_type.evg) uses an initialized-range
+fact inside `Slot<T>` to authorize a typed element loan. Consuming the complete
+record removes the parent before extraction changes that fact. Its generic
+owning payload is moved once, and the empty backing buffer is freed. An empty
+range wrapper over a billion-slot buffer uses the same obligation and certificate
+count as its eight-slot version.
+
+This does not finish general invariant transport: scalar-only quantified facts
+captured under an initial `self` root cannot yet be named through a different
+borrowed parameter root. Referenced array ranges retain their actual backing
+plane and work in the example above. Capacity-conditional pointer observations,
+resource range loop frames, and general destructor prefix cleanup remain pending.
+Type-invariant imports retain the same unresolved frontend substitution boundary
+as other contract imports.
+
 Function and loop contract instantiation remains an explicitly unresolved
 frontend import, just as scalar contract instantiation does. Logical clauses
 retain their actual admission parents and do not become arithmetic assumptions.
 Complete independent certification of these state substitutions remains pending.
-Universal nominal type invariants, quantified domains, conditional input-cell
-aliases, and resource range loop frames remain unfinished.
+General nominal-invariant subject transport, quantified domains, conditional
+input-cell aliases, and resource range loop frames remain unfinished.
 Generalization through declaration summaries or imported trust with untraced
 context dependencies is rejected. User predicate calls and indexed payload reads
 inside quantifiers remain rejected: opaque frontend identities must not hide a

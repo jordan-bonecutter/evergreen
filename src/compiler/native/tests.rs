@@ -152,6 +152,7 @@ fn native_range_slot_loans_follow_extracted_payloads() {
     for (index, source) in [
         include_str!("../../../examples/range_slots.evg"),
         include_str!("../../../examples/range_index.evg"),
+        include_str!("../../../examples/range_type.evg"),
     ]
     .into_iter()
     .enumerate()

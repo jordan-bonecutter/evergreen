@@ -430,8 +430,7 @@ impl Context<'_> {
                     self.assume_return_type(fields.get(&name).ok_or("missing result field")?, &ty)?;
                 }
                 if let Some(invariant) = definition.invariant {
-                    let p = self.proposition(&invariant)?;
-                    self.assume(&p)?;
+                    self.assume_declared_invariant(&invariant)?;
                 }
                 self.locals.values = env;
                 self.locals.places = roots;

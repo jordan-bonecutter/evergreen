@@ -1,0 +1,35 @@
+type Slot<T> struct {data: unique(T | shape(T), 1)} where (
+    fact initialized = forall(i: integer) where(0 <= i && i < 1) {
+        typeof((*self.data)[i]) == T
+    };
+    initialized
+);
+
+impl<T> Slot<T> {
+    fn new(value: T) -> Self {
+        let data: unique(T | shape(T), 1) = alloc(1, shape(T));
+        (*data)[0] = value;
+        Self {data: data}
+    }
+
+    method& get() -> &T borrows(&(*self.data)[0]) {
+        &(*self.data)[0]
+    }
+
+    method into_inner() -> T {
+        // Complete decomposition consumes the parent before its fact changes.
+        let Self {data} = self;
+        let value: T = move((*data)[0]);
+        let empty: unique(shape(T), 1) = data;
+        drop(empty);
+        value
+    }
+}
+
+fn main() -> usize {
+    let slot = Slot::<unique(usize)>::new(alloc(42));
+    let view = slot.get();
+    let payload = &**view;
+    let value = slot.into_inner();
+    *payload
+}

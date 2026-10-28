@@ -1524,8 +1524,7 @@ impl<'a> Context<'a> {
                 let value = Symbol::Record(name.clone(), fields);
                 self.locals.values.insert("self".into(), value.clone());
                 if let Some(p) = &def.invariant {
-                    let p = self.proposition(p)?;
-                    self.assume(&p)?;
+                    self.assume_declared_invariant(p)?;
                 }
                 self.locals.values = saved;
                 self.locals.places = saved_roots;
@@ -2261,8 +2260,7 @@ impl<'a> Context<'a> {
                     definition.facts.into_iter().collect(),
                 );
                 self.locals.values.insert("self".into(), value.clone());
-                let invariant = self.proposition(&invariant)?;
-                self.assume(&invariant)?;
+                self.assume_declared_invariant(&invariant)?;
                 self.locals.values = env;
                 self.locals.places = roots;
                 self.proof.facts = facts;

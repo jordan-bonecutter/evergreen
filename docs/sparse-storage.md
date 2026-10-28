@@ -148,6 +148,15 @@ freeing the buffer, until the extracted payload owner is released. Moving a
 non-Copy owner out through a typed member reference remains rejected; extraction
 uses the raw union slot and its checked shape transition.
 
+[range_type.evg](../examples/range_type.evg) packages a range promise in a
+nominal type invariant. `Slot<T>::get` uses its initialized-slot guarantee;
+`into_inner` consumes the complete wrapper, extracts the real payload, and
+frees its empty backing storage. Clearing the slot while retaining the parent
+is rejected because the parent still requires it to be initialized. Scalar-only
+quantified invariant transport across different record roots remains conservative;
+this example's range refers to the actual backing plane. General prefix cleanup
+in Drop bodies is still unfinished.
+
 Resource range loop frames, conditional input-cell identities, and cleanup of
 a dynamically initialized prefix remain unfinished. The general
 move-only Vec still needs those rules. Sparse resource arrays currently separate
