@@ -3,8 +3,13 @@
 
 use super::*;
 
+mod checks;
+pub(super) use checks::Check;
+
 #[cfg(test)]
 mod call_tests;
+#[cfg(test)]
+mod precondition_tests;
 #[cfg(test)]
 mod tests;
 
@@ -128,15 +133,21 @@ impl Context<'_> {
         self.with_logical_binding(name, &variable, true, |ctx| {
             ctx.check_quantified_expression(domain, 0)?;
             ctx.check_quantified_expression(body, 0)?;
-            let domain = ctx.eval_quantified_expression(domain)?.proposition()?;
+            // The domain cannot justify its own definedness. Its calls must be
+            // valid for every binder value, subject only to enclosing domains.
+            ctx.locals.quantified_checks.push(Vec::new());
+            let domain = ctx.eval_quantified_expression(domain).and_then(|value| value.proposition());
+            let domain_checks = ctx.locals.quantified_checks.pop().ok_or("missing quantified domain scope")?;
+            let domain = domain?;
             if !domain.is_arithmetic() {
                 return Err(format!("line {line}: a universal domain currently requires an unquantified scalar proposition"));
             }
+            ctx.finish_quantified_checks(&variable, &Formula::True, domain_checks)?;
             ctx.locals.quantified_checks.push(Vec::new());
             let body = ctx.eval_quantified_expression(body).and_then(|body| body.proposition());
             let checks = ctx.locals.quantified_checks.pop().ok_or("missing quantified well-formedness scope")?;
             let body = body?;
-            ctx.finish_quantified_checks(&variable, &domain, checks, line)?;
+            ctx.finish_quantified_checks(&variable, &domain, checks)?;
             Ok(Symbol::Bool(Formula::Forall {
                 variable: variable.clone(), domain: Box::new(domain), body: Box::new(body),
             }))

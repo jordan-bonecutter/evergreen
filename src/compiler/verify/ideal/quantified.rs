@@ -11,13 +11,12 @@ fn scalar(ty: &Type) -> bool {
 }
 
 impl<'a> Context<'a> {
-    pub(in crate::compiler::verify) fn is_total_scalar_definition(
+    pub(in crate::compiler::verify) fn is_verified_scalar_definition(
         &self,
         function: &Function,
     ) -> bool {
         function.ideal
             && eligible(self, function)
-            && function.pre.is_none()
             && scalar(&function.ret)
             && function.params.iter().all(|(_, ty)| scalar(ty))
             && self
@@ -37,8 +36,8 @@ impl<'a> Context<'a> {
             .functions
             .get(name)
             .ok_or_else(|| format!("line {line}: unknown quantified function {name}"))?;
-        if !self.is_total_scalar_definition(function) {
-            return Err(format!("line {line}: quantified calls currently require a verified ideal scalar definition with no precondition or trusted safety dependency; {name} does not meet that requirement"));
+        if !self.is_verified_scalar_definition(function) {
+            return Err(format!("line {line}: quantified calls currently require a verified ideal scalar definition with no trusted safety dependency; {name} does not meet that requirement"));
         }
         Ok(function)
     }
@@ -62,7 +61,7 @@ impl<'a> Context<'a> {
             let value = self.eval(expression, Some(&ty))?;
             actuals.insert(parameter.clone(), value);
         }
-        let (value, spent) = {
+        let (value, precondition, spent) = {
             let mut budget = Budget::new(MAX_VALUE_WORK.saturating_sub(self.work.value_work));
             let mut importer = Importer::new(self, &mut budget);
             let mut arguments = BTreeMap::new();
@@ -74,13 +73,35 @@ impl<'a> Context<'a> {
                         .ok_or("quantified call has a nonscalar argument")?,
                 );
             }
+            let precondition = if function.pre.is_some() {
+                let value = evaluate::precondition(self, function, arguments.clone(), &mut budget)?
+                    .ok_or_else(|| format!("line {line}: precondition of quantified call to {name} did not reduce to an exact scalar proposition"))?;
+                budget.spend(symbolic::weight(&value)?)?;
+                let proposition = value
+                    .scalar()
+                    .ok_or("quantified precondition is not scalar")?
+                    .proposition()?;
+                if !proposition.is_arithmetic() {
+                    return Err(format!("line {line}: precondition of quantified call to {name} requires an arithmetic proposition"));
+                }
+                Some(proposition)
+            } else {
+                None
+            };
             let value = evaluate::run(self, function, arguments, &mut budget)?;
             if let Some(value) = &value {
                 budget.spend(symbolic::weight(value)?)?;
             }
-            (value.and_then(Value::scalar), budget.spent)
+            (value.and_then(Value::scalar), precondition, budget.spent)
         };
         self.charge_value_work(spent)?;
+        if let Some(condition) = precondition {
+            self.defer_quantified_check(
+                condition,
+                format!("precondition of quantified call to {name}"),
+                line,
+            )?;
+        }
         // Deliberately bypass the ordinary unknown-result cache and postcondition
         // import. All bound dependence must remain visible to substitution and
         // universal introduction in the exact value returned by the evaluator.

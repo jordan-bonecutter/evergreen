@@ -1,0 +1,20 @@
+// Source helpers keep their requirements when used in a universal proposition.
+ideal fn offset_from(index: integer, start: integer) -> integer
+    where
+        index >= start
+{
+    index - start
+}
+
+fn check_range(start: usize, end: usize) {
+    proof offsets: forall(i: integer) where (integer::from(start) <= i && i < integer::from(end)) {offset_from(i, integer::from(start)) >= 0} by {
+        intro i;
+        omega
+    };
+}
+
+fn main() -> usize {
+    // The checker proves one symbolic obligation, without enumerating the range.
+    check_range(7, 1000000000);
+    42
+}

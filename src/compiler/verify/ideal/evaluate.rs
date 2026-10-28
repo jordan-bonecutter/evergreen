@@ -30,11 +30,42 @@ pub(super) fn run<'a>(
     arguments: BTreeMap<String, Value<'a>>,
     budget: &mut Budget,
 ) -> Result<Option<Value<'a>>> {
+    start(context, function, arguments, budget, false)
+}
+
+/// Evaluate the declared precondition in the actual argument environment,
+/// without installing a callee scope in the verifier or importing any contracts.
+pub(super) fn precondition<'a>(
+    context: &'a Context<'_>,
+    function: &Function,
+    arguments: BTreeMap<String, Value<'a>>,
+    budget: &mut Budget,
+) -> Result<Option<Value<'a>>> {
+    start(context, function, arguments, budget, true)
+}
+
+fn start<'a>(
+    context: &'a Context<'_>,
+    function: &Function,
+    arguments: BTreeMap<String, Value<'a>>,
+    budget: &mut Budget,
+    precondition: bool,
+) -> Result<Option<Value<'a>>> {
     let function = context
         .declarations
         .functions
         .get(&function.name)
         .ok_or("missing ideal definition")?;
+    let entry = if precondition {
+        Task::Expression(
+            function.pre.as_ref().ok_or("missing ideal precondition")?,
+            0,
+            Some(Ty::Bool),
+            false,
+        )
+    } else {
+        Task::Body(0, 0)
+    };
     let mut machine = Machine {
         context,
         budget,
@@ -43,7 +74,7 @@ pub(super) fn run<'a>(
             entry: arguments.clone(),
             locals: arguments,
         }],
-        pending: vec![Task::Return(0), Task::Body(0, 0)],
+        pending: vec![Task::Return(0), entry],
         values: Vec::new(),
     };
     while let Some(task) = machine.pending.pop() {

@@ -182,7 +182,7 @@ impl Context<'_> {
                     .declarations
                     .functions
                     .get(name)
-                    .is_some_and(|function| self.is_total_scalar_definition(function)) =>
+                    .is_some_and(|function| self.is_verified_scalar_definition(function)) =>
             {
                 // A pure scalar definition observes only these values. Keep its
                 // identity and every argument revision without evaluating it.

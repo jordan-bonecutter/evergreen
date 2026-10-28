@@ -2478,11 +2478,26 @@ introduction and specialization then use the existing proof kernel; they neither
 enumerate the domain nor introduce a fresh unknown result for an application.
 
 This path accepts verified pure ideal definitions with scalar parameters and
-results, no precondition, and no trusted safety dependency. It computes the body
+results and no trusted safety dependency. It computes the body
 without importing its postcondition, including a postcondition marked `trustme`.
 Unknown branches, nonlinear symbolic computation, and other opaque results are
-rejected here instead of falling back to an ordinary call model. Preconditions
-under a binder and general bound-dependent array reads remain unsupported.
+rejected here instead of falling back to an ordinary call model. General
+bound-dependent array payload reads remain unsupported.
+
+[`quantified_preconditions.evg`](../examples/quantified_preconditions.evg) uses a
+helper with a `where` clause. Its precondition must reduce to an explicit
+arithmetic formula, which is proved for every value in the quantified domain.
+This is a definedness check even when the surrounding expression only declares a
+`fact`, or its proof uses `trustme`. Nested quantifiers preserve the outer domains
+and lexical bindings; they never enumerate the range. Calls in the domain itself
+must be valid for every value of that binder, using only enclosing domains and
+the caller's existing facts. A domain cannot justify its own calls. Boolean
+connectives do not introduce additional domains for these checks.
+
+Precondition reduction uses the actual scalar arguments without importing helper
+postconditions or changing the caller's bindings. Opaque preconditions remain
+unsupported. Proving a precondition does not widen the evaluator's exact fragment:
+symbolic narrowing conversions, for example, still need additional support.
 
 Proof subjects record the definition identity and every argument's plane revision.
 Specialization substitutes bound arguments through those keys. Changing a

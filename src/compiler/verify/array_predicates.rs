@@ -113,11 +113,11 @@ impl Context<'_> {
         };
         let bounds =
             Formula::Ge(index.clone()).and(Formula::Ge(len.sub(&index)?.add(&Linear::number(-1))?));
-        self.locals
-            .quantified_checks
-            .last_mut()
-            .ok_or("indexed type predicates require an arithmetic quantifier domain")?
-            .push(bounds);
+        self.defer_quantified_check(
+            bounds,
+            "quantified array index bounds".into(),
+            expression.line,
+        )?;
         self.ensure_type_selector(&array, &target, 0)?;
         let key = (identity.clone(), target.clone());
         let selector = &self.arrays.type_predicates[&key];
@@ -223,55 +223,5 @@ impl Context<'_> {
                 },
             )
             .map(Some)
-    }
-
-    pub(super) fn finish_quantified_checks(
-        &mut self,
-        variable: &str,
-        domain: &Formula,
-        checks: Vec<Formula>,
-        line: usize,
-    ) -> Result<()> {
-        for check in checks {
-            let goal = Formula::Forall {
-                variable: variable.into(),
-                domain: Box::new(domain.clone()),
-                body: Box::new(check),
-            };
-            self.charge_value_work(goal.storage_weight()?)?;
-            if let Some(parent) = self.locals.quantified_checks.last_mut() {
-                parent.push(goal);
-                continue;
-            }
-            let mut steps = Vec::new();
-            let mut tail = &goal;
-            let mut domains = paths::Paths::unit();
-            while let Formula::Forall { domain, body, .. } = tail {
-                domains = extend(
-                    &domains,
-                    domain,
-                    false,
-                    self.session,
-                    &mut self.work.value_work,
-                )?;
-                steps.push(format!("intro evg_index_check_{}", steps.len()));
-                tail = body;
-            }
-            steps.push("omega".into());
-            // Bounds often follow from the quantified domains alone. Prove
-            // those in an independent context so unrelated storage case splits
-            // cannot introduce imported dependencies into ForallIntro.
-            let independent = self.probe_guard(&domains, tail)?.is_some();
-            let saved =
-                independent.then(|| std::mem::replace(&mut self.proof.paths, paths::Paths::unit()));
-            let result =
-                self.proof_script_for(&goal, "quantified array index bounds", line, &steps, None);
-            if let Some(saved) = saved {
-                self.proof.paths = saved;
-            }
-            let node = result?;
-            self.proof.uses.push(node);
-        }
-        Ok(())
     }
 }

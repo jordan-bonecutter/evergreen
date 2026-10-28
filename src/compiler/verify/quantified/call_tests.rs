@@ -33,7 +33,6 @@ fn quantified_calls_reject_opaque_results_unchecked_domains_and_trusted_safety()
     for (source, fragment) in [
         ("ideal fn select(n: integer) -> integer {if n == 0 {7} else {8}} fn main() {fact p = forall(i: integer) {select(i) == 7};}", "exact scalar expression"),
         ("ideal fn square(n: integer) -> integer {n * n} fn main() {fact p = forall(i: integer) {square(i) >= 0};}", "nonlinear"),
-        ("ideal fn needs(n: integer) -> bool where n >= 0 {true} fn main() {fact p = forall(i: integer) where(i >= 0) {needs(i)};}", "no precondition"),
         ("fn runtime(n: usize) -> bool {n > 0} fn main() {fact p = forall(i: integer) {runtime(0)};}", "verified ideal scalar"),
         ("ideal fn view(n: &usize) -> integer {integer(*n)} fn main() {let n: usize = 7; fact p = forall(i: integer) {view(&n) >= i};}", "verified ideal scalar"),
         ("ideal fn needs(n: integer) where n == 42 {} ideal fn unsafe_call(n: integer) -> bool {proof lie: n == 42 by {trustme}; needs(n); true} fn main() {fact p = forall(i: integer) {unsafe_call(i)};}", "trusted safety dependency"),

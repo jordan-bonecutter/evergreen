@@ -369,7 +369,8 @@ ten-element one. These propositions have no executable Boolean representation.
 See [universal.evg](../examples/universal.evg) for a runnable example.
 
 Bound indices use lexical scope and mathematical integer arithmetic. Machine and
-natural values need `integer(value)` before arithmetic inside a quantifier.
+natural values need `integer::from(value)` (or the bootstrap `integer(value)`)
+before arithmetic inside a quantifier.
 Free scalar fields retain their ordinary plane/revision dependencies. Proof keys
 store bound indices by their lexical distance, so renaming a binder does not
 change its identity or confuse it with a plane read. Specialization preserves
@@ -441,9 +442,26 @@ Complete independent certification of these state substitutions remains pending.
 General nominal-invariant subject transport, quantified domains, conditional
 input-cell aliases, and resource range loop frames remain unfinished.
 Generalization through declaration summaries or imported trust with untraced
-context dependencies is rejected. User predicate calls and indexed payload reads
-inside quantifiers remain rejected: opaque frontend identities must not hide a
-bound argument. Indexed type observations have the implementation described below.
+context dependencies is rejected. Indexed payload reads inside quantifiers
+remain rejected: opaque frontend identities must not hide a bound argument.
+Indexed type observations have the implementation described below.
+
+Pure ideal scalar calls can reduce inside a quantifier to exact arithmetic or
+Boolean expressions containing the bound variable. Their preconditions are
+separate universal obligations over the enclosing domains, discharged before the
+formula is usable. A call in a domain must be valid without assuming that domain;
+only outer domains and existing caller facts may justify it. This prevents a
+partial predicate from supplying its own prerequisite. These checks apply even
+to unproved named facts and admitted theorems. They use the same kernel rules as
+indexed type bounds and do not enumerate a finite domain.
+
+This path requires verified definitions with no trusted safety dependency. It
+does not import postconditions or fall back to opaque results, and it rejects a
+precondition that does not reduce to an arithmetic formula. Nested source calls
+retain the defining function's checked safety requirements. Subject keys retain
+the function identity and actual argument revisions; bound substitution traverses
+all arguments. The source evaluator and its interpretation remain part of the
+trusted frontend, rather than a newly independently certified reduction rule.
 
 The kernel now has structured predicate atoms as groundwork for those memory
 claims. An atom retains an uninterpreted symbol and its integer arguments.
