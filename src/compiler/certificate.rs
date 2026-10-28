@@ -1,9 +1,12 @@
 //! Portable, untrusted arithmetic proof artifacts. Replay regenerates all VCs
 //! with the current frontend and checks every certificate against those VCs.
 
-use crate::compiler::kernel::{self, Certificate, Linear};
+use crate::compiler::kernel::{self, Affine, Certificate, Linear};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, io::Read, path::Path, sync::Arc};
+
+mod terms;
+use terms::ArtifactAtom;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -21,20 +24,8 @@ fn source_hash(source: &str) -> String {
     format!("{:x}", h.finalize())
 }
 
-fn statement_hash(rows: &[Linear]) -> String {
-    let mut h = Sha256::new();
-    h.update(b"evergreen-linear-v1\0");
-    h.update((rows.len() as u64).to_le_bytes());
-    for row in rows {
-        h.update(row.constant.to_le_bytes());
-        h.update((row.terms.len() as u64).to_le_bytes());
-        for (name, coefficient) in &row.terms {
-            h.update((name.len() as u64).to_le_bytes());
-            h.update(name.as_bytes());
-            h.update(coefficient.to_le_bytes());
-        }
-    }
-    format!("{:x}", h.finalize())
+fn statement_hash<V: ArtifactAtom>(rows: &[Affine<V>]) -> String {
+    V::statement_hash(rows)
 }
 
 fn digest(text: &str) -> bool {
@@ -306,22 +297,32 @@ impl Session {
     /// Replay obtains them from the checked certificate, never artifact claims.
     /// These indices include any negated-goal rows supplied by the VC generator;
     /// the caller must distinguish those from assumptions when building edges.
-    pub(crate) fn prove_with_support(&mut self, rows: &[Linear]) -> Result<Vec<usize>> {
+    pub(crate) fn prove_with_support<V: ArtifactAtom>(
+        &mut self,
+        rows: &[Affine<V>],
+    ) -> Result<Vec<usize>> {
         self.query(rows, false)?
             .ok_or_else(|| "required certificate is missing".into())
     }
 
-    pub(crate) fn probe(&mut self, rows: &[Linear]) -> Result<bool> {
+    pub(crate) fn probe<V: ArtifactAtom>(&mut self, rows: &[Affine<V>]) -> Result<bool> {
         Ok(self.probe_with_support(rows)?.is_some())
     }
 
     /// A successful optional query carries the same checked support as a
     /// required proof. Failure carries no evidence and cannot justify pruning.
-    pub(crate) fn probe_with_support(&mut self, rows: &[Linear]) -> Result<Option<Vec<usize>>> {
+    pub(crate) fn probe_with_support<V: ArtifactAtom>(
+        &mut self,
+        rows: &[Affine<V>],
+    ) -> Result<Option<Vec<usize>>> {
         self.query(rows, true)
     }
 
-    fn query(&mut self, rows: &[Linear], optional: bool) -> Result<Option<Vec<usize>>> {
+    fn query<V: ArtifactAtom>(
+        &mut self,
+        rows: &[Affine<V>],
+        optional: bool,
+    ) -> Result<Option<Vec<usize>>> {
         if self.cursor >= MAX_RECORDS {
             return Err("verification query limit reached".into());
         }

@@ -6,10 +6,12 @@ use super::{Affine, ArithmeticResult};
 use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, OnceLock,
 };
 
+mod commitment;
 mod traversal;
+pub use commitment::CommittedAtom;
 
 #[cfg(test)]
 mod tests;
@@ -62,6 +64,7 @@ pub struct Terms {
     arena: u64,
     nodes: Vec<Arc<Node>>,
     interned: BTreeMap<Arc<Node>, Id>,
+    commitments: Vec<OnceLock<[u8; 32]>>,
 }
 
 impl Terms {
@@ -73,6 +76,7 @@ impl Terms {
             arena,
             nodes: Vec::new(),
             interned: BTreeMap::new(),
+            commitments: Vec::new(),
         })
     }
 
@@ -101,6 +105,7 @@ impl Terms {
         };
         let node = Arc::new(node);
         self.nodes.push(Arc::clone(&node));
+        self.commitments.push(OnceLock::new());
         self.interned.insert(node, id);
         Ok(id)
     }

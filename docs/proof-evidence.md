@@ -488,9 +488,26 @@ contents version or index.
 
 This scalar term layer is kernel groundwork, not yet source-level indexed
 payload support. The frontend still uses named affine rows. Connecting structured
-terms to propositions, portable artifacts, typed array-read interpretations,
+terms to propositions, typed array-read interpretations,
 congruence evidence, and quantified source elaboration remains required. A bare
 application supplies no truth, bounds, memory access, or ownership authority.
+
+Structured arithmetic queries now use the existing proof-artifact recording and
+replay path. Their commitments describe the reachable term DAG with distinct
+tags for variables, applications, and sums. Application arguments stay ordered;
+affine entries are ordered by their structural commitments. Arena IDs, interning
+order, and unrelated nodes do not enter the query digest. The frontend regenerates
+the terms; artifacts supply certificate weights, not trusted term definitions.
+The same arithmetic checker validates those weights against exact regenerated
+atom identities. Digests select cached queries but never establish term equality.
+
+Commitments are computed on demand with a work budget and cached on immutable
+nodes. All rows in one query share a traversal, and later observations of a cached
+root need no descendant traversal. Tests replay structured queries after creating
+their terms in a fresh arena in a different order, reject changed contents versions
+and indices, and reject forged weights. The existing named-row artifact encoding
+is unchanged; structured queries have a distinct digest domain. Source-level
+payload reads still need the frontend integration described above.
 
 Atoms establish no truth by their construction and have no built-in memory or
 ownership meaning. They cannot enter arithmetic paths as fresh Boolean variables.

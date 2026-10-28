@@ -72,6 +72,7 @@ fn substitution_traverses_application_arguments_and_keeps_old_terms_immutable() 
     let plus_one = terms.add(i, one, work).unwrap();
     let read = terms.application("contents_v0", &[plus_one], work).unwrap();
     let root = terms.application("predicate", &[read, n], work).unwrap();
+    let original_commitment = terms.commitment(root, work).unwrap();
     assert_eq!(
         terms.free_variables(root, work).unwrap(),
         BTreeSet::from(["i".into(), "n".into()])
@@ -86,6 +87,11 @@ fn substitution_traverses_application_arguments_and_keeps_old_terms_immutable() 
         .application("predicate", &[expected_read, n], work)
         .unwrap();
     assert_eq!(rewritten, expected);
+    assert_ne!(
+        original_commitment,
+        terms.commitment(rewritten, work).unwrap()
+    );
+    assert_eq!(original_commitment, terms.commitment(root, work).unwrap());
     assert_eq!(
         terms.free_variables(rewritten, work).unwrap(),
         BTreeSet::from(["n".into()])
@@ -214,4 +220,33 @@ fn foreign_ids_exhaustion_and_numeric_overflow_fail_closed() {
         terms.free_variables(scaled, work).unwrap(),
         BTreeSet::from(["x".into()])
     );
+}
+
+#[test]
+fn commitments_preserve_structure_and_are_bounded_by_dag_size() {
+    let mut terms = Terms::new().unwrap();
+    let build = &mut Work::new(100_000);
+    let x = terms.variable("x", build).unwrap();
+    let empty_application = terms.application("x", &[], build).unwrap();
+    assert_ne!(
+        terms.commitment(x, build).unwrap(),
+        terms.commitment(empty_application, build).unwrap()
+    );
+    let mut root = x;
+    for _ in 0..4000 {
+        root = terms.application("f", &[root, root], build).unwrap();
+    }
+    assert!(terms.commitment(root, &mut Work::new(100)).is_err());
+    let mut work = Work::new(400_000);
+    let digest = terms.commitment(root, &mut work).unwrap();
+    assert!(work.spent() < 300_000);
+    assert_eq!(digest, terms.commitment(root, &mut Work::new(2)).unwrap());
+
+    let mut foreign = Terms::new().unwrap();
+    let foreign = foreign.variable("x", build).unwrap();
+    assert!(terms.commitment(foreign, build).is_err());
+    let one = terms.number(1, build).unwrap();
+    assert!(terms
+        .committed_rows(&[Affine::variable(one)], build)
+        .is_err());
 }
