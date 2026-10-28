@@ -5,6 +5,8 @@ use std::sync::Arc;
 pub(super) enum Value {
     Number(Ty, i128),
     Bool(bool),
+    SymbolicNumber(Ty, Arc<Linear>),
+    SymbolicBool(Arc<Formula>),
     Unit,
     Array(Ty, Arc<[Value]>),
     Record(String, Arc<BTreeMap<String, Value>>),
@@ -14,8 +16,8 @@ pub(super) enum Value {
 impl Value {
     pub(super) fn ty(&self) -> Ty {
         match self {
-            Self::Number(ty, _) => ty.clone(),
-            Self::Bool(_) => Ty::Bool,
+            Self::Number(ty, _) | Self::SymbolicNumber(ty, _) => ty.clone(),
+            Self::Bool(_) | Self::SymbolicBool(_) => Ty::Bool,
             Self::Unit => Ty::Unit,
             Self::Array(element, values) => Ty::Array(
                 Box::new(element.clone()),
@@ -30,6 +32,8 @@ impl Value {
         match self {
             Self::Number(ty, n) => Some(Symbol::Number(ty, Linear::number(n))),
             Self::Bool(b) => Some(Symbol::Bool(if b { Formula::True } else { Formula::False })),
+            Self::SymbolicNumber(ty, n) => Some(Symbol::Number(ty, Arc::unwrap_or_clone(n))),
+            Self::SymbolicBool(p) => Some(Symbol::Bool(Arc::unwrap_or_clone(p))),
             Self::Unit => Some(Symbol::Unit),
             _ => None,
         }
@@ -79,11 +83,14 @@ impl Budget {
         }
     }
     pub(super) fn tick(&mut self) -> Result<()> {
-        if self.remaining == 0 {
+        self.spend(1)
+    }
+    pub(super) fn spend(&mut self, amount: usize) -> Result<()> {
+        if self.remaining < amount {
             return Err("ideal definition evaluation work limit reached".into());
         }
-        self.remaining -= 1;
-        self.spent += 1;
+        self.remaining -= amount;
+        self.spent += amount;
         Ok(())
     }
 }
@@ -114,9 +121,16 @@ impl<'a, 'c> Importer<'a, 'c> {
             Symbol::Number(ty, n) if n.terms.is_empty() => {
                 Value::checked_number(ty.clone(), n.constant)?
             }
+            Symbol::Number(ty, n) => {
+                self.budget.spend(n.terms.len().saturating_add(1))?;
+                Value::SymbolicNumber(ty.clone(), Arc::new(n.clone()))
+            }
             Symbol::Bool(p) => match closed_boolean(p) {
                 Some(b) => Value::Bool(b),
-                None => return Ok(None),
+                None => {
+                    self.budget.spend(p.storage_weight()?)?;
+                    Value::SymbolicBool(Arc::new(p.clone()))
+                }
             },
             Symbol::Unit => Value::Unit,
             Symbol::Array {
@@ -187,7 +201,7 @@ impl<'a, 'c> Importer<'a, 'c> {
     }
 }
 
-fn closed_boolean(p: &Formula) -> Option<bool> {
+pub(super) fn closed_boolean(p: &Formula) -> Option<bool> {
     Some(match p {
         Formula::True => true,
         Formula::False => false,

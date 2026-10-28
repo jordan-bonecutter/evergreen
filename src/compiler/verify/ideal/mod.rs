@@ -1,11 +1,13 @@
 //! Demand-driven computation of read-only verified definitions on concrete
-//! inputs. Source contracts and their trust dependencies still pass through the
-//! ordinary call checker; reduction is not a new axiom or an FFI escape hatch.
+//! inputs and total scalar symbolic expressions. Source contracts and trust
+//! dependencies still pass through the ordinary call checker; reduction adds
+//! neither an axiom nor an FFI escape hatch.
 
 use super::*;
 
 mod applications;
 mod evaluate;
+mod symbolic;
 #[cfg(test)]
 mod tests;
 mod values;
@@ -37,7 +39,7 @@ impl Context<'_> {
             let mut budget = Budget::new(MAX_VALUE_WORK.saturating_sub(self.work.value_work));
             let mut importer = Importer::new(self, &mut budget);
             let mut arguments = BTreeMap::new();
-            let mut concrete = true;
+            let mut supported = true;
             for (name, _) in &function.params {
                 match importer.value(
                     self.locals
@@ -50,12 +52,12 @@ impl Context<'_> {
                         arguments.insert(name.clone(), value);
                     }
                     None => {
-                        concrete = false;
+                        supported = false;
                         break;
                     }
                 }
             }
-            let value = if concrete {
+            let value = if supported {
                 evaluate::run(self, function, arguments, &mut budget)?
             } else {
                 None
@@ -63,6 +65,9 @@ impl Context<'_> {
             (value, budget.spent)
         };
         self.charge_value_work(spent)?;
+        if let Some(value) = &value {
+            self.charge_value_work(symbolic::weight(value)?)?;
+        }
         let value = value.and_then(Value::scalar);
         if let (Some(key), Some(value)) = (application, value.as_ref()) {
             self.applications.computed.insert(key, value.clone());

@@ -85,16 +85,25 @@ impl<'a> Machine<'a, '_, '_> {
                 pop(&mut self.values)?;
             }
             Task::Branch(yes, no, frame, expected, entry) => {
-                let branch = if pop(&mut self.values)?.boolean()? {
-                    yes
-                } else {
-                    no
+                let condition = pop(&mut self.values)?;
+                // Do not speculate through an unknown branch: its untaken arm
+                // may need bounds or recursion facts that do not hold here.
+                let Value::Bool(condition) = condition else {
+                    return Ok(false);
                 };
+                let branch = if condition { yes } else { no };
                 self.pending
                     .push(Task::Expression(branch, frame, expected, entry));
             }
             Task::Unary(op) => {
                 let value = pop(&mut self.values)?;
+                if symbolic::is_symbolic(&value) {
+                    let Some(value) = symbolic::unary(op, value, self.budget)? else {
+                        return Ok(false);
+                    };
+                    self.values.push(value);
+                    return Ok(true);
+                }
                 self.values.push(match (op, value) {
                     ("!", Value::Bool(b)) => Value::Bool(!b),
                     ("-", Value::Number(ty, n)) => {
@@ -110,18 +119,25 @@ impl<'a> Machine<'a, '_, '_> {
             Task::Binary(op) => {
                 let right = pop(&mut self.values)?;
                 let left = pop(&mut self.values)?;
-                let Some(value) = binary(op, left, right)? else {
+                let Some(value) = binary(op, left, right, self.budget)? else {
                     return Ok(false);
                 };
                 self.values.push(value);
             }
             Task::Convert(ty) => {
-                let n = pop(&mut self.values)?.number()?;
-                self.values.push(Value::checked_number(ty, n)?);
+                let value = pop(&mut self.values)?;
+                let Some(value) = symbolic::convert(ty, value)? else {
+                    return Ok(false);
+                };
+                self.values.push(value);
             }
             Task::Index => {
-                let index = usize::try_from(pop(&mut self.values)?.number()?)
-                    .map_err(|_| "invalid ideal array index")?;
+                let index = pop(&mut self.values)?;
+                if symbolic::is_symbolic(&index) {
+                    return Ok(false);
+                }
+                let index =
+                    usize::try_from(index.number()?).map_err(|_| "invalid ideal array index")?;
                 let Value::Array(_, array) = pop(&mut self.values)? else {
                     return Ok(false);
                 };
@@ -457,7 +473,10 @@ fn hint(expression: &Expr, locals: &BTreeMap<String, Value>, context: &Context<'
     }
 }
 
-fn binary(op: &str, a: Value, b: Value) -> Result<Option<Value>> {
+fn binary(op: &str, a: Value, b: Value, budget: &mut Budget) -> Result<Option<Value>> {
+    if symbolic::is_symbolic(&a) || symbolic::is_symbolic(&b) {
+        return symbolic::binary(op, a, b, budget);
+    }
     if matches!(op, "&&" | "||" | "=>") {
         let (a, b) = (a.boolean()?, b.boolean()?);
         return Ok(Some(Value::Bool(match op {

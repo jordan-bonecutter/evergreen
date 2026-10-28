@@ -247,7 +247,27 @@ impl Context<'_> {
                 self.locals.values.insert(name.clone(), value.clone());
             }
         }
-        let (result, left, right) = match self.join_value(&a, &b, &mut views, line) {
+        // A Boolean result already has a logical representation. Preserve the
+        // guarded formula directly instead of creating a fresh Boolean and
+        // expanding equivalence constraints in both branches.
+        let joined = match (&a, &b) {
+            (Symbol::Bool(a), Symbol::Bool(b)) => {
+                self.charge_value_work(
+                    p.storage_weight()?
+                        .saturating_add(a.storage_weight()?)
+                        .saturating_add(b.storage_weight()?)
+                        .saturating_mul(2),
+                )?;
+                let value = if a == b {
+                    a.clone()
+                } else {
+                    p.clone().and(a.clone()).or(p.not().and(b.clone()))
+                };
+                Ok((Symbol::Bool(value), Formula::True, Formula::True))
+            }
+            _ => self.join_value(&a, &b, &mut views, line),
+        };
+        let (result, left, right) = match joined {
             Ok(joined) => joined,
             Err(error)
                 if a.ty() == b.ty()

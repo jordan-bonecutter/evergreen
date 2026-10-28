@@ -102,7 +102,16 @@ fn loop_measures_follow_pointer_revisions_and_method_sugar() {
 
 #[test]
 fn admitted_progress_remains_an_explicit_safety_dependency() {
-    let source = "ideal fn rank(value: usize) -> nat ensures result == nat(value) {0} proof {trustme} fn claimed() -> usize {let value: usize = 0; while value < 42 invariant(value <= 42) modifies(&value) decreases(rank(42 - value)) {value = value + 1;} value} fn main() -> usize {claimed()}";
+    let source = "ideal fn rank(value: usize) -> nat ensures result == nat(value) {if value == 0 {0} else {1}} proof {trustme} fn claimed() -> usize {let value: usize = 0; while value < 42 invariant(value <= 42) modifies(&value) decreases(rank(42 - value)) {value = value + 1;} value} fn main() -> usize {claimed()}";
+    // A symbolic branch falls back to the admitted contract, so progress
+    // depends on that admission. A visibly constant rank cannot decrease:
+    // its contradictory postcondition must not prove unrelated arithmetic.
+    let constant_rank = source.replace("{if value == 0 {0} else {1}}", "{0}");
+    let error = verify(&constant_rank).unwrap_err();
+    assert!(
+        error.contains("strictly decreasing loop measure"),
+        "{error}"
+    );
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.trusted_assumptions().len(), 1);
     for name in ["claimed", "main"] {

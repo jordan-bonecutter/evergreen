@@ -2435,8 +2435,36 @@ Ideal scalar observations reuse computed results by definition identity and inpu
 values. References additionally key the exact projected read revision, so a
 write or a dropped plane cannot reuse its old observation. Symbolic ideal
 integers and Booleans also share one result for the same application, avoiding
-repeated unfolding of a definition. Bounded symbolic results
-retain ordinary type-bound handling; concrete bounded results can be cached
+repeated unfolding of a definition. The read-only evaluator now reduces total
+scalar expressions on symbolic inputs: mathematical linear arithmetic, numeric
+comparisons, Boolean connectives, and representation-preserving numeric views.
+For example, `ideal fn positive(n: usize) -> bool {n > 0}` exposes that exact
+formula without requiring a duplicate postcondition. Symbolic reference reads
+retain the observed memory revision.
+
+Reduction does not consult caller assumptions to choose branches. An unknown
+branch, symbolic array index, nonlinear product, or symbolic machine arithmetic
+falls back to the checked contract/model. Natural subtraction keeps saturation;
+it does not become integer subtraction. Bounded computed results are retained
+only when derived exactly from typed inputs; fresh bounded symbolic results
+retain ordinary type-bound handling. Concrete bounded results can be cached
 across branches. Every call still checks preconditions and imports its safety and
 contract dependencies, including on a cache hit. This reuse applies to verified
 pure ideal definitions, not unspecified runtime arithmetic.
+
+
+[`utf8_byte_proofs.evg`](../examples/utf8_byte_proofs.evg) proves byte classification
+for symbolic inputs: ASCII leads need no continuation, continuation bytes cannot
+start a code point, and three-byte leads require two continuations. The source
+UTF-8 helpers now advertise their precise continuation count and first-byte
+bounds through checked contracts. Boolean conditionals preserve their guarded
+formula directly, avoiding the extra case splits previously introduced by a
+fresh Boolean result and two equivalence constraints.
+
+This is groundwork for buffer append, not yet a general UTF-8 concatenation
+proof or an append API. Symbolic sequence content, bound-dependent array reads,
+and recursive predicate unfolding still need proof support. User function calls
+inside quantified expressions remain rejected; this reducer does not hide bound
+arguments inside opaque scalar identities. String literals still have their
+existing byte-array representation; ideal Unicode strings and encoding APIs are
+separate unfinished work.

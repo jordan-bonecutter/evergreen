@@ -6,7 +6,12 @@ ideal fn lead_valid(byte: u8) -> bool {
 
 ideal fn lead_count(byte: u8) -> nat
     ensures
-        result <= 3
+        result <= 3 &&
+        if byte <= 127 {result == 0} else {
+            if byte <= 223 {result == 1} else {
+                if byte <= 239 {result == 2} else {result == 3}
+            }
+        }
 {
     if byte <= 127 {0} else {
         if byte <= 223 {1} else {
@@ -17,13 +22,23 @@ ideal fn lead_count(byte: u8) -> nat
 
 // The first continuation excludes overlong encodings, surrogates, and values
 // above U+10FFFF. Later continuations always use [128, 191].
-ideal fn first_low(byte: u8) -> u8 {
+ideal fn first_low(byte: u8) -> u8
+    ensures
+        if byte == 224 {result == 160} else {
+            if byte == 240 {result == 144} else {result == 128}
+        }
+{
     if byte == 224 {160} else {
         if byte == 240 {144} else {128}
     }
 }
 
-ideal fn first_high(byte: u8) -> u8 {
+ideal fn first_high(byte: u8) -> u8
+    ensures
+        if byte == 237 {result == 159} else {
+            if byte == 244 {result == 143} else {result == 191}
+        }
+{
     if byte == 237 {159} else {
         if byte == 244 {143} else {191}
     }

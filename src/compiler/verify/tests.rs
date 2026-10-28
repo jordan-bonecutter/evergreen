@@ -1947,8 +1947,9 @@ fn erased_move_only_resources_move_without_runtime_values_or_effects() {
         "fn branch(ideal t: tickets::Ticket) -> usize {if t.tag == 1 {42} else {0}}",
     ] {assert!(verify(&format!("{declarations} {bad}")).is_err(), "{bad}");}
     let proof_view = "ideal fn inspect(t: tickets::Ticket) -> nat {1} fn caller(ideal t: tickets::Ticket) -> usize {proof stable: inspect(t) == inspect(t); consume(t, 42)}";
-    // A missing postcondition cannot prove equality of arbitrary summaries.
-    assert!(verify(&format!("{declarations} {proof_view}")).is_err());
+    // Symbolic read-only reduction observes the constant result. A proof view
+    // still leaves the ideal ticket available for its one consuming use.
+    assert!(verify(&format!("{declarations} {proof_view}")).is_ok());
     let proof_view = proof_view.replace_evg("-> nat {1}", "-> nat ensures(result == 1) {1}");
     assert!(verify(&format!("{declarations} {proof_view}")).is_ok());
     let old_scalar = "fn answer(ideal expected: nat) -> usize where(expected == 42) ensures(result == 42) {42} fn caller(n: usize) -> usize where(n == 42) ensures(result == 42) {n = 0; answer(nat(old(n)))} fn main() -> usize {caller(42)}";

@@ -1,0 +1,35 @@
+// The byte is symbolic: these facts follow from source definitions and checked
+// helper contracts, without executing a concrete byte sequence or using trustme.
+fn ascii(byte: u8)
+    where
+        byte <= 127
+{
+    proof _: utf8::lead_valid(byte);
+    proof _: utf8::lead_count(byte) == 0;
+}
+
+fn continuation(byte: u8)
+    where
+        byte >= 128 &&
+        byte <= 191
+{
+    proof _: !utf8::lead_valid(byte);
+}
+
+fn three_byte_lead(byte: u8)
+    where
+        byte >= 224 &&
+        byte <= 239
+{
+    proof _: utf8::lead_valid(byte);
+    proof _: utf8::lead_count(byte) == 2;
+    proof _: utf8::first_low(byte) >= 128;
+    proof _: utf8::first_high(byte) <= 191;
+}
+
+fn main() -> usize {
+    ascii(42);
+    continuation(128);
+    three_byte_lead(224);
+    42
+}
