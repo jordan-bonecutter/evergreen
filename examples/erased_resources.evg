@@ -1,19 +1,28 @@
 // A test factory for ideal tickets, not an allocation authority.
 module tickets {
     ideal opaque type Ticket struct {tag: nat} where (tag == 1);
-    ideal fn issue() -> Ticket {Ticket {tag: 1}}
+    ideal fn issue() -> Ticket {
+        Ticket {tag: 1}
+    }
 }
 
 fn consume(ideal ticket: tickets::Ticket, value: usize) -> usize
-ensures (result == value) {
+    ensures
+        (result == value)
+{
     value
 }
 
 fn forward(ideal ticket: tickets::Ticket, value: usize) -> usize
-ensures (result == value) {
+    ensures
+        (result == value)
+{
     consume(ticket, value)
 }
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     forward(tickets::issue(), 42)
 }

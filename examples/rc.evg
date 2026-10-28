@@ -14,9 +14,7 @@ fn main() -> usize {
     third.release_nonfinal();
     proof unique: second.strong_count() == 1;
     let one_remains = second.strong_count() == 1;
-    let answer = if two_handles && three_handles && two_remain && one_remains {
-        *view
-    } else {1};
+    let answer = if two_handles && three_handles && two_remain && one_remains {*view} else {1};
     second.release_last();
     answer
 }

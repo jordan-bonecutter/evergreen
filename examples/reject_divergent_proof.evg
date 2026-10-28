@@ -1,3 +1,10 @@
 // A checked postcondition on return cannot provide proof evidence of a return.
-fn spin() -> usize ensures (false) {spin()}
-ideal fn impossible() -> nat {nat(spin())}
+fn spin() -> usize
+    ensures
+        (false)
+{
+    spin()
+}
+ideal fn impossible() -> nat {
+    nat(spin())
+}

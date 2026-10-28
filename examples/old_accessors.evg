@@ -1,19 +1,34 @@
-fn read(value: &usize) -> usize ensures(result == *value) {*value}
+fn read(value: &usize) -> usize
+    ensures
+        (result == *value)
+{
+    *value
+}
 
-fn is_answer(value: &usize) -> bool ensures(result == (*value == 42)) {
+fn is_answer(value: &usize) -> bool
+    ensures
+        (result == (*value == 42))
+{
     *value == 42
 }
 
 fn advance(value: &usize)
-where(*value == 41)
-modifies(value)
-ensures(read(value) == old(read(value)) + 1
-    && old(read(value)) == 41
-    && is_answer(value) && !old(is_answer(value))) {
+    where
+        (*value == 41)
+    modifies(value)
+    ensures
+        (read(value) == old(read(value)) + 1 &&
+        old(read(value)) == 41 &&
+        is_answer(value) &&
+        !old(is_answer(value)))
+{
     *value = 42;
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let value: usize = 41;
     advance(&value);
     value

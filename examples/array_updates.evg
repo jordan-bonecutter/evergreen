@@ -1,6 +1,9 @@
 fn change(index: usize) -> usize
-where (index < 2)
-ensures (result == 42) {
+    where
+        (index < 2)
+    ensures
+        (result == 42)
+{
     let data: [usize; 2] = [7, 9];
     let existing = &data[index];
     arrays::set(2, &data, index, 42);
@@ -12,26 +15,39 @@ ensures (result == 42) {
 }
 
 // A wrapper forwards the same two-cell permission, including coincident cells.
-fn swap_prefix(data: &[usize; 3], left: usize, right: usize)
-where (left < 2 && right < 2)
-modifies(&(*data)[left], &(*data)[right])
-ensures (
-    (*data)[left] == old(*data)[right] &&
-    (*data)[right] == old(*data)[left]
-) {
+fn swap_prefix(
+    data: &[usize; 3],
+    left: usize,
+    right: usize
+)
+    where
+        (left < 2 &&
+        right < 2)
+    modifies(&(*data)[left], &(*data)[right])
+    ensures
+        ((*data)[left] == old(*data)[right] &&
+        (*data)[right] == old(*data)[left])
+{
     arrays::swap(3, data, left, right);
 }
 
 fn framed_swap(left: usize, right: usize) -> usize
-where (left < 2 && right < 2)
-ensures (result == 42) {
+    where
+        (left < 2 &&
+        right < 2)
+    ensures
+        (result == 42)
+{
     let data: [usize; 3] = [7, 9, 42];
     let untouched = &data[2];
     swap_prefix(&data, left, right);
     *untouched
 }
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let changed = change(1);
     let distinct = framed_swap(0, 1);
     framed_swap(1, 1)

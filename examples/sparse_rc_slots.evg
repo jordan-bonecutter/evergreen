@@ -1,5 +1,7 @@
 fn new_buffer<T>(capacity: usize) -> unique(T | shape(T), capacity)
-where integer(capacity) * integer(size_of(T)) <= integer(isize::MAX) {
+    where
+        integer(capacity) * integer(size_of(T)) <= integer(isize::MAX)
+{
     alloc(capacity, shape(T))
 }
 

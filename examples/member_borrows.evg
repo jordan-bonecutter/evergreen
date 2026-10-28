@@ -1,12 +1,13 @@
 fn as_ref<T>(slot: &(T | shape(T))) -> &T
-where typeof(*slot) == T
-borrows(slot) {
+    where
+        typeof(*slot) == T
+    borrows(slot)
+{
     slot
 }
 
 fn main() -> usize {
-    let buffer: unique(unique(usize) | shape(unique(usize)), 8) =
-        alloc(8, shape(unique(usize)));
+    let buffer: unique(unique(usize) | shape(unique(usize)), 8) = alloc(8, shape(unique(usize)));
     (*buffer)[3] = alloc(42);
 
     let view = as_ref::<unique(usize)>(&(*buffer)[3]);

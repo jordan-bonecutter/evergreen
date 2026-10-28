@@ -7,7 +7,9 @@ type Packet struct {
     ready: bool,
 }
 
-fn forward(packet: Packet, marker: u8) -> Packet {packet}
+fn forward(packet: Packet, marker: u8) -> Packet {
+    packet
+}
 
 fn main() -> u8 {
     let packet = Packet {
@@ -21,11 +23,5 @@ fn main() -> u8 {
     let byte = &moved.bytes[1];
     *byte = 42;
     let owner = alloc(moved);
-    if (*owner).prefix == 255
-        && (*owner).bytes[0] == 7
-        && (*owner).bytes[1] == 42
-        && (*owner).bytes[2] == 9
-        && (*owner).count == 4294967295
-        && (*owner).delta == -32768
-        && (*owner).ready {42} else {1}
+    if (*owner).prefix == 255 && (*owner).bytes[0] == 7 && (*owner).bytes[1] == 42 && (*owner).bytes[2] == 9 && (*owner).count == 4294967295 && (*owner).delta == -32768 && (*owner).ready {42} else {1}
 }

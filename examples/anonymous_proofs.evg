@@ -1,6 +1,11 @@
-fn process(x: usize) where x == 42 {}
-
-fn main() -> usize ensures result == 42 {
+fn process(x: usize)
+    where
+        x == 42
+{}
+fn main() -> usize
+    ensures
+        result == 42
+{
     let x: usize = 0;
     x = x + 42;
     fact x_is_42 = x == 42;

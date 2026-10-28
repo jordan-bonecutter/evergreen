@@ -4,7 +4,10 @@ type Ledger struct {count: &usize, owners: usize} where (
     accurate && zero_is_safe
 );
 
-fn copied_array() -> usize ensures(result == 42) {
+fn copied_array() -> usize
+    ensures
+        (result == 42)
+{
     let data: [usize; 2] = [7, 9];
     ideal let snapshot = data;
     ideal snapshot[0] = 42;
@@ -13,7 +16,10 @@ fn copied_array() -> usize ensures(result == 42) {
     data[0] + 35
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let count: usize = 41;
     let ledger = Ledger {count: &count, owners: 41};
     ideal let expected = nat(count);
@@ -22,8 +28,7 @@ fn main() -> usize ensures(result == 42) {
         ledger.owners = 42;
         count = 42;
         ideal expected = updated;
-    }
-    proof agrees: expected == nat(count);
+    } proof agrees: expected == nat(count);
     // The ideal local's scope is over; this is an ordinary runtime binding.
     let updated: usize = 0;
     let copied = copied_array();

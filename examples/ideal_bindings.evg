@@ -1,12 +1,23 @@
-ideal fn expected_answer() -> nat ensures (result == 42) {42}
+ideal fn expected_answer() -> nat
+    ensures
+        (result == 42)
+{
+    42
+}
 
 fn checked(value: usize, ideal expected: nat) -> usize
-where (nat(value) == expected)
-ensures (result == value) {
+    where
+        (nat(value) == expected)
+    ensures
+        (result == value)
+{
     value
 }
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     ideal let expected = expected_answer();
     proof established: expected == 42;
     checked(42, expected)

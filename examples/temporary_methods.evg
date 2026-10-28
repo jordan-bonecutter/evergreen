@@ -1,24 +1,42 @@
 type Item struct {value: usize, dropped: &bool}
-
 impl Item {
     fn new(dropped: &bool) -> Self
-    borrows(dropped: dropped)
-    ensures(result.value == 41 && result.dropped == dropped) {
+        borrows(dropped: dropped)
+        ensures
+            (result.value == 41 &&
+            result.dropped == dropped)
+    {
         Self {value: 41, dropped: dropped}
     }
 
-    method& read() -> usize ensures(result == self.value) {self.value}
+    method& read() -> usize
+        ensures
+            (result == self.value)
+    {
+        self.value
+    }
 
-    method& view() -> &usize borrows(&self.value) {&self.value}
+    method& view() -> &usize
+        borrows(&self.value)
+    {
+        &self.value
+    }
 }
 
 impl Drop for Item {
-    method drop() modifies(self.dropped) ensures(*self.dropped) {
+    method drop()
+        modifies(self.dropped)
+        ensures
+            (*self.dropped)
+    {
         *self.dropped = true;
     }
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let dropped = false;
     // The receiver stays alive through this whole expression, then drops.
     let value = Item::new(&dropped).read() + if dropped {0} else {1};

@@ -1,4 +1,7 @@
-fn main() -> usize ensures (result == 3) {
+fn main() -> usize
+    ensures
+        (result == 3)
+{
     let data: [usize; 2] = [1, 2];
     let reference = &data[0];
     // Same storage, same layout: the plane and reference remain valid.

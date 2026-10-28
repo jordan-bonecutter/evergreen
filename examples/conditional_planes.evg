@@ -1,12 +1,22 @@
 fn maximum(a: &usize, b: &usize) -> &usize
-borrows(a) when *a >= *b else borrows(b)
-ensures *result >= *a && *result >= *b {
+    borrows(a) when *a >= *b else borrows(b)
+    ensures
+        *result >= *a &&
+        *result >= *b
+{
     if *a >= *b {a} else {b}
 }
 
-fn forward(value: &usize) -> &usize borrows(value) {&*value}
+fn forward(value: &usize) -> &usize
+    borrows(value)
+{
+    &*value
+}
 
-fn main() -> usize ensures result == 42 {
+fn main() -> usize
+    ensures
+        result == 42
+{
     let left: usize = 7;
     let right: usize = 42;
     let selected = forward(maximum(&left, &right));

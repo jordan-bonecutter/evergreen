@@ -1,4 +1,8 @@
-ideal fn identity(target: &usize) -> &usize borrows(target) {target}
+ideal fn identity(target: &usize) -> &usize
+    borrows(target)
+{
+    target
+}
 
 fn main() -> usize {
     let data: usize = 42;

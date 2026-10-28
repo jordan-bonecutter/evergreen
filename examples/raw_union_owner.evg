@@ -4,22 +4,29 @@ fn consume(value: unique(usize)) -> usize {
     drop(value);
     n
 }
-fn empty(value: shape(unique(usize))) -> usize {0}
+fn empty(value: shape(unique(usize))) -> usize {
+    0
+}
 
 fn read(value: &(unique(usize) | shape(unique(usize)))) -> usize
-    where typeof(*value) == unique(usize)
+    where
+        typeof(*value) == unique(usize)
 {
     **value
 }
 
 fn take(value: unique(usize) | shape(unique(usize)), full: bool) -> usize
-    where full == (typeof(value) == unique(usize))
+    where
+        full == (typeof(value) == unique(usize))
 {
     if full {consume(value)} else {empty(value)}
 }
-fn make() -> unique(usize) {alloc(42)}
+fn make() -> unique(usize) {
+    alloc(42)
+}
 fn choose(full: bool) -> unique(usize) | shape(unique(usize))
-    ensures full == (typeof(result) == unique(usize))
+    ensures
+        full == (typeof(result) == unique(usize))
 {
     if full {make()} else {shape(unique(usize))}
 }

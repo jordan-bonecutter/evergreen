@@ -5,9 +5,12 @@ fn read_far(references: linear_plane(&usize, 1000000000)) -> usize {
 }
 
 fn set_first(count: usize, references: linear_plane(&usize, count))
-where count > 0
-modifies((*references)[0])
-ensures *(*references)[0] == 42 {
+    where
+        count > 0
+    modifies((*references)[0])
+    ensures
+        *(*references)[0] == 42
+{
     *(*references)[0] = 42;
 }
 

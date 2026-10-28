@@ -2,4 +2,6 @@ fn unlicensed(owner: &unique(usize)) {
     **owner = 42;
 }
 
-fn main() -> usize {0}
+fn main() -> usize {
+    0
+}

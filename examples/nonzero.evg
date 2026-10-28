@@ -1,16 +1,26 @@
 type NonZero struct {data: usize} where (data != 0);
 impl NonZero {
-    fn new(x: usize) -> Self where (x != 0)
-    ensures(result.data == x) {
+    fn new(x: usize) -> Self
+        where
+            (x != 0)
+        ensures
+            (result.data == x)
+    {
         Self {data: x}
     }
     method& add(other: NonZero) -> Self
-    where(integer(self.data) + integer(other.data) <= integer(usize::MAX))
-    ensures(result.data == self.data + other.data) {
+        where
+            (integer(self.data) + integer(other.data) <= integer(usize::MAX))
+        ensures
+            (result.data == self.data + other.data)
+    {
         Self {data: self.data + other.data}
     }
 }
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let x = NonZero::new(10);
     let y = NonZero::new(32);
     let z = x.add(y);

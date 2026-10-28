@@ -1,18 +1,25 @@
 // Check after credits.evg and borrow_credits.evg. Consumes existing authority.
 fn read_transferred(ideal token: borrow_credits::Token, location: &usize) -> usize
-where(borrow_credits::target(&token) == location)
-ensures(result == *location) {*location}
+    where
+        (borrow_credits::target(&token) == location)
+    ensures
+        (result == *location)
+{
+    *location
+}
 
 fn use_borrow_transfer(ideal budget: credits::Credit, location: &usize) -> usize
-where(credits::units(&budget) >= 1)
-ensures(result == *location) {
+    where
+        (credits::units(&budget) >= 1)
+    ensures
+        (result == *location)
+{
     ideal let token = borrow_credits::bind(budget, location);
     ideal let original: nat = borrow_credits::units(&token);
     ideal let taken = borrow_credits::take(&token, 1);
     proof target_unchanged: borrow_credits::target(&token) == location;
     proof same_target: borrow_credits::target(&taken) == location;
-    proof quantity_conserved:
-        borrow_credits::units(&token) + borrow_credits::units(&taken) == original;
+    proof quantity_conserved: borrow_credits::units(&token) + borrow_credits::units(&taken) == original;
     ideal let restored = borrow_credits::join(token, taken);
     read_transferred(restored, location)
 }

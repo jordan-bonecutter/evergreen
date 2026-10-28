@@ -1,11 +1,18 @@
 fn narrow(value: usize) -> u8
-where(value <= 255)
-ensures(nat(result) == nat(value)) {
+    where
+        (value <= 255)
+    ensures
+        (nat(result) == nat(value))
+{
     u8(value)
 }
 
 fn widen(value: i8) -> i16
-ensures(integer(result) == integer(value)) {i16(value)}
+    ensures
+        (integer(result) == integer(value))
+{
+    i16(value)
+}
 
 fn byte_or_zero(value: isize) -> u8 {
     if value >= 0 && value <= 255 {u8(value)} else {0}

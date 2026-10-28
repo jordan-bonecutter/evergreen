@@ -1,18 +1,32 @@
 type Deferred struct {target: &usize}
 impl Drop for Deferred {
-    fn drop(self) modifies(self.target) ensures(*self.target == 42) {
+    fn drop(self)
+        modifies(self.target)
+        ensures
+            (*self.target == 42)
+    {
         *self.target = 42;
     }
 }
 
-fn write_selected(flag: bool) -> usize ensures(result == 42) {
+fn write_selected(flag: bool) -> usize
+    ensures
+        (result == 42)
+{
     let data: [usize; 2] = [7, 9];
-    let pending = if flag {Deferred {target: &data[0]}} else {Deferred {target: &data[1]}};
+    let pending = if flag {
+        Deferred {target: &data[0]}
+    } else {
+        Deferred {target: &data[1]}
+    };
     drop(pending);
     if flag {data[0]} else {data[1]}
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let first = write_selected(true);
     let second = write_selected(false);
     first + second - 42

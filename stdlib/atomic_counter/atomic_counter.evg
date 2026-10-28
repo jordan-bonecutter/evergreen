@@ -3,23 +3,17 @@
 // needs a shared-invariant rule and an instruction/memory-model refinement.
 module atomic_counter;
 fn increment_from(value: &usize, observed: usize) -> bool
-modifies(value)
-ensures(
-    (result && nat(*value) == nat(old(*value)) + 1) ||
-    (!result && *value == old(*value) && *value == usize::MAX)
-) {
+    modifies(value)
+    ensures
+        ((result &&
+        nat(*value) == nat(old(*value)) + 1) || (!result &&
+        *value == old(*value) &&
+        *value == usize::MAX))
+{
     let finished = false;
     let incremented = false;
-    fact maintained =
-        (!finished => *value == old(*value)) &&
-        (finished => (
-            (incremented && nat(*value) == nat(old(*value)) + 1) ||
-            (!incremented && *value == old(*value) && *value == usize::MAX)
-        ));
-    while !finished
-        invariant(maintained)
-        modifies(value, &observed, &finished, &incremented)
-    {
+    fact maintained = (!finished => *value == old(*value)) && (finished => ((incremented && nat(*value) == nat(old(*value)) + 1) || (!incremented && *value == old(*value) && *value == usize::MAX)));
+    while !finished invariant (maintained) modifies(value, &observed, &finished, &incremented) {
         let desired: usize = if observed == usize::MAX {observed} else {observed + 1};
         let actual = x86_64_atomics::compare_exchange(value, observed, desired);
         finished = actual == observed;
@@ -36,32 +30,27 @@ ensures(
 
 // A failed attempt publishes no increment. Saturation never wraps to zero.
 fn try_increment(value: &usize) -> bool
-modifies(value)
-ensures(
-    (result && nat(*value) == nat(old(*value)) + 1) ||
-    (!result && *value == old(*value) && *value == usize::MAX)
-) {
+    modifies(value)
+    ensures
+        ((result &&
+        nat(*value) == nat(old(*value)) + 1) || (!result &&
+        *value == old(*value) &&
+        *value == usize::MAX))
+{
     increment_from(value, 0)
 }
 
 fn decrement_from(value: &usize, observed: usize) -> usize
-modifies(value)
-ensures(result == old(*value)
-    && (result == 0 => *value == 0)
-    && (result > 0 => nat(*value) + 1 == nat(result))) {
+    modifies(value)
+    ensures
+        (result == old(*value) &&
+        (result == 0 => *value == 0) &&
+        (result > 0 => nat(*value) + 1 == nat(result)))
+{
     let finished = false;
     let previous: usize = 0;
-    fact maintained =
-        (!finished => *value == old(*value)) &&
-        (finished => (
-            previous == old(*value)
-            && (previous == 0 => *value == 0)
-            && (previous > 0 => nat(*value) + 1 == nat(previous))
-        ));
-    while !finished
-        invariant(maintained)
-        modifies(value, &observed, &finished, &previous)
-    {
+    fact maintained = (!finished => *value == old(*value)) && (finished => (previous == old(*value) && (previous == 0 => *value == 0) && (previous > 0 => nat(*value) + 1 == nat(previous))));
+    while !finished invariant (maintained) modifies(value, &observed, &finished, &previous) {
         let desired: usize = if observed == 0 {0} else {observed - 1};
         let actual = x86_64_atomics::compare_exchange(value, observed, desired);
         finished = actual == observed;
@@ -78,9 +67,11 @@ ensures(result == old(*value)
 // Return the old count, so the caller can distinguish the final decrement
 // from a separate (possibly stale under concurrency) observation of zero.
 fn decrement(value: &usize) -> usize
-modifies(value)
-ensures(result == old(*value)
-    && (result == 0 => *value == 0)
-    && (result > 0 => nat(*value) + 1 == nat(result))) {
+    modifies(value)
+    ensures
+        (result == old(*value) &&
+        (result == 0 => *value == 0) &&
+        (result > 0 => nat(*value) + 1 == nat(result)))
+{
     decrement_from(value, 0)
 }

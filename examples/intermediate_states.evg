@@ -1,14 +1,20 @@
-type Pair struct {
-    left: usize,
-    right: usize,
-} where (fact balanced = left == right; balanced);
+type Pair struct {left: usize, right: usize,} where (
+    fact balanced = left == right;
+    balanced
+);
 
-fn observe(pair: &Pair) -> usize ensures (result == (*pair).left) {
+fn observe(pair: &Pair) -> usize
+    ensures
+        (result == (*pair).left)
+{
     (*pair).left
 }
 
-fn main() -> usize ensures (result == 42) {
-    let pair = Pair { left: 1, right: 1 };
+fn main() -> usize
+    ensures
+        (result == 42)
+{
+    let pair = Pair {left: 1, right: 1};
     let reference = &pair;
     update(pair) lifts balanced {
         pair.left = 42;

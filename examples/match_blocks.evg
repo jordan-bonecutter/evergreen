@@ -1,12 +1,16 @@
 type Resource struct {tag: usize} where self.tag == 7;
 
 impl Drop for Resource {
-    fn drop(self) {proof valid: self.tag == 7;}
+    fn drop(self) {
+        proof valid: self.tag == 7;
+    }
 }
 
 fn choose(which: bool, target: &usize)
-modifies(target)
-ensures *target == if which {42} else {7} {
+    modifies(target)
+    ensures
+        *target == if which {42} else {7}
+{
     match which {
         true => {
             let local = Resource {tag: 7};
@@ -27,6 +31,9 @@ fn main() -> usize {
     choose(true, &value);
     proof second_arm: value == 42;
     // A block's result survives its local destructor.
-    let answer = {let local = Resource {tag: 7}; value};
+    let answer = {
+        let local = Resource {tag: 7};
+        value
+    };
     answer
 }

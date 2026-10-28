@@ -3,5 +3,5 @@ fn main() -> usize {
     values.push(7);
     values.push(42);
     values = values.reallocate(8);
-    if *values.get(0) == 7 { values.pop() } else { 0 }
+    if *values.get(0) == 7 {values.pop()} else {0}
 }

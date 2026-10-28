@@ -2,21 +2,32 @@
 // this is not yet an unforgeable authority or an RC implementation.
 ideal type Credit struct {units: nat}
 ideal type Split struct {left: Credit, right: Credit}
-
 ideal fn split_credit(c: Credit, first: nat) -> Split
-where (first <= c.units)
-ensures (result.left.units == first && result.left.units + result.right.units == c.units) {
-    Split {left: Credit {units: first}, right: Credit {units: c.units - first}}
+    where
+        (first <= c.units)
+    ensures
+        (result.left.units == first &&
+        result.left.units + result.right.units == c.units)
+{
+    Split {
+        left: Credit {units: first},
+        right: Credit {units: c.units - first}
+    }
 }
 
 ideal fn join_credit(parts: Split) -> Credit
-ensures (result.units == parts.left.units + parts.right.units) {
+    ensures
+        (result.units == parts.left.units + parts.right.units)
+{
     let Split {left, right} = parts;
     Credit {units: left.units + right.units}
 }
 
 ideal fn roundtrip(c: Credit, first: nat) -> Credit
-where (first <= c.units)
-ensures (result.units == c.units) {
+    where
+        (first <= c.units)
+    ensures
+        (result.units == c.units)
+{
     join_credit(split_credit(c, first))
 }

@@ -1,3 +1,8 @@
 module arithmetic;
 
-fn answer() -> usize ensures(result == 42) { add(40, 2) }
+fn answer() -> usize
+    ensures
+        (result == 42)
+{
+    add(40, 2)
+}

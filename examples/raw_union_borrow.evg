@@ -1,20 +1,26 @@
 // Borrow contracts name the active allocation; the union keeps its owner.
 fn view(value: &(unique(usize) | shape(unique(usize)))) -> &usize
-    where typeof(*value) == unique(usize)
+    where
+        typeof(*value) == unique(usize)
     borrows(&**value)
 {
     &**value
 }
 fn exchange(value: &(unique(usize) | shape(unique(usize))), n: usize) -> usize
-    where typeof(*value) == unique(usize)
+    where
+        typeof(*value) == unique(usize)
     modifies(&**value)
-    ensures result == old(**value) && **value == n
+    ensures
+        result == old(**value) &&
+        **value == n
 {
     let previous = **value;
     **value = n;
     previous
 }
-fn dispose(value: unique(usize)) {drop(value);}
+fn dispose(value: unique(usize)) {
+    drop(value);
+}
 fn main() -> usize {
     let owner: unique(usize) = alloc(7);
     let data: unique(usize) | shape(unique(usize)) = owner;

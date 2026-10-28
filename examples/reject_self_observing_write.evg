@@ -1,6 +1,12 @@
-type PositiveView struct {value: usize, pointer: &usize} where(*pointer > 0);
+type PositiveView struct {value: usize, pointer: &usize} where (*pointer > 0);
 
-fn restore(value: &usize) modifies(value) ensures(*value == 7) {*value = 7;}
+fn restore(value: &usize)
+    modifies(value)
+    ensures
+        (*value == 7)
+{
+    *value = 7;
+}
 
 fn main() -> usize {
     let initial: usize = 7;

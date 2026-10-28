@@ -1,12 +1,27 @@
-type Pair struct {left: usize, right: usize}
-where(fact balanced = left == right; balanced);
+type Pair struct {left: usize, right: usize} where (
+    fact balanced = left == right;
+    balanced
+);
 type Counter struct {value: usize}
 impl Counter {
-    method& read() -> usize ensures(result == self.value) {self.value}
-    method& set(value: usize) modifies(&self.value)
-    ensures(self.value == value) {self.value = value;}
+    method& read() -> usize
+        ensures
+            (result == self.value)
+    {
+        self.value
+    }
+    method& set(value: usize)
+        modifies(&self.value)
+        ensures
+            (self.value == value)
+    {
+        self.value = value;
+    }
 }
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let pair = Pair {left: 7, right: 7};
     let counter = Counter {value: 0};
     update(pair) lifts balanced {

@@ -1,22 +1,36 @@
-fn next(data: &[usize; 3], index: usize) -> &usize
-where (index < 2)
-borrows(&(*data)[index + 1]) {
+fn next(
+    data: &[usize; 3],
+    index: usize
+) -> &usize
+    where
+        (index < 2)
+    borrows(&(*data)[index + 1])
+{
     &(*data)[1 + index]
 }
 
-fn set_next(data: &[usize; 3], index: usize) -> &usize
-where (index < 2)
-modifies(&(*data)[index + 1])
-borrows(&(*data)[index + 1])
-ensures (*result == 42) {
+fn set_next(
+    data: &[usize; 3],
+    index: usize
+) -> &usize
+    where
+        (index < 2)
+    modifies(&(*data)[index + 1])
+    borrows(&(*data)[index + 1])
+    ensures
+        (*result == 42)
+{
     let next_index = index + 1;
     (*data)[next_index] = 42;
     &(*data)[next_index]
 }
 
 fn change_next(index: usize) -> usize
-where (index < 2)
-ensures (result == 42) {
+    where
+        (index < 2)
+    ensures
+        (result == 42)
+{
     let data: [usize; 3] = [7, 8, 9];
     let earlier = next(&data, index);
     let changed = set_next(&data, index);
@@ -26,18 +40,28 @@ ensures (result == 42) {
 }
 
 // Both the write footprint and returned alias capture the old cursor value.
-fn advance(data: &[usize; 3], cursor: &usize) -> &usize
-where (*cursor < 2)
-modifies(cursor, &(*data)[*cursor + 1])
-borrows(&(*data)[*cursor + 1])
-ensures (*result == 42 && *cursor == old(*cursor) + 1) {
+fn advance(
+    data: &[usize; 3],
+    cursor: &usize
+) -> &usize
+    where
+        (*cursor < 2)
+    modifies(cursor, &(*data)[*cursor + 1])
+    borrows(&(*data)[*cursor + 1])
+    ensures
+        (*result == 42 &&
+        *cursor == old(*cursor) + 1)
+{
     let selected = &(*data)[*cursor + 1];
     *selected = 42;
     *cursor = *cursor + 1;
     selected
 }
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let changed = change_next(1);
     let data: [usize; 3] = [7, 8, 9];
     let cursor: usize = 1;

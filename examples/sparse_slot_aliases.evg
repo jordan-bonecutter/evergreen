@@ -1,8 +1,11 @@
 fn probe(i: usize, j: usize) -> usize
-where i < 8 && j < 8
-ensures result == 42 {
-    let buffer: unique(unique(usize) | shape(unique(usize)), 8) =
-        alloc(8, shape(unique(usize)));
+    where
+        i < 8 &&
+        j < 8
+    ensures
+        result == 42
+{
+    let buffer: unique(unique(usize) | shape(unique(usize)), 8) = alloc(8, shape(unique(usize)));
     let a = &(*buffer)[i];
     let b = &(*buffer)[j];
     if i == j {

@@ -1,15 +1,25 @@
 type Pair struct {left: usize, right: usize}
-
-fn set_left(data: &[Pair; 2], index: usize)
-where(index < 2)
-modifies(&(*data)[index].left)
-ensures((*data)[index].left == 42 && (*data)[index].right == old((*data)[index].right)
-    && (*data)[if index == 0 {1} else {0}].left == old((*data)[if index == 0 {1} else {0}].left)) {
+fn set_left(
+    data: &[Pair; 2],
+    index: usize
+)
+    where
+        (index < 2)
+    modifies(&(*data)[index].left)
+    ensures
+        ((*data)[index].left == 42 &&
+        (*data)[index].right == old((*data)[index].right) &&
+        (*data)[if index == 0 {1} else {0}].left == old((*data)[if index == 0 {1} else {0}].left))
+{
     (*data)[index].left = 42;
 }
 
 fn check(index: usize, flag: bool) -> usize
-where(index < 2) ensures(result == 42) {
+    where
+        (index < 2)
+    ensures
+        (result == 42)
+{
     let data: [Pair; 2] = [Pair {left: 7, right: 9}, Pair {left: 11, right: 13}];
     let selected = &data[index].left;
     let effect = if flag {set_left(&data, index)} else {()};
@@ -18,7 +28,10 @@ where(index < 2) ensures(result == 42) {
     if flag {*selected} else {42}
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let first = check(0, true);
     let second = check(1, false);
     first + second - 42

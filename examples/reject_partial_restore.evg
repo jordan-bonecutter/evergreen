@@ -1,9 +1,12 @@
 type Left struct {}
-impl Drop for Left {fn drop(self) {}}
+impl Drop for Left {
+    fn drop(self) {}
+}
 type Right struct {}
-impl Drop for Right {fn drop(self) {}}
+impl Drop for Right {
+    fn drop(self) {}
+}
 type Pair struct {left: Left, right: Right}
-
 fn take_left(pair: Pair) -> Left {
     let Pair {left, right} = pair;
     // right is dropped on exit; left is transferred to the caller.
@@ -11,7 +14,10 @@ fn take_left(pair: Pair) -> Left {
 }
 
 fn main() -> usize {
-    let pair = Pair {left: Left {}, right: Right {}};
+    let pair = Pair {
+        left: Left {},
+        right: Right {}
+    };
     // take_left consumes pair. Replacing one field must not revive right.
     pair.left = take_left(pair);
     0

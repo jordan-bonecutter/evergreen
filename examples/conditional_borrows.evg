@@ -1,10 +1,18 @@
-fn select(data: &[usize; 2], index: usize) -> &usize
-where(index < 2)
-borrows(&(*data)[index]) {
+fn select(
+    data: &[usize; 2],
+    index: usize
+) -> &usize
+    where
+        (index < 2)
+    borrows(&(*data)[index])
+{
     if index == 0 {&(*data)[0]} else {&(*data)[1]}
 }
 
-fn choose(flag: bool) -> usize ensures(result == 42) {
+fn choose(flag: bool) -> usize
+    ensures
+        (result == 42)
+{
     let data: [usize; 2] = [7, 9];
     let first = &data[0];
     let selected = if flag {&data[0]} else {&data[1]};
@@ -15,7 +23,10 @@ fn choose(flag: bool) -> usize ensures(result == 42) {
     if flag {*first} else {data[1]}
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let data: [usize; 2] = [7, 9];
     let selected = select(&data, 1);
     data[1] = 42;

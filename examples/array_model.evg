@@ -1,9 +1,30 @@
-fn put(data: &[usize; 2], mirror: &[usize; 2], index: usize, value: usize)
-where(index < 2) modifies(&(*data)[index])
-ensures((*data)[index] == value) {(*data)[index] = value;}
+fn put(
+    data: &[usize; 2],
+    mirror: &[usize; 2],
+    index: usize,
+    value: usize
+)
+    where
+        (index < 2)
+    modifies(&(*data)[index])
+    ensures
+        ((*data)[index] == value)
+{
+    (*data)[index] = value;
+}
 fn scenario(flag: bool, first: usize, second: usize, queried: usize) -> usize
-where(first < 2 && second < 2 && queried < 2)
-ensures(result == (if flag && second == queried {13} else {if first == queried {42} else {if queried == 0 {7} else {9}}})) {
+    where
+        (first < 2 &&
+        second < 2 &&
+        queried < 2)
+    ensures
+        (result == (if flag &&
+        second == queried {13} else {
+            if first == queried {42} else {
+                if queried == 0 {7} else {9}
+            }
+        }))
+{
     let data: [usize; 2] = [7, 9];
     let chosen = &data[queried];
     data[first] = 42;
@@ -11,7 +32,10 @@ ensures(result == (if flag && second == queried {13} else {if first == queried {
     let effect = if flag {put(&data, &data, second, 13)} else {()};
     *chosen
 }
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let actual_0 = scenario(false, 0, 0, 0);
     let failed_0: usize = if actual_0 == 42 {0} else {1};
     let actual_1 = scenario(true, 0, 0, 0);

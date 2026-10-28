@@ -1,6 +1,5 @@
 module ledgers {
-    type Ledger struct {count: usize, ideal owners: nat}
-    where(
+    type Ledger struct {count: usize, ideal owners: nat} where (
         fact accurate = nat(count) == owners;
         fact zero_is_safe = count == 0 => owners == 0;
         fact bounded = count <= 100;
@@ -8,42 +7,63 @@ module ledgers {
     );
 
     fn store(slot: &usize, value: usize) -> &usize
-    modifies(slot) borrows(slot) ensures(*slot == value) {*slot = value; slot}
+        modifies(slot)
+        borrows(slot)
+        ensures
+            (*slot == value)
+    {
+        *slot = value;
+        slot
+    }
 
     fn replace_balance(ledger: &Ledger, next: usize)
-    where(next > 0 && next <= 100)
-    modifies(&(*ledger).count, &(*ledger).owners)
-    ensures((*ledger).count == next && (*ledger).owners == nat(next)) {
+        where
+            (next > 0 &&
+            next <= 100)
+        modifies(&(*ledger).count, &(*ledger).owners)
+        ensures
+            ((*ledger).count == next &&
+            (*ledger).owners == nat(next))
+    {
         update(*ledger) lifts accurate {
             let changed = store(&(*ledger).count, next);
-            ideal (*ledger).owners = nat(*changed);
+            ideal(*ledger).owners = nat(*changed);
         }
     }
 
     fn release(ledger: &Ledger)
-    where((*ledger).count > 0)
-    modifies(&(*ledger).count, &(*ledger).owners)
-    ensures((*ledger).count + 1 == old((*ledger).count)) {
+        where
+            ((*ledger).count > 0)
+        modifies(&(*ledger).count, &(*ledger).owners)
+        ensures
+            ((*ledger).count + 1 == old((*ledger).count))
+    {
         update(*ledger) lifts accurate {
-            ideal (*ledger).owners = (*ledger).owners - 1;
+            ideal(*ledger).owners = (*ledger).owners - 1;
             (*ledger).count = (*ledger).count - 1;
         }
     }
 
     ideal fn inspect(ledger: &Ledger) -> nat
-    ensures(result == (*ledger).owners) {(*ledger).owners}
+        ensures
+            (result == (*ledger).owners)
+    {
+        (*ledger).owners
+    }
 }
 
 type Holder struct {allocation: unique(ledgers::Ledger)}
-
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let owner = alloc(ledgers::Ledger {count: 41, owners: 41});
     let dormant = &*owner;
     let holder = Holder {allocation: owner};
     ledgers::replace_balance(dormant, 42);
     update(*holder.allocation) lifts ledgers::Ledger::accurate {
         let changed = ledgers::store(&(*holder.allocation).count, 43);
-        ideal (*holder.allocation).owners = nat(*changed);
+        ideal(*holder.allocation).owners = nat(*changed);
     }
     ledgers::release(dormant);
     (*dormant).count

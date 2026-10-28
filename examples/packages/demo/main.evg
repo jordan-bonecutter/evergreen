@@ -2,4 +2,9 @@ module main;
 
 import arithmetic;
 
-fn main() -> usize ensures(result == 42) { arithmetic::answer() }
+fn main() -> usize
+    ensures
+        (result == 42)
+{
+    arithmetic::answer()
+}

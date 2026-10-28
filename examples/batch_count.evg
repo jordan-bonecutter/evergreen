@@ -1,6 +1,9 @@
 // Check/run with stdlib/counter.evg and proofs/count_handles.evg.
 // A borrowed numeric count model, not physical allocation ownership.
-fn main() -> usize ensures(result == 0) {
+fn main() -> usize
+    ensures
+        (result == 0)
+{
     let count: usize = 1;
     let first = count_handles::create(&count);
     let second = count_handles::duplicate(&first);

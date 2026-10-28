@@ -6,7 +6,10 @@ type Ledger struct {count: usize, owners: usize} where (
     reference_count_is_accurate && reference_count_is_0_implies_no_owners
 );
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let ledger = Ledger {count: 41, owners: 41};
     update(ledger) lifts reference_count_is_accurate {
         ledger.count = 42;

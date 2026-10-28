@@ -1,22 +1,37 @@
-fn select(data: &[usize; 2], flag: bool) -> &usize
-borrows(&(*data)[if flag {0} else {1}]) {
+fn select(
+    data: &[usize; 2],
+    flag: bool
+) -> &usize
+    borrows(&(*data)[if flag {0} else {1}])
+{
     if flag {&(*data)[0]} else {&(*data)[1]}
 }
 
-fn store(data: &[usize; 2], flag: bool)
-modifies(&(*data)[if flag {0} else {1}])
-ensures((*data)[if flag {0} else {1}] == 42) {
+fn store(
+    data: &[usize; 2],
+    flag: bool
+)
+    modifies(&(*data)[if flag {0} else {1}])
+    ensures
+        ((*data)[if flag {0} else {1}] == 42)
+{
     *select(data, flag) = 42;
 }
 
-fn check(flag: bool) -> usize ensures(result == 42) {
+fn check(flag: bool) -> usize
+    ensures
+        (result == 42)
+{
     let data: [usize; 2] = [7, 9];
     let selected = select(&data, flag);
     store(&data, flag);
     *selected
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let first = check(true);
     let second = check(false);
     first + second - 42

@@ -1,7 +1,6 @@
-ideal type RcProtocol struct { count: nat, owners: nat, credits: nat }
-where (count == owners + credits);
+ideal type RcProtocol struct {count: nat, owners: nat, credits: nat} where (count == owners + credits);
 
 ideal fn incorrect_reserve(state: RcProtocol) -> RcProtocol {
     // Missing the matching ideal reservation: the result is invalid.
-    RcProtocol { count: state.count + 1, owners: state.owners, credits: state.credits }
+    RcProtocol {count: state.count + 1, owners: state.owners, credits: state.credits}
 }

@@ -2,69 +2,72 @@
 module x86_64;
 
 type u8 = make_type(
-    size: 1, align: 1,
-    represents: repr::Integral {signed: false, bits: 8,
-        encoding: repr::Binary, endian: repr::Little}
+    size: 1,
+    align: 1,
+    represents: repr::Integral {signed: false, bits: 8, encoding: repr::Binary, endian: repr::Little}
 );
 
 type i8 = make_type(
-    size: 1, align: 1,
-    represents: repr::Integral {signed: true, bits: 8,
-        encoding: repr::TwosComplement, endian: repr::Little}
+    size: 1,
+    align: 1,
+    represents: repr::Integral {signed: true, bits: 8, encoding: repr::TwosComplement, endian: repr::Little}
 );
 
 type u16 = make_type(
-    size: 2, align: 2,
-    represents: repr::Integral {signed: false, bits: 16,
-        encoding: repr::Binary, endian: repr::Little}
+    size: 2,
+    align: 2,
+    represents: repr::Integral {signed: false, bits: 16, encoding: repr::Binary, endian: repr::Little}
 );
 
 type i16 = make_type(
-    size: 2, align: 2,
-    represents: repr::Integral {signed: true, bits: 16,
-        encoding: repr::TwosComplement, endian: repr::Little}
+    size: 2,
+    align: 2,
+    represents: repr::Integral {signed: true, bits: 16, encoding: repr::TwosComplement, endian: repr::Little}
 );
 
 type u32 = make_type(
-    size: 4, align: 4,
-    represents: repr::Integral {signed: false, bits: 32,
-        encoding: repr::Binary, endian: repr::Little}
+    size: 4,
+    align: 4,
+    represents: repr::Integral {signed: false, bits: 32, encoding: repr::Binary, endian: repr::Little}
 );
 
 type i32 = make_type(
-    size: 4, align: 4,
-    represents: repr::Integral {signed: true, bits: 32,
-        encoding: repr::TwosComplement, endian: repr::Little}
+    size: 4,
+    align: 4,
+    represents: repr::Integral {signed: true, bits: 32, encoding: repr::TwosComplement, endian: repr::Little}
 );
 
 type u64 = make_type(
-    size: 8, align: 8,
-    represents: repr::Integral {signed: false, bits: 64,
-        encoding: repr::Binary, endian: repr::Little}
+    size: 8,
+    align: 8,
+    represents: repr::Integral {signed: false, bits: 64, encoding: repr::Binary, endian: repr::Little}
 );
 
 type i64 = make_type(
-    size: 8, align: 8,
-    represents: repr::Integral {signed: true, bits: 64,
-        encoding: repr::TwosComplement, endian: repr::Little}
+    size: 8,
+    align: 8,
+    represents: repr::Integral {signed: true, bits: 64, encoding: repr::TwosComplement, endian: repr::Little}
 );
 
 type usize = make_type(
-    size: 8, align: 8,
-    represents: repr::Integral {signed: false, bits: 64,
-        encoding: repr::Binary, endian: repr::Little}
+    size: 8,
+    align: 8,
+    represents: repr::Integral {signed: false, bits: 64, encoding: repr::Binary, endian: repr::Little}
 );
 
 type isize = make_type(
-    size: 8, align: 8,
-    represents: repr::Integral {signed: true, bits: 64,
-        encoding: repr::TwosComplement, endian: repr::Little}
+    size: 8,
+    align: 8,
+    represents: repr::Integral {signed: true, bits: 64, encoding: repr::TwosComplement, endian: repr::Little}
 );
 
 type bool = make_type(size: 1, align: 1, represents: repr::Boolean {});
 type unit = make_type(size: 1, align: 1, represents: repr::Unit {});
-type pointer = make_type(size: 8, align: 8,
-    represents: repr::Pointer {bits: 64, endian: repr::Little});
+type pointer = make_type(
+    size: 8,
+    align: 8,
+    represents: repr::Pointer {bits: 64, endian: repr::Little}
+);
 
 // Copy is a checked trait implementation, not an implicit property of width.
 impl Copy for u8 {}

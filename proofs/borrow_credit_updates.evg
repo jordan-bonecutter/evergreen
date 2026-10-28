@@ -7,16 +7,28 @@ type CountLedger struct {count: &usize, owners: usize} where (
 );
 
 ideal fn discard_unit(token: borrow_credits::Token)
-where(borrow_credits::units(&token) == 1) {}
-
+    where
+        (borrow_credits::units(&token) == 1)
+{}
 fn read_remaining(ideal token: borrow_credits::Token, count: &usize) -> usize
-where(borrow_credits::target(&token) == count
-    && borrow_credits::units(&token) == nat(*count))
-ensures(result == *count) {*count}
+    where
+        (borrow_credits::target(&token) == count &&
+        borrow_credits::units(&token) == nat(*count))
+    ensures
+        (result == *count)
+{
+    *count
+}
 
 fn release_budget(ideal budget: credits::Credit, count: &usize) -> usize
-where(credits::units(&budget) == nat(*count) && *count > 0)
-modifies(count) ensures(result == *count && *count == old(*count) - 1) {
+    where
+        (credits::units(&budget) == nat(*count) &&
+        *count > 0)
+    modifies(count)
+    ensures
+        (result == *count &&
+        *count == old(*count) - 1)
+{
     ideal let token = borrow_credits::bind(budget, count);
     ideal let original = borrow_credits::units(&token);
     let ledger = CountLedger {count: count, owners: *count};
@@ -28,7 +40,6 @@ modifies(count) ensures(result == *count && *count == old(*count) - 1) {
         ideal token = remaining;
         ideal let discarded = discard_unit(released);
         proof conserved: borrow_credits::units(&token) + 1 == original;
-    }
-    proof matches_count: borrow_credits::units(&token) == nat(*count);
+    } proof matches_count: borrow_credits::units(&token) == nat(*count);
     read_remaining(token, count)
 }

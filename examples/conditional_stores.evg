@@ -1,23 +1,26 @@
 type DeferredStore struct {target: &usize}
-
 impl Drop for DeferredStore {
     fn drop(self)
-    modifies(self.target)
-    ensures *self.target == 42 {
+        modifies(self.target)
+        ensures
+            *self.target == 42
+    {
         *self.target = 42;
     }
 }
 
 fn set(value: &usize)
-modifies(value)
-ensures *value == 42 {
+    modifies(value)
+    ensures
+        *value == 42
+{
     let deferred = DeferredStore {target: value};
 }
 
 type Pair struct {value: usize, untouched: usize}
-
 fn choose_pair(a: &Pair, b: &Pair, first: bool) -> &Pair
-borrows(a) when first else borrows(b) {
+    borrows(a) when first else borrows(b)
+{
     if first {a} else {b}
 }
 
@@ -36,4 +39,6 @@ fn work(first: bool) -> usize {
     selected.value
 }
 
-fn main() -> usize {work(false)}
+fn main() -> usize {
+    work(false)
+}

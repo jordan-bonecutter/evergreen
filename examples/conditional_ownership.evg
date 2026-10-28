@@ -1,9 +1,15 @@
 // Both arms consume the same claim and leave the same allocation alive.
 fn release(value: rc::Rc, flag: bool)
-where value.strong_count() > 1 {
+    where
+        value.strong_count() > 1
+{
     match flag {
-        true => {value.release_nonfinal();},
-        false => {value.release_nonfinal();},
+        true => {
+            value.release_nonfinal();
+        },
+        false => {
+            value.release_nonfinal();
+        },
     }
 }
 

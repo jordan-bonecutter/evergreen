@@ -1,4 +1,7 @@
-fn main() -> usize ensures (result == 0) {
+fn main() -> usize
+    ensures
+        (result == 0)
+{
     let count: usize = 1;
     let original = count_handles::create(&count);
     let duplicate = count_handles::duplicate(&original);

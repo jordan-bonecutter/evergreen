@@ -1,15 +1,21 @@
 fn take<T>(slot: &(T | shape(T))) -> T
-where typeof(*slot) == T
-modifies(slot)
-ensures typeof(*slot) == shape(T) {
+    where
+        typeof(*slot) == T
+    modifies(slot)
+    ensures
+        typeof(*slot) == shape(T)
+{
     // Explicit move also consumes a Copy member. Its shape stays in the slot.
     move(*slot)
 }
 
 fn initialize<T>(slot: &(T | shape(T)), value: T)
-where typeof(*slot) == shape(T)
-modifies(slot)
-ensures typeof(*slot) == T {
+    where
+        typeof(*slot) == shape(T)
+    modifies(slot)
+    ensures
+        typeof(*slot) == T
+{
     *slot = value;
 }
 

@@ -1,18 +1,24 @@
 type Pair struct {left: usize, right: usize}
-
 fn identity(r: &usize) -> &usize
-borrows(r)
-ensures (*result == *r) {
+    borrows(r)
+    ensures
+        (*result == *r)
+{
     r
 }
 
 fn right(pair: &Pair) -> &usize
-borrows(&(*pair).right)
-ensures (*result == (*pair).right) {
+    borrows(&(*pair).right)
+    ensures
+        (*result == (*pair).right)
+{
     &(*pair).right
 }
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let pair = Pair {left: 7, right: 1};
     let r = identity(right(&pair));
     pair = Pair {left: 0, right: 42};

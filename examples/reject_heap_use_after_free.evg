@@ -1,5 +1,4 @@
 fn release(owner: unique(usize)) {}
-
 fn main() -> usize {
     let owner: unique(usize) = alloc(42);
     let view = &*owner;

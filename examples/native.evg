@@ -1,21 +1,41 @@
-ideal fn answer_model() -> nat ensures (result == 42) {42}
+ideal fn answer_model() -> nat
+    ensures
+        (result == 42)
+{
+    42
+}
 
 fn add(a: usize, b: usize) -> usize
-where (nat(a) + nat(b) <= 18446744073709551615)
-ensures (nat(result) == nat(a) + nat(b)) {
+    where
+        (nat(a) + nat(b) <= 18446744073709551615)
+    ensures
+        (nat(result) == nat(a) + nat(b))
+{
     a + b
 }
 
 fn choose(flag: bool, a: usize, b: usize) -> usize
-ensures ((flag && result == a) || (!flag && result == b)) {
+    ensures
+        ((flag &&
+        result == a) || (!flag &&
+        result == b))
+{
     if flag {a} else {b}
 }
 
 fn checked(n: usize, ideal expected: nat) -> usize
-where (nat(n) == expected)
-ensures (nat(result) == expected) {n}
+    where
+        (nat(n) == expected)
+    ensures
+        (nat(result) == expected)
+{
+    n
+}
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let count: usize = 40;
     count = choose(true, count, 41);
     count = add(count, 2);

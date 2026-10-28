@@ -1,31 +1,48 @@
 module packets {
     ideal opaque type Witness struct {expected: nat}
-    type Packet struct {value: usize, ideal witness: Witness}
-    where(witness.expected == nat(value));
+    type Packet struct {value: usize, ideal witness: Witness} where (witness.expected == nat(value));
 
     ideal fn issue(expected: nat) -> Witness
-    ensures(result.expected == expected) {Witness {expected: expected}}
+        ensures
+            (result.expected == expected)
+    {
+        Witness {expected: expected}
+    }
 
     ideal fn discard(witness: Witness) {}
-
-    fn make(value: usize) -> Packet ensures(result.value == value) {
+    fn make(value: usize) -> Packet
+        ensures
+            (result.value == value)
+    {
         Packet {value: value, witness: issue(nat(value))}
     }
 
     fn forward(packet: Packet) -> Packet
-    ensures(result.value == packet.value) {packet}
+        ensures
+            (result.value == packet.value)
+    {
+        packet
+    }
 
-    fn consume(packet: Packet) -> usize ensures(result == packet.value) {
+    fn consume(packet: Packet) -> usize
+        ensures
+            (result == packet.value)
+    {
         let Packet {value, witness} = packet;
         proof matches: witness.expected == nat(value);
         ideal let consumed = discard(witness);
         value
     }
 
-    type Checked struct {value: usize, ideal expected: usize}
-    where(fact synced = expected == value; synced);
+    type Checked struct {value: usize, ideal expected: usize} where (
+        fact synced = expected == value;
+        synced
+    );
 
-    fn update_checked() -> usize ensures(result == 42) {
+    fn update_checked() -> usize
+        ensures
+            (result == 42)
+    {
         let state = Checked {value: 41, expected: 41};
         let view = &state.value;
         update(state) lifts synced {
@@ -36,16 +53,20 @@ module packets {
     }
 
     type Empty struct {ideal expected: nat}
-    fn empty_identity() -> usize ensures(result == 42) {
+    fn empty_identity() -> usize
+        ensures
+            (result == 42)
+    {
         let a = Empty {expected: 1};
         let b = Empty {expected: 2};
         if &a != &b {42} else {0}
     }
 
     type Resource struct {value: usize}
-    impl Drop for Resource {fn drop(self) {}}
-    type Tagged struct {payload: Resource, ideal expected: nat}
-    where(expected == nat(payload.value));
+    impl Drop for Resource {
+        fn drop(self) {}
+    }
+    type Tagged struct {payload: Resource, ideal expected: nat} where (expected == nat(payload.value));
     impl Drop for Tagged {
         fn drop(self) {
             proof agrees: self.expected == nat(self.payload.value);
@@ -53,7 +74,10 @@ module packets {
     }
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let packet = packets::make(42);
     let forwarded = packets::forward(packet);
     let value = packets::consume(forwarded);

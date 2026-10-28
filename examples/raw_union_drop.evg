@@ -7,22 +7,24 @@ impl Drop for Resource {
     }
 }
 
-fn consume(resource: Resource) -> usize {resource.tag}
-fn word(value: usize) -> usize {value}
+fn consume(resource: Resource) -> usize {
+    resource.tag
+}
+fn word(value: usize) -> usize {
+    value
+}
 
 fn choose(flag: bool) -> usize {
-    let value: Resource | usize = if flag {Resource {tag: 7}} else {42};
+    let value: Resource | usize = if flag {
+        Resource {tag: 7}
+    } else {42};
     if flag {consume(value)} else {word(value)}
 }
 
-type Holder struct {
-    data: usize | shape(usize),
-    present: bool,
-} where present == (typeof(data) == usize);
+type Holder struct {data: usize | shape(usize), present: bool,} where present == (typeof(data) == usize);
 
 fn discard_word(value: usize) {}
 fn discard_storage(value: shape(usize)) {}
-
 impl Drop for Holder {
     fn drop(self) {
         let Holder {data, present} = self;

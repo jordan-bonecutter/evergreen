@@ -1,26 +1,59 @@
-type Resource struct {value: usize} where(value == 42);
-impl Drop for Resource {fn drop(self) {proof valid: self.value == 42;}}
+type Resource struct {value: usize} where (value == 42);
+impl Drop for Resource {
+    fn drop(self) {
+        proof valid: self.value == 42;
+    }
+}
 
-fn make(value: usize) -> unique(usize) ensures(*result == value) {alloc(value)}
+fn make(value: usize) -> unique(usize)
+    ensures
+        (*result == value)
+{
+    alloc(value)
+}
 
 fn forward(owner: unique(usize)) -> unique(usize)
-ensures(*result == *owner) {owner}
+    ensures
+        (*result == *owner)
+{
+    owner
+}
 
-fn read(owner: &unique(usize)) -> usize ensures(result == **owner) {**owner}
+fn read(owner: &unique(usize)) -> usize
+    ensures
+        (result == **owner)
+{
+    **owner
+}
 
-fn borrow(owner: &unique(usize)) -> &usize borrows(&**owner) {&**owner}
+fn borrow(owner: &unique(usize)) -> &usize
+    borrows(&**owner)
+{
+    &**owner
+}
 
 fn set(owner: &unique(usize), value: usize)
-modifies(&**owner) ensures(**owner == value) {**owner = value;}
+    modifies(&**owner)
+    ensures
+        (**owner == value)
+{
+    **owner = value;
+}
 
 fn advance(owner: unique(usize)) -> unique(usize)
-where(*owner < usize::MAX)
-ensures(*result == old(*owner) + 1) {
+    where
+        (*owner < usize::MAX)
+    ensures
+        (*result == old(*owner) + 1)
+{
     *owner = *owner + 1;
     owner
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let owner = make(41);
     let view = &*owner;
     let moved = advance(forward(owner));

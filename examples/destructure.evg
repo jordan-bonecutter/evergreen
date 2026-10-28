@@ -1,9 +1,20 @@
 type Permit struct {tag: usize}
 type Pair struct {left: Permit, right: Permit}
-fn consume(p: Permit) -> usize ensures (result == p.tag) {p.tag}
+fn consume(p: Permit) -> usize
+    ensures
+        (result == p.tag)
+{
+    p.tag
+}
 
-fn main() -> usize ensures (result == 42) {
-    let pair = Pair {left: Permit {tag: 19}, right: Permit {tag: 23}};
+fn main() -> usize
+    ensures
+        (result == 42)
+{
+    let pair = Pair {
+        left: Permit {tag: 19},
+        right: Permit {tag: 23}
+    };
     // This consumes the entire pair; each field gets a new owning binding.
     let Pair {left: first, right: second} = pair;
     let a = consume(first);

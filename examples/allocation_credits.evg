@@ -6,8 +6,7 @@ fn main() -> usize {
     let first = allocation_credits::attach(allocation);
     let second = allocation_credits::duplicate(&first);
     proof shared: allocation_credits::outstanding(&first) == 2;
-    proof same_target: allocation_credits::target(&first) == view
-        && allocation_credits::target(&second) == view;
+    proof same_target: allocation_credits::target(&first) == view && allocation_credits::target(&second) == view;
 
     let sole = allocation_credits::merge(first, second);
     proof unique: allocation_credits::outstanding(&sole) == 1;

@@ -4,26 +4,29 @@ module vec;
 // A target-sized word whose only value is zero.
 type Zero struct {word: usize} where word == 0;
 impl Copy for Zero {}
-opaque type Vec<T = usize> struct {
-    cap: usize,
-    len: usize,
-    data: Zero | unique(T, cap)
-} where (
+opaque type Vec<T = usize> struct {cap: usize, len: usize, data: Zero | unique(T, cap)} where (
     fact length_fits = len <= cap;
     fact storage_matches_capacity = (cap == 0) == (typeof(data) == Zero);
     length_fits && storage_matches_capacity
 );
 
 fn allocate_buffer<T = usize>(capacity: usize, initial: T) -> unique(T, capacity)
-where(capacity > 0 && integer(capacity) * integer(size_of(T)) <= integer(isize::MAX)) {
+    where
+        (capacity > 0 &&
+        integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
+{
     alloc(capacity, initial)
 }
 
 // Initialize backing capacity while the logical vector remains empty.
 // Concrete instantiation must prove that duplicating initial is permitted.
 fn filled<T = usize>(capacity: usize, initial: T) -> Vec<T>
-where(integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
-ensures(result.len == 0 && result.cap == capacity) {
+    where
+        (integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
+    ensures
+        (result.len == 0 &&
+        result.cap == capacity)
+{
     let data: Zero | unique(T, capacity) = if capacity == 0 {
         Zero {word: 0}
     } else {allocate_buffer::<T>(capacity, initial)};
@@ -31,64 +34,86 @@ ensures(result.len == 0 && result.cap == capacity) {
 }
 
 fn new<T = usize>(capacity: usize) -> Vec<T>
-where(integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
-ensures(result.len == 0 && result.cap == capacity) {
+    where
+        (integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
+    ensures
+        (result.len == 0 &&
+        result.cap == capacity)
+{
     filled::<T>(capacity, 0)
 }
 
 fn discard_zero(value: Zero) {}
 fn discard_buffer<T>(ideal n: nat, value: unique(T, n)) {}
-
 impl<T> Drop for Vec<T> {
-    fn drop(self) {
-        let Vec::<T> {cap, len, data} = self;
+    fn drop({cap, len, data}) {
         if cap == 0 {discard_zero(data)} else {discard_buffer::<T>(data)}
     }
 }
 
 fn length<T = usize>(value: &Vec<T>) -> usize
-ensures(result == value.len) { value.len }
+    ensures
+        (result == value.len)
+{
+    value.len
+}
 
 fn capacity<T = usize>(value: &Vec<T>) -> usize
-ensures(result == value.cap) { value.cap }
+    ensures
+        (result == value.cap)
+{
+    value.cap
+}
 
 fn get<T = usize>(value: &Vec<T>, index: usize) -> &T
-where(index < value.len)
-borrows(&(*value.data)[index]) {
+    where
+        (index < value.len)
+    borrows(&(*value.data)[index])
+{
     &(*value.data)[index]
 }
 
 fn push<T = usize>(value: &Vec<T>, item: T)
-where(value.len < value.cap)
-modifies(&value.len, &(*value.data)[value.len])
-ensures(value.len == old(value.len) + 1
-    && (*value.data)[old(value.len)] == item) {
+    where
+        (value.len < value.cap)
+    modifies(&value.len, &(*value.data)[value.len])
+    ensures
+        (value.len == old(value.len) + 1 &&
+        (*value.data)[old(value.len)] == item)
+{
     (*value.data)[value.len] = item;
     value.len = value.len + 1;
 }
 
 fn pop<T = usize>(value: &Vec<T>) -> T
-where(value.len > 0)
-modifies(&value.len)
-ensures(value.len + 1 == old(value.len)
-    && result == old((*value.data)[value.len - 1])) {
+    where
+        (value.len > 0)
+    modifies(&value.len)
+    ensures
+        (value.len + 1 == old(value.len) &&
+        result == old((*value.data)[value.len - 1]))
+{
     let item = (*value.data)[value.len - 1];
     value.len = value.len - 1;
     item
 }
 
-fn copy_prefix<T = usize>(source_capacity: usize,
+fn copy_prefix<T = usize>(
+    source_capacity: usize,
     source: linear_plane(T, source_capacity),
     target_capacity: usize,
-    target: linear_plane(T, target_capacity), count: usize, index: usize)
-where(index <= count && count <= source_capacity && count <= target_capacity)
-modifies(target) {
+    target: linear_plane(T, target_capacity),
+    count: usize,
+    index: usize
+)
+    where
+        (index <= count &&
+        count <= source_capacity &&
+        count <= target_capacity)
+    modifies(target)
+{
     let cursor = index;
-    while cursor < count
-        invariant(cursor <= count && count <= source_capacity && count <= target_capacity)
-        modifies(target, &cursor)
-        decreases(count - cursor)
-    {
+    while cursor < count invariant (cursor <= count && count <= source_capacity && count <= target_capacity) modifies(target, &cursor) decreases(count - cursor) {
         (*target)[cursor] = (*source)[cursor];
         cursor = cursor + 1;
     }
@@ -97,78 +122,126 @@ modifies(target) {
 // Return a fresh allocation. Assigning this result over the old Vec releases
 // its old allocation and invalidates outstanding references into that buffer.
 fn reallocate_filled<T = usize>(value: &Vec<T>, new_capacity: usize, initial: T) -> Vec<T>
-where(value.len <= new_capacity && integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
-ensures(result.len == value.len && result.cap == new_capacity) {
+    where
+        (value.len <= new_capacity &&
+        integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
+    ensures
+        (result.len == value.len &&
+        result.cap == new_capacity)
+{
     let grown = filled::<T>(new_capacity, initial);
     if value.len == 0 {()} else {
-        copy_prefix::<T>(value.cap, &*value.data, new_capacity, &*grown.data,
-            value.len, 0)
+        copy_prefix::<T>(value.cap, &*value.data, new_capacity, &*grown.data, value.len, 0)
     };
     grown.len = value.len;
     grown
 }
 
 fn reallocate<T = usize>(value: &Vec<T>, new_capacity: usize) -> Vec<T>
-where(value.len <= new_capacity && integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
-ensures(result.len == value.len && result.cap == new_capacity) {
+    where
+        (value.len <= new_capacity &&
+        integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
+    ensures
+        (result.len == value.len &&
+        result.cap == new_capacity)
+{
     reallocate_filled::<T>(value, new_capacity, 0)
 }
 
 // Inherent methods use the same checked operations as the function interface.
 impl<T> Vec<T> {
     fn filled(capacity: usize, initial: T) -> Self
-    where(integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
-    ensures(result.len == 0 && result.cap == capacity) {
+        where
+            (integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
+        ensures
+            (result.len == 0 &&
+            result.cap == capacity)
+    {
         filled::<T>(capacity, initial)
     }
 
     fn new(capacity: usize) -> Self
-    where(integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
-    ensures(result.len == 0 && result.cap == capacity) {
+        where
+            (integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
+        ensures
+            (result.len == 0 &&
+            result.cap == capacity)
+    {
         new::<T>(capacity)
     }
 
-    method& length() -> usize ensures(result == self.len) { length::<T>(self) }
+    method& length() -> usize
+        ensures
+            (result == self.len)
+    {
+        length::<T>(self)
+    }
 
-    method& capacity() -> usize ensures(result == self.cap) { capacity::<T>(self) }
+    method& capacity() -> usize
+        ensures
+            (result == self.cap)
+    {
+        capacity::<T>(self)
+    }
 
     method& get(index: usize) -> &T
-    where(index < self.len)
-    borrows(&(*self.data)[index]) {
+        where
+            (index < self.len)
+        borrows(&(*self.data)[index])
+    {
         get::<T>(self, index)
     }
 
     method& push(item: T)
-    where(self.len < self.cap)
-    modifies(&self.len, &(*self.data)[self.len])
-    ensures(self.len == old(self.len) + 1
-        && (*self.data)[old(self.len)] == item) {
+        where
+            (self.len < self.cap)
+        modifies(&self.len, &(*self.data)[self.len])
+        ensures
+            (self.len == old(self.len) + 1 &&
+            (*self.data)[old(self.len)] == item)
+    {
         push::<T>(self, item);
     }
 
     method& pop() -> T
-    where(self.len > 0)
-    modifies(&self.len)
-    ensures(self.len + 1 == old(self.len)
-        && result == old((*self.data)[self.len - 1])) {
+        where
+            (self.len > 0)
+        modifies(&self.len)
+        ensures
+            (self.len + 1 == old(self.len) &&
+            result == old((*self.data)[self.len - 1]))
+    {
         pop::<T>(self)
     }
 
     method& reallocate(new_capacity: usize) -> Self
-    where(self.len <= new_capacity && integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
-    ensures(result.len == self.len && result.cap == new_capacity) {
+        where
+            (self.len <= new_capacity &&
+            integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
+        ensures
+            (result.len == self.len &&
+            result.cap == new_capacity)
+    {
         reallocate::<T>(self, new_capacity)
     }
 
     method& reallocate_filled(new_capacity: usize, initial: T) -> Self
-    where(self.len <= new_capacity && integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
-    ensures(result.len == self.len && result.cap == new_capacity) {
+        where
+            (self.len <= new_capacity &&
+            integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
+        ensures
+            (result.len == self.len &&
+            result.cap == new_capacity)
+    {
         reallocate_filled::<T>(self, new_capacity, initial)
     }
 
     // Complete consumption transfers the live allocation; an empty vector has
     // no allocated plane to return.
-    method into_data() -> unique(T, self.cap) where self.cap > 0 {
+    method into_data() -> unique(T, self.cap)
+        where
+            self.cap > 0
+    {
         let Vec::<T> {cap, len, data} = self;
         data
     }

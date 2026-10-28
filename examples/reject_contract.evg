@@ -1,4 +1,7 @@
 // Must fail: n is never strictly greater than itself.
-ideal fn bad_increment(n: nat) -> nat ensures (result > n) {
+ideal fn bad_increment(n: nat) -> nat
+    ensures
+        (result > n)
+{
     n
 }

@@ -1,16 +1,26 @@
 // Parameters are universally quantified; this is not testing example inputs.
 ideal fn increment(n: nat) -> nat
-ensures (result > n) {
-    proof successor_grows: n + 1 > n by { omega };
+    ensures
+        (result > n)
+{
+    proof successor_grows: n + 1 > n by {omega};
     n + 1
-} proof { omega }
-
-ideal fn bounded_index(n: nat, data: [integer; n], index: nat) -> integer
-where (index < n) {
+} proof {omega}
+ideal fn bounded_index(
+    n: nat,
+    data: [integer; n],
+    index: nat
+) -> integer
+    where
+        (index < n)
+{
     data[index]
 }
 
-ideal fn main() -> nat ensures (result == 42) {
+ideal fn main() -> nat
+    ensures
+        (result == 42)
+{
     let answer: nat = 40 + 2;
     answer
-} proof { rfl }
+} proof {rfl}

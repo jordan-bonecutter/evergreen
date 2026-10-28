@@ -1,33 +1,48 @@
 // Writes to proof storage are checked effects, then erased from the executable.
 ideal type Budget struct {remaining: nat}
-
 ideal fn set_budget(state: &Budget, remaining: nat)
-modifies(&(*state).remaining)
-ensures((*state).remaining == remaining) {
+    modifies(&(*state).remaining)
+    ensures
+        ((*state).remaining == remaining)
+{
     (*state).remaining = remaining;
 }
 
 ideal fn forward_budget(state: &Budget, remaining: nat)
-modifies(&(*state).remaining)
-ensures((*state).remaining == remaining) {
+    modifies(&(*state).remaining)
+    ensures
+        ((*state).remaining == remaining)
+{
     let done = set_budget(state, remaining);
 }
 
-type Checked struct {value: usize, ideal expected: nat}
-where(fact synced = nat(value) == expected; synced);
+type Checked struct {value: usize, ideal expected: nat} where (
+    fact synced = nat(value) == expected;
+    synced
+);
 
 // The parent schema certifies that this slot is ideal, despite its scalar type.
 type Metadata struct {ideal expected: usize}
 ideal fn set_expected(state: &Metadata, expected: usize)
-modifies(&(*state).expected)
-ensures((*state).expected == expected) {
+    modifies(&(*state).expected)
+    ensures
+        ((*state).expected == expected)
+{
     (*state).expected = expected;
 }
 
 ideal fn set_nat(state: &nat, expected: nat)
-modifies(state) ensures(*state == expected) {*state = expected;}
+    modifies(state)
+    ensures
+        (*state == expected)
+{
+    *state = expected;
+}
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     ideal let budget = Budget {remaining: 1};
     ideal let adjusted = forward_budget(&budget, 42);
     proof remaining: budget.remaining == 42;

@@ -1,18 +1,21 @@
 type Child struct {finished: &bool}
 impl Drop for Child {
     fn drop(self)
-    modifies(self.finished)
-    ensures(*self.finished) {
+        modifies(self.finished)
+        ensures
+            (*self.finished)
+    {
         *self.finished = true;
     }
 }
 
-type Resource struct {data: unique(usize), child: Child}
-where(*data == 42);
+type Resource struct {data: unique(usize), child: Child} where (*data == 42);
 impl Drop for Resource {
     fn drop(self)
-    modifies(self.child.finished)
-    ensures(*self.child.finished) {
+        modifies(self.child.finished)
+        ensures
+            (*self.child.finished)
+    {
         let payload = &*self.data;
         let Resource {data, child} = self;
         // Moving the pointer into a local does not move its allocation.
@@ -22,9 +25,15 @@ impl Drop for Resource {
     }
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let finished = false;
-    let resource = Resource {data: alloc(42), child: Child {finished: &finished}};
+    let resource = Resource {
+        data: alloc(42),
+        child: Child {finished: &finished}
+    };
     drop(resource);
     proof child_ran: finished;
     if finished {42} else {0}

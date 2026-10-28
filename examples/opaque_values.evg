@@ -9,12 +9,17 @@ module permits {
     }
 
     fn read(permit: &Permit) -> usize
-    ensures (result == (*permit).tag) {
+        ensures
+            (result == (*permit).tag)
+    {
         (*permit).tag
     }
 }
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let permit = permits::issue();
     proof permitted: permit::valid;
     permits::read(&permit)

@@ -1,13 +1,23 @@
 // Both alternatives retain the same unique owner. Their footprints are exclusive.
 type Left struct {owner: unique(usize)};
 type Right struct {owner: unique(usize)};
-fn consume_left(value: Left) -> usize {*value.owner}
-fn consume_right(value: Right) -> usize {*value.owner}
+fn consume_left(value: Left) -> usize {
+    *value.owner
+}
+fn consume_right(value: Right) -> usize {
+    *value.owner
+}
 fn choose(flag: bool) -> usize {
     let owner: unique(usize) = alloc(7);
     let view = &*owner;
-    let data: Left | Right = if flag {Left {owner: owner}} else {Right {owner: owner}};
+    let data: Left | Right = if flag {
+        Left {owner: owner}
+    } else {
+        Right {owner: owner}
+    };
     *view = 42;
     if flag {consume_left(data)} else {consume_right(data)}
 }
-fn main() -> usize {if choose(true) == 42 {choose(false)} else {1}}
+fn main() -> usize {
+    if choose(true) == 42 {choose(false)} else {1}
+}

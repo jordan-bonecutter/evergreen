@@ -1,15 +1,21 @@
 // Disjoint calls use the checked summary; overlapping calls recheck the body.
 fn swap_usize(left: &usize, right: &usize)
-modifies(left, right)
-ensures (*left == old(*right) && *right == old(*left)) {
+    modifies(left, right)
+    ensures
+        (*left == old(*right) &&
+        *right == old(*left))
+{
     let previous = *left;
     *left = *right;
     *right = previous;
 }
 
 fn swap_bool(left: &bool, right: &bool)
-modifies(left, right)
-ensures (*left == old(*right) && *right == old(*left)) {
+    modifies(left, right)
+    ensures
+        (*left == old(*right) &&
+        *right == old(*left))
+{
     let previous = *left;
     *left = *right;
     *right = previous;

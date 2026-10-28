@@ -1,18 +1,22 @@
 type Bar struct {data: &usize, data2: &usize}
-
 impl Bar {
     fn new(data: &usize, data2: &usize) -> Self
-    borrows(data: data, data2: data2) {
+        borrows(data: data, data2: data2)
+    {
         Self {data: data, data2: data2}
     }
 }
 
 fn foo(y: &usize, z: &usize) -> Bar
-borrows(data: y, data2: z) {
+    borrows(data: y, data2: z)
+{
     Bar::new(y, z)
 }
 
-fn main() -> usize ensures result == 42 {
+fn main() -> usize
+    ensures
+        result == 42
+{
     let first: unique(usize) = alloc(7);
     let second: unique(usize) = alloc(42);
     let bar = foo(&*first, &*second);

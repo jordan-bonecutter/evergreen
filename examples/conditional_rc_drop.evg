@@ -1,11 +1,15 @@
 // Each path consumes value once. The borrowed payload is read only on the path
 // that kept value alive until the return expression.
 fn finish(value: rc::Rc, early: bool) -> usize
-where *value.value() == 42
-ensures result == 42 {
+    where
+        *value.value() == 42
+    ensures
+        result == 42
+{
     let view = value.value();
-    if early {drop(value);} else {}
-    if early {42} else {*view}
+    if early {
+        drop(value);
+    } else {} if early {42} else {*view}
 }
 
 fn main() -> usize {

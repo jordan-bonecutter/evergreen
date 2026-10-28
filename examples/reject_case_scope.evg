@@ -1,5 +1,8 @@
 ideal fn main() -> nat {
-    proof either: false || true by {right; decide};
+    proof either: false || true by {
+        right;
+        decide
+    };
     proof escaped: false by {
         cases either with first | second;
         exact first;

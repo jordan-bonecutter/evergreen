@@ -1,22 +1,37 @@
 type Pair struct {left: usize, right: usize}
-
-fn choose(data: &[Pair; 2], flag: bool) -> &Pair
-borrows(&(*data)[if flag {0} else {1}]) {
+fn choose(
+    data: &[Pair; 2],
+    flag: bool
+) -> &Pair
+    borrows(&(*data)[if flag {0} else {1}])
+{
     if flag {&(*data)[0]} else {&(*data)[1]}
 }
 
-fn choose_left(data: &[Pair; 2], flag: bool) -> &usize
-borrows(&(*data)[if flag {0} else {1}].left) {
+fn choose_left(
+    data: &[Pair; 2],
+    flag: bool
+) -> &usize
+    borrows(&(*data)[if flag {0} else {1}].left)
+{
     if flag {&(*data)[0].left} else {&(*data)[1].left}
 }
 
-fn set_left(data: &[Pair; 2], flag: bool)
-modifies(&(*data)[if flag {0} else {1}].left)
-ensures((*data)[if flag {0} else {1}].left == 42) {
+fn set_left(
+    data: &[Pair; 2],
+    flag: bool
+)
+    modifies(&(*data)[if flag {0} else {1}].left)
+    ensures
+        ((*data)[if flag {0} else {1}].left == 42)
+{
     *choose_left(data, flag) = 42;
 }
 
-fn check(flag: bool) -> usize ensures(result == 42) {
+fn check(flag: bool) -> usize
+    ensures
+        (result == 42)
+{
     let data: [Pair; 2] = [Pair {left: 7, right: 9}, Pair {left: 11, right: 13}];
     let selected = choose(&data, flag);
     let field = choose_left(&data, flag);
@@ -26,7 +41,10 @@ fn check(flag: bool) -> usize ensures(result == 42) {
     (*selected).left
 }
 
-fn replace(flag: bool) -> usize ensures(result == 42) {
+fn replace(flag: bool) -> usize
+    ensures
+        (result == 42)
+{
     let data: [Pair; 2] = [Pair {left: 7, right: 9}, Pair {left: 11, right: 13}];
     let selected = choose(&data, flag);
     let field = choose_left(&data, flag);
@@ -35,7 +53,10 @@ fn replace(flag: bool) -> usize ensures(result == 42) {
     *field
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let first = check(true);
     let second = check(false);
     let third = replace(true);

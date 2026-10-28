@@ -1,17 +1,29 @@
-type Pair struct { left: usize, right: usize } where (fact balanced = left == right; balanced);
+type Pair struct {left: usize, right: usize} where (
+    fact balanced = left == right;
+    balanced
+);
 
 fn increment(value: usize) -> usize
-where (value < usize::MAX)
-ensures (result == value + 1) {
+    where
+        (value < usize::MAX)
+    ensures
+        (result == value + 1)
+{
     value + 1
 }
 
-fn read(value: &usize) -> usize ensures (result == *value) {
+fn read(value: &usize) -> usize
+    ensures
+        (result == *value)
+{
     *value
 }
 
-fn main() -> usize ensures (result == 42) {
-    let pair = Pair { left: 41, right: 41 };
+fn main() -> usize
+    ensures
+        (result == 42)
+{
+    let pair = Pair {left: 41, right: 41};
     update(pair) lifts balanced {
         // This helper cannot observe Pair: its checked effects are scalar-only.
         pair.left = increment(pair.left);

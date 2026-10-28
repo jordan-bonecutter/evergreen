@@ -12,17 +12,27 @@ type BorrowedLedger struct {count: &usize, owners: usize} where (
 );
 
 fn set(slot: &usize, value: usize) -> &usize
-modifies(slot) borrows(slot) ensures(*slot == value) {
+    modifies(slot)
+    borrows(slot)
+    ensures
+        (*slot == value)
+{
     *slot = value;
     slot
 }
 
 fn forward(slot: &usize, value: usize)
-modifies(slot) ensures(*slot == value) {
+    modifies(slot)
+    ensures
+        (*slot == value)
+{
     set(slot, value);
 }
 
-fn local() -> usize ensures(result == 42) {
+fn local() -> usize
+    ensures
+        (result == 42)
+{
     let ledger = Ledger {count: 41, owners: 41};
     let dormant = &ledger;
     update(ledger) lifts accurate {
@@ -33,7 +43,10 @@ fn local() -> usize ensures(result == 42) {
     (*dormant).count
 }
 
-fn external() -> usize ensures(result == 42) {
+fn external() -> usize
+    ensures
+        (result == 42)
+{
     let count: usize = 41;
     let ledger = BorrowedLedger {count: &count, owners: 41};
     let dormant = &ledger;
@@ -45,7 +58,10 @@ fn external() -> usize ensures(result == 42) {
     *(*dormant).count
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let first = local();
     let second = external();
     first + second - 42

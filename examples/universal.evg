@@ -1,16 +1,12 @@
 // The theorem stores one bound index, regardless of the size of its domain.
 fn main() -> usize {
-    fact bounded = forall(i: integer) where (0 <= i && i < 10) {
-        i <= 9
-    };
+    fact bounded = forall(i: integer) where (0 <= i && i < 10) {i <= 9};
     proof range: bounded by {
         intro i;
         omega
     };
 
-    fact suffix = forall(i: integer) where (4 <= i && i < 10) {
-        i <= 9
-    };
+    fact suffix = forall(i: integer) where (4 <= i && i < 10) {i <= 9};
     proof restrict_range: bounded => suffix by {
         intro all;
         intro i;

@@ -1,22 +1,42 @@
 type Point struct {x: usize, y: usize}
-type Sample struct {point: Point, tag: usize} where(tag == 7);
+type Sample struct {point: Point, tag: usize} where (tag == 7);
 
 impl Copy for Point {}
 impl Copy for Sample {}
-
-fn replace(data: &[Sample; 2], index: usize)
-where(index < 2) modifies(&(*data)[index])
-ensures((*data)[index].point.x == 42
-    && (*data)[index].point.y == old((*data)[index].point.y)
-    && (*data)[index].tag == 7) {
+fn replace(
+    data: &[Sample; 2],
+    index: usize
+)
+    where
+        (index < 2)
+    modifies(&(*data)[index])
+    ensures
+        ((*data)[index].point.x == 42 &&
+        (*data)[index].point.y == old((*data)[index].point.y) &&
+        (*data)[index].tag == 7)
+{
     let previous = (*data)[index];
-    (*data)[index] = Sample {point: Point {x: 42, y: previous.point.y}, tag: 7};
+    (*data)[index] = Sample {
+        point: Point {x: 42, y: previous.point.y},
+        tag: 7
+    };
 }
 
-fn change(index: usize) -> usize where(index < 2) ensures(result == 42) {
+fn change(index: usize) -> usize
+    where
+        (index < 2)
+    ensures
+        (result == 42)
+{
     let data: [Sample; 2] = [
-        Sample {point: Point {x: 11, y: 13}, tag: 7},
-        Sample {point: Point {x: 17, y: 19}, tag: 7}
+        Sample {
+            point: Point {x: 11, y: 13},
+            tag: 7
+        },
+        Sample {
+            point: Point {x: 17, y: 19},
+            tag: 7
+        }
     ];
     let selected = &data[index].point.x;
     replace(&data, index);
@@ -25,7 +45,10 @@ fn change(index: usize) -> usize where(index < 2) ensures(result == 42) {
     *selected
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let first = change(0);
     let second = change(1);
     first + second - 42

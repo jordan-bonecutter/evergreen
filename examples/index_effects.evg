@@ -1,7 +1,15 @@
-fn replace(data: &[usize; 1], calls: &usize) -> usize
-where(*calls < usize::MAX)
-modifies(data, calls)
-ensures(result == 0 && (*data)[0] == 41 && *calls == old(*calls) + 1) {
+fn replace(
+    data: &[usize; 1],
+    calls: &usize
+) -> usize
+    where
+        (*calls < usize::MAX)
+    modifies(data, calls)
+    ensures
+        (result == 0 &&
+        (*data)[0] == 41 &&
+        *calls == old(*calls) + 1)
+{
     *data = [41];
     *calls = *calls + 1;
     0

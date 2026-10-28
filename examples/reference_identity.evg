@@ -1,20 +1,35 @@
 fn same(left: &usize, right: &usize) -> bool
-ensures(result == (left == right)) {
+    ensures
+        (result == (left == right))
+{
     left == right
 }
 
 fn forward(left: &usize, right: &usize) -> bool
-ensures(result == (left == right)) {
+    ensures
+        (result == (left == right))
+{
     same(left, right)
 }
 
-fn same_element(data: &[usize; 2], i: usize, j: usize) -> bool
-where(i < 2 && j < 2)
-ensures(result == (i == j)) {
+fn same_element(
+    data: &[usize; 2],
+    i: usize,
+    j: usize
+) -> bool
+    where
+        (i < 2 &&
+        j < 2)
+    ensures
+        (result == (i == j))
+{
     forward(&(*data)[i], &(*data)[j])
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let first: usize = 7;
     let second: usize = 7;
     let data: [usize; 2] = [7, 7];

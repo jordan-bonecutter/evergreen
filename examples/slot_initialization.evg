@@ -1,8 +1,11 @@
 // A shape reserves storage without granting a live payload or destruction work.
 fn initialize<T>(slot: &(T | shape(T)), value: T)
-where typeof(*slot) == shape(T)
-modifies(slot)
-ensures typeof(*slot) == T {
+    where
+        typeof(*slot) == shape(T)
+    modifies(slot)
+    ensures
+        typeof(*slot) == T
+{
     *slot = value;
 }
 

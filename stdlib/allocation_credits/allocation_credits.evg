@@ -4,11 +4,12 @@
 module allocation_credits;
 
 opaque type Credit struct {allocation: shared(usize)}
-
 fn attach(allocation: unique(usize)) -> Credit
-ensures outstanding(&result) == 1
-    && target(&result) == old(&*allocation)
-    && *target(&result) == old(*allocation) {
+    ensures
+        outstanding(&result) == 1 &&
+        target(&result) == old(&*allocation) &&
+        *target(&result) == old(*allocation)
+{
     Credit {allocation: move(allocation)}
 }
 
@@ -17,22 +18,29 @@ ideal fn outstanding(credit: &Credit) -> nat {
 }
 
 fn target(credit: &Credit) -> &usize
-borrows(&*credit.allocation) {
+    borrows(&*credit.allocation)
+{
     &*credit.allocation
 }
 
 fn duplicate(credit: &Credit) -> Credit
-ensures outstanding(&result) == old(outstanding(credit)) + 1
-    && target(&result) == old(target(credit)) {
+    ensures
+        outstanding(&result) == old(outstanding(credit)) + 1 &&
+        target(&result) == old(target(credit))
+{
     Credit {allocation: credit.allocation}
 }
 
 // Consume two claims to one allocation, return the surviving claim. A credit
 // to a different allocation cannot witness the release or recover uniqueness.
 fn merge(left: Credit, right: Credit) -> Credit
-where target(&left) == target(&right) && outstanding(&left) > 1
-ensures outstanding(&result) + 1 == old(outstanding(&left))
-    && target(&result) == old(target(&left)) {
+    where
+        target(&left) == target(&right) &&
+        outstanding(&left) > 1
+    ensures
+        outstanding(&result) + 1 == old(outstanding(&left)) &&
+        target(&result) == old(target(&left))
+{
     let Credit {allocation: released} = left;
     let Credit {allocation: retained} = right;
     leak(released);
@@ -40,9 +48,12 @@ ensures outstanding(&result) + 1 == old(outstanding(&left))
 }
 
 fn recover(credit: Credit) -> unique(usize)
-where outstanding(&credit) == 1
-ensures &*result == old(target(&credit))
-    && *result == old(*target(&credit)) {
+    where
+        outstanding(&credit) == 1
+    ensures
+        &*result == old(target(&credit)) &&
+        *result == old(*target(&credit))
+{
     let Credit {allocation} = credit;
     move(allocation)
 }

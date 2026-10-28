@@ -1,41 +1,55 @@
 // Borrowed-counter handles. No allocation authority or actual owner_count(data) model.
 module count_handles {
     opaque type Release struct {count: &usize}
-
     impl Drop for Release {
-        fn drop(self) modifies(self.count)
-        ensures (nat(*self.count) == nat(old(*self.count)) - 1) {
+        fn drop(self)
+            modifies(self.count)
+            ensures
+                (nat(*self.count) == nat(old(*self.count)) - 1)
+        {
             let zero = if *self.count > 0 {counter_decrement(self.count)} else {false};
         }
     }
 
-    opaque type Handle struct {release: Release}
-    where (*release.count > 0);
+    opaque type Handle struct {release: Release} where (*release.count > 0);
 
     impl Drop for Handle {
-        fn drop(self) modifies(self.release.count) {
+        fn drop(self)
+            modifies(self.release.count)
+        {
             proof live: *self.release.count > 0;
         }
     }
 
     fn create(count: &usize) -> Handle
-    where (*count > 0)
-    borrows(release.count: count) {
-        Handle {release: Release {count: count}}
+        where
+            (*count > 0)
+        borrows(release.count: count)
+    {
+        Handle {
+            release: Release {count: count}
+        }
     }
 
     fn duplicate(handle: &Handle) -> Handle
-    where (*(*handle).release.count < usize::MAX)
-    modifies((*handle).release.count)
-    borrows(release.count: (*handle).release.count)
-    ensures (nat(*(*handle).release.count) == nat(old(*(*handle).release.count)) + 1) {
+        where
+            (*(*handle).release.count < usize::MAX)
+        modifies((*handle).release.count)
+        borrows(release.count: (*handle).release.count)
+        ensures
+            (nat(*(*handle).release.count) == nat(old(*(*handle).release.count)) + 1)
+    {
         let incremented = counter_increment((*handle).release.count);
-        Handle {release: Release {count: (*handle).release.count}}
+        Handle {
+            release: Release {count: (*handle).release.count}
+        }
     }
 
     // Consumes both handles. Shared counters require a body recheck so that
     // the second handle is still valid after the first handle's release.
-    fn release_pair(handles: [Handle; 2])
-    modifies(handles[0].release.count, handles[1].release.count) {
-    }
+    fn release_pair(
+        handles: [Handle; 2]
+    )
+        modifies(handles[0].release.count, handles[1].release.count)
+    {}
 }

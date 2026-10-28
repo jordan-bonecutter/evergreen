@@ -1,8 +1,14 @@
-fn read(value: &usize) -> usize ensures (result == *value) {
+fn read(value: &usize) -> usize
+    ensures
+        (result == *value)
+{
     *value
 }
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let data: [usize; 2] = [1, 2];
     // Mutable aliases are allowed, including references into the same array.
     let first = &data[0];

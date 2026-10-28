@@ -1,5 +1,5 @@
 fn main() -> usize {
     fact impossible = 1 == 2;
-    proof not_allowed: impossible by { omega };
+    proof not_allowed: impossible by {omega};
     0
 }

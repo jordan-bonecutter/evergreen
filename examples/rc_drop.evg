@@ -1,6 +1,5 @@
 // A helper can drop an Rc without knowing whether the caller has other handles.
 fn discard(value: rc::Rc) {}
-
 fn main() -> usize {
     let first = rc::new(42);
     let view = first.value();

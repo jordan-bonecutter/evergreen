@@ -28,7 +28,5 @@ fn main() -> usize {
     let acquired_first = atomic_counter::try_increment(&started_empty);
     proof first_increment: acquired_first && started_empty == 1;
 
-    if increased && !overflowed && previous == 42 && absent == 0 && last == 1 {
-        42
-    } else {1}
+    if increased && !overflowed && previous == 42 && absent == 0 && last == 1 {42} else {1}
 }

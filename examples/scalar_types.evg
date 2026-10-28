@@ -1,22 +1,28 @@
 type Octet = make_type(
-    size: 1, align: 1,
-    represents: repr::Integral {signed: false, bits: 8,
-        encoding: repr::Binary, endian: repr::Little}
+    size: 1,
+    align: 1,
+    represents: repr::Integral {signed: false, bits: 8, encoding: repr::Binary, endian: repr::Little}
 );
 
 type SignedOctet = make_type(
-    size: 1, align: 1,
-    represents: repr::Integral {signed: true, bits: 8,
-        encoding: repr::TwosComplement, endian: repr::Little}
+    size: 1,
+    align: 1,
+    represents: repr::Integral {signed: true, bits: 8, encoding: repr::TwosComplement, endian: repr::Little}
 );
 
 fn add(left: Octet, right: Octet) -> Octet
-where(integer(left) + integer(right) <= integer(Octet::MAX))
-ensures(integer(result) == integer(left) + integer(right)) {
+    where
+        (integer(left) + integer(right) <= integer(Octet::MAX))
+    ensures
+        (integer(result) == integer(left) + integer(right))
+{
     left + right
 }
 
-fn main() -> Octet ensures(result == 42) {
+fn main() -> Octet
+    ensures
+        (result == 42)
+{
     let negative: SignedOctet = -42;
     proof signed_meaning: integer(negative) == -42;
     add(Octet(40), Octet(2))

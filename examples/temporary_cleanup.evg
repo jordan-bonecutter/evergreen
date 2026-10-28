@@ -1,12 +1,23 @@
 type First struct {}
-impl Drop for First {fn drop(self) {}}
+impl Drop for First {
+    fn drop(self) {}
+}
 type Second struct {}
-impl Drop for Second {fn drop(self) {}}
+impl Drop for Second {
+    fn drop(self) {}
+}
 type Pair struct {second: Second, first: First}
+fn make() -> Pair {
+    Pair {
+        first: First {},
+        second: Second {}
+    }
+}
 
-fn make() -> Pair {Pair {first: First {}, second: Second {}}}
-
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let later = First {};
     // The temporary pair drops Second then First before the next statement.
     make();

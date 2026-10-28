@@ -1,9 +1,15 @@
 fn increment(n: usize) -> usize
-where (n < usize::MAX)
-ensures (result == n + 1) {
+    where
+        (n < usize::MAX)
+    ensures
+        (result == n + 1)
+{
     n + 1
 }
 
-fn main() -> usize ensures (result == usize::MAX) {
+fn main() -> usize
+    ensures
+        (result == usize::MAX)
+{
     increment(usize::MAX - 1)
 }

@@ -2,7 +2,9 @@
 type Resource struct {tag: usize} where self.tag == 42;
 
 impl Drop for Resource {
-    fn drop(self) {proof valid_payload: self.tag == 42;}
+    fn drop(self) {
+        proof valid_payload: self.tag == 42;
+    }
 }
 
 fn main() -> usize {

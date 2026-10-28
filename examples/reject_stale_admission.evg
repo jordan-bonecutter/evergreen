@@ -1,5 +1,7 @@
-fn process(parameter: usize) where parameter == 42 {}
-
+fn process(parameter: usize)
+    where
+        parameter == 42
+{}
 fn main() -> usize {
     let x: usize = 43;
     proof admitted: x == 42 by {trustme};

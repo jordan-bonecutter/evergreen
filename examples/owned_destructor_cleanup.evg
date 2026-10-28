@@ -1,7 +1,8 @@
-type OwnedGuard struct {owner: unique(usize), target: &usize}
-where(target == &*owner);
+type OwnedGuard struct {owner: unique(usize), target: &usize} where (target == &*owner);
 impl Drop for OwnedGuard {
-    fn drop(self) modifies(self.target) {
+    fn drop(self)
+        modifies(self.target)
+    {
         *self.target = 42;
         proof updated: *self.target == 42;
     }

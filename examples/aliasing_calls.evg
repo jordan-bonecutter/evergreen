@@ -1,25 +1,33 @@
 fn swap(left: &usize, right: &usize)
-modifies(left, right)
-ensures(*left == old(*right) && *right == old(*left)) {
+    modifies(left, right)
+    ensures
+        (*left == old(*right) &&
+        *right == old(*left))
+{
     let previous = *left;
     *left = *right;
     *right = previous;
 }
 
 fn write_read(target: &usize, observed: &usize, value: usize) -> &usize
-modifies(target)
-borrows(observed) {
+    modifies(target)
+    borrows(observed)
+{
     *target = value;
     observed
 }
 
 fn forward(target: &usize, observed: &usize, value: usize) -> &usize
-modifies(target)
-borrows(observed) {
+    modifies(target)
+    borrows(observed)
+{
     write_read(target, observed, value)
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let value: usize = 7;
     swap(&value, &value);
     proof self_swap: value == 7;

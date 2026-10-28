@@ -1,6 +1,18 @@
 // A literal has a fixed byte-array type, including its UTF-8 byte extent.
-fn first(ideal n: nat, bytes: &[u8; n]) -> u8 where n > 0 {(*bytes)[0]}
-fn empty(bytes: &[u8; 0]) -> usize {42}
+fn first(
+    ideal n: nat,
+    bytes: &[u8; n]
+) -> u8
+    where
+        n > 0
+{
+    (*bytes)[0]
+}
+fn empty(
+    bytes: &[u8; 0]
+) -> usize {
+    42
+}
 
 fn main() -> usize {
     let text = "λ🦀\n";

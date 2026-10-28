@@ -1,6 +1,11 @@
 ideal fn transitive(a: bool, b: bool, c: bool) -> nat
-where ((a => b) && (b => c))
-ensures ((a => c) && result == 42) {
+    where
+        ((a => b) &&
+        (b => c))
+    ensures
+        ((a => c) &&
+        result == 42)
+{
     proof first: a => b by {simp_all};
     proof second: b => c by {simp_all};
     proof composed: a => c by {
@@ -10,7 +15,11 @@ ensures ((a => c) && result == 42) {
         exact premise
     };
     42
-} proof {constructor; exact composed; omega}
+} proof {
+    constructor;
+    exact composed;
+    omega
+}
 
 ideal fn package(a: bool, b: bool) -> nat {
     proof package: a => b => (a && b) by {
@@ -24,10 +33,17 @@ ideal fn package(a: bool, b: bool) -> nat {
 }
 
 ideal fn choose(a: bool, b: bool) -> nat {
-    proof choose: a => (b || a) by {intro present; right; assumption};
+    proof choose: a => (b || a) by {
+        intro present;
+        right;
+        assumption
+    };
     42
 }
 
-ideal fn main() -> nat ensures(result == 42) {
+ideal fn main() -> nat
+    ensures
+        (result == 42)
+{
     42
 }

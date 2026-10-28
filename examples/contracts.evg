@@ -1,17 +1,28 @@
 // Parameters are universally quantified; this is not testing example inputs.
 fn increment(n: usize) -> usize
-where (n < usize::MAX)
-ensures (result > n) {
-    proof successor_grows: n + 1 > n by { omega };
+    where
+        (n < usize::MAX)
+    ensures
+        (result > n)
+{
+    proof successor_grows: n + 1 > n by {omega};
     n + 1
-} proof { omega }
-
-fn bounded_index(n: usize, data: [isize; n], index: usize) -> isize
-where (index < n) {
+} proof {omega}
+fn bounded_index(
+    n: usize,
+    data: [isize; n],
+    index: usize
+) -> isize
+    where
+        (index < n)
+{
     data[index]
 }
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let answer: usize = 40 + 2;
     answer
-} proof { rfl }
+} proof {rfl}

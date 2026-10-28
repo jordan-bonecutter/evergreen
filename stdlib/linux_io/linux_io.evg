@@ -6,13 +6,18 @@ extern syscall(1) fn write(
     count: usize,
     ideal capacity: nat
 ) -> isize
-where(integer(count) <= integer(capacity))
-ensures(integer(result) <= integer(count));
+    where
+        (integer(count) <= integer(capacity))
+    ensures
+        (integer(result) <= integer(count))
+;
 proof {trustme}
-
 fn write_byte(fd: usize, byte: &u8, count: usize) -> isize
-where(count <= 1)
-ensures(result <= 1) {
+    where
+        (count <= 1)
+    ensures
+        (result <= 1)
+{
     let bytes: array(u8, 1) = [*byte];
     write(fd, &bytes, count)
 }
@@ -23,6 +28,8 @@ fn stdout_byte(byte: &u8) -> bool {
 
 // One write attempt. Preserve short counts and negative error codes.
 fn print_bytes(length: usize, bytes: linear_plane(u8, length)) -> isize
-ensures(integer(result) <= integer(length)) {
+    ensures
+        (integer(result) <= integer(length))
+{
     write(1, bytes, length)
 }

@@ -1,22 +1,29 @@
 // Check after credits.evg and borrow_credits.evg. The runtime record owns its
 // ideal credit token; this still supplies no allocation/deallocation authority.
 type Carrier struct {target: &usize, ideal token: borrow_credits::Token}
-
 fn carry(ideal budget: credits::Credit, target: &usize) -> Carrier
-borrows(target: target, token.target: target)
-ensures(borrow_credits::units(&result.token) == credits::units(&budget)) {
+    borrows(target: target, token.target: target)
+    ensures
+        (borrow_credits::units(&result.token) == credits::units(&budget))
+{
     ideal let bound = borrow_credits::bind(budget, target);
     Carrier {target: target, token: bound}
 }
 
 fn read_carrier(carrier: &Carrier) -> usize
-ensures(result == *(*carrier).target) {*(*carrier).target}
+    ensures
+        (result == *(*carrier).target)
+{
+    *(*carrier).target
+}
 
 ideal fn discard_carried(token: borrow_credits::Token) {}
-
 fn consume_carrier(carrier: Carrier) -> usize
-where(borrow_credits::target(&carrier.token) == carrier.target)
-ensures(result == *carrier.target) {
+    where
+        (borrow_credits::target(&carrier.token) == carrier.target)
+    ensures
+        (result == *carrier.target)
+{
     let Carrier {target, token} = carrier;
     proof same_target: borrow_credits::target(&token) == target;
     ideal let discarded = discard_carried(token);

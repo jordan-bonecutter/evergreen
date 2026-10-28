@@ -6,9 +6,7 @@ module rc;
 opaque type Data<T> struct {count: usize, value: T}
 
 // An unpublished handle already owns its allocation-backed lifetime credit.
-opaque type Credit<T> struct {data: shared(Data<T>)} where (
-    nat(self.data.count) == owner_count(self.data)
-);
+opaque type Credit<T> struct {data: shared(Data<T>)} where (nat(self.data.count) == owner_count(self.data));
 
 opaque type Rc<T = usize> struct {data: shared(Data<T>)} where (
     fact reference_count_is_accurate = nat(self.data.count) == owner_count(self.data);
@@ -17,8 +15,12 @@ opaque type Rc<T = usize> struct {data: shared(Data<T>)} where (
 );
 
 fn new<T = usize>(value: T) -> Rc<T>
-ensures result.data.count == 1 {
-    Rc::<T> {data: alloc(Data::<T> {count: 1, value: value})}
+    ensures
+        result.data.count == 1
+{
+    Rc::<T> {
+        data: alloc(Data::<T> {count: 1, value: value})
+    }
 }
 
 // The projected loans expose no Rc view whose accuracy fact could be used
@@ -44,10 +46,12 @@ fn publish<T = usize>(credit: Credit<T>) -> Rc<T> {
 
 impl<T> Drop for Rc<T> {
     fn drop(self)
-    ensures if old(self.data.count) > 1 {
-        nat((*old(self.data)).count) + 1 == nat(old(self.data.count))
-            && owner_count(old(self.data)) + 1 == old(owner_count(self.data))
-    } else {true} {
+        ensures
+            if old(self.data.count) > 1 {
+                nat((*old(self.data)).count) + 1 == nat(old(self.data.count)) &&
+                owner_count(old(self.data)) + 1 == old(owner_count(self.data))
+            } else {true}
+    {
         let Self {data} = self;
         if data.count == 1 {
             let allocation: unique(Data<T>) = move(data);
@@ -61,31 +65,46 @@ impl<T> Drop for Rc<T> {
 
 impl<T> Rc<T> {
     method& strong_count() -> usize
-    ensures result == self.data.count {self.data.count}
+        ensures
+            result == self.data.count
+    {
+        self.data.count
+    }
 
     method& value() -> &T
-    borrows(&self.data.value) {&self.data.value}
+        borrows(&self.data.value)
+    {
+        &self.data.value
+    }
 
     method& clone() -> Self
-    where self.data.count < usize::MAX
-    modifies(&self.data.count)
-    ensures result.data.count == old(self.data.count) + 1
-        && owner_count(result.data) == old(owner_count(self.data)) + 1 {
+        where
+            self.data.count < usize::MAX
+        modifies(&self.data.count)
+        ensures
+            result.data.count == old(self.data.count) + 1 &&
+            owner_count(result.data) == old(owner_count(self.data)) + 1
+    {
         let credit = reserve::<T>(&self.data);
         publish::<T>(credit)
     }
 
     method release_nonfinal()
-    where self.data.count > 1
-    ensures nat((*old(self.data)).count) + 1 == nat(old(self.data.count))
-        && owner_count(old(self.data)) + 1 == old(owner_count(self.data)) {
+        where
+            self.data.count > 1
+        ensures
+            nat((*old(self.data)).count) + 1 == nat(old(self.data.count)) &&
+            owner_count(old(self.data)) + 1 == old(owner_count(self.data))
+    {
         let Self {data} = self;
         data.count = data.count - 1;
         leak(data);
     }
 
     method release_last()
-    where self.data.count == 1 {
+        where
+            self.data.count == 1
+    {
         let Self {data} = self;
         let allocation: unique(Data<T>) = move(data);
         drop(allocation);

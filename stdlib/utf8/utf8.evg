@@ -4,7 +4,10 @@ ideal fn lead_valid(byte: u8) -> bool {
     byte <= 127 || (byte >= 194 && byte <= 244)
 }
 
-ideal fn lead_count(byte: u8) -> nat ensures result <= 3 {
+ideal fn lead_count(byte: u8) -> nat
+    ensures
+        result <= 3
+{
     if byte <= 127 {0} else {
         if byte <= 223 {1} else {
             if byte <= 239 {2} else {3}
@@ -15,24 +18,34 @@ ideal fn lead_count(byte: u8) -> nat ensures result <= 3 {
 // The first continuation excludes overlong encodings, surrogates, and values
 // above U+10FFFF. Later continuations always use [128, 191].
 ideal fn first_low(byte: u8) -> u8 {
-    if byte == 224 {160} else {if byte == 240 {144} else {128}}
+    if byte == 224 {160} else {
+        if byte == 240 {144} else {128}
+    }
 }
 
 ideal fn first_high(byte: u8) -> u8 {
-    if byte == 237 {159} else {if byte == 244 {143} else {191}}
+    if byte == 237 {159} else {
+        if byte == 244 {143} else {191}
+    }
 }
 
-ideal fn scan(ideal n: nat, bytes: &[u8; n], index: nat,
-              remaining: nat, low: u8, high: u8) -> bool
-    where index <= n && remaining <= 3
+ideal fn scan(
+    ideal n: nat,
+    bytes: &[u8; n],
+    index: nat,
+    remaining: nat,
+    low: u8,
+    high: u8
+) -> bool
+    where
+        index <= n &&
+        remaining <= 3
     decreases n - index
 {
     let byte: u8 = if index < n {(*bytes)[index]} else {0};
     if index == n {remaining == 0} else {
         if remaining != 0 {
-            if byte >= low && byte <= high {
-                scan(n, bytes, index + 1, remaining - 1, 128, 191)
-            } else {false}
+            if byte >= low && byte <= high {scan(n, bytes, index + 1, remaining - 1, 128, 191)} else {false}
         } else {
             if lead_valid(byte) {
                 scan(n, bytes, index + 1, lead_count(byte), first_low(byte), first_high(byte))
@@ -41,35 +54,48 @@ ideal fn scan(ideal n: nat, bytes: &[u8; n], index: nat,
     }
 }
 
-ideal fn valid(ideal n: nat, bytes: &[u8; n]) -> bool {
+ideal fn valid(
+    ideal n: nat,
+    bytes: &[u8; n]
+) -> bool {
     scan(n, bytes, 0, 0, 128, 191)
 }
 
 // A borrowed UTF-8 view. Its representation and encoding invariant are library
 // definitions; there is no compiler-defined string object or runtime validator.
-opaque type Text struct {
-    length: usize,
-    data: linear_plane(u8, length),
-} where (fact valid_encoding = valid(data); valid_encoding);
+opaque type Text struct {length: usize, data: linear_plane(u8, length),} where (
+    fact valid_encoding = valid(data);
+    valid_encoding
+);
 
 impl Text {
     fn from_bytes(length: usize, data: linear_plane(u8, length)) -> Self
-        where valid(data)
+        where
+            valid(data)
         borrows(data: data)
-        ensures result.length == length
+        ensures
+            result.length == length
     {
         Self {length: length, data: data}
     }
 
-    method& len() -> usize ensures result == self.length {
+    method& len() -> usize
+        ensures
+            result == self.length
+    {
         self.length
     }
 
-    method& bytes() -> linear_plane(u8, self.length) borrows(self.data) {
+    method& bytes() -> linear_plane(u8, self.length)
+        borrows(self.data)
+    {
         self.data
     }
 
-    method& byte(index: usize) -> u8 where index < self.length {
+    method& byte(index: usize) -> u8
+        where
+            index < self.length
+    {
         (*self.data)[index]
     }
 }

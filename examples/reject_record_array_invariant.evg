@@ -1,10 +1,22 @@
-type Positive struct {value: usize} where(value > 0);
+type Positive struct {value: usize} where (value > 0);
 
-fn clear(value: &usize) modifies(value) ensures(*value == 0) {*value = 0;}
+fn clear(value: &usize)
+    modifies(value)
+    ensures
+        (*value == 0)
+{
+    *value = 0;
+}
 
 // A scalar helper's contract does not authorize breaking its caller's element
 // invariant. Cached field borrows must not hide this enclosing typed view.
-fn bad(data: [Positive; 2], index: usize) where(index < 2) {
+fn bad(
+    data: [Positive; 2],
+    index: usize
+)
+    where
+        (index < 2)
+{
     let selected = &data[index].value;
     clear(&data[index].value);
 }

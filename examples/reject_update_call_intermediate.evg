@@ -4,7 +4,11 @@ type Ledger struct {count: &usize, owners: usize} where (
     accurate && zero_is_safe
 );
 
-fn pulse(slot: &usize) modifies(slot) ensures(*slot == 42) {
+fn pulse(slot: &usize)
+    modifies(slot)
+    ensures
+        (*slot == 42)
+{
     *slot = 0;
     *slot = 42;
 }

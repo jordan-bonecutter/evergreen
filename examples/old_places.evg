@@ -1,29 +1,36 @@
 type Pair struct {left: usize, right: usize}
 type Handle struct {count: &usize}
-
 fn increment_left(pair: &Pair)
-where ((*pair).left < usize::MAX)
-modifies(&(*pair).left)
-ensures (
-    (*pair).left == old((*pair).left) + 1 &&
-    (*pair).right == old((*pair).right)
-) {
+    where
+        ((*pair).left < usize::MAX)
+    modifies(&(*pair).left)
+    ensures
+        ((*pair).left == old((*pair).left) + 1 &&
+        (*pair).right == old((*pair).right))
+{
     proof entry_bound: old((*pair).left) < usize::MAX;
     (*pair).left = (*pair).left + 1;
     proof stable_snapshot: old((*pair).left) < usize::MAX by {exact entry_bound};
 }
 
 fn increment_twice(pair: &Pair)
-where ((*pair).left < usize::MAX - 1)
-modifies(&(*pair).left)
-ensures ((*pair).left == old((*pair).left) + 2) {
+    where
+        ((*pair).left < usize::MAX - 1)
+    modifies(&(*pair).left)
+    ensures
+        ((*pair).left == old((*pair).left) + 2)
+{
     increment_left(pair);
     increment_left(pair);
 }
 
 fn entry_target(handle: Handle, other: &usize) -> usize
-where (*handle.count == 42 && *other == 7)
-ensures (result == old(*handle.count)) {
+    where
+        (*handle.count == 42 &&
+        *other == 7)
+    ensures
+        (result == old(*handle.count))
+{
     let previous = *handle.count;
     handle.count = other;
     proof current_target: *handle.count == 7;
@@ -32,7 +39,10 @@ ensures (result == old(*handle.count)) {
     previous
 }
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let pair = Pair {left: 40, right: 7};
     increment_twice(&pair);
     entry_target(Handle {count: &pair.left}, &pair.right)

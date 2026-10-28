@@ -1,17 +1,19 @@
-type Resource struct { tag: usize } where (tag == 7);
+type Resource struct {tag: usize} where (tag == 7);
 
 impl Drop for Resource {
-    fn drop(self) ensures (self.tag == 7) {
+    fn drop(self)
+        ensures
+            (self.tag == 7)
+    {
         fact valid_tag = self.tag == 7;
-        proof tag_is_valid: valid_tag by { omega };
-    } proof { exact tag_is_valid }
+        proof tag_is_valid: valid_tag by {omega};
+    } proof {exact tag_is_valid}
 }
 
-type Pair struct {
-    left: usize,
-    right: usize,
-    resource: Resource,
-} where (fact balanced = left == right; balanced);
+type Pair struct {left: usize, right: usize, resource: Resource,} where (
+    fact balanced = left == right;
+    balanced
+);
 
 impl Drop for Pair {
     fn drop(self) {
@@ -20,9 +22,12 @@ impl Drop for Pair {
     }
 }
 
-fn main() -> usize ensures (result == 42) {
-    let resource = Resource { tag: 7 };
-    let pair = Pair { left: 1, right: 1, resource: resource };
+fn main() -> usize
+    ensures
+        (result == 42)
+{
+    let resource = Resource {tag: 7};
+    let pair = Pair {left: 1, right: 1, resource: resource};
     update(pair) lifts balanced {
         pair.left = 42;
         pair.right = pair.left;

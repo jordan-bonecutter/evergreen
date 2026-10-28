@@ -5,26 +5,34 @@
 module credits;
 ideal opaque type Credit struct {units: nat}
 ideal type Split struct {left: Credit, right: Credit}
-
 ideal fn units(credit: &Credit) -> nat
-ensures (result == (*credit).units) {
+    ensures
+        (result == (*credit).units)
+{
     (*credit).units
 }
 
 // Transfer a quantity out of borrowed proof storage, conserving the total.
 // The footprint is checked in this module; clients cannot access its slot.
 ideal fn take(credit: &Credit, amount: nat) -> Credit
-where(amount <= (*credit).units)
-modifies(&(*credit).units)
-ensures(result.units == amount
-    && result.units + (*credit).units == old((*credit).units)) {
+    where
+        (amount <= (*credit).units)
+    modifies(&(*credit).units)
+    ensures
+        (result.units == amount &&
+        result.units + (*credit).units == old((*credit).units))
+{
     (*credit).units = (*credit).units - amount;
     Credit {units: amount}
 }
 
 ideal fn split(credit: Credit, amount: nat) -> Split
-where (amount <= credit.units)
-ensures (result.left.units == amount && result.left.units + result.right.units == credit.units) {
+    where
+        (amount <= credit.units)
+    ensures
+        (result.left.units == amount &&
+        result.left.units + result.right.units == credit.units)
+{
     let Credit {units} = credit;
     Split {
         left: Credit {units: amount},
@@ -33,7 +41,9 @@ ensures (result.left.units == amount && result.left.units + result.right.units =
 }
 
 ideal fn join(left: Credit, right: Credit) -> Credit
-ensures (result.units == left.units + right.units) {
+    ensures
+        (result.units == left.units + right.units)
+{
     let Credit {units: left_units} = left;
     let Credit {units: right_units} = right;
     Credit {units: left_units + right_units}

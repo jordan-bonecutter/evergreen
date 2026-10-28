@@ -1,10 +1,13 @@
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     // A named proposition need not be true and is never an assumption.
     fact impossible = 1 == 2;
 
     let value: usize = 42;
     fact is_answer = value == 42;
-    proof answer_is_valid: is_answer by { omega };
-    proof reused: is_answer by { exact answer_is_valid };
+    proof answer_is_valid: is_answer by {omega};
+    proof reused: is_answer by {exact answer_is_valid};
     value
-} proof { exact answer_is_valid }
+} proof {exact answer_is_valid}

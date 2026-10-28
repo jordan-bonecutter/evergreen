@@ -1,9 +1,10 @@
 type Reset struct {target: &usize, ready: bool}
-
 impl Drop for Reset {
     fn drop(self)
-    modifies(self.target)
-    ensures(*self.target == 41) {
+        modifies(self.target)
+        ensures
+            (*self.target == 41)
+    {
         *self.target = 41;
     }
 }

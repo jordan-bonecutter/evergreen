@@ -1,14 +1,20 @@
-type Mirror struct {value: usize, pointer: &usize}
-where(*pointer == value);
+type Mirror struct {value: usize, pointer: &usize} where (*pointer == value);
 
 fn set_self(view: &Mirror, value: usize)
-where((*view).pointer == &(*view).value)
-modifies(&(*view).value)
-ensures((*view).value == value && *(*view).pointer == value) {
+    where
+        ((*view).pointer == &(*view).value)
+    modifies(&(*view).value)
+    ensures
+        ((*view).value == value &&
+        *(*view).pointer == value)
+{
     (*view).value = value;
 }
 
-fn array_case() -> usize ensures(result == 42) {
+fn array_case() -> usize
+    ensures
+        (result == 42)
+{
     let initial: usize = 7;
     let data: [Mirror; 1] = [Mirror {value: 7, pointer: &initial}];
     data[0].pointer = &data[0].value;
@@ -16,7 +22,10 @@ fn array_case() -> usize ensures(result == 42) {
     *data[0].pointer
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let initial: usize = 7;
     let view = Mirror {value: 7, pointer: &initial};
     view.pointer = &view.value;

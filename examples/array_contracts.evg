@@ -1,11 +1,29 @@
-fn identity(data: [usize; 2]) -> [usize; 2]
-ensures (result[0] == data[0] && result[1] == data[1]) {data}
+fn identity(
+    data: [usize; 2]
+) -> [usize; 2]
+    ensures
+        (result[0] == data[0] &&
+        result[1] == data[1])
+{
+    data
+}
 
-fn read_at(data: [usize; 2], index: usize) -> usize
-where (index < 2)
-ensures (result == data[index]) {data[index]}
+fn read_at(
+    data: [usize; 2],
+    index: usize
+) -> usize
+    where
+        (index < 2)
+    ensures
+        (result == data[index])
+{
+    data[index]
+}
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let input: [usize; 2] = [7, 42];
     let output = identity(input);
     let answer = read_at(output, 1);

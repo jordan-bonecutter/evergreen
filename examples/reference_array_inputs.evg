@@ -1,17 +1,28 @@
 type View struct {target: &usize}
-
-fn set_second(views: &[View; 2], value: usize)
-modifies((*views)[1].target)
-ensures(*(*views)[1].target == value && *(*views)[0].target == old(*(*views)[0].target)) {
+fn set_second(
+    views: &[View; 2],
+    value: usize
+)
+    modifies((*views)[1].target)
+    ensures
+        (*(*views)[1].target == value &&
+        *(*views)[0].target == old(*(*views)[0].target))
+{
     *(*views)[1].target = value;
 }
 
-fn second(views: &[View; 2]) -> &usize
-borrows((*views)[1].target) {
+fn second(
+    views: &[View; 2]
+) -> &usize
+    borrows((*views)[1].target)
+{
     (*views)[1].target
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let first: usize = 7;
     let last: usize = 0;
     let views: [View; 2] = [View {target: &first}, View {target: &last}];

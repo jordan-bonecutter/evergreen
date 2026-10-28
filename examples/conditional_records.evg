@@ -1,23 +1,39 @@
 type Checked struct {value: usize} where (value > 0);
 impl Copy for Checked {}
-
 type Pair struct {chosen: Checked, other: usize}
-
 fn choose(flag: bool, a: Checked, b: Checked) -> Checked
-ensures ((flag && result.value == a.value) || (!flag && result.value == b.value)) {
-    if flag { a } else { b }
+    ensures
+        ((flag &&
+        result.value == a.value) || (!flag &&
+        result.value == b.value))
+{
+    if flag {a} else {b}
 }
 
 fn nested(flag: bool) -> Pair
-ensures (((flag && result.chosen.value == 7) || (!flag && result.chosen.value == 42)) && result.other == 1) {
+    ensures
+        (((flag &&
+        result.chosen.value == 7) || (!flag &&
+        result.chosen.value == 42)) &&
+        result.other == 1)
+{
     if flag {
-        Pair {chosen: Checked {value: 7}, other: 1}
+        Pair {
+            chosen: Checked {value: 7},
+            other: 1
+        }
     } else {
-        Pair {chosen: Checked {value: 42}, other: 1}
+        Pair {
+            chosen: Checked {value: 42},
+            other: 1
+        }
     }
 }
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let a = nested(false);
     let b = choose(true, a.chosen, Checked {value: 7});
     b.value

@@ -6,7 +6,13 @@ type Ledger struct {count: &usize, owners: usize} where (
 );
 
 fn borrowed(count: &usize) -> usize
-where(*count == 41) modifies(count) ensures(*count == 42 && result == 42) {
+    where
+        (*count == 41)
+    modifies(count)
+    ensures
+        (*count == 42 &&
+        result == 42)
+{
     let ledger = Ledger {count: count, owners: 41};
     update(ledger) lifts accurate {
         let view = ledger.count;
@@ -17,7 +23,10 @@ where(*count == 41) modifies(count) ensures(*count == 42 && result == 42) {
     *ledger.count
 }
 
-fn indexed(flag: bool) -> usize ensures(result == 42) {
+fn indexed(flag: bool) -> usize
+    ensures
+        (result == 42)
+{
     let data: [usize; 2] = [41, 41];
     let index: usize = if flag {0} else {1};
     let ledger = Ledger {count: &data[index], owners: 41};
@@ -32,13 +41,21 @@ fn indexed(flag: bool) -> usize ensures(result == 42) {
 }
 
 fn select(count: &usize, visits: &usize) -> &usize
-where(*visits < usize::MAX) modifies(visits) borrows(count)
-ensures(*visits == old(*visits) + 1) {
+    where
+        (*visits < usize::MAX)
+    modifies(visits)
+    borrows(count)
+    ensures
+        (*visits == old(*visits) + 1)
+{
     *visits = *visits + 1;
     count
 }
 
-fn once() -> usize ensures(result == 42) {
+fn once() -> usize
+    ensures
+        (result == 42)
+{
     let count: usize = 41;
     let visits: usize = 0;
     let ledger = Ledger {count: &count, owners: 41};
@@ -51,7 +68,10 @@ fn once() -> usize ensures(result == 42) {
     *ledger.count + visits - 1
 }
 
-fn main() -> usize ensures(result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let count: usize = 41;
     let a = borrowed(&count);
     let b = indexed(true);

@@ -1,20 +1,21 @@
-type Pair struct { left: usize, right: usize }
-where (
+type Pair struct {left: usize, right: usize} where (
     fact balanced = left == right;
     fact bounded = left <= 100;
     fact unused_false_claim = left != left;
     balanced && bounded
 );
 
-fn main() -> usize ensures (result == 42) {
-    let pair = Pair { left: 1, right: 1 };
+fn main() -> usize
+    ensures
+        (result == 42)
+{
+    let pair = Pair {left: 1, right: 1};
     proof before: pair::balanced;
     update(pair) lifts balanced {
         pair.left = 42;
         // balanced is open, but bounded must still hold at every step.
         proof open_state: !(pair::balanced);
         pair.right = pair.left;
-    }
-    proof after: pair::balanced;
+    } proof after: pair::balanced;
     pair.right
 }

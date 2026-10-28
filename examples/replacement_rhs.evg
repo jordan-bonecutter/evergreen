@@ -1,9 +1,10 @@
 // Nested replacement must destroy tags 1, 2, and 3 exactly once each.
-type Resource struct {tag: usize, counter: &usize}
-where self.tag <= 3 && *self.counter >= self.tag;
+type Resource struct {tag: usize, counter: &usize} where self.tag <= 3 && *self.counter >= self.tag;
 
 impl Drop for Resource {
-    fn drop(self) modifies(self.counter) {
+    fn drop(self)
+        modifies(self.counter)
+    {
         let Self {tag, counter} = self;
         *counter = *counter - tag;
     }

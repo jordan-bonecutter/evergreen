@@ -1,16 +1,35 @@
 type First struct {tag: usize} where (tag == 1);
-impl Drop for First {fn drop(self) {}}
+impl Drop for First {
+    fn drop(self) {}
+}
 type Second struct {tag: usize} where (tag == 2);
-impl Drop for Second {fn drop(self) {}}
+impl Drop for Second {
+    fn drop(self) {}
+}
 type Third struct {}
-impl Drop for Third {fn drop(self) {}}
-fn first() -> First {First {tag: 1}}
-fn second() -> Second {Second {tag: 2}}
+impl Drop for Third {
+    fn drop(self) {}
+}
+fn first() -> First {
+    First {tag: 1}
+}
+fn second() -> Second {
+    Second {tag: 2}
+}
 fn combine(a: usize, b: usize) -> usize
-where (a <= 10 && b <= 10)
-ensures (result == a + b) {a + b}
+    where
+        (a <= 10 &&
+        b <= 10)
+    ensures
+        (result == a + b)
+{
+    a + b
+}
 
-fn main() -> usize ensures (result == 6) {
+fn main() -> usize
+    ensures
+        (result == 6)
+{
     let later = Third {};
     // The argument receivers survive the call, then drop Second followed by First.
     let total = combine(first().tag, second().tag);

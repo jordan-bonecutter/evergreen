@@ -1,26 +1,47 @@
-fn at(ideal n: nat, data: &[usize; n], index: usize) -> &usize
-where (integer(index) < integer(n))
-borrows(&(*data)[index])
-ensures (*result == (*data)[index]) {
+fn at(
+    ideal n: nat,
+    data: &[usize; n],
+    index: usize
+) -> &usize
+    where
+        (integer(index) < integer(n))
+    borrows(&(*data)[index])
+    ensures
+        (*result == (*data)[index])
+{
     &(*data)[index]
 }
 
 fn set_42(r: &usize)
-modifies(r)
-ensures (*r == 42) {
+    modifies(r)
+    ensures
+        (*r == 42)
+{
     *r = 42;
 }
 
-fn may_alias(data: [usize; 2], i: usize, j: usize) -> usize
-where (i < 2 && j < 2)
-ensures ((i == j => result == 42) && (i != j => result == data[j])) {
+fn may_alias(
+    data: [usize; 2],
+    i: usize,
+    j: usize
+) -> usize
+    where
+        (i < 2 &&
+        j < 2)
+    ensures
+        ((i == j => result == 42) &&
+        (i != j => result == data[j]))
+{
     let left = at(2, &data, i);
     let right = at(2, &data, j);
     set_42(left);
     *right
 }
 
-fn main() -> usize ensures (result == 42) {
+fn main() -> usize
+    ensures
+        (result == 42)
+{
     let data: [usize; 2] = [7, 1];
     may_alias(data, 1, 1)
 }
