@@ -250,3 +250,37 @@ fn commitments_preserve_structure_and_are_bounded_by_dag_size() {
         .committed_rows(&[Affine::variable(one)], build)
         .is_err());
 }
+
+#[test]
+fn explicit_import_preserves_meaning_and_sharing_without_copying_unrelated_nodes() {
+    let mut source = Terms::new().unwrap();
+    let work = &mut Work::new(10_000);
+    source.variable("unused", work).unwrap();
+    let x = source.variable("x", work).unwrap();
+    let one = source.number(1, work).unwrap();
+    let index = source.add(x, one, work).unwrap();
+    let root = source
+        .application("contents_v0", &[index, index], work)
+        .unwrap();
+    let mut target = Terms::new().unwrap();
+    let roots = target.import(&source, &[root, root], work).unwrap();
+    assert_ne!(roots[0], root);
+    assert_eq!(roots[0], roots[1]);
+    assert_eq!(target.node_count(), 3);
+    assert_eq!(
+        target.commitment(roots[0], work).unwrap(),
+        source.commitment(root, work).unwrap()
+    );
+    let (_, args) = target.application_parts(roots[0], work).unwrap().unwrap();
+    assert_eq!(args[0], args[1]);
+    assert_eq!(
+        target.linear(args[0], work).unwrap(),
+        Some(
+            super::super::Linear::variable("x")
+                .add(&super::super::Linear::number(1))
+                .unwrap()
+        )
+    );
+    assert!(target.linear(roots[0], work).unwrap().is_none());
+    assert!(target.import(&source, &[roots[0]], work).is_err());
+}

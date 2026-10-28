@@ -10,6 +10,7 @@ use std::sync::{
 };
 
 mod commitment;
+mod transfer;
 mod traversal;
 pub use commitment::CommittedAtom;
 
@@ -50,7 +51,7 @@ impl Work {
         self.spent
     }
 
-    fn charge(&mut self, amount: usize) -> ArithmeticResult<()> {
+    pub fn charge(&mut self, amount: usize) -> ArithmeticResult<()> {
         self.remaining = self
             .remaining
             .checked_sub(amount)
@@ -60,6 +61,7 @@ impl Work {
     }
 }
 
+#[derive(Debug)]
 pub struct Terms {
     arena: u64,
     nodes: Vec<Arc<Node>>,
@@ -174,5 +176,33 @@ impl Terms {
         let row = self.affine(value, work)?;
         work.charge(row.terms.len())?;
         self.sum(row.scale(factor)?, work)
+    }
+
+    pub fn application_parts(
+        &self,
+        id: Id,
+        work: &mut Work,
+    ) -> ArithmeticResult<Option<(&str, &[Id])>> {
+        work.charge(1)?;
+        match self.node(id)? {
+            Node::Application { symbol, arguments } => {
+                work.charge(symbol.len().saturating_add(arguments.len()))?;
+                Ok(Some((symbol, arguments)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    pub fn linear(&self, id: Id, work: &mut Work) -> ArithmeticResult<Option<super::Linear>> {
+        let row = self.affine(id, work)?;
+        let mut output = super::Linear::number(row.constant);
+        for (id, coefficient) in row.terms {
+            let Node::Variable(name) = self.node(id)? else {
+                return Ok(None);
+            };
+            work.charge(name.len().saturating_add(1))?;
+            output.terms.insert(name.clone(), coefficient);
+        }
+        Ok(Some(output))
     }
 }

@@ -488,8 +488,8 @@ contents version or index.
 
 This scalar term layer is kernel groundwork, not yet source-level indexed
 payload support. The frontend still uses named affine rows. Connecting structured
-terms to propositions, typed array-read interpretations,
-congruence evidence, and quantified source elaboration remains required. A bare
+terms to typed array-read interpretations and quantified source elaboration
+remains required. A bare
 application supplies no truth, bounds, memory access, or ownership authority.
 
 Structured arithmetic queries now use the existing proof-artifact recording and
@@ -508,6 +508,24 @@ their terms in a fresh arena in a different order, reject changed contents versi
 and indices, and reject forged weights. The existing named-row artifact encoding
 is unchanged; structured queries have a distinct digest domain. Source-level
 payload reads still need the frontend integration described above.
+
+Scalar equality recipes now connect those terms to the existing evidence DAG.
+Registration names every free integer as an explicit predicate parameter,
+including variables nested inside applications. It provides no proof and cannot
+replace an earlier declaration. Instantiation imports only reachable term nodes
+into a temporary arena, then substitutes all actual arguments simultaneously.
+The existing predicate substitution and quantifier rules therefore retain every
+bound dependency without changing the propositional representation.
+
+Checked scalar reflexivity requires the instantiated terms to be identical after
+affine normalization. Scalar congruence requires matching function symbols and
+arities, with a proof of each corresponding argument equality in order. Parents
+can be arithmetic equalities or earlier scalar equality proofs, so nested
+applications compose. Every used hypothesis and admission remains a dependency;
+unrelated admissions do not enter the result. Changed contents-version symbols,
+missing argument proofs, and attempts to generalize an admitted bound instance
+are rejected. These rules establish equality, not memory access or a declaration's
+safety. Source-level indexed payload elaboration is still pending.
 
 Atoms establish no truth by their construction and have no built-in memory or
 ownership meaning. They cannot enter arithmetic paths as fresh Boolean variables.

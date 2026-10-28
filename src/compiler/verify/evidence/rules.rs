@@ -56,6 +56,12 @@ pub(in crate::compiler::verify) enum Rule {
         source: NodeId,
         equalities: Vec<NodeId>,
     },
+    #[allow(dead_code)]
+    ScalarReflexivity,
+    #[allow(dead_code)]
+    ScalarCongruence {
+        equalities: Vec<NodeId>,
+    },
     UnfoldPredicate {
         definition: DefinitionId,
         reverse: bool,
@@ -65,7 +71,8 @@ pub(in crate::compiler::verify) enum Rule {
 impl Rule {
     pub(super) fn parents(&self) -> Vec<NodeId> {
         match *self {
-            Self::UnfoldPredicate { .. } => vec![],
+            Self::UnfoldPredicate { .. } | Self::ScalarReflexivity => vec![],
+            Self::ScalarCongruence { ref equalities } => equalities.clone(),
             Self::Reuse(p)
             | Self::AndLeft(p)
             | Self::AndRight(p)
@@ -110,7 +117,8 @@ impl Rule {
                 .terms
                 .keys()
                 .fold(1usize, |cost, name| cost.saturating_add(1 + name.len())),
-            Self::PredicateCongruence { equalities, .. } => equalities.len(),
+            Self::PredicateCongruence { equalities, .. }
+            | Self::ScalarCongruence { equalities } => equalities.len(),
             _ => 0,
         }
     }
@@ -140,6 +148,10 @@ impl Rule {
             claim(id.node)
         };
         let valid = match *self {
+            Self::ScalarReflexivity => graph.scalar_reflexivity(goal, work, limit)?,
+            Self::ScalarCongruence { ref equalities } => {
+                graph.scalar_congruence(goal, equalities, work, limit)?
+            }
             Self::UnfoldPredicate {
                 definition,
                 reverse,
