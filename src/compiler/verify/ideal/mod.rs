@@ -1,13 +1,15 @@
 //! Demand-driven computation of read-only verified definitions on concrete
 //! inputs and total scalar symbolic expressions. Source contracts and trust
-//! dependencies still pass through the ordinary call checker; reduction adds
-//! neither an axiom nor an FFI escape hatch.
+//! dependencies still pass through the ordinary call checker. Under a quantifier,
+//! only total, safety-verified scalar definitions may reduce, without importing
+//! their contracts. Neither path adds an axiom or an FFI escape hatch.
 
 use super::*;
 
 mod aggregate;
 mod applications;
 mod evaluate;
+mod quantified;
 mod symbolic;
 #[cfg(test)]
 mod tests;

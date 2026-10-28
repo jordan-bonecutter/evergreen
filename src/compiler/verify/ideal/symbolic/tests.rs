@@ -78,15 +78,12 @@ fn symbolic_reduction_keeps_trusted_safety_dependencies_local() {
 }
 
 #[test]
-fn quantified_user_calls_still_require_structured_bound_dependent_elaboration() {
+fn quantified_user_calls_cannot_generalize_a_predicate_over_the_wrong_domain() {
     // Reduction outside a binder must not enable the old, unsound shortcut of
     // hiding a bound argument inside a fresh uninterpreted scalar variable.
     let source = "ideal fn positive(n: integer) -> bool {n > 0} fn check() {proof _: forall(n: integer) where(n >= 0) {positive(n)} by {intro n; omega};}";
     let error = verify(source).unwrap_err();
-    assert!(
-        error.contains("structured bound-dependent terms"),
-        "{error}"
-    );
+    assert!(error.contains("cannot prove"), "{error}");
 }
 
 #[test]

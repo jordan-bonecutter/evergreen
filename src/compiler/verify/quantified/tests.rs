@@ -103,7 +103,6 @@ fn source_universals_reject_single_index_proofs_wrong_instances_and_effects() {
         ("fn main() -> usize {proof bad: forall(i: integer) {i == 0} by {intro i; omega}; 0}", "cannot prove"),
         ("fn main() -> usize {proof p: forall(i: integer) where(i >= 0) {i >= 0} by {intro i; omega}; proof bad: -1 >= 0 by {specialize p(-1); omega}; 0}", "cannot prove"),
         ("fn main() -> usize {proof p: forall(i: integer) where(i >= 0) {i >= 0} by {intro i; omega}; proof bad: 1 == 0 by {specialize p(1); omega}; 0}", "different proposition"),
-        ("ideal fn predicate(x: integer) -> bool {x >= 0} fn main() -> usize {fact bad = forall(i: integer) {predicate(i)}; 0}", "structured bound-dependent"),
         ("fn main() -> usize {let data: [usize; 2] = [7, 9]; fact bad = forall(i: integer) where(i >= 0 && i < 2) {data[i] == 7}; 0}", "structured bound-dependent"),
         ("fn main() -> usize {let bad = forall(i: integer) {i == i}; 0}", "proof-only"),
         ("fn main() -> usize {let n: usize = 1; fact bad = forall(i: integer) {n + 1 >= n}; 0}", "quantified arithmetic uses integer"),

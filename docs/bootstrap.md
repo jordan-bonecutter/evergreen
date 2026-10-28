@@ -2463,11 +2463,32 @@ fresh Boolean result and two equivalence constraints.
 
 This is groundwork for buffer append, not yet a general UTF-8 concatenation
 proof or an append API. Symbolic sequence content, bound-dependent array reads,
-and recursive predicate unfolding still need proof support. User function calls
-inside quantified expressions remain rejected; this reducer does not hide bound
-arguments inside opaque scalar identities. String literals still have their
+and recursive predicate unfolding still need proof support. Quantified calls
+support the exact scalar fragment described below; bound arguments cannot be
+hidden inside opaque scalar identities. String literals still have their
 existing byte-array representation; ideal Unicode strings and encoding APIs are
 separate unfinished work.
+
+### Source-defined scalar functions in universal proofs
+
+[`quantified_calls.evg`](../examples/quantified_calls.evg) uses ideal source
+functions and `integer::from` inside `forall`, including in its domain. Calls must
+reduce to explicit scalar formulas that retain their bound arguments. Universal
+introduction and specialization then use the existing proof kernel; they neither
+enumerate the domain nor introduce a fresh unknown result for an application.
+
+This path accepts verified pure ideal definitions with scalar parameters and
+results, no precondition, and no trusted safety dependency. It computes the body
+without importing its postcondition, including a postcondition marked `trustme`.
+Unknown branches, nonlinear symbolic computation, and other opaque results are
+rejected here instead of falling back to an ordinary call model. Preconditions
+under a binder and general bound-dependent array reads remain unsupported.
+
+Proof subjects record the definition identity and every argument's plane revision.
+Specialization substitutes bound arguments through those keys. Changing a
+captured argument invalidates a proof about its old state; writing an independent
+sibling field preserves it. Describing an untrue proposition with `fact` remains
+legal, while proving it requires evidence.
 
 
 ### Demand-driven ideal aggregate reads

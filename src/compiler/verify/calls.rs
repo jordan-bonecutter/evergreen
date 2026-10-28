@@ -76,6 +76,9 @@ impl<'a> Context<'a> {
         if matches!(name, "move" | "drop" | "leak") {
             return self.eval_ownership_call(name, args, expected, line);
         }
+        if self.locals.quantified_evaluation != 0 {
+            return self.eval_quantified_call(name, args, line);
+        }
         let function = self.function_for_call(name, line)?;
         let results = self.proof.results.len();
         let actuals = self.evaluate_arguments(function, args, line)?;

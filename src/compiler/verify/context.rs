@@ -17,6 +17,7 @@ pub(super) struct Declarations<'a> {
 #[derive(Default)]
 pub(super) struct Locals {
     pub(super) quantified_checks: Vec<Vec<Formula>>,
+    pub(super) quantified_evaluation: usize,
     pub(super) logical_bindings: Vec<LogicalBinding>,
     pub(super) values: BTreeMap<String, Symbol>,
     pub(super) places: BTreeMap<String, PlaneId>,

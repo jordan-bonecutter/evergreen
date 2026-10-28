@@ -18,6 +18,7 @@ pub(in crate::compiler::verify) enum ClaimKey {
     Unary(String, Box<Self>),
     Binary(String, Box<Self>, Box<Self>),
     Array(Vec<Self>),
+    Call(String, Vec<Self>),
     Record(String, Vec<(String, Self)>),
     Guarded(Vec<(Formula, Self)>),
 }
@@ -90,7 +91,7 @@ impl Snapshot {
                     pending.push((a, guard.clone()));
                     pending.push((b, guard));
                 }
-                ClaimKey::Array(values) => {
+                ClaimKey::Array(values) | ClaimKey::Call(_, values) => {
                     pending.extend(values.iter().map(|key| (key, guard.clone())))
                 }
                 ClaimKey::Record(_, fields) => {
@@ -128,7 +129,9 @@ impl Snapshot {
                     pending.push(a);
                     pending.push(b);
                 }
-                ClaimKey::Array(values) => pending.extend(values.iter()),
+                ClaimKey::Array(values) | ClaimKey::Call(_, values) => {
+                    pending.extend(values.iter())
+                }
                 ClaimKey::Record(_, fields) => pending.extend(fields.iter().map(|(_, key)| key)),
                 ClaimKey::Guarded(cases) => pending.extend(cases.iter().map(|(_, key)| key)),
                 _ => {}
@@ -170,6 +173,10 @@ impl Snapshot {
                     pending.push(b);
                 }
                 ClaimKey::Array(keys) => pending.extend(keys),
+                ClaimKey::Call(name, keys) => {
+                    weight = weight.saturating_add(name.len());
+                    pending.extend(keys);
+                }
                 ClaimKey::Record(_, fields) => pending.extend(fields.iter().map(|(_, key)| key)),
                 ClaimKey::Guarded(cases) => {
                     for (guard, key) in cases {
@@ -219,7 +226,7 @@ impl Snapshot {
                     freeze(a, world);
                     freeze(b, world);
                 }
-                ClaimKey::Array(keys) => {
+                ClaimKey::Array(keys) | ClaimKey::Call(_, keys) => {
                     for key in keys {
                         freeze(key, world);
                     }
@@ -262,7 +269,7 @@ impl Snapshot {
                     replace(a, original, replacement);
                     replace(b, original, replacement);
                 }
-                ClaimKey::Array(values) => {
+                ClaimKey::Array(values) | ClaimKey::Call(_, values) => {
                     for key in values {
                         replace(key, original, replacement);
                     }
@@ -334,7 +341,7 @@ impl Snapshot {
                     pending.push(a);
                     pending.push(b);
                 }
-                ClaimKey::Array(items) => pending.extend(items),
+                ClaimKey::Array(items) | ClaimKey::Call(_, items) => pending.extend(items),
                 ClaimKey::Record(_, fields) => pending.extend(fields.iter().map(|(_, key)| key)),
                 ClaimKey::Guarded(cases) => pending.extend(cases.iter().map(|(_, key)| key)),
                 _ => {}
@@ -362,6 +369,13 @@ impl Snapshot {
                         .map(|(guard, key)| {
                             Some((guard.clone(), substitute(key, argument, depth)?))
                         })
+                        .collect::<Option<_>>()?,
+                ),
+                ClaimKey::Call(name, arguments) => ClaimKey::Call(
+                    name.clone(),
+                    arguments
+                        .iter()
+                        .map(|key| substitute(key, argument, depth))
                         .collect::<Option<_>>()?,
                 ),
                 // Quantified source expressions currently contain scalar syntax only.

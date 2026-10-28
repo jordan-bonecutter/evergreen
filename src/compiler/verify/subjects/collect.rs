@@ -177,6 +177,25 @@ impl Context<'_> {
             Kind::Call(name, _) if matches!(name.as_str(), "shape" | "unique" | "shared") => {
                 self.type_literal(expression).map(ClaimKey::Type)
             }
+            Kind::Call(name, arguments)
+                if self
+                    .declarations
+                    .functions
+                    .get(name)
+                    .is_some_and(|function| self.is_total_scalar_definition(function)) =>
+            {
+                // A pure scalar definition observes only these values. Keep its
+                // identity and every argument revision without evaluating it.
+                let mut keys = Vec::new();
+                let mut complete = true;
+                for argument in arguments {
+                    match self.collect_subjects(argument, snapshot, depth + 1)? {
+                        Some(key) => keys.push(key),
+                        None => complete = false,
+                    }
+                }
+                complete.then_some(ClaimKey::Call(name.clone(), keys))
+            }
             Kind::Call(_, arguments) => {
                 // Call-result subjects need value-flow provenance through
                 // parameter renaming. Never re-evaluate a call to discover it.

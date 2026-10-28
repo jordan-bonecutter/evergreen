@@ -4,6 +4,8 @@
 use super::*;
 
 #[cfg(test)]
+mod call_tests;
+#[cfg(test)]
 mod tests;
 
 impl Context<'_> {
@@ -126,12 +128,12 @@ impl Context<'_> {
         self.with_logical_binding(name, &variable, true, |ctx| {
             ctx.check_quantified_expression(domain, 0)?;
             ctx.check_quantified_expression(body, 0)?;
-            let domain = ctx.eval(domain, Some(&Ty::Bool))?.proposition()?;
+            let domain = ctx.eval_quantified_expression(domain)?.proposition()?;
             if !domain.is_arithmetic() {
                 return Err(format!("line {line}: a universal domain currently requires an unquantified scalar proposition"));
             }
             ctx.locals.quantified_checks.push(Vec::new());
-            let body = ctx.eval(body, Some(&Ty::Bool)).and_then(|body| body.proposition());
+            let body = ctx.eval_quantified_expression(body).and_then(|body| body.proposition());
             let checks = ctx.locals.quantified_checks.pop().ok_or("missing quantified well-formedness scope")?;
             let body = body?;
             ctx.finish_quantified_checks(&variable, &domain, checks, line)?;
@@ -139,6 +141,13 @@ impl Context<'_> {
                 variable: variable.clone(), domain: Box::new(domain), body: Box::new(body),
             }))
         })
+    }
+
+    fn eval_quantified_expression(&mut self, expression: &Expr) -> Result<Symbol> {
+        self.locals.quantified_evaluation += 1;
+        let result = self.eval(expression, Some(&Ty::Bool));
+        self.locals.quantified_evaluation -= 1;
+        result
     }
 
     fn check_quantified_expression(&mut self, expression: &Expr, depth: usize) -> Result<()> {
@@ -155,7 +164,7 @@ impl Context<'_> {
             return Ok(());
         }
         let error = || {
-            format!("line {}: quantified propositions currently support total scalar arithmetic; indexed reads, user calls, and other computations need structured bound-dependent terms", expression.line)
+            format!("line {}: quantified propositions currently support total scalar arithmetic; indexed reads and opaque computations need structured bound-dependent terms", expression.line)
         };
         match &expression.kind {
             Kind::Number(_) | Kind::Constant(..) | Kind::Bool(_) => Ok(()),
@@ -196,6 +205,13 @@ impl Context<'_> {
             }
             Kind::Call(name, args) if name == "integer" && args.len() == 1 => {
                 self.check_quantified_expression(&args[0], depth + 1)
+            }
+            Kind::Call(name, args) if self.declarations.functions.contains_key(name) => {
+                self.quantified_scalar_function(name, expression.line)?;
+                for argument in args {
+                    self.check_quantified_expression(argument, depth + 1)?;
+                }
+                Ok(())
             }
             Kind::Forall { .. } => Ok(()), // Its own elaborator checks its lexical scope.
             _ => Err(error()),
