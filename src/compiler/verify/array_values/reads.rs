@@ -1,4 +1,4 @@
-//! Demand-driven equations for ordinary reads of an opaque numeric input.
+//! Demand-driven equations for ordinary reads of an opaque scalar input.
 //! Only fresh read scalars are named; literals and stores retain their existing
 //! definitions. One observed index never supplies a default for other cells.
 
@@ -11,7 +11,7 @@ pub(in crate::compiler::verify) struct ReadBinding {
 }
 
 impl Context<'_> {
-    pub(in crate::compiler::verify) fn bind_numeric_array_read(
+    pub(in crate::compiler::verify) fn bind_scalar_array_read(
         &mut self,
         identity: &str,
         index: &Linear,
@@ -22,14 +22,17 @@ impl Context<'_> {
         {
             return Ok(());
         }
-        let Symbol::Number(_, value) = value else {
+        if !scalar(&value.ty()) {
             return Ok(());
+        }
+        let scalars::Argument::Word(value) = self.scalar_argument(value)? else {
+            return Err("new scalar array reads require a registered word".into());
         };
         let Some((name, 1)) = value.terms.iter().next() else {
             return Ok(());
         };
         if value.constant != 0 || value.terms.len() != 1 {
-            return Err("numeric array read must allocate a fresh scalar".into());
+            return Err("scalar array read must allocate a fresh scalar".into());
         }
         let mut terms = Terms::new()?;
         let mut work = Work::new(MAX_VALUE_WORK.saturating_sub(self.work.value_work));
@@ -50,7 +53,7 @@ impl Context<'_> {
             .evidence
             .define_scalar_binding(name.clone(), terms, read)?;
         self.arrays
-            .numeric_bindings
+            .scalar_bindings
             .entry(identity.to_owned())
             .or_default()
             .insert(
@@ -63,7 +66,7 @@ impl Context<'_> {
         Ok(())
     }
 
-    pub(super) fn prove_numeric_read_binding(
+    pub(super) fn prove_scalar_read_binding(
         &mut self,
         goal: &Formula,
         key: &Key,
@@ -81,14 +84,14 @@ impl Context<'_> {
         if arguments.len() != 2 || self.arrays.predicate_definitions.contains_key(symbol) {
             return Ok(None);
         }
-        let Some(bindings) = self.arrays.numeric_bindings.get(identity) else {
+        let Some(bindings) = self.arrays.scalar_bindings.get(identity) else {
             return Ok(None);
         };
         let weight = bindings.iter().fold(0usize, |cost, (index, binding)| {
             cost.saturating_add(index.terms.len() + binding.value.terms.len() + 2)
         });
         self.charge_value_work(weight)?;
-        let bindings = self.arrays.numeric_bindings[identity].clone();
+        let bindings = self.arrays.scalar_bindings[identity].clone();
         for (index, binding) in bindings {
             let mut actual = vec![index, binding.value];
             if side == 1 {

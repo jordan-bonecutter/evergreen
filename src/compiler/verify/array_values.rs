@@ -1,4 +1,4 @@
-//! Numeric payload equalities retain immutable contents identities and explicit
+//! Scalar payload equalities retain immutable contents identities and explicit
 //! indices. Observing a range creates no per-element storage or ownership view.
 
 use super::*;
@@ -8,8 +8,11 @@ use std::sync::Arc;
 mod histories;
 mod observations;
 mod reads;
+mod scalars;
 pub(super) use reads::ReadBinding;
 
+#[cfg(test)]
+mod boolean_tests;
 #[cfg(test)]
 mod history_tests;
 #[cfg(test)]
@@ -40,11 +43,11 @@ pub(super) fn parts(expression: &Expr) -> Option<(&Expr, &Expr, bool)> {
 struct Operand {
     ty: Ty,
     contents: Option<String>,
-    argument: Linear,
+    argument: scalars::Argument,
 }
 
-fn numeric(ty: &Ty) -> bool {
-    matches!(ty, Ty::Int | Ty::Nat | Ty::Machine(_))
+fn scalar(ty: &Ty) -> bool {
+    matches!(ty, Ty::Int | Ty::Nat | Ty::Machine(_) | Ty::Bool)
 }
 
 impl Context<'_> {
@@ -54,8 +57,11 @@ impl Context<'_> {
         let a = self.indexed_equality_operand(a, hint.as_ref())?;
         let b = self.indexed_equality_operand(b, Some(&a.ty))?;
         self.compatible(&a.ty, &b.ty, expression.line)?;
-        let proposition =
-            self.value_equality(&(a.contents, b.contents), &a.argument, &b.argument, 0)?;
+        let proposition = self.scalar_argument_cases(&a.argument, |ctx, left| {
+            ctx.scalar_argument_cases(&b.argument, |ctx, right| {
+                ctx.value_equality(&(a.contents.clone(), b.contents.clone()), left, right, 0)
+            })
+        })?;
         Ok(Symbol::Bool(if negated {
             proposition.not()
         } else {
@@ -73,13 +79,13 @@ impl Context<'_> {
             return Ok(Operand {
                 ty: value.ty(),
                 contents: None,
-                argument: value.number()?,
+                argument: self.scalar_argument(&value)?,
             });
         };
         let index = self.eval(index, Some(&Ty::Int))?.number()?;
         let array = self.storage(base)?;
         self.charge_value_work(symbol_weight(&array)?)?;
-        self.remember_numeric_literal(&array)?;
+        self.remember_scalar_literal(&array)?;
         let Symbol::Array {
             element,
             len,
@@ -90,8 +96,8 @@ impl Context<'_> {
         else {
             return Err("indexed value equalities require array storage".into());
         };
-        if !numeric(element) {
-            return Err("quantified payload equalities require initialized numeric elements; resource, union, and shaped slots need their typed observation rules".into());
+        if !scalar(element) {
+            return Err("quantified payload equalities require initialized numeric or Boolean elements; resource, union, and shaped slots need their typed observation rules".into());
         }
         self.defer_quantified_check(
             Formula::Ge(index.clone()).and(Formula::Ge(len.sub(&index)?.add(&Linear::number(-1))?)),
@@ -108,17 +114,17 @@ impl Context<'_> {
             }),
             _ => None,
         };
-        if let Some(Symbol::Number(_, value)) = uniform {
+        if let Some(value) = uniform {
             return Ok(Operand {
                 ty: (**element).clone(),
                 contents: None,
-                argument: value.clone(),
+                argument: self.scalar_argument(value)?,
             });
         }
         Ok(Operand {
             ty: (**element).clone(),
             contents: Some(identity.clone()),
-            argument: index,
+            argument: scalars::Argument::Word(index),
         })
     }
 
@@ -164,7 +170,7 @@ impl Context<'_> {
             return Ok(None);
         };
         if left != right || left.is_none() {
-            return self.prove_numeric_read_binding(goal, &(left, right));
+            return self.prove_scalar_read_binding(goal, &(left, right));
         }
         let [a, b] = arguments.as_slice() else {
             return Err("indexed equality has the wrong arity".into());

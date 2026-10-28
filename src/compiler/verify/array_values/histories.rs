@@ -4,7 +4,7 @@
 use super::*;
 
 impl Context<'_> {
-    pub(in crate::compiler::verify) fn remember_numeric_literal(
+    pub(in crate::compiler::verify) fn remember_scalar_literal(
         &mut self,
         array: &Symbol,
     ) -> Result<()> {
@@ -17,18 +17,16 @@ impl Context<'_> {
         else {
             return Ok(());
         };
-        if !numeric(element)
+        if !scalar(element)
             || self.arrays.value_literals.contains_key(identity)
             || self.arrays.history.contains_key(identity)
         {
             return Ok(());
         }
         self.charge_value_work(values_weight(items.iter())?)?;
-        let values = items
-            .iter()
-            .map(Symbol::number)
-            .collect::<Result<Vec<_>>>()?;
-        self.arrays.value_literals.insert(identity.clone(), values);
+        self.arrays
+            .value_literals
+            .insert(identity.clone(), items.clone());
         Ok(())
     }
 
@@ -129,11 +127,15 @@ impl Context<'_> {
                     ctx.value_equality(&(key.0.clone(), contents), left, value, depth + 1)
                 }
             };
+            let compare_scalar = |ctx: &mut Self, value: &Symbol| {
+                let argument = ctx.scalar_argument(value)?;
+                ctx.scalar_argument_cases(&argument, |ctx, word| compare(ctx, None, word))
+            };
             let body = match history {
-                Some(ArrayHistory::Fill(value)) => compare(self, None, &value.number()?)?,
+                Some(ArrayHistory::Fill(value)) => compare_scalar(self, &value)?,
                 Some(ArrayHistory::Store { base, index, value }) => {
                     let same = equal(selected, &index)?;
-                    let stored = compare(self, None, &value.number()?)?;
+                    let stored = compare_scalar(self, &value)?;
                     let previous = compare(self, Some(base), selected)?;
                     same.clone().and(stored).or(same.not().and(previous))
                 }
@@ -147,20 +149,18 @@ impl Context<'_> {
                     condition.clone().and(a).or(condition.not().and(b))
                 }
                 Some(ArrayHistory::Uninitialized(_)) => {
-                    return Err("numeric payload equality cannot read uninitialized storage".into())
+                    return Err("scalar payload equality cannot read uninitialized storage".into())
                 }
                 None => {
                     let Some(values) = self.arrays.value_literals.get(identity) else {
                         continue;
                     };
-                    let weight = values.iter().fold(0usize, |cost, value| {
-                        cost.saturating_add(value.terms.len() + 1)
-                    });
+                    let weight = values_weight(values.iter())?;
                     self.charge_value_work(weight)?;
                     let values = self.arrays.value_literals[identity].clone();
                     let mut alternatives = Vec::with_capacity(values.len());
                     for (index, value) in values.iter().enumerate() {
-                        let body = compare(self, None, value)?;
+                        let body = compare_scalar(self, value)?;
                         alternatives
                             .push(equal(selected, &Linear::number(index as i128))?.and(body));
                     }

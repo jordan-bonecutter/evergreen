@@ -106,10 +106,13 @@ pub(super) struct EntryState {
 
 #[derive(Default)]
 pub(super) struct Arrays {
-    pub(super) numeric_bindings: BTreeMap<String, BTreeMap<Linear, array_values::ReadBinding>>,
+    // Only words allocated as Booleans belong here; arbitrary numeric equalities
+    // with one must never be mistaken for a Boolean representation.
+    pub(super) boolean_words: BTreeMap<Formula, Linear>,
+    pub(super) scalar_bindings: BTreeMap<String, BTreeMap<Linear, array_values::ReadBinding>>,
     pub(super) value_equalities: BTreeMap<array_values::Key, array_values::Equality>,
     pub(super) value_equality_origins: BTreeMap<String, array_values::Key>,
-    pub(super) value_literals: BTreeMap<String, Vec<Linear>>,
+    pub(super) value_literals: BTreeMap<String, Vec<Symbol>>,
     pub(super) type_predicates: BTreeMap<(String, Ty), array_predicates::Selector>,
     pub(super) predicate_definitions: BTreeMap<String, evidence::DefinitionId>,
     pub(super) reads: BTreeMap<(String, Linear), Symbol>,

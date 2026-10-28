@@ -1,6 +1,6 @@
 module arrays;
 
-// Fill [start, end), preserving the remaining numeric elements. The extent can
+// Fill [start, end), preserving the remaining numeric or Boolean elements. The extent can
 // be supplied by the pointer type, including when its capacity is runtime data.
 fn fill_range<T = usize>(
     capacity: usize,

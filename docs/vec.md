@@ -37,6 +37,12 @@ a general equality interface. Constructors use explicit type arguments such as
 implemented directly on Vec, with reusable copying in `vec::copy_prefix`.
 Omitting type arguments selects the default `usize`.
 
+The separate `arrays::copy_range` and `arrays::fill_range` functions now prove
+element values and preservation for numeric and Boolean arrays, including
+compound Boolean values. Vec's existing copy helper remains in place until
+general Copy-record equality is available, so its reallocation contract still
+guarantees length and capacity rather than preservation of every element value.
+
 This is a precursor to the README's vector, not its full implementation. Repeated
 initialization requires actual Copy permission; pointers with unique authority
 and resource values cannot be duplicated into storage. Move-only elements still

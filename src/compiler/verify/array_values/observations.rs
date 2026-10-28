@@ -1,8 +1,10 @@
-//! A checked universal instance can describe an ordinary numeric read. This
+//! A checked universal instance can describe an ordinary scalar read. This
 //! frontend interpretation uses exact contents identities and observed indices;
 //! it neither enumerates a range nor invents values for unobserved cells.
 
 use super::*;
+
+mod compound;
 
 fn atom(formula: &Formula) -> Option<(&str, &[Linear], bool)> {
     match formula {
@@ -33,9 +35,9 @@ impl Context<'_> {
         index: &Linear,
         value: &Symbol,
     ) -> Result<()> {
-        let Symbol::Number(_, observed) = value else {
+        if !scalar(&value.ty()) {
             return Ok(());
-        };
+        }
         if self.arrays.value_equality_origins.is_empty() {
             return Ok(());
         }
@@ -54,6 +56,7 @@ impl Context<'_> {
             else {
                 continue;
             };
+            self.observe_compound_values(theorem, &variable, &body, identity, index, value)?;
             let mut pending = vec![(&*body, Vec::new())];
             while let Some((part, path)) = pending.pop() {
                 self.charge_value_work(1 + path.len())?;
@@ -84,7 +87,7 @@ impl Context<'_> {
                     self.charge_value_work(part.storage_weight()?)?;
                     let claim = part.substitute(&variable, &term)?;
                     let Some(interpretation) =
-                        self.observed_numeric_equality(&claim, &key, side, index, observed)?
+                        self.observed_scalar_equality(&claim, &key, side, index, value)?
                     else {
                         continue;
                     };
@@ -98,14 +101,14 @@ impl Context<'_> {
                     else {
                         continue;
                     };
-                    self.import_numeric_observation(claim, interpretation, premise, &path)?;
+                    self.import_scalar_observation(claim, interpretation, premise, &path)?;
                 }
             }
         }
         Ok(())
     }
 
-    fn import_numeric_observation(
+    fn import_scalar_observation(
         &mut self,
         claim: Formula,
         interpretation: Formula,
@@ -114,7 +117,7 @@ impl Context<'_> {
     ) -> Result<()> {
         for &right in path {
             let Formula::And(a, b) = self.proof.evidence.claim(premise)?.clone() else {
-                return Err("numeric observation lost its conjunction path".into());
+                return Err("scalar observation lost its conjunction path".into());
             };
             premise = self.proof.evidence.derive(
                 if right { *b } else { *a },
@@ -142,13 +145,13 @@ impl Context<'_> {
         self.assume_from(&interpretation, paths::Origin::Evidence(fact))
     }
 
-    fn observed_numeric_equality(
+    fn observed_scalar_equality(
         &mut self,
         claim: &Formula,
         key: &Key,
         side: usize,
         index: &Linear,
-        observed: &Linear,
+        observed: &Symbol,
     ) -> Result<Option<Formula>> {
         let Some((symbol, arguments, negated)) = atom(claim) else {
             return Ok(None);
@@ -160,25 +163,24 @@ impl Context<'_> {
             return Ok(None);
         }
         if arguments.len() < 2 || &arguments[side] != index {
-            return Err("numeric observation does not match its array index".into());
+            return Err("scalar observation does not match its array index".into());
         }
         let other = 1 - side;
         let contents = if other == 0 { &key.0 } else { &key.1 };
-        let other_value = match contents {
-            None => arguments[other].clone(),
+        let equality = match contents {
+            None => self.scalar_word_equality(observed, &arguments[other])?,
             Some(contents) => {
-                let Some(value) = self.captured_numeric_value(contents, &arguments[other])? else {
+                let Some(value) = self.captured_scalar_value(contents, &arguments[other])? else {
                     return Ok(None);
                 };
-                value
+                self.symbol_equal(observed, &value)?
             }
         };
-        let equality = equal(observed, &other_value)?;
         self.charge_value_work(equality.storage_weight()?)?;
         Ok(Some(if negated { equality.not() } else { equality }))
     }
 
-    fn captured_numeric_value(&mut self, identity: &str, index: &Linear) -> Result<Option<Linear>> {
+    fn captured_scalar_value(&mut self, identity: &str, index: &Linear) -> Result<Option<Symbol>> {
         let mut identity = identity.to_owned();
         loop {
             self.charge_value_work(
@@ -191,23 +193,20 @@ impl Context<'_> {
                 .arrays
                 .reads
                 .get(&(identity.clone(), index.clone()))
-                .and_then(|value| match value {
-                    Symbol::Number(_, value) => Some(value),
-                    _ => None,
-                })
+                .filter(|value| scalar(&value.ty()))
                 .or_else(|| {
                     constant_index(index)
                         .and_then(|index| self.arrays.value_literals.get(&identity)?.get(index))
                 });
             if let Some(value) = known {
                 let value = value.clone();
-                self.charge_value_work(value.terms.len() + 1)?;
+                self.charge_value_work(symbol_weight(&value)?)?;
                 return Ok(Some(value));
             }
             match self.arrays.history.get(&identity) {
-                Some(ArrayHistory::Fill(Symbol::Number(_, value))) => {
+                Some(ArrayHistory::Fill(value)) if scalar(&value.ty()) => {
                     let value = value.clone();
-                    self.charge_value_work(value.terms.len() + 1)?;
+                    self.charge_value_work(symbol_weight(&value)?)?;
                     return Ok(Some(value));
                 }
                 Some(ArrayHistory::Store {
@@ -216,8 +215,11 @@ impl Context<'_> {
                     value,
                 }) => {
                     if written == index {
-                        let value = value.number()?;
-                        self.charge_value_work(value.terms.len() + 1)?;
+                        if !scalar(&value.ty()) {
+                            return Ok(None);
+                        }
+                        let value = value.clone();
+                        self.charge_value_work(symbol_weight(&value)?)?;
                         return Ok(Some(value));
                     }
                     // Different affine constants with identical terms cannot

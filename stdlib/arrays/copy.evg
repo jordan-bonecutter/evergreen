@@ -1,6 +1,6 @@
 module arrays;
 
-// Copy numeric elements at [start, end), preserving the rest of the target.
+// Copy numeric or Boolean elements at [start, end), preserving the target's rest.
 // Both pointers supply their capacities. Copying an array onto itself is valid.
 fn copy_range<T = usize>(
     source_capacity: usize,

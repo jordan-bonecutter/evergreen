@@ -2508,7 +2508,7 @@ sibling field preserves it. Describing an untrue proposition with `fact` remains
 legal, while proving it requires evidence.
 
 
-### Numeric array values in universal proofs
+### Scalar array values in universal proofs
 
 [`quantified_array_values.evg`](../examples/quantified_array_values.evg) proves
 that equal indices select equal numeric values from the same immutable array
@@ -2524,7 +2524,7 @@ Writes create a new contents version and invalidate old admitted claims. Unknown
 values stay unknown: filling an array with `usize::MAX + 1` cannot establish that
 every element is zero.
 
-This path supports direct numeric `==` and `!=` propositions inside `forall`.
+This path supports direct numeric and Boolean `==` and `!=` propositions inside `forall`.
 Known uniform values use arithmetic proofs; unknown reads use checked reflexivity
 or congruence, or an explicit logical premise. Arbitrary indexed arithmetic and
 ordering still need more support.
@@ -2543,7 +2543,7 @@ reassigned, and cannot infer values in an unrelated array. This also supports
 Callers can also use a current quantified guarantee when reading an element.
 The example returns `data[1]` and proves its result is `42` from the replacement
 contract. The checker specializes the guarantee at that index and checks its
-domain before importing the numeric equality. Direct `==` and `!=` clauses,
+domain before importing the scalar equality. Direct `==` and `!=` clauses,
 conjunctions, and affine index expressions are supported. A relation between two
 arrays connects their values once both cells have been observed; no range is
 materialized. Branch-dependent domains must hold again on each read, and old
@@ -2554,7 +2554,7 @@ does not import `trustme` or unfinished summary dependencies.
 `arrays::fill_range(&data, start, end, value)`. It fills `[start, end)` and
 guarantees that elements outside that range equal their old values. The pointer's
 type supplies both the extent and the generic element type; runtime-sized planes
-are also supported. The current implementation supports numeric elements.
+are also supported. The current implementation supports numeric and Boolean elements.
 Generic inference matches supplied arguments after accounting for omitted length
 parameters, so a typed byte pointer overrides the weak `usize` default. Explicit
 type arguments remain authoritative. All eligible lengths must be supplied or
@@ -2571,16 +2571,16 @@ empty arrays are supported; reversed or out-of-bounds ranges are rejected.
 
 [`array_copy_range.evg`](../examples/array_copy_range.evg) uses
 `arrays::copy_range(&source, &target, start, end)`. Both arrays supply their own
-lengths and their common numeric element type. The source implementation in
+lengths and their common numeric or Boolean element type. The source implementation in
 `stdlib/arrays/copy.evg` proves that target elements in `[start, end)` equal the
 source's entry values at the same indices, and that all other target elements
 are unchanged. Later source writes do not change the copied values. Empty ranges
 and self-copy are explicit no-ops; an aliasing call is still checked against its
 actual incoming references. This is a same-index copy, not an offset-based move
 or a generic resource transfer. Vec's existing copy API remains separate and
-also supports nonnumeric Copy elements.
+also supports Copy records, whose general equality interface remains unfinished.
 
-An ordinary numeric read now names an immutable scalar term containing the
+An ordinary numeric or Boolean read now names an immutable scalar term containing the
 array version and the observed index. A quantified proof can relate that exact
 read to its saved scalar through checked argument equalities. The definition's
 inputs remain fixed during universal introduction; a read at one index cannot
@@ -2595,6 +2595,24 @@ Explicit arithmetic proof steps first try their local logical hypotheses. This
 avoids importing unrelated runtime path closures into universal lemmas. If those
 premises are insufficient, ordinary context checking still applies; universal
 introduction continues to reject unresolved or untraced dependencies.
+
+[`boolean_array_proofs.evg`](../examples/boolean_array_proofs.evg) copies and fills
+Boolean arrays using the same source functions. Compound values such as `a && !b`
+retain their formula and captured inputs. Boolean inputs have a registered
+zero-or-one scalar representation; an arbitrary integer compared with one is
+not treated as such a representation. The checker splits compound formulas into
+true/false cases when building equality definitions, without choosing a branch
+from caller assumptions.
+
+Ordinary reads can interpret a complete specialized formula containing `&&`,
+`||`, `=>`, or negation. The original connectives are retained: a disjunction
+does not establish either branch by itself. Every array atom must refer to an
+available observation at the exact revision and index, and substituted captures
+must match. Domain, admission, and stale-state checks still apply before the
+derived observation enters the current proof state. Boolean range proofs remain
+sparse for billion-element inputs. Vec still uses its existing copy helper;
+general Copy-record equality is needed before that path can adopt these stronger
+contracts for all of its supported types.
 
 ### Demand-driven ideal aggregate reads
 

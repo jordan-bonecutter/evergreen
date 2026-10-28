@@ -939,7 +939,7 @@ impl<'a> Context<'a> {
             *value = new;
             return Ok(());
         }
-        self.remember_numeric_literal(value)?;
+        self.remember_scalar_literal(value)?;
         if let (
             Projection::Index(target),
             Symbol::Array {
@@ -1520,7 +1520,14 @@ impl<'a> Context<'a> {
                     &Formula::Ge(Linear::number(1).sub(&n)?),
                     paths::Origin::Unresolved,
                 )?;
-                Ok(Symbol::Bool(equal(&n, &Linear::number(1))?))
+                let predicate = equal(&n, &Linear::number(1))?;
+                self.charge_value_work(
+                    predicate
+                        .storage_weight()?
+                        .saturating_add(n.terms.len() + 1),
+                )?;
+                self.arrays.boolean_words.insert(predicate.clone(), n);
+                Ok(Symbol::Bool(predicate))
             }
             Ty::Array(element, len) => {
                 self.arrays.inputs.insert(name.clone());
@@ -2445,7 +2452,7 @@ impl<'a> Context<'a> {
                 self.assume(&relation)?;
             }
         }
-        self.bind_numeric_array_read(identity, index, &value)?;
+        self.bind_scalar_array_read(identity, index, &value)?;
         self.arrays.reads.insert(key, value.clone());
         Ok(value)
     }
