@@ -93,3 +93,10 @@ The example runs with:
 cargo run --locked --offline -- run examples/generics.evg
 cargo run --locked --offline -- build examples/generics.evg
 ```
+
+Reference type observations use the same angle syntax as annotations:
+`proof _: typeof(view) == &Pair<usize>;`. Nested and qualified forms such as
+`&&pairs::Pair<[usize; 2]>` work too. Expression calls and constructors still use
+`Pair::<usize>::new(...)` and `Pair::<usize> {...}`. A type proof does not change
+an expression's static type or restore access to a dropped plane. See
+[`examples/rc_generic_view.evg`](../examples/rc_generic_view.evg).

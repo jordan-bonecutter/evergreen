@@ -68,3 +68,21 @@ fn loop_contracts_follow_the_same_layout_as_function_contracts() {
     assert_eq!(source(&formatted).unwrap(), formatted);
     assert!(super::super::parse(&formatted).is_ok());
 }
+
+#[test]
+fn generic_reference_type_observations_keep_angle_and_reference_spacing() {
+    let source = "type Pair<T> struct {value:T} fn main(){let pair=Pair::<usize>{value:42};let view=&pair;proof _:typeof(view)==&Pair<usize>;}";
+    let formatted = super::source(source).unwrap();
+    assert!(
+        formatted.contains("typeof(view) == &Pair<usize>"),
+        "{formatted}"
+    );
+    assert_eq!(super::source(&formatted).unwrap(), formatted);
+    let indirect =
+        super::source("fn f(x: &&Pair<usize>) {proof _: typeof(x) == &&Pair<usize>;}").unwrap();
+    assert!(indirect.contains("x: &&Pair<usize>"), "{indirect}");
+    assert!(
+        indirect.contains("typeof(x) == &&Pair<usize>"),
+        "{indirect}"
+    );
+}

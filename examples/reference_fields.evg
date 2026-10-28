@@ -25,7 +25,7 @@ fn increment_nested(view: &NestedView) -> &usize
     increment_view((*view).counter)
 }
 
-fn increment_indirect(count: && usize)
+fn increment_indirect(count: &&usize)
     where
         (**count < usize::MAX)
     modifies(*count)

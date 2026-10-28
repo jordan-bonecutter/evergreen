@@ -154,3 +154,41 @@ fn unused_templates_are_not_certified_and_expanding_instantiations_are_bounded()
     let error = verify(source).unwrap_err();
     assert!(error.contains("limit"), "{error}");
 }
+
+#[test]
+fn reference_type_observations_accept_angle_arguments_without_turbofish() {
+    let declaration =
+        "type Pair<T> struct {value: T} fn read(view: &Pair<usize>) -> usize {view.value}";
+    for observation in ["&Pair<usize>", "&Pair::<usize>"] {
+        let source = format!("{declaration} fn main() -> usize {{let pair = Pair::<usize> {{value: 42}}; let view = &pair; proof _: typeof(view) == {observation}; read(view)}}");
+        let (program, bundle) = prove(&source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(
+            verify_with_certificate(&source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        crate::compiler::native::emit(&program).unwrap();
+    }
+    let source = "module pairs {type Pair<T> struct {value: T}} fn main() {let pair = pairs::Pair::<[usize; 2]> {value: [7, 42]}; let view = &pair; let indirect = &view; proof _: typeof(view) == &pairs::Pair<[usize; 2]>; proof _: typeof(indirect) == &&pairs::Pair<[usize; 2]>;}";
+    verify(source).unwrap();
+    // Reference comparisons still borrow values, and scalar comparisons retain
+    // the ordinary precedence around a borrow argument.
+    verify("fn less(view: &usize, limit: usize) -> bool {*view < limit} fn main() {let a: usize = 1; let b: usize = 2; proof _: &a == &a; proof _: &a != &b; less(&a, b);}").unwrap();
+}
+
+#[test]
+fn reference_type_proofs_do_not_resurrect_planes_or_reinterpret_references() {
+    let declarations =
+        "type Pair<T> struct {value: T} fn read(view: &Pair<usize>) -> usize {view.value}";
+    let dangling = format!("{declarations} fn main() -> usize {{let pair = Pair::<usize> {{value: 42}}; let view = &pair; drop(pair); proof lie: typeof(view) == &Pair<usize> by {{trustme}}; read(view)}}");
+    let error = verify(&dangling).unwrap_err();
+    assert!(
+        error.contains("plane") || error.contains("dangling") || error.contains("live"),
+        "{error}"
+    );
+    let wrong_type = format!("{declarations} fn main() -> usize {{let pair = Pair::<bool> {{value: true}}; let view = &pair; proof lie: typeof(view) == &Pair<usize> by {{trustme}}; read(view)}}");
+    assert!(verify(&wrong_type).unwrap_err().contains("type mismatch"));
+}

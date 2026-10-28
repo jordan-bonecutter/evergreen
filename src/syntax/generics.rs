@@ -76,6 +76,38 @@ impl GenericDeclaration {
 }
 
 impl Parser {
+    /// A reference to an applied type cannot name a runtime place. Recognize
+    /// its angle arguments before the expression parser treats `<` as comparison.
+    /// Ordinary borrows and expression turbofish keep their existing grammar.
+    pub(super) fn generic_reference_type_start(&self) -> bool {
+        let mut position = self.pos;
+        while self
+            .tokens
+            .get(position)
+            .is_some_and(|token| matches!(token.text.as_str(), "&" | "&&"))
+        {
+            position += 1;
+        }
+        if position == self.pos {
+            return false;
+        }
+        loop {
+            if !self
+                .tokens
+                .get(position)
+                .is_some_and(|token| token.text.starts_with(|c: char| c.is_ascii_alphabetic()))
+            {
+                return false;
+            }
+            position += 1;
+            match self.tokens.get(position).map(|token| token.text.as_str()) {
+                Some("<") => return true,
+                Some("::") => position += 1,
+                _ => return false,
+            }
+        }
+    }
+
     pub(super) fn generic_implementation(
         &mut self,
         module: Option<String>,

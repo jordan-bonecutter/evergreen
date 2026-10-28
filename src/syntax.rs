@@ -728,6 +728,11 @@ impl Parser {
             return Err(self.err("syntax nesting limit reached"));
         }
         self.depth += 1;
+        if matches!(self.peek(), "&" | "&&") {
+            if let Some(hints) = &mut self.format_hints {
+                hints.prefix.insert(self.pos);
+            }
+        }
         let result = if self.eat("&&") {
             // The lexer also uses && for logical conjunction. In a type it is
             // two reference constructors, with both counted toward depth.
@@ -922,6 +927,11 @@ impl Parser {
                 let e = self.expr(0)?;
                 self.expect(")")?;
                 e
+            }
+        } else if self.generic_reference_type_start() {
+            Expr {
+                kind: Kind::Type(self.type_atom()?),
+                line,
             }
         } else if matches!(self.peek(), "-" | "!" | "&" | "*") {
             let op = self.peek().to_owned();

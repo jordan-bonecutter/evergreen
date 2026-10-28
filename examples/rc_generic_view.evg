@@ -1,0 +1,21 @@
+// A type observation needs no expression turbofish in its reference type.
+type Pair<T> struct {
+    data: [T; 2]
+};
+
+impl<T> Pair<T> {
+    method& first() -> &T
+        borrows(&self.data[0])
+    {
+        &self.data[0]
+    }
+}
+
+fn main() -> usize {
+    let first = rc::new::<Pair<usize>>(Pair::<usize> {data: [42, 7]});
+    let view = first.value();
+    proof _: typeof(view) == &Pair<usize>;
+    let second = first.clone();
+    drop(first);
+    *view.first()
+}
