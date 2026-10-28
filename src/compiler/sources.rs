@@ -18,6 +18,24 @@ struct Library {
 
 const LIBRARIES: &[Library] = &[
     Library {
+        module: Some("integer"),
+        exports: &[],
+        path: "stdlib/integer/integer.evg",
+        source: include_str!("../../stdlib/integer/integer.evg"),
+    },
+    Library {
+        module: Some("nat"),
+        exports: &[],
+        path: "stdlib/nat/nat.evg",
+        source: include_str!("../../stdlib/nat/nat.evg"),
+    },
+    Library {
+        module: Some("usize"),
+        exports: &[],
+        path: "stdlib/usize/usize.evg",
+        source: include_str!("../../stdlib/usize/usize.evg"),
+    },
+    Library {
         module: Some("rc"),
         exports: &[],
         path: "stdlib/rc/rc.evg",
@@ -583,6 +601,18 @@ mod tests {
             verify("fn main() -> usize {let count: usize = 41; counter_increment(&count); count}")
                 .unwrap();
         assert_eq!(flat.run().unwrap().to_string(), "42");
+    }
+
+    #[test]
+    fn primitive_type_observations_do_not_load_word_policy_libraries() {
+        let source =
+            "fn main() -> usize {let value = usize::MAX; proof _: typeof(value) == usize; 42}";
+        assert_eq!(load(source).unwrap().fingerprint, source);
+        let source = "fn main() {proof _: integer::from(42) == 42;}";
+        let loaded = load(source).unwrap();
+        assert!(loaded.program.modules.contains("integer"));
+        assert!(!loaded.program.modules.contains("usize"));
+        assert!(!loaded.program.modules.contains("nat"));
     }
 
     #[test]

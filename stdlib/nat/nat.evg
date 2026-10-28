@@ -1,0 +1,11 @@
+// Natural embedding requires a nonnegative mathematical value.
+module nat;
+
+ideal fn from<T = usize>(value: T) -> nat
+    where
+        integer::from::<T>(value) >= 0
+    ensures
+        integer(result) == integer(value)
+{
+    nat(value)
+}

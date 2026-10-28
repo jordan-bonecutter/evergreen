@@ -1,0 +1,9 @@
+// Mathematical embedding is ideal and grants no runtime conversion authority.
+module integer;
+
+ideal fn from<T = usize>(value: T) -> integer
+    ensures
+        result == integer(value)
+{
+    integer(value)
+}

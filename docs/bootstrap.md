@@ -147,6 +147,24 @@ The interpreter and x86-64 backend currently choose the low result bits on
 overflow, then extend to the type's signedness. This is an implementation choice,
 not a source guarantee or a proof rule.
 
+The standard library provides `usize::non_overflowing_sum(a, b)`, with a verified
+contract equating its Boolean result to the mathematical sum fitting the word.
+Use it in a `where` clause or a runtime branch. It is ordinary Evergreen code,
+implemented as `a <= usize::MAX - b`; the compiler has no rule for its name.
+`usize::wrapping_add(a, b)` explicitly promises a modular result and proves that
+policy using branches and primitive operations that stay in range. Its stronger
+contract does not give primitive `a + b` a wrapping guarantee.
+
+`integer::from(value)` and `nat::from(value)` are source-defined ideal generic
+functions over the existing numeric-view primitives. Natural conversion requires
+nonnegativity. Their type parameter defaults to `usize`; use an explicit argument
+for other types until generic argument inference is implemented, such as
+`integer::from::<i8>(value)` or `nat::from::<integer>(value)`. The bootstrap
+`integer(value)` and `nat(value)` primitives remain available and implement these
+wrappers. Ideal values still cannot supply runtime data. Primitive namespaces
+can contain ordinary library functions without changing primitive type meanings.
+See `examples/non_overflowing_sum.evg` for a NonZero method using these contracts.
+
 `Null` is a built-in scalar with the representation of `usize` and the single
 valid value zero: conceptually `usize where self == 0`. `let empty: Null = 0`
 constructs it; `Null(value)` requires a proof that the input is zero, and

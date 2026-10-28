@@ -1305,11 +1305,6 @@ fn parse_unit_with_hints(
                 return Err(p.err("nested modules are not supported yet"));
             }
             let name = p.name()?;
-            if MachineInt::parse(&name).is_some()
-                || matches!(name.as_str(), "integer" | "nat" | "bool")
-            {
-                return Err(p.err("module names cannot shadow builtin types"));
-            }
             if !modules.insert(name.clone()) {
                 return Err(
                     p.err("a module must have one closed definition; reopening is forbidden")

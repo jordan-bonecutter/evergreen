@@ -1,0 +1,19 @@
+// Word arithmetic policies are ordinary verified source code.
+module usize;
+
+fn non_overflowing_sum(left: usize, right: usize) -> bool
+    ensures
+        result == (integer::from(left) + integer::from(right) <= integer::from(usize::MAX))
+{
+    left <= usize::MAX - right
+}
+
+// Choose a fully specified modular sum without overflowing any primitive step.
+fn wrapping_add(left: usize, right: usize) -> usize
+    ensures
+        if integer::from(left) + integer::from(right) <= integer::from(usize::MAX) {integer::from(result) == integer::from(left) + integer::from(right)} else {
+            integer::from(result) + integer::from(usize::MAX) + 1 == integer::from(left) + integer::from(right)
+        }
+{
+    if non_overflowing_sum(left, right) {left + right} else {left - (usize::MAX - right) - 1}
+}

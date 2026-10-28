@@ -239,6 +239,7 @@ fn native_execution_agrees_with_the_interpreter() {
     fs::create_dir(&directory).unwrap();
     let mut cases = [
         include_str!("../../../examples/null.evg"),
+        include_str!("../../../examples/non_overflowing_sum.evg"),
         include_str!("../../../examples/rc_generic_view.evg"),
         include_str!("../../../examples/string_bytes.evg"),
         include_str!("../../../examples/utf8_literal.evg"),

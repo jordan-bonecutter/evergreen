@@ -56,7 +56,6 @@ fn module_scopes_are_closed_and_names_are_qualified_once() {
         "module a {fn f() -> usize {0}} module a {fn g() -> usize {0}}",
         "module a {fn f() -> usize {0}",
         "opaque type Item struct {} fn main() -> usize {0}",
-        "module usize {fn f() -> usize {0}}",
     ] {
         assert!(parse(source).is_err(), "{source}");
     }
@@ -210,5 +209,21 @@ fn receiver_patterns_are_destructor_syntax() {
         "type R struct {data: usize} impl R {fn drop({data}) {}}",
     ] {
         assert!(parse(source).is_err(), "accepted {source}");
+    }
+}
+
+#[test]
+fn primitive_namespaces_do_not_change_primitive_type_meanings() {
+    for name in ["usize", "u8", "integer", "nat", "bool", "Null"] {
+        let source = format!("module {name}; fn helper(value: usize) -> usize {{usize::MAX}}");
+        let program = parse(&source).unwrap();
+        assert_eq!(program.functions[0].name, format!("{name}::helper"));
+        assert_eq!(
+            program.functions[0].ret,
+            Type::Machine(MachineInt::parse("usize").unwrap())
+        );
+        assert!(
+            matches!(program.functions[0].result.kind, Kind::Constant(integer, _) if integer == MachineInt::parse("usize").unwrap())
+        );
     }
 }

@@ -118,6 +118,36 @@ mod tests {
     }
 
     #[test]
+    fn source_word_policies_and_associated_ideal_views_replay_without_trust() {
+        let source = include_str!("../../../examples/non_overflowing_sum.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        for source in [
+            source.replace("NonZero::new(10)", "NonZero::new(usize::MAX)"),
+            source.replace(
+                "sum.data\n}",
+                "let raw = usize::MAX + 1; proof _: raw == 0; sum.data\n}",
+            ),
+            "fn main() -> usize {integer::from(42)}".into(),
+            "fn main() {ideal let value = nat::from::<isize>(-1);}".into(),
+            "fn main() {ideal let value = integer::from::<bool>(true);}".into(),
+        ] {
+            assert!(verify(&source).is_err(), "{source}");
+        }
+        let views = "fn views(value: i8) {proof _: integer::from::<i8>(value) == integer(value);} fn main() -> usize {ideal let value = nat::from::<isize>(42); proof _: value == 42; views(-1); 42}";
+        let (program, bundle) = prove(views).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        verify_with_certificate(views, &bundle).unwrap();
+    }
+
+    #[test]
     fn exact_mathematical_contract_still_requires_a_bound() {
         let source =
             "fn increment(n: usize) -> usize ensures integer(result) == integer(n) + 1 {n + 1}";
