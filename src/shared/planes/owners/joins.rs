@@ -33,7 +33,8 @@ impl<T> Memory<T> {
                         .into(),
                 );
             }
-            if a.census_revision != original.census_revision
+            if a.ownership != original.ownership
+                || a.census_revision != original.census_revision
                 || b.census_revision != original.census_revision
             {
                 // A count-preserving round trip still changes the census.
@@ -41,10 +42,18 @@ impl<T> Memory<T> {
                 updates.push((slot, a.ownership.clone(), fresh_revision()?));
             }
         }
+        let mut outstanding = self.early_owners;
+        for (slot, ownership, _) in &updates {
+            outstanding = outstanding
+                .checked_sub(self.planes[*slot].ownership.early_count())
+                .and_then(|count| count.checked_add(ownership.early_count()))
+                .ok_or("joined early owner bookkeeping is inconsistent")?;
+        }
         for (slot, ownership, revision) in updates {
             self.planes[slot].ownership = ownership;
             self.planes[slot].census_revision = revision;
         }
+        self.early_owners = outstanding;
         Ok(())
     }
 }

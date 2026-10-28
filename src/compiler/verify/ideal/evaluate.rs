@@ -187,7 +187,8 @@ impl<'a> Machine<'a, '_, '_> {
                             ..
                         },
                     value,
-                } => {
+                    starts,
+                } if starts.is_empty() => {
                     let expected = self.frames[frame].locals.get(name).map(Value::ty);
                     self.pending.push(Task::Bind(name, frame));
                     self.pending

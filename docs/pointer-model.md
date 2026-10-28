@@ -42,12 +42,52 @@ owner prevents unique recovery and deallocation; it supplies no early access or
 drop authority. Materialization fulfills the existing ownership claim without
 adding another owner. Unfulfilled obligations cannot silently disappear.
 
-The source Rc helper currently makes this order explicit using a real shared
-local: copy the pointer, increment the count, and return the local. It exposes no
-Rc view during the temporary mismatch and restores the caller's full invariant
-at return. Compiler scheduling of a future owner's logical start, independently
-of runtime pointer construction, is the next step. Such scheduling belongs to
-generic ownership checking and must not recognize Rc's counter or layout.
+An assignment explicitly marks the point where a future owner begins:
+
+```evg
+self.data.count = self.data.count + 1 starts_owner(self.data);
+proof accurate: nat(self.data.count) == owner_count(self.data);
+Self {data: self.data}
+```
+
+The marker names a pure stored `shared(T)` place. Its pointer identity is resolved
+before the right-hand side runs. At the store event the compiler starts one
+additional owner of that allocation and generation, before checking the resulting
+invariants. The later ordinary shared-pointer copy materializes that owner;
+it does not increment the census again. Multiple places can be listed to start
+multiple owners. The marker has no runtime representation.
+
+Rc uses this directly in its clone method, with no allocation helper, Credit
+wrapper, or separate publication step. Accuracy is available after the increment
+and before construction, including when calling code requiring a valid Rc.
+Removing the marker makes that intermediate accuracy proof fail.
+
+A returning function must fulfill every owner it started. An inherited caller
+promise may survive a nested call; copies fulfill the most recent pending owner
+of the same allocation, so an inner operation fulfills its own promise first.
+A copy cannot fulfill a promise for another allocation or generation. Completing
+a promise preserves census proofs; a later additional copy expires them.
+
+The host plane store now represents an early owner as a distinct phase of an
+already counted token. Only materialization grants an owning-reference handle.
+Repeated materialization, a foreign plane/arena/generation, and attempts to use
+the early token for reads, release, duplication, or unique recovery are rejected.
+Snapshots retain pending obligations independently. Branches must agree on
+fulfillment, and a returning function must fulfill every owner it started.
+An inherited caller obligation may survive a nested call.
+
+Both the checker and interpreter enforce these transitions. Native code erases
+ownership metadata and emits the original checked assignment and pointer copy.
+[`examples/early_ownership.evg`](../examples/early_ownership.evg) demonstrates
+explicit counting, proof reuse across materialization, and eventual unique
+recovery without a wrapper type.
+
+[`proofs/early_ownership.evg`](../proofs/early_ownership.evg) checks the arithmetic
+transitions with the internal proof kernel and no admissions. It proves that
+an outstanding future owner blocks final release, including when the original
+materialized owner disappears first. These arithmetic statements do not mint
+pointer authority or prove machine atomicity; token identity and access rights
+are checked separately by the host store and its finite-history tests.
 
 For Arc, the successful atomic increment must establish the corresponding early
 owner at the same logical event. A failed update supplies no new ownership.
@@ -65,3 +105,10 @@ No thread-transfer or shared-access marker may replace these proofs.
 Full `match` support, including payload binding and destructuring, remains
 grouped with the patterns work. The current implementation supports Boolean
 matches and scoped statement arms.
+
+The clause currently marks source assignments. It does not make a store atomic.
+An Arc primitive needs a corresponding ownership event at the successful atomic
+update, with no event on failure; ordinary function-return boundaries are not
+substitutes for that machine event. Atomic annotations and concurrent interference
+remain unfinished. Ownership transitions in loops and while invariants are lifted
+still require additional resource frames and are rejected.

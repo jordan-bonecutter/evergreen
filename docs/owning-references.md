@@ -20,7 +20,10 @@ fn main() -> usize {
 A unique rvalue converts to an expected `shared(T)` by transferring its claim.
 On the current target, shared pointers have Copy permission through the target's
 explicit pointer Copy declaration. Reading one as a runtime value creates a
-fresh claim. Specification observations, address calculation, and borrows do not
+fresh claim, or materializes a previously marked early owner without counting it
+again. An assignment such as `n = n + 1 starts_owner(pointer);` marks that
+owner's lifetime start. Every newly started owner must be materialized before
+the function returns. Specification observations, address calculation, and borrows do not
 copy owning pointers. Copy records and arrays copy each shared-pointer leaf;
 copying must preserve the source and result refinements. `move(handle)` explicitly
 transfers a claim without creating another one.
@@ -82,10 +85,11 @@ live allocation is invented. See
 
 [`owning_references.evg`](../examples/owning_references.evg) runs in the interpreter
 and native backend without admissions. The [source Rc](rc.md) uses ordinary shared pointers and checked runtime count
-updates, with no Credit wrapper. Its clone helper creates the new shared local
-before incrementing the runtime count. A source destructor selects final or
-nonfinal release for generic payloads. Early ownership scheduling and concurrent
-interference still need work; see [pointer-model.md](pointer-model.md).
+updates, with no Credit wrapper. Its clone method marks the counter
+increment with `starts_owner(self.data)` and constructs the handle directly.
+There is no helper-isolated protocol. A source destructor selects final or
+nonfinal release for generic payloads. Explicit source assignments support early ownership; atomic events and
+concurrent interference still need work; see [pointer-model.md](pointer-model.md).
 The separate [`allocation_credits::Credit`](allocation-credits.md) example wraps
 real lifetime claims in an opaque source API. The earlier arithmetic credit
 libraries grant no allocation authority.

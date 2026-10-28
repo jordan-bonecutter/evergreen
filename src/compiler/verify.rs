@@ -559,7 +559,7 @@ fn destructor_body(body: &[Statement]) -> bool {
         Statement::Destructure { value, .. } => {
             matches!(&value.kind, Kind::Name(name) if name == "self")
         }
-        Statement::Assign { target, value } => {
+        Statement::Assign { target, value, .. } => {
             destructor_expression(target) && destructor_expression(value)
         }
         Statement::Let { value, .. } | Statement::Fact { value, .. } | Statement::Effect(value) => {
@@ -699,7 +699,7 @@ fn needs_old_memory(function: &Function) -> bool {
             | Statement::Fact { value, .. }
             | Statement::Effect(value) => expression(value),
             Statement::Proof { proposition, .. } => expression(proposition),
-            Statement::Assign { target, value } => expression(target) || expression(value),
+            Statement::Assign { target, value, .. } => expression(target) || expression(value),
             Statement::Update { body, .. } => body.iter().any(statement),
             Statement::While {
                 condition,
@@ -1725,7 +1725,11 @@ impl<'a> Context<'a> {
                 body,
                 line,
             } => self.update(places, lifts, body, *line),
-            Statement::Assign { target, value } => self.assign(target, value),
+            Statement::Assign {
+                target,
+                value,
+                starts,
+            } => self.assign_starting_owners(target, value, starts),
             Statement::Effect(e) => {
                 let start = self.proof.results.len();
                 let value = self.eval(e, None)?;

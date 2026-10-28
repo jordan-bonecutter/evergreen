@@ -9,6 +9,19 @@ This document records concurrency and resource-model obligations. Unique
 [source Rc](rc.md) work today. Arc and verified concurrent interference remain
 unimplemented.
 
+## Current early-ownership work
+
+The current direction counts a future owner from a checked earlier start event,
+with no source Credit wrapper. The host store implements the distinction between
+a counted token and a materialized pointer, and checks fulfillment at function
+boundaries. `starts_owner(pointer)` explicitly marks that event on a source
+assignment. Both the checker and interpreter enforce it, and native code erases
+the metadata. Atomic success events remain unfinished. See
+[pointer-model.md](pointer-model.md) and the internal-kernel obligations in
+[early_ownership.evg](../proofs/early_ownership.evg). The reservation/retirement
+model below remains an independent mathematical specification; it does not
+require a Credit type in the library API.
+
 ## Counted resources, including intermediate operations
 
 `proofs/SharedOwnership.lean` specifies one allocation with distinct token IDs.

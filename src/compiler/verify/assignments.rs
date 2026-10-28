@@ -4,9 +4,15 @@
 use super::*;
 
 impl Context<'_> {
-    pub(super) fn assign(&mut self, place: &Expr, value: &Expr) -> Result<()> {
+    pub(super) fn assign_starting_owners(
+        &mut self,
+        place: &Expr,
+        value: &Expr,
+        starts: &[Expr],
+    ) -> Result<()> {
+        let owners = self.owner_start_sources(starts)?;
         if place.indirect_place() {
-            return self.assign_indirect(place, value);
+            return self.assign_indirect(place, value, &owners);
         }
 
         fn path(e: &Expr, fields: &mut Vec<String>) -> Result<String> {
@@ -128,6 +134,7 @@ impl Context<'_> {
             self.note_state_write(id, &projections)?;
             self.storage.memory.write(id, root.clone(), replace_plane)?;
         }
+        self.start_owners(&owners)?;
         self.retained_valid_with(&root, place.line, &lifted)?;
         self.locals.values.insert(name, root);
         self.validate_opened_planes(place.line)?;

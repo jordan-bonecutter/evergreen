@@ -90,8 +90,17 @@ impl Parser {
 
     fn assignment(&mut self, target: Expr) -> Result<Statement, String> {
         let value = self.expr(0)?;
+        let starts = if self.eat("starts_owner") {
+            self.nonempty_expressions()?
+        } else {
+            Vec::new()
+        };
         self.expect(";")?;
-        Ok(Statement::Assign { target, value })
+        Ok(Statement::Assign {
+            target,
+            value,
+            starts,
+        })
     }
 
     fn while_statement(&mut self) -> Result<Statement, String> {

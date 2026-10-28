@@ -104,6 +104,7 @@ impl Context<'_> {
         inputs: &[InputReference],
         declaration: bool,
     ) -> Result<(Symbol, Option<Formula>)> {
+        let owner_scope = self.storage.memory.owner_scope();
         let entry = self.clone_env()?;
         // Only the independent entry configuration of a heap declaration may
         // be discharged as impossible. Actual calls and main always require
@@ -143,6 +144,7 @@ impl Context<'_> {
         }
         self.finish_scope(function)?;
         self.locals.values.remove("evg_return_value");
+        self.storage.memory.require_owner_scope(&owner_scope)?;
         // Cleanup may change fields used to select a result-owned view.
         // Check provenance against the final returned storage, not a state
         // preceding destructor effects.

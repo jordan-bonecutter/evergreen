@@ -17,17 +17,25 @@ let answer = *view;
 drop(second);
 ```
 
-`clone` checks that incrementing the counter cannot overflow. Its source helper
-borrows the underlying owner slot, with write permission only for the counter.
-It creates the new shared owner first, increments the runtime count, and returns
-that owner directly. `clone` constructs the new Rc from the returned pointer.
-There is no Credit wrapper or separate publication operation.
+`clone` checks that incrementing the counter cannot overflow. Its body explicitly
+starts the future pointer's lifetime at the counter update:
 
-The helper has no `Rc` view from which it could use the accuracy invariant
-between those steps. Caller invariants are checked at the call boundary. This
-is sequential reasoning; it establishes no atomicity under concurrent
-interference. Early ownership scheduling across atomic events remains separate
-compiler work. The standalone [`allocation_credits`](allocation-credits.md)
+```evg
+self.data.count = self.data.count + 1 starts_owner(self.data);
+Self {data: self.data}
+```
+
+The first statement updates both the runtime count and the ideal owner census.
+The second materializes the already counted owner. The accuracy fact remains
+valid between those statements. There is no allocation helper, Credit wrapper,
+or separate publication operation. The compiler checks this through generic
+shared-pointer rules; it recognizes no Rc fields or methods.
+
+Each marked owner must be materialized on every returning path. Pending owners
+block destruction without granting early access or drop authority. Removing the
+marker makes the intermediate accuracy proof and calls requiring a valid Rc
+fail. This is sequential source code; atomic events and concurrent interference
+remain separate work. The standalone [`allocation_credits`](allocation-credits.md)
 library is an independent capability example and is not used by Rc.
 
 The source `Drop` implementation consumes and completely destructures its handle.

@@ -327,12 +327,20 @@ impl Evaluator<'_> {
                     );
                 }
             }
-            Statement::Assign { target, value } => self.assign(target, value, env)?,
+            Statement::Assign {
+                target,
+                value,
+                starts,
+            } => self.assign(target, value, starts, env)?,
             Statement::Update { body, .. } => {
                 let mut locals = Vec::new();
                 for update in body {
                     match update {
-                        Statement::Assign { target, value } => self.assign(target, value, env)?,
+                        Statement::Assign {
+                            target,
+                            value,
+                            starts,
+                        } => self.assign(target, value, starts, env)?,
                         Statement::Let { name, ty, value } => {
                             let value = self.expr(value, env, ty.as_ref())?;
                             env.insert(name.clone(), value);
@@ -401,6 +409,7 @@ impl Evaluator<'_> {
             .map(|(n, _)| n.clone())
             .zip(actuals)
             .collect();
+        let owner_scope = self.memory.owner_scope();
         let saved_roots = std::mem::take(&mut self.roots);
         let saved_temporaries = std::mem::take(&mut self.temporaries);
         self.depth += 1;
@@ -438,6 +447,7 @@ impl Evaluator<'_> {
                 self.drop_value(live)?;
             }
         }
+        self.memory.require_owner_scope(&owner_scope)?;
         self.roots = saved_roots;
         self.temporaries = saved_temporaries;
         self.depth -= 1;
@@ -524,8 +534,18 @@ impl Evaluator<'_> {
         &mut self,
         target: &Expr,
         value: &Expr,
+        starts: &[Expr],
         env: &mut BTreeMap<String, Value>,
     ) -> Result<()> {
+        let owners = starts
+            .iter()
+            .map(|source| {
+                let Value::Shared(_, owner) = self.storage(source, env)? else {
+                    return Err("starts_owner requires a shared pointer".into());
+                };
+                Ok(owner)
+            })
+            .collect::<Result<Vec<_>>>()?;
         if target.indirect_place() {
             let (r, path) = self.location(target, env)?;
             let old = copy_value(project(self.memory.read(r)?, &path)?, &mut self.fuel)?;
@@ -541,6 +561,9 @@ impl Evaluator<'_> {
                 if *p == id {
                     env.insert(n.clone(), copy_value(&root, &mut self.fuel)?);
                 }
+            }
+            for owner in owners {
+                self.memory.begin_owner(owner)?;
             }
             return Ok(());
         }
@@ -641,6 +664,9 @@ impl Evaluator<'_> {
             )?;
         }
 
+        for owner in owners {
+            self.memory.begin_owner(owner)?;
+        }
         Ok(())
     }
 

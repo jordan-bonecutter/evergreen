@@ -218,9 +218,16 @@ impl Shapes {
                     }
                 }
             }
-            Statement::Assign { target, value } => {
+            Statement::Assign {
+                target,
+                value,
+                starts,
+            } => {
                 let ty = self.expr(target, scope, None);
                 self.expr(value, scope, ty.as_ref());
+                for source in starts {
+                    self.expr(source, scope, None);
+                }
             }
             Statement::Effect(value) | Statement::Fact { value, .. } => {
                 self.expr(value, scope, None);

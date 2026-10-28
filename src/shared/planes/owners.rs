@@ -3,12 +3,14 @@
 //! the same token; only duplicate_owner creates another owner.
 
 use super::*;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 mod census;
+mod early;
 mod joins;
 use census::fresh_revision;
 pub use census::OwnerCensus;
+pub use early::{EarlyOwner, OwnerCopy, OwnerScope};
 
 static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
 
@@ -29,10 +31,26 @@ impl OwnedReference {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Ownership {
     Unique,
-    Shared(BTreeSet<u64>),
+    Shared(BTreeMap<u64, OwnerState>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OwnerState {
+    Early,
+    Materialized,
 }
 
 impl Ownership {
+    pub(super) fn early_count(&self) -> usize {
+        match self {
+            Self::Unique => 0,
+            Self::Shared(tokens) => tokens
+                .values()
+                .filter(|state| **state == OwnerState::Early)
+                .count(),
+        }
+    }
+
     pub(super) fn is_unique(&self) -> bool {
         matches!(self, Self::Unique)
     }
@@ -57,7 +75,8 @@ impl<T> Memory<T> {
         }
         let token = fresh_token()?;
         let revision = fresh_revision()?;
-        self.planes[id.slot].ownership = Ownership::Shared(BTreeSet::from([token]));
+        self.planes[id.slot].ownership =
+            Ownership::Shared(BTreeMap::from([(token, OwnerState::Materialized)]));
         self.planes[id.slot].census_revision = revision;
         Ok(OwnedReference { reference, token })
     }
@@ -65,7 +84,11 @@ impl<T> Memory<T> {
     fn owner_plane(&self, owner: OwnedReference) -> Result<PlaneId, String> {
         let id = self.plane(owner.reference)?;
         match &self.planes[id.slot].ownership {
-            Ownership::Shared(tokens) if tokens.contains(&owner.token) => Ok(id),
+            Ownership::Shared(tokens)
+                if tokens.get(&owner.token) == Some(&OwnerState::Materialized) =>
+            {
+                Ok(id)
+            }
             _ => Err("owning reference was consumed or does not belong to this plane".into()),
         }
     }
@@ -76,18 +99,8 @@ impl<T> Memory<T> {
     }
 
     pub fn duplicate_owner(&mut self, owner: OwnedReference) -> Result<OwnedReference, String> {
-        let id = self.owner_plane(owner)?;
-        let token = fresh_token()?;
-        let revision = fresh_revision()?;
-        let Ownership::Shared(tokens) = &mut self.planes[id.slot].ownership else {
-            unreachable!()
-        };
-        tokens.insert(token);
-        self.planes[id.slot].census_revision = revision;
-        Ok(OwnedReference {
-            reference: owner.reference,
-            token,
-        })
+        let early = self.begin_owner(owner)?;
+        self.materialize_owner(early)
     }
 
     /// Consume a lifetime claim, without dropping the allocation's payload.

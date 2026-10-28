@@ -52,6 +52,51 @@ impl Context<'_> {
         }
     }
 
+    pub(super) fn owner_start_sources(
+        &mut self,
+        sources: &[Expr],
+    ) -> Result<Vec<crate::shared::planes::OwnedReference>> {
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.execution.phase != Phase::Runtime || !self.storage.opened_planes.is_empty() {
+            return Err("starts_owner requires a runtime store with closed invariants".into());
+        }
+        sources
+            .iter()
+            .map(|source| {
+                if !source.pure_read() || !source.stored_place() {
+                    return Err(format!(
+                        "line {}: starts_owner requires a pure stored shared-pointer place",
+                        source.line
+                    ));
+                }
+                let Symbol::Shared(_, owner) = self.storage(source)? else {
+                    return Err(format!(
+                        "line {}: starts_owner requires a live shared pointer",
+                        source.line
+                    ));
+                };
+                self.storage.memory.borrow_owned(owner)?;
+                Ok(owner)
+            })
+            .collect()
+    }
+
+    pub(super) fn start_owners(
+        &mut self,
+        owners: &[crate::shared::planes::OwnedReference],
+    ) -> Result<()> {
+        for &owner in owners {
+            let reference = self.storage.memory.borrow_owned(owner)?;
+            let count = self.census_value(reference)?.add(&Linear::number(1))?;
+            self.note_census_write(reference)?;
+            self.storage.memory.begin_owner(owner)?;
+            self.censuses.insert(reference, count);
+        }
+        Ok(())
+    }
+
     pub(super) fn copy_pointer_read(&mut self, value: Symbol, line: usize) -> Result<Symbol> {
         if self.execution.phase == Phase::Specification
             || self.symbol_is_move_only(&value)
@@ -75,11 +120,24 @@ impl Context<'_> {
         Ok(match value {
             Symbol::Shared(ty, owner) => {
                 let reference = self.storage.memory.borrow_owned(owner)?;
-                let count = self.census_value(reference)?.add(&Linear::number(1))?;
-                self.note_census_write(reference)?;
-                let owner = self.storage.memory.duplicate_owner(owner)?;
+                let count = self.census_value(reference)?;
+                if self.storage.memory.has_early_owner(owner)? {
+                    if !self.storage.loops.is_empty() {
+                        return Err(
+                            "materializing early owners in loops requires a resource frame".into(),
+                        );
+                    }
+                } else {
+                    self.note_census_write(reference)?;
+                }
+                let copied = self.storage.memory.copy_owner(owner)?;
+                let count = if copied.started_lifetime() {
+                    count.add(&Linear::number(1))?
+                } else {
+                    count
+                };
                 self.censuses.insert(reference, count);
-                Symbol::Shared(ty, owner)
+                Symbol::Shared(ty, copied.owner())
             }
             Symbol::Record(name, fields) => Symbol::Record(
                 name,

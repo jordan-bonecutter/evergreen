@@ -179,9 +179,16 @@ impl Uses {
                     self.expression(proposition, bound, false, depth + 1)?;
                     bound.insert(name.clone());
                 }
-                Statement::Assign { target, value } => {
+                Statement::Assign {
+                    target,
+                    value,
+                    starts,
+                } => {
                     self.expression(target, bound, runtime, depth + 1)?;
                     self.expression(value, bound, runtime, depth + 1)?;
+                    for source in starts {
+                        self.expression(source, bound, runtime, depth + 1)?;
+                    }
                 }
                 Statement::Effect(value) => self.expression(value, bound, runtime, depth + 1)?,
                 Statement::While {

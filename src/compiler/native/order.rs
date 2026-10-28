@@ -130,7 +130,7 @@ impl<'a> Dependencies<'a> {
                     Statement::Destructure { record, value, .. } => {
                         pending.extend([Source::Record(record), Source::Expression(value)]);
                     }
-                    Statement::Assign { target, value } => {
+                    Statement::Assign { target, value, .. } => {
                         pending.extend([Source::Expression(target), Source::Expression(value)]);
                     }
                     Statement::Effect(value) => pending.push(Source::Expression(value)),

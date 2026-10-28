@@ -235,9 +235,16 @@ impl Scope<'_> {
             }
             Statement::Fact { value, .. } | Statement::Effect(value) => self.expr(value),
             Statement::Proof { proposition, .. } => self.expr(proposition),
-            Statement::Assign { target, value } => {
+            Statement::Assign {
+                target,
+                value,
+                starts,
+            } => {
                 self.expr(target);
                 self.expr(value);
+                for source in starts {
+                    self.expr(source);
+                }
             }
             Statement::While {
                 condition,

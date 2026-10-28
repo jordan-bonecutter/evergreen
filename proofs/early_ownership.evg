@@ -1,0 +1,103 @@
+// Arithmetic obligations for early ownership. These functions do not mint
+// pointer authority or specify machine atomics; the plane store checks tokens.
+ideal type EarlyOwnership struct {count: nat, materialized: nat, early: nat} where (
+    fact accounting = count == materialized + early;
+    fact bounded = count <= 18446744073709551615;
+    accounting && bounded
+);
+
+ideal fn begin_ownership(state: EarlyOwnership) -> EarlyOwnership
+    where
+        state.materialized > 0 &&
+        state.count < 18446744073709551615
+    ensures
+        result.count == state.count + 1 &&
+        result.materialized == state.materialized &&
+        result.early == state.early + 1
+{
+    EarlyOwnership {
+        count: state.count + 1,
+        materialized: state.materialized,
+        early: state.early + 1
+    }
+}
+
+ideal fn materialize(state: EarlyOwnership) -> EarlyOwnership
+    where
+        state.early > 0
+    ensures
+        result.count == state.count &&
+        result.materialized == state.materialized + 1 &&
+        result.early + 1 == state.early
+{
+    EarlyOwnership {
+        count: state.count,
+        materialized: state.materialized + 1,
+        early: state.early - 1
+    }
+}
+
+// Ownership ends only for an actual materialized pointer. Atomic Arc release
+// must realize this counter/census transition at its successful machine event.
+ideal fn release_materialized(state: EarlyOwnership) -> EarlyOwnership
+    where
+        state.materialized > 0
+    ensures
+        result.count + 1 == state.count &&
+        result.materialized + 1 == state.materialized &&
+        result.early == state.early
+{
+    EarlyOwnership {
+        count: state.count - 1,
+        materialized: state.materialized - 1,
+        early: state.early
+    }
+}
+
+ideal fn final_release(state: EarlyOwnership) -> EarlyOwnership
+    where
+        state.count == 1 &&
+        state.materialized > 0
+    ensures
+        result.count == 0 &&
+        result.materialized == 0 &&
+        result.early == 0
+{
+    release_materialized(state)
+}
+
+ideal fn early_ownership_blocks_final_release(state: EarlyOwnership)
+    where
+        state.early > 0 &&
+        state.materialized > 0
+    ensures
+        state.count >= 2
+{}
+
+// The original pointer can disappear while the future pointer is in flight.
+// Its early owner keeps the allocation counted throughout the interval.
+ideal fn original_released_before_materialization(state: EarlyOwnership) -> EarlyOwnership
+    where
+        state.materialized == 1 &&
+        state.early == 0 &&
+        state.count < 18446744073709551615
+    ensures
+        result.count == 1 &&
+        result.materialized == 1 &&
+        result.early == 0
+{
+    let started = begin_ownership(state);
+    let pending = release_materialized(started);
+    proof alive: pending.count == 1 && pending.materialized == 0 && pending.early == 1;
+    materialize(pending)
+}
+
+// A failed atomic attempt leaves both the physical count and ownership intact.
+ideal fn failed_start(state: EarlyOwnership) -> EarlyOwnership
+    ensures
+        result.count == state.count &&
+        result.materialized == state.materialized &&
+        result.early == state.early
+{
+    state
+}

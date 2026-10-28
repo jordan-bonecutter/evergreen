@@ -2323,3 +2323,23 @@ point. A later mutation does not retarget an old proof to the new value.
 arithmetic goals vacuous. It does not justify earlier operations. Programs using
 it remain labeled as checked with trusted assumptions and are rejected by
 `--deny-trust`.
+
+
+### Explicit early shared ownership
+
+`assignment starts_owner(pointer);` starts an additional owner of a stored
+`shared(T)` pointer at that write event. A later ordinary copy of the same
+allocation materializes the counted owner. No access or drop authority is granted
+early, and every promise created by a function must be fulfilled before return.
+Multiple pointers can be listed; each creates one obligation. The operands are
+pure stored places resolved before evaluating the assignment's right-hand side.
+
+The annotation keeps Rc's clone counter and owner census aligned without a
+Credit type or helper function. See [pointer-model.md](pointer-model.md),
+[rc.md](rc.md), and `examples/early_ownership.evg`. This assignment feature does
+not turn ordinary stores into atomics; success-conditioned atomic ownership
+events and concurrency checks still need work.
+
+`examples/pair_updates.evg` also demonstrates per-reference write footprints,
+overflow preconditions, and a constructor postcondition preserving array values
+for callers.

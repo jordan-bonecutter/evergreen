@@ -888,7 +888,7 @@ impl Emitter<'_> {
                 let ty = self.expr(value, ty.as_ref())?;
                 self.slot(name, ty)
             }
-            Statement::Assign { target, value } => self.assign(target, value),
+            Statement::Assign { target, value, .. } => self.assign(target, value),
             Statement::Destructure {
                 record,
                 arguments,

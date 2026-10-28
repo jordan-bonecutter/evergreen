@@ -170,13 +170,13 @@ fn source_rc_rejects_counter_drift_overflow_and_missing_claims() {
     let library = include_str!("../../../../stdlib/rc/rc.evg");
     for (from, to, expected) in [
         (
-            "allocation.count = allocation.count + 1;",
+            "self.data.count = self.data.count + 1 starts_owner(self.data);",
             "",
-            "postcondition",
+            "invariant",
         ),
         (
-            "let cloned = *allocation;",
-            "let cloned = shape(shared(Data::<T>));",
+            "Self {data: self.data}",
+            "Self {data: shape(shared(Data::<T>))}",
             "type mismatch",
         ),
         ("data.count = data.count - 1;", "", "postcondition"),
@@ -185,11 +185,7 @@ fn source_rc_rejects_counter_drift_overflow_and_missing_claims() {
             "data.count = data.count - 2;",
             "postcondition",
         ),
-        (
-            "where allocation.count < usize::MAX\n    &&",
-            "where",
-            "upper bound",
-        ),
+        ("where self.data.count < usize::MAX", "", "upper bound"),
     ] {
         let wrong = library.replace_evg(from, to);
         assert_ne!(wrong, library);
@@ -456,4 +452,101 @@ fn old_owner_views_are_observations_without_recreating_a_consumed_claim() {
             .proof_search_count(),
         0
     );
+}
+
+#[test]
+fn early_ownership_arithmetic_replays_and_rejects_early_drop_or_double_materialization() {
+    let source = include_str!("../../../../proofs/early_ownership.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    for invalid in [
+        source.replace_evg("count: state.count + 1", "count: state.count"),
+        source.replace_evg("materialized: state.materialized + 1", "materialized: state.materialized + 2"),
+        source.replace_evg("early: state.early - 1", "early: state.early"),
+        source.replace_evg("state.count == 1 && state.materialized > 0", "state.count == 1"),
+        format!("{source} ideal fn early_drop() {{final_release(EarlyOwnership {{count: 1, materialized: 0, early: 1}});}}"),
+        format!("{source} ideal fn double_materialization() {{let future = EarlyOwnership {{count: 1, materialized: 0, early: 1}}; let actual = materialize(future); materialize(actual);}}"),
+    ] { assert!(verify(&invalid).is_err(), "accepted {invalid}"); }
+}
+
+#[test]
+fn direct_rc_cloning_cannot_reuse_accuracy_before_its_pointer_copy() {
+    let library =
+        include_str!("../../../../stdlib/rc/rc.evg").replace_evg("starts_owner(self.data)", "");
+    let exercise = "fn exercise() -> usize {let first = new(42); let second = first.clone(); second.release_nonfinal(); *first.value()}";
+    let observer =
+        "fn accuracy<T>(value: &Rc<T>) ensures nat(value.data.count) == owner_count(value.data) {}";
+    let early_call = library.replace_evg(
+        "self.data.count = self.data.count + 1;",
+        "self.data.count = self.data.count + 1; accuracy::<T>(self);",
+    );
+    let error = verify(&format!("{early_call}\n{observer}\n{exercise}")).unwrap_err();
+    assert!(error.contains("invariant"), "{error}");
+    let early_fact = library.replace_evg(
+        "self.data.count = self.data.count + 1;",
+        "self.data.count = self.data.count + 1; proof prematurely_accurate: nat(self.data.count) == owner_count(self.data);",
+    );
+    let error = verify(&format!("{early_fact}\n{exercise}")).unwrap_err();
+    assert!(error.contains("prematurely_accurate"), "{error}");
+}
+
+#[test]
+fn an_explicit_owner_start_keeps_rc_accuracy_available_before_materialization() {
+    let library = include_str!("../../../../stdlib/rc/rc.evg");
+    let checked = library.replace_evg(
+        "self.data.count = self.data.count + 1 starts_owner(self.data);",
+        "self.data.count = self.data.count + 1 starts_owner(self.data); proof accurate: nat(self.data.count) == owner_count(self.data); accuracy::<T>(self);",
+    );
+    let source = syntax::join_source_units(&[
+        format!("{checked}\nfn accuracy<T>(value: &Rc<T>) ensures nat(value.data.count) == owner_count(value.data) {{}}"),
+        "fn main() -> usize {let first = rc::new(42); let second = first.clone(); second.release_nonfinal(); *first.value()}".into(),
+    ]).unwrap();
+    let (program, bundle) = prove(&source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(&source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    crate::compiler::native::emit(&program).unwrap();
+}
+
+#[test]
+fn explicit_owner_starts_are_fulfilled_once_and_preserve_census_proofs() {
+    for source in [
+        "fn main() -> usize {let first: shared(usize) = alloc(42); let n: usize = 0; n = 1 starts_owner(first); proof two: owner_count(first) == 2; let second = first; proof unchanged: owner_count(first) == 2 by {exact two}; let third = first; proof three: owner_count(first) == 3; leak(third); leak(first); let unique: unique(usize) = move(second); *unique}",
+        "fn main() -> usize {let first: shared(usize) = alloc(42); let n: usize = 0; n = 2 starts_owner(first, first); let copies = [first, first]; proof three: owner_count(first) == 3; leak(copies); let unique: unique(usize) = move(first); *unique}",
+        "fn copy(value: &shared(usize)) -> shared(usize) {*value} fn main() -> usize {let first: shared(usize) = alloc(42); let n: usize = 0; n = 1 starts_owner(first); let second = copy(&first); proof two: owner_count(first) == 2; leak(first); let unique: unique(usize) = move(second); *unique}",
+        "fn nested(value: &shared(usize)) -> shared(usize) {let n: usize = 0; n = 1 starts_owner(*value); *value} fn main() -> usize {let first: shared(usize) = alloc(42); let n: usize = 0; n = 1 starts_owner(first); let inner = nested(&first); proof three: owner_count(first) == 3; let outer = first; proof still_three: owner_count(first) == 3; leak(inner); leak(first); let unique: unique(usize) = move(outer); *unique}",
+    ] {
+        let (program, bundle) = prove(source).unwrap_or_else(|e| panic!("{e}\n{source}"));
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
+        crate::compiler::native::emit(&program).unwrap();
+    }
+}
+
+#[test]
+fn owner_starts_cannot_escape_unfulfilled_or_grant_early_destruction() {
+    for source in [
+        "fn main() {let p: shared(usize) = alloc(42); let n: usize = 0; n = 1 starts_owner(p);}",
+        "fn main() {let p: shared(usize) = alloc(42); let n: usize = 0; n = 1 starts_owner(p, p); let only_one = p;}",
+        "fn main() {let p: shared(usize) = alloc(42); let q: shared(usize) = alloc(7); let n: usize = 0; n = 1 starts_owner(p); let wrong_plane = q;}",
+        "fn main() {let p: shared(usize) = alloc(42); let n: usize = 0; n = 1 starts_owner(p); let early: unique(usize) = move(p);}",
+        "fn main() {let p: shared(usize) = alloc(42); let n: usize = 0; n = 1 starts_owner(p); proof lie: owner_count(p) == 1 by {trustme}; let early: unique(usize) = move(p);}",
+        "fn main() {let p: unique(usize) = alloc(42); let n: usize = 0; n = 1 starts_owner(p);}",
+        "fn main() {let p: shared(usize) = alloc(42); let view = &p; let n: usize = 0; n = 1 starts_owner(view);}",
+        "fn main() {let p: shared(usize) = alloc(42); leak(p); let n: usize = 0; n = 1 starts_owner(p);}",
+        "fn bad(flag: bool) {let p: shared(usize) = alloc(42); let n: usize = 0; n = 1 starts_owner(p); if flag {let copy = p;} else {}}",
+        "fn main() {let p: shared(usize) = alloc(42); ideal let n: nat = 0; ideal n = 1 starts_owner(p);}",
+    ] { assert!(verify(source).is_err(), "accepted {source}"); }
 }

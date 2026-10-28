@@ -168,7 +168,12 @@ impl Context<'_> {
         Ok(Symbol::Ref(element, case.reference, path))
     }
 
-    pub(super) fn assign_indirect(&mut self, place: &Expr, expression: &Expr) -> Result<()> {
+    pub(super) fn assign_indirect(
+        &mut self,
+        place: &Expr,
+        expression: &Expr,
+        owners: &[crate::shared::planes::OwnedReference],
+    ) -> Result<()> {
         let target = self.place_reference(place)?;
         let Ty::Ref(ty) = target.ty() else {
             return Err("assignment requires a stored place".into());
@@ -179,7 +184,13 @@ impl Context<'_> {
             Some(&Ty::Unit),
             place.line,
             &|ctx, case| {
-                ctx.write_reference(case.reference, &case.path, value.clone(), place.line)?;
+                ctx.write_reference(
+                    case.reference,
+                    &case.path,
+                    value.clone(),
+                    place.line,
+                    owners,
+                )?;
                 Ok(Symbol::Unit)
             },
         )?;
@@ -192,6 +203,7 @@ impl Context<'_> {
         path: &[Projection<Linear>],
         value: Symbol,
         line: usize,
+        owners: &[crate::shared::planes::OwnedReference],
     ) -> Result<()> {
         self.validate_member_path(reference, path, line)?;
         let old = project(self.storage.memory.read(reference)?, path)?.clone();
@@ -201,7 +213,7 @@ impl Context<'_> {
         {
             return Err("overwriting owned fields through references requires ownership effect proofs; unsupported".into());
         }
-        self.replace_reference_contents(reference, path, value, line)
+        self.replace_reference_starting_owners(reference, path, value, line, owners)
     }
 
     // Callers must first discharge old cleanup or transfer its live payload.
@@ -210,8 +222,19 @@ impl Context<'_> {
         &mut self,
         reference: Reference,
         path: &[Projection<Linear>],
+        value: Symbol,
+        line: usize,
+    ) -> Result<()> {
+        self.replace_reference_starting_owners(reference, path, value, line, &[])
+    }
+
+    fn replace_reference_starting_owners(
+        &mut self,
+        reference: Reference,
+        path: &[Projection<Linear>],
         mut value: Symbol,
         line: usize,
+        owners: &[crate::shared::planes::OwnedReference],
     ) -> Result<()> {
         self.validate_member_path(reference, path, line)?;
         let id = self.storage.memory.plane(reference)?;
@@ -235,6 +258,7 @@ impl Context<'_> {
             .unwrap_or_default();
         self.note_state_write(id, path)?;
         self.storage.memory.write(id, root.clone(), replace_plane)?;
+        self.start_owners(owners)?;
         self.retained_valid_with(&root, line, &lifted)?;
         for (name, plane) in &self.locals.places {
             if *plane == id {

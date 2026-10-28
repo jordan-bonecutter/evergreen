@@ -123,14 +123,14 @@ impl Context<'_> {
         line: usize,
     ) -> Result<()> {
         match statement {
-            Statement::Assign {target, value}
+            Statement::Assign {target, value, starts}
                 if self.update_expression(target) && self.update_expression(value) => {
                 // Inspect the type without evaluating the target twice:
                 // computing an address may itself call a checked helper.
                 if !self.hint(target).as_ref().is_some_and(scalar_value) {
                     return Err(format!("line {}: updates currently allow only scalar writes; replacing owned fields requires destructor/effect proofs", target.line));
                 }
-                self.assign(target, value)?;
+                self.assign_starting_owners(target, value, starts)?;
             }
             Statement::Let {name, value, ..} if self.update_expression(value) => {
                 self.statement(statement)?;

@@ -299,7 +299,14 @@ fn scalar_effects(
                 };
                 env.insert(name.clone(), t);
             }
-            Statement::Assign { target, value } => {
+            Statement::Assign {
+                target,
+                value,
+                starts,
+            } => {
+                if !starts.is_empty() {
+                    return false;
+                }
                 let ty = match &target.kind {
                     Kind::Name(n) => env.get(n).cloned(),
                     _ if writes => place(target, &env, functions, safe),
@@ -348,7 +355,7 @@ pub(crate) fn recursive(function: &Function) -> bool {
             Statement::Let { value, .. }
             | Statement::Destructure { value, .. }
             | Statement::Effect(value) => expression(value, name),
-            Statement::Assign { target, value } => {
+            Statement::Assign { target, value, .. } => {
                 expression(target, name) || expression(value, name)
             }
             Statement::Update { body, .. } => body.iter().any(|s| statement(s, name)),
@@ -386,7 +393,7 @@ pub(crate) fn unmeasured_loops(function: &Function) -> bool {
             Statement::Let { value, .. }
             | Statement::Destructure { value, .. }
             | Statement::Effect(value) => expression(value),
-            Statement::Assign { target, value } => expression(target) || expression(value),
+            Statement::Assign { target, value, .. } => expression(target) || expression(value),
             Statement::Fact { .. } | Statement::Proof { .. } => false,
         }
     }

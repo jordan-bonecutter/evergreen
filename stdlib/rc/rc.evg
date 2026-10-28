@@ -20,23 +20,6 @@ fn new<T = usize>(value: T) -> Rc<T>
     }
 }
 
-// The new owning pointer exists before the count changes. This helper exposes
-// only the allocation; the caller's complete invariant is checked at return.
-fn clone_allocation<T = usize>(allocation: &shared(Data<T>)) -> shared(Data<T>)
-    where
-        allocation.count < usize::MAX &&
-        nat(allocation.count) == owner_count(allocation)
-    modifies(&allocation.count)
-    ensures
-        owner_count(result) == old(owner_count(allocation)) + 1 &&
-        result.count == old(allocation.count) + 1 &&
-        &*result == &**allocation
-{
-    let cloned = *allocation;
-    allocation.count = allocation.count + 1;
-    cloned
-}
-
 impl<T> Drop for Rc<T> {
     fn drop({data})
         ensures
@@ -77,7 +60,8 @@ impl<T> Rc<T> {
             result.data.count == old(self.data.count) + 1 &&
             owner_count(result.data) == old(owner_count(self.data)) + 1
     {
-        Self {data: clone_allocation::<T>(&self.data)}
+        self.data.count = self.data.count + 1 starts_owner(self.data);
+        Self {data: self.data}
     }
 
     method release_nonfinal()

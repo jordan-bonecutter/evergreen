@@ -571,12 +571,13 @@ fn old_pointee_uses_the_saved_world_while_dereferencing_an_old_pointer_is_live()
         assert!(historical.complete && historical.reads.is_empty());
         assert_eq!(historical.past.len(), 1);
         assert_eq!(live.reads.len(), 1);
-        ctx.assign(
+        ctx.assign_starting_owners(
             &dereference,
             &Expr {
                 kind: Kind::Number(8),
                 line: 1,
             },
+            &[],
         )
         .unwrap();
         assert!(ctx

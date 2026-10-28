@@ -88,9 +88,11 @@ pub(super) fn function_uses_planes(
             | Statement::Effect(value)
             | Statement::Fact { value, .. } => expression(value, structs),
             Statement::Proof { proposition, .. } => expression(proposition, structs),
-            Statement::Assign { target, value } => {
-                expression(target, structs) || expression(value, structs)
-            }
+            Statement::Assign {
+                target,
+                value,
+                starts,
+            } => !starts.is_empty() || expression(target, structs) || expression(value, structs),
             Statement::Update { body, .. } => body.iter().any(|s| statement(s, structs)),
             Statement::While {
                 condition, body, ..

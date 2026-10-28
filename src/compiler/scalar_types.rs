@@ -293,9 +293,16 @@ impl Aliases<'_> {
             }
             Statement::Fact { value, .. } | Statement::Effect(value) => self.expr(value, module),
             Statement::Proof { proposition, .. } => self.expr(proposition, module),
-            Statement::Assign { target, value } => {
+            Statement::Assign {
+                target,
+                value,
+                starts,
+            } => {
                 self.expr(target, module);
                 self.expr(value, module);
+                for source in starts {
+                    self.expr(source, module);
+                }
             }
             Statement::While {
                 condition,

@@ -149,9 +149,16 @@ pub(crate) fn walk_statement(v: &mut impl Visitor, statement: &mut Statement) ->
         }
         Statement::Fact { value, .. } | Statement::Effect(value) => v.expr(value)?,
         Statement::Proof { proposition, .. } => v.expr(proposition)?,
-        Statement::Assign { target, value } => {
+        Statement::Assign {
+            target,
+            value,
+            starts,
+        } => {
             v.expr(target)?;
             v.expr(value)?;
+            for source in starts {
+                v.expr(source)?;
+            }
         }
         Statement::Update { places, body, .. } => {
             for place in places {

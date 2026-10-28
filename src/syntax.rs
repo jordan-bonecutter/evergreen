@@ -318,6 +318,7 @@ pub enum Statement {
     Assign {
         target: Expr,
         value: Expr,
+        starts: Vec<Expr>,
     },
     Effect(Expr),
     Update {
@@ -350,7 +351,11 @@ impl Statement {
             | Self::Fact { value, .. }
             | Self::Effect(value) => expr(value),
             Self::Proof { proposition, .. } => expr(proposition),
-            Self::Assign { target, value } => expr(target) && expr(value),
+            Self::Assign {
+                target,
+                value,
+                starts,
+            } => expr(target) && expr(value) && starts.iter().all(expr),
             Self::Update { places, body, .. } => {
                 places.iter().all(expr) && body.iter().all(statement)
             }

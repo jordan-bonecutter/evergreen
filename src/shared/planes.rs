@@ -9,7 +9,7 @@ use std::sync::{
 };
 
 mod owners;
-pub use owners::{OwnedReference, OwnerCensus};
+pub use owners::{EarlyOwner, OwnedReference, OwnerCensus, OwnerCopy, OwnerScope};
 
 static NEXT_ARENA: AtomicU64 = AtomicU64::new(1);
 
@@ -69,6 +69,7 @@ struct Plane<T> {
 #[derive(Debug)]
 pub struct Memory<T> {
     owner: u64,
+    early_owners: usize,
     next_slot: Arc<AtomicUsize>,
     planes: Vec<Plane<T>>,
 }
@@ -92,6 +93,7 @@ impl<T> Default for Memory<T> {
         }
         Self {
             owner,
+            early_owners: 0,
             next_slot: Arc::new(AtomicUsize::new(0)),
             planes: Vec::new(),
         }
@@ -105,6 +107,7 @@ impl<T> Memory<T> {
     {
         Self {
             owner: self.owner,
+            early_owners: self.early_owners,
             next_slot: Arc::clone(&self.next_slot),
             planes: self.planes.clone(),
         }

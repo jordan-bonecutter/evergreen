@@ -27,7 +27,7 @@ impl Evaluator<'_> {
             .checked_sub(1)
             .ok_or("execution value-work limit reached during pointer copy")?;
         Ok(match value {
-            Value::Shared(ty, owner) => Value::Shared(ty, self.memory.duplicate_owner(owner)?),
+            Value::Shared(ty, owner) => Value::Shared(ty, self.memory.copy_owner(owner)?.owner()),
             Value::Record(name, fields) => Value::Record(
                 name,
                 fields

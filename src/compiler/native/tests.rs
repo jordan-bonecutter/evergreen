@@ -454,6 +454,8 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/array_frame_history.evg"),
         include_str!("../../../examples/array_branch_history.evg"),
         include_str!("../../../examples/array_model.evg"),
+        include_str!("../../../examples/pair_updates.evg"),
+        include_str!("../../../examples/early_ownership.evg"),
         include_str!("../../../examples/record_array_history.evg"),
         include_str!("../../../examples/record_array_values.evg"),
         include_str!("../../../examples/record_array_borrows.evg"),
