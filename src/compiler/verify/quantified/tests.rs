@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn universal_premises_use_scoped_specialization_and_logical_cases() {
+    for source in [
+        "fn main() -> usize {proof restrict: (forall(i: integer) where(i >= 0) {i >= 5}) => (forall(j: integer) where(j >= 1) {j >= 5}) by {intro all; intro j; specialize all(j); omega}; 42}",
+        "fn main() -> usize {proof select: (forall(i: integer) where(i >= 0) {i >= 5}) => 7 >= 5 by {intro all; specialize all(7); omega}; 42}",
+        "fn main() -> usize {proof select: ((forall(i: integer) where(i >= 0) {i >= 5}) && 7 >= 0) => 7 >= 5 by {intro both; cases both with all, positive; specialize all(7); exact positive}; 42}",
+        "fn main() -> usize {proof either: ((forall(i: integer) {i == 0}) || (forall(j: integer) {j == 1})) => ((forall(k: integer) {k == 1}) || (forall(k: integer) {k == 0})) by {intro either; cases either with zero | one; right; exact zero; left; exact one}; 42}",
+    ] {
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        crate::compiler::native::emit(&program).unwrap();
+    }
+}
+
+#[test]
+fn universal_premises_cannot_escape_scope_skip_domains_or_generalize_one_point() {
+    for source in [
+        "fn main() -> usize {proof select: (forall(i: integer) where(i >= 0) {i >= 5}) => -1 >= 5 by {intro all; specialize all(-1); omega}; 42}",
+        "fn main() -> usize {proof select: (forall(i: integer) where(i >= 0) {i >= 5}) => 7 >= 5 by {intro all; specialize all(7); omega}; proof escaped: 7 >= 5 by {specialize all(7); omega}; 42}",
+        "fn main() -> usize {proof bad: (forall(i: integer) where(i == 7) {i == 7}) => (forall(j: integer) {j == 7}) by {intro all; intro j; specialize all(j); omega}; 42}",
+        "fn main() -> usize {proof bad: (forall(i: integer) where(i >= 0) {i >= 5}) => 7 == 0 by {intro all; omega}; 42}",
+    ] {
+        assert!(verify(source).is_err(), "accepted {source}");
+    }
+}
+
+#[test]
 fn source_universals_introduce_specialize_execute_and_replay() {
     let source = include_str!("../../../../examples/universal.evg");
     let (program, bundle) = prove(source).unwrap();

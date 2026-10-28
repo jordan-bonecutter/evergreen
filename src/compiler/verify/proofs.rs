@@ -166,7 +166,12 @@ impl Context<'_> {
             for (name, node) in hypotheses {
                 let premise = self.proof.evidence.claim(*node)?.clone();
                 self.proof.witnesses.insert((*name).into(), *node);
-                self.assume_from(&premise, paths::Origin::Evidence(*node))?;
+                // Quantifiers and predicate atoms remain scoped logical
+                // witnesses. Only arithmetic propositions become solver rows;
+                // specialization and cases must expose their consequences.
+                if premise.is_arithmetic() {
+                    self.assume_from(&premise, paths::Origin::Evidence(*node))?;
+                }
             }
             check(self)
         })();

@@ -95,6 +95,14 @@ actually used. Named proofs refer to nodes; anonymous proofs need no user-visibl
 name. Arithmetic certificate weights identify the exact constraint rows used by
 a checked derivation. Logical steps identify their premise nodes and retain an
 explicit inference rule.
+
+Logical hypotheses can themselves be universal propositions or contain
+predicate atoms. They remain scoped witnesses: `intro all` introduces such a
+premise, `specialize all(index)` exposes a checked instance, and `cases` exposes
+the parts of conjunctions and disjunctions. Only arithmetic hypotheses become
+solver rows. Leaving the proof scope removes its local witnesses and restores
+the arithmetic context. This supports reusable range-restriction theorems;
+function and loop imports of universal contracts remain unfinished.
 The rule checker validates connective shape and premise/conclusion agreement
 before inserting a derived node. Tactics cannot insert arbitrary logical edges.
 An admitted claim is a distinct node, not a proved constraint in the execution

@@ -8,6 +8,20 @@ fn main() -> usize {
         omega
     };
 
+    fact suffix = forall(i: integer) where (4 <= i && i < 10) {
+        i <= 9
+    };
+    proof restrict_range: bounded => suffix by {
+        intro all;
+        intro i;
+        specialize all(i);
+        omega // The smaller domain must imply the original domain.
+    };
+    proof tail: suffix by {
+        apply restrict_range;
+        exact range
+    };
+
     let index: usize = 7;
     proof selected: integer(index) <= 9 by {
         specialize range(index);

@@ -160,6 +160,34 @@ fn introduction_preserves_claim_and_does_not_admit_its_hypothesis() {
 }
 
 #[test]
+fn predicate_hypotheses_stay_logical_and_disappear_on_success_or_error() {
+    with_context(&mut Session::search(), |ctx| {
+        let predicate = Formula::Predicate {
+            symbol: "observation".into(),
+            arguments: vec![Linear::variable("value")],
+        };
+        let goal = Formula::Implies(Box::new(predicate.clone()), Box::new(predicate));
+        let before = ctx.proof.paths.clone();
+        let root = script(ctx, &goal, &["intro p", "exact p"]);
+        ctx.proof.evidence.check_closed(root).unwrap();
+        assert!(ctx.proof.evidence.admissions(root).admissions.is_empty());
+        assert_eq!(ctx.proof.paths, before);
+        assert!(ctx.proof.witnesses.is_empty());
+
+        assert!(ctx
+            .proof_script(
+                &goal,
+                "bad local proof",
+                1,
+                &["intro p".into(), "exact absent".into()],
+            )
+            .is_err());
+        assert_eq!(ctx.proof.paths, before);
+        assert!(ctx.proof.witnesses.is_empty());
+    });
+}
+
+#[test]
 fn nested_case_hypotheses_are_discharged_on_search_and_replay() {
     fn check(session: &mut Session) {
         with_context(session, |ctx| {

@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn sparse_range_premises_specialize_without_materializing_bound_cells() {
+    let source = include_str!("../../../../examples/sparse_ranges.evg");
+    let theorem = "proof restrict: (forall(i: integer) where(0 <= i && i < 8) {typeof((*buffer)[i]) == shape(unique(usize))}) => (forall(j: integer) where(4 <= j && j < 8) {typeof((*buffer)[j]) == shape(unique(usize))}) by {intro all; intro j; specialize all(j); omega};";
+    let source = source.replace(
+        "(*buffer)[3] = alloc(42);",
+        &format!("{theorem}\n(*buffer)[3] = alloc(42);"),
+    );
+    let (program, bundle) = prove(&source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(&source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let huge = source
+        .replace("(8)", "(1000000000)")
+        .replace("i < 8", "i < 1000000000")
+        .replace("j < 8", "j < 1000000000")
+        .replace(", 8)", ", 1000000000)");
+    let (large, large_bundle) = prove(&huge).unwrap();
+    assert_eq!(program.obligations, large.obligations);
+    assert_eq!(bundle.certificate_count(), large_bundle.certificate_count());
+    assert!(crate::compiler::native::emit(&large).unwrap().len() < 16384);
+}
+
+#[test]
 fn indexed_memory_ranges_follow_initialization_and_extraction_without_trust() {
     let source = include_str!("../../../../examples/sparse_ranges.evg");
     let (program, bundle) = prove(source).unwrap();
