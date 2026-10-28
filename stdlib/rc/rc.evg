@@ -45,14 +45,13 @@ fn publish<T = usize>(credit: Credit<T>) -> Rc<T> {
 }
 
 impl<T> Drop for Rc<T> {
-    fn drop(self)
+    fn drop({data})
         ensures
             if old(self.data.count) > 1 {
                 nat((*old(self.data)).count) + 1 == nat(old(self.data.count)) &&
                 owner_count(old(self.data)) + 1 == old(owner_count(self.data))
             } else {true}
     {
-        let Self {data} = self;
         if data.count == 1 {
             let allocation: unique(Data<T>) = move(data);
             drop(allocation);

@@ -59,3 +59,12 @@ fn bundled_sources_format_idempotently() {
         visit(std::path::Path::new(dir));
     }
 }
+
+#[test]
+fn loop_contracts_follow_the_same_layout_as_function_contracts() {
+    let input = "fn main() {let n:usize=0; while n<10 invariant n<=10 modifies(&n) decreases 10-n {n=n+1;} n}";
+    let formatted = source(input).unwrap();
+    assert!(formatted.contains("while n < 10\n        invariant\n            n <= 10\n        modifies(&n)\n        decreases 10 - n\n    {"), "{formatted}");
+    assert_eq!(source(&formatted).unwrap(), formatted);
+    assert!(super::super::parse(&formatted).is_ok());
+}

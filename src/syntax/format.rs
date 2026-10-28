@@ -254,7 +254,7 @@ fn render(items: &[Item<'_>], hints: &Hints) -> String {
             writer.word(text, base + 1, false);
             indent = base + 2;
             clause = Some((end, base));
-            if matches!(text, "where" | "ensures") {
+            if matches!(text, "where" | "ensures" | "invariant") {
                 writer.newline();
             }
             previous = text;

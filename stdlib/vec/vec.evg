@@ -18,84 +18,12 @@ fn allocate_buffer<T = usize>(capacity: usize, initial: T) -> unique(T, capacity
     alloc(capacity, initial)
 }
 
-// Initialize backing capacity while the logical vector remains empty.
-// Concrete instantiation must prove that duplicating initial is permitted.
-fn filled<T = usize>(capacity: usize, initial: T) -> Vec<T>
-    where
-        (integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
-    ensures
-        (result.len == 0 &&
-        result.cap == capacity)
-{
-    let data: Zero | unique(T, capacity) = if capacity == 0 {
-        Zero {word: 0}
-    } else {allocate_buffer::<T>(capacity, initial)};
-    Vec::<T> {cap: capacity, len: 0, data: data}
-}
-
-fn new<T = usize>(capacity: usize) -> Vec<T>
-    where
-        (integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
-    ensures
-        (result.len == 0 &&
-        result.cap == capacity)
-{
-    filled::<T>(capacity, 0)
-}
-
 fn discard_zero(value: Zero) {}
 fn discard_buffer<T>(ideal n: nat, value: unique(T, n)) {}
 impl<T> Drop for Vec<T> {
     fn drop({cap, len, data}) {
         if cap == 0 {discard_zero(data)} else {discard_buffer::<T>(data)}
     }
-}
-
-fn length<T = usize>(value: &Vec<T>) -> usize
-    ensures
-        (result == value.len)
-{
-    value.len
-}
-
-fn capacity<T = usize>(value: &Vec<T>) -> usize
-    ensures
-        (result == value.cap)
-{
-    value.cap
-}
-
-fn get<T = usize>(value: &Vec<T>, index: usize) -> &T
-    where
-        (index < value.len)
-    borrows(&(*value.data)[index])
-{
-    &(*value.data)[index]
-}
-
-fn push<T = usize>(value: &Vec<T>, item: T)
-    where
-        (value.len < value.cap)
-    modifies(&value.len, &(*value.data)[value.len])
-    ensures
-        (value.len == old(value.len) + 1 &&
-        (*value.data)[old(value.len)] == item)
-{
-    (*value.data)[value.len] = item;
-    value.len = value.len + 1;
-}
-
-fn pop<T = usize>(value: &Vec<T>) -> T
-    where
-        (value.len > 0)
-    modifies(&value.len)
-    ensures
-        (value.len + 1 == old(value.len) &&
-        result == old((*value.data)[value.len - 1]))
-{
-    let item = (*value.data)[value.len - 1];
-    value.len = value.len - 1;
-    item
 }
 
 fn copy_prefix<T = usize>(
@@ -113,43 +41,23 @@ fn copy_prefix<T = usize>(
     modifies(target)
 {
     let cursor = index;
-    while cursor < count invariant (cursor <= count && count <= source_capacity && count <= target_capacity) modifies(target, &cursor) decreases(count - cursor) {
+    while cursor < count
+        invariant
+            (cursor <= count &&
+            count <= source_capacity &&
+            count <= target_capacity)
+        modifies(target, &cursor)
+        decreases(count - cursor)
+    {
         (*target)[cursor] = (*source)[cursor];
         cursor = cursor + 1;
     }
 }
 
-// Return a fresh allocation. Assigning this result over the old Vec releases
-// its old allocation and invalidates outstanding references into that buffer.
-fn reallocate_filled<T = usize>(value: &Vec<T>, new_capacity: usize, initial: T) -> Vec<T>
-    where
-        (value.len <= new_capacity &&
-        integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
-    ensures
-        (result.len == value.len &&
-        result.cap == new_capacity)
-{
-    let grown = filled::<T>(new_capacity, initial);
-    if value.len == 0 {()} else {
-        copy_prefix::<T>(value.cap, &*value.data, new_capacity, &*grown.data, value.len, 0)
-    };
-    grown.len = value.len;
-    grown
-}
-
-fn reallocate<T = usize>(value: &Vec<T>, new_capacity: usize) -> Vec<T>
-    where
-        (value.len <= new_capacity &&
-        integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
-    ensures
-        (result.len == value.len &&
-        result.cap == new_capacity)
-{
-    reallocate_filled::<T>(value, new_capacity, 0)
-}
-
-// Inherent methods use the same checked operations as the function interface.
+// The checked vector API lives on Vec; storage copying remains reusable.
 impl<T> Vec<T> {
+    // Initialize backing capacity while the logical vector remains empty.
+    // Concrete instantiation must prove that duplicating initial is permitted.
     fn filled(capacity: usize, initial: T) -> Self
         where
             (integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
@@ -157,7 +65,10 @@ impl<T> Vec<T> {
             (result.len == 0 &&
             result.cap == capacity)
     {
-        filled::<T>(capacity, initial)
+        let data: Zero | unique(T, capacity) = if capacity == 0 {
+            Zero {word: 0}
+        } else {allocate_buffer::<T>(capacity, initial)};
+        Self {cap: capacity, len: 0, data: data}
     }
 
     fn new(capacity: usize) -> Self
@@ -167,21 +78,21 @@ impl<T> Vec<T> {
             (result.len == 0 &&
             result.cap == capacity)
     {
-        new::<T>(capacity)
+        Self::filled(capacity, 0)
     }
 
     method& length() -> usize
         ensures
             (result == self.len)
     {
-        length::<T>(self)
+        self.len
     }
 
     method& capacity() -> usize
         ensures
             (result == self.cap)
     {
-        capacity::<T>(self)
+        self.cap
     }
 
     method& get(index: usize) -> &T
@@ -189,7 +100,7 @@ impl<T> Vec<T> {
             (index < self.len)
         borrows(&(*self.data)[index])
     {
-        get::<T>(self, index)
+        &(*self.data)[index]
     }
 
     method& push(item: T)
@@ -200,7 +111,8 @@ impl<T> Vec<T> {
             (self.len == old(self.len) + 1 &&
             (*self.data)[old(self.len)] == item)
     {
-        push::<T>(self, item);
+        (*self.data)[self.len] = item;
+        self.len = self.len + 1;
     }
 
     method& pop() -> T
@@ -211,9 +123,13 @@ impl<T> Vec<T> {
             (self.len + 1 == old(self.len) &&
             result == old((*self.data)[self.len - 1]))
     {
-        pop::<T>(self)
+        let item = (*self.data)[self.len - 1];
+        self.len = self.len - 1;
+        item
     }
 
+    // Return fresh storage; assignment releases the previous allocation and
+    // invalidates references into that buffer.
     method& reallocate(new_capacity: usize) -> Self
         where
             (self.len <= new_capacity &&
@@ -222,7 +138,7 @@ impl<T> Vec<T> {
             (result.len == self.len &&
             result.cap == new_capacity)
     {
-        reallocate::<T>(self, new_capacity)
+        self.reallocate_filled(new_capacity, 0)
     }
 
     method& reallocate_filled(new_capacity: usize, initial: T) -> Self
@@ -233,7 +149,12 @@ impl<T> Vec<T> {
             (result.len == self.len &&
             result.cap == new_capacity)
     {
-        reallocate_filled::<T>(self, new_capacity, initial)
+        let grown = Self::filled(new_capacity, initial);
+        if self.len == 0 {()} else {
+            copy_prefix::<T>(self.cap, &*self.data, new_capacity, &*grown.data, self.len, 0)
+        };
+        grown.len = self.len;
+        grown
     }
 
     // Complete consumption transfers the live allocation; an empty vector has

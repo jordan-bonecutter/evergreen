@@ -4,7 +4,12 @@ fn count_to(limit: usize) -> usize
         result == limit
 {
     let count: usize = 0;
-    while count < limit invariant (count <= limit) modifies(&count) decreases(limit - count) {
+    while count < limit
+        invariant
+            (count <= limit)
+        modifies(&count)
+        decreases(limit - count)
+    {
         count = count + 1;
     }
     count

@@ -27,7 +27,14 @@ fn main() -> usize {
     establish(&b);
 
     let cursor: usize = 0;
-    while cursor < 4 invariant (cursor <= 4 && (forall(i: integer) where (0 <= i && i < 4) {i < integer(b.limit)})) modifies(&cursor) decreases(4 - cursor) {
+    while cursor < 4
+        invariant
+            (cursor <= 4 &&
+            (forall(i: integer) where (0 <= i &&
+            i < 4) {i < integer(b.limit)}))
+        modifies(&cursor)
+        decreases(4 - cursor)
+    {
         cursor = cursor + 1;
     }
 

@@ -13,7 +13,11 @@ fn increment_from(value: &usize, observed: usize) -> bool
     let finished = false;
     let incremented = false;
     fact maintained = (!finished => *value == old(*value)) && (finished => ((incremented && nat(*value) == nat(old(*value)) + 1) || (!incremented && *value == old(*value) && *value == usize::MAX)));
-    while !finished invariant (maintained) modifies(value, &observed, &finished, &incremented) {
+    while !finished
+        invariant
+            (maintained)
+        modifies(value, &observed, &finished, &incremented)
+    {
         let desired: usize = if observed == usize::MAX {observed} else {observed + 1};
         let actual = x86_64_atomics::compare_exchange(value, observed, desired);
         finished = actual == observed;
@@ -50,7 +54,11 @@ fn decrement_from(value: &usize, observed: usize) -> usize
     let finished = false;
     let previous: usize = 0;
     fact maintained = (!finished => *value == old(*value)) && (finished => (previous == old(*value) && (previous == 0 => *value == 0) && (previous > 0 => nat(*value) + 1 == nat(previous))));
-    while !finished invariant (maintained) modifies(value, &observed, &finished, &previous) {
+    while !finished
+        invariant
+            (maintained)
+        modifies(value, &observed, &finished, &previous)
+    {
         let desired: usize = if observed == 0 {0} else {observed - 1};
         let actual = x86_64_atomics::compare_exchange(value, observed, desired);
         finished = actual == observed;

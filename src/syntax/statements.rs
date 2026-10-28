@@ -101,18 +101,27 @@ impl Parser {
         }
         self.depth += 1;
         let condition = self.expr(0)?;
+        let start = self.pos;
         self.expect("invariant")?;
         let invariant = self.expr(0)?;
+        self.note_format_clause(start);
+        let start = self.pos;
         let modifies = if self.eat("modifies") {
             self.nonempty_expressions()?
         } else {
             Vec::new()
         };
+        self.note_format_clause(start);
+        let start = self.pos;
         let decreases = if self.eat("decreases") {
             Some(self.expr(0)?)
         } else {
             None
         };
+        self.note_format_clause(start);
+        if let Some(hints) = &mut self.format_hints {
+            hints.bodies.insert(self.pos);
+        }
         let (mut body, tail) = self.block(false)?;
         if tail.kind != Kind::Unit {
             body.push(Statement::Effect(tail));

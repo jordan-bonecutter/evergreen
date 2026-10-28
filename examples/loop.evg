@@ -2,7 +2,12 @@ fn main() -> usize {
     let values: [usize; 4] = [0, 0, 0, 0];
     let index: usize = 0;
 
-    while index < 4 invariant (index <= 4) modifies(&values, &index) decreases(4 - index) {
+    while index < 4
+        invariant
+            (index <= 4)
+        modifies(&values, &index)
+        decreases(4 - index)
+    {
         values[index] = 42;
         index = index + 1;
     }

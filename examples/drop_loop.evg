@@ -9,7 +9,13 @@ impl Drop for Counter {
         let Self {count, limit} = self;
         let remaining = limit;
         ideal let total = integer(*count) + integer(limit);
-        while remaining > 0 invariant (integer(*count) + integer(remaining) == total && integer(*count) + integer(remaining) <= integer(usize::MAX)) modifies(count, &remaining) decreases(remaining) {
+        while remaining > 0
+            invariant
+                (integer(*count) + integer(remaining) == total &&
+                integer(*count) + integer(remaining) <= integer(usize::MAX))
+            modifies(count, &remaining)
+            decreases(remaining)
+        {
             *count = *count + 1;
             remaining = remaining - 1;
         }

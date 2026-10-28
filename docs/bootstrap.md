@@ -220,6 +220,10 @@ when the parent implements Drop. The parent becomes inaccessible and its Drop
 does not run; the fields receive normal reverse-binding-order cleanup. Opaque
 records still restrict field access to their defining module. A destructor can
 also consume its entire `self` this way, without running a second parent Drop.
+Prefer destructuring in the signature: `fn drop({cap, len, data})` lowers to
+`fn drop(self) { let Self {cap, len, data} = self; ... }`. Every field must be
+named exactly once; `field: local` renames a binding. Contracts retain their
+normal entry-state bindings; the body cannot access the consumed `self`.
 After decomposition, complete local bindings can be moved or explicitly dropped;
 ordinary ownership, liveness, and effect checks still apply. `drop(self)` and
 moving the receiver directly remain rejected. After a complete receiver pattern,
@@ -2030,8 +2034,8 @@ cargo run -- build examples/vec.evg -o /tmp/vec
 
 `new(0)` stores a zero word without allocating; positive capacities allocate
 initialized integer storage. Its source-defined Drop releases only the allocated
-case. `push(&value, item)` requires
-spare capacity, `pop(&value)` requires a nonempty vector, and `get(&value, index)`
+case. `value.push(item)` requires
+spare capacity, `value.pop()` requires a nonempty vector, and `value.get(index)`
 returns a checked reference to an element below length. `length` and `capacity`
 expose those quantities without exposing the representation. Capacity is bounded
 by addressability:
@@ -2039,7 +2043,7 @@ by addressability:
 Native allocation can still fail at runtime; the interpreter has a separate work
 budget. Neither imposes a 8192-element language limit.
 
-`value = vec::reallocate(&value, new_capacity)` copies the live prefix to fresh
+`value = value.reallocate(new_capacity)` copies the live prefix to fresh
 storage and releases the previous buffer on assignment. Reallocating an empty
 vector to zero performs no allocation. Borrows of the Vec header remain valid
 across replacement because its storage layout is unchanged. Existing references
@@ -2228,7 +2232,7 @@ method runs ordinary cleanup for any receiver value it does not return or move.
 
 `examples/methods.evg` demonstrates a constructor, borrowed mutation, proof-time
 accessor use, and a consuming method. `examples/vec.evg` uses the Vec method
-interface; the existing free functions remain available. Vec's `method&`
+interface, implemented directly in the methods. Vec's `method&`
 reallocation returns a fresh Vec to assign over the old value. Its consuming
 `into_data` method transfers the existing allocation using complete receiver
 destructuring. `examples/owned_method_transfer.evg` proves that an element

@@ -31,9 +31,10 @@ references. Borrowed header storage remains valid across replacement.
 Integer and Boolean instances support push, pop, get, and explicit reallocation.
 Flat scalar records with an explicit Copy implementation can initialize backing
 storage and transfer it using `into_data()`. Their push/pop contracts still need
-a general equality interface. Free functions accept explicit type arguments,
-such as `vec::push::<u8>(&values, 42)`; methods use the receiver's specialization.
-Existing calls without arguments continue to use `usize`.
+a general equality interface. Constructors use explicit type arguments such as
+`vec::Vec::<u8>::new(2)`; methods use the receiver's specialization. The API is
+implemented directly on Vec, with reusable copying in `vec::copy_prefix`.
+Omitting type arguments selects the default `usize`.
 
 This is a precursor to the README's vector, not its full implementation. Repeated
 initialization requires actual Copy permission; pointers with unique authority

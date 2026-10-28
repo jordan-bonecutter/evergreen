@@ -2743,7 +2743,7 @@ fn runtime_divergence_is_inferred_and_cannot_become_proof_evidence() {
     let total = "fn count(n: usize) -> usize ensures(result == n) decreases(n) {if n == 0 {0} else {count(n - 1) + 1}} fn main() -> usize ensures(result == 42) {ideal let expected = nat(count(42)); proof established: expected == 42; 42}";
     let program = verify(total).unwrap();
     assert_eq!(program.potentially_diverging_functions().count(), 0);
-    let checked_pop = "fn main() -> usize ensures(result == 42) {let v = vec::new(2); vec::push(&v, 7); vec::push(&v, 42); vec::pop(&v)}";
+    let checked_pop = "fn main() -> usize ensures(result == 42) {let v = vec::Vec::new(2); v.push(7); v.push(42); v.pop()}";
     assert_eq!(
         verify(checked_pop).unwrap().run().unwrap().to_string(),
         "42"
@@ -3257,12 +3257,12 @@ fn owned_word_vectors_check_capacity_and_reference_lifetimes() {
         0
     );
     for source in [
-        "fn main() -> usize {let v = vec::new(0); vec::push(&v, 1); 0}",
-        "fn main() -> usize {let v = vec::new(2); vec::pop(&v)}",
-        "fn main() -> usize {let v = vec::new(2); *vec::get(&v, 0)}",
-        "fn main() -> usize {let v = vec::new(1); vec::push(&v, 42); let p = vec::get(&v, 0); v = vec::reallocate(&v, 2); *p}",
-        "fn main() -> usize {let v = vec::new(2); vec::push(&v, 42); v = vec::reallocate(&v, 0); 0}",
-        "fn main() -> usize {let v = vec::new(usize::MAX); 0}",
+        "fn main() -> usize {let v = vec::Vec::new(0); v.push(1); 0}",
+        "fn main() -> usize {let v = vec::Vec::new(2); v.pop()}",
+        "fn main() -> usize {let v = vec::Vec::new(2); *v.get(0)}",
+        "fn main() -> usize {let v = vec::Vec::new(1); v.push(42); let p = v.get(0); v = v.reallocate(2); *p}",
+        "fn main() -> usize {let v = vec::Vec::new(2); v.push(42); v = v.reallocate(0); 0}",
+        "fn main() -> usize {let v = vec::Vec::new(usize::MAX); 0}",
     ] {
         assert!(verify(source).is_err(), "accepted invalid vector operation: {source}");
     }
@@ -3310,7 +3310,7 @@ fn field_autoderef_uses_the_existing_ownership_and_effect_checks() {
             .is_err()
     );
     assert!(verify("type Person struct {age: usize} fn main() -> usize {let p = alloc(Person {age: 42}); let moved = p; p.age}").is_err());
-    assert!(verify("fn main() -> usize {let v = vec::new(2); let r = &v; r.len}").is_err());
+    assert!(verify("fn main() -> usize {let v = vec::Vec::new(2); let r = &v; r.len}").is_err());
     let nested = "type Inner struct {value: usize} type Outer struct {inner: unique(Inner)} fn main() -> usize {let outer = alloc(Outer {inner: alloc(Inner {value: 42})}); let a = &outer; let b = &a; b.inner.value}";
     assert_eq!(verify(nested).unwrap().run().unwrap().to_string(), "42");
     let field_borrow = "type Item struct {value: usize} fn read(x: &Item) -> &usize borrows(&x.value) {*&x.value; &x.value} fn main() -> usize {let x = alloc(Item {value: 42}); *read(&*x)}";
@@ -3394,7 +3394,7 @@ fn unresolved_source_imports_cannot_silently_be_ignored() {
     assert!(verify("import absent; fn main() -> usize {42}")
         .unwrap_err()
         .contains("unresolved import absent"));
-    let program = verify("import vec; fn main() -> usize {let value = vec::new(1); vec::push(&value, 42); vec::pop(&value)}").unwrap();
+    let program = verify("import vec; fn main() -> usize {let value = vec::Vec::new(1); value.push(42); value.pop()}").unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.trusted_assumptions().is_empty());
 }
