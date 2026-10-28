@@ -4,6 +4,8 @@
 use super::*;
 
 #[cfg(test)]
+mod range_tests;
+#[cfg(test)]
 mod tests;
 
 impl Context<'_> {
@@ -49,17 +51,18 @@ impl Context<'_> {
             line,
         )?;
         self.charge_value_work(symbol_weight(self.storage.memory.read(reference)?)?)?;
+        let array = self.storage.memory.read(reference)?.clone();
         let Symbol::Array {
             element: stored_element,
             len,
             items,
             cells,
             identity,
-        } = self.storage.memory.read(reference)?.clone()
+        } = &array
         else {
             return Err("empty array conversion requires array storage".into());
         };
-        let initial = match self.arrays.history.get(&identity).cloned() {
+        let initial = match self.arrays.history.get(identity).cloned() {
             Some(ArrayHistory::Uninitialized(initial)) => Some(initial),
             _ => None,
         };
@@ -70,18 +73,19 @@ impl Context<'_> {
         };
         let covered = if default_empty {
             true
-        } else if let Some(items) = &items {
-            self.checked_entails(&equal(&len, &Linear::number(items.len() as i128))?)?
+        } else if let Some(items) = items {
+            self.checked_entails(&equal(len, &Linear::number(items.len() as i128))?)?
         } else {
-            self.empty_array_coverage(&len, &cells)?
+            self.empty_array_coverage(len, cells)?
         };
-        if !covered {
+        let proved_range = !covered && self.checked_array_member_range(&array, element)?;
+        if !covered && !proved_range {
             return Err(
-                "empty array conversion requires an empty default or complete cell coverage".into(),
+                "empty array conversion requires an empty default, complete cell coverage, or a checked full-range shape proof".into(),
             );
         }
         let before = crate::compiler::layout::of(
-            &heap::syntax_type(&stored_element, line)?,
+            &heap::syntax_type(stored_element, line)?,
             self.declarations.structs,
         )?;
         let after = crate::compiler::layout::of(
@@ -96,6 +100,7 @@ impl Context<'_> {
         };
         let empty = Symbol::Shape(inner.clone());
         let items = items
+            .clone()
             .map(|items| {
                 items
                     .into_iter()
@@ -113,10 +118,13 @@ impl Context<'_> {
         let mut converted = BTreeMap::new();
         for (index, value) in cells {
             self.charge_value_work(1 + index.terms.len())?;
-            if !self.cell_has_shape(&value, element)? {
+            if proved_range {
+                self.observe_input_slot_types(identity, index, value)?;
+            }
+            if !self.cell_has_shape(value, element)? {
                 return Err("empty array conversion would discard an initialized member".into());
             }
-            converted.insert(index, empty.clone());
+            converted.insert(index.clone(), empty.clone());
         }
         let identity = self.fresh_name();
         self.arrays
@@ -124,7 +132,7 @@ impl Context<'_> {
             .insert(identity.clone(), ArrayHistory::Uninitialized(empty));
         let value = Symbol::Array {
             element: element.clone(),
-            len,
+            len: len.clone(),
             items,
             cells: converted,
             identity,

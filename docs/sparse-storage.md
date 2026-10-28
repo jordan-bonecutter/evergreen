@@ -43,9 +43,10 @@ empty-slot proof after an aliased write are rejected.
 The typed assignment to `unique(shape(T), capacity)` closes an emptied buffer.
 The checker requires genuine unique authority, unchanged extent, unchanged
 element size and alignment, and admission-free evidence that every tracked cell
-has that shape. The remaining range must have an empty default or complete
-observed coverage. Explicit literal elements can provide complete coverage;
-zero length follows from the same coverage rule. A live member cannot disappear
+has that shape. The remaining range must have an empty default, complete observed
+coverage, or a checked full-range proof that every slot has the matching shape.
+Explicit literal elements can provide complete coverage; zero length follows
+from the same coverage rule. A live member cannot disappear
 through the conversion, including by an incorrect `trustme` claim.
 
 This assignment preserves storage identity and advances its proof state.
@@ -161,11 +162,25 @@ buffer, and let the payload's own cleanup run once. Before decomposition the
 parent still requires the slot to be initialized, so projected moves are rejected.
 General prefix cleanup in Drop bodies still needs resource loop frames.
 
+[`range_empty.evg`](../examples/range_empty.evg) uses the source library's
+`arrays::release_empty::<T>(buffer)`. Capacity is inferred from the pointer type.
+The helper requires a universal shape guarantee for the entire allocation,
+narrows it to shape storage, and releases the allocation. It does not enumerate
+unobserved slots or run a payload destructor on vacant storage. The full-range
+proof is checked through the existing selector definitions and kernel rules;
+admissions and unresolved recursive summaries cannot authorize this transition.
+Materialized cells are still checked independently, and releasing the backing
+plane invalidates references into its slots. A separately extracted payload
+remains alive under its own owner. The billion-slot test has the same obligation
+and certificate counts as the small input and does not allocate that buffer.
+
 [range_store.evg](../examples/range_store.evg) proves initialized-prefix and
 empty-suffix transitions for generic push and pop. A fresh store selector records
 the changed slot and refers to the prior selector elsewhere. Explicit frame proofs
 carry the two range guarantees across that write; they do not carry by default.
 A surviving initialized slot can then be borrowed using the new prefix proof.
+After popping the entire prefix, the example passes its proved empty buffer to
+`arrays::release_empty`.
 The same rules work with negative type tests and remain sparse at a billion
 slots. Resource reads through successive input versions reuse the original
 cell identities with checked index equality or separation.

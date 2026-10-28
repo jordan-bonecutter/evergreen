@@ -94,6 +94,10 @@ implementation has not yet switched to that representation.
 [range_drop.evg](../examples/range_drop.evg) provides source cleanup for one
 initialized owning slot. Destructor loops now use the ordinary loop checker,
 but iterating over a changing family of owners still needs a resource frame.
+The final buffer-release step now accepts a checked full-range shape proof,
+through `arrays::release_empty::<T>(buffer)`; it does not need to observe every
+vacant slot. [`range_empty.evg`](../examples/range_empty.evg) demonstrates this
+step, including keeping an extracted payload alive after releasing its buffer.
 
 Run [vec_generic.evg](../examples/vec_generic.evg) with:
 

@@ -1,0 +1,8 @@
+// A whole-range shape proof releases a buffer without observing every cell.
+fn main() -> usize {
+    let buffer: unique(unique(usize) | shape(unique(usize)), 8) = alloc(8, shape(unique(usize)));
+    (*buffer)[3] = alloc(42);
+    let value: unique(usize) = move((*buffer)[3]);
+    arrays::release_empty::<unique(usize)>(buffer);
+    *value
+}

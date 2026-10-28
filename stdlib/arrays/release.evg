@@ -1,0 +1,11 @@
+module arrays;
+
+// Every slot must be vacant before the backing allocation can be released.
+fn release_empty<T>(capacity: usize, data: unique(T | shape(T), capacity))
+    where
+        forall(i: integer) where (0 <= i &&
+        i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)}
+{
+    let empty: unique(shape(T), capacity) = data;
+    drop(empty);
+}

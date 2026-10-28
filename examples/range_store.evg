@@ -98,7 +98,6 @@ fn main() -> usize {
     push::<unique(usize), 8>(&*data, 1, alloc(42));
     let last = take_last::<unique(usize), 8>(&*data, 2);
     let first = take_last::<unique(usize), 8>(&*data, 1);
-    let empty: unique(shape(unique(usize)), 8) = data;
-    drop(empty);
+    arrays::release_empty::<unique(usize)>(data);
     *last
 }
