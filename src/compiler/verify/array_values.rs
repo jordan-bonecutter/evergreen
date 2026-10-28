@@ -7,11 +7,15 @@ use std::sync::Arc;
 
 mod histories;
 mod observations;
+mod reads;
+pub(super) use reads::ReadBinding;
 
 #[cfg(test)]
 mod history_tests;
 #[cfg(test)]
 mod observation_tests;
+#[cfg(test)]
+mod read_tests;
 #[cfg(test)]
 mod tests;
 
@@ -156,11 +160,11 @@ impl Context<'_> {
         let Formula::Predicate { symbol, arguments } = goal else {
             return Ok(None);
         };
-        let Some((left, right)) = self.arrays.value_equality_origins.get(symbol) else {
+        let Some((left, right)) = self.arrays.value_equality_origins.get(symbol).cloned() else {
             return Ok(None);
         };
         if left != right || left.is_none() {
-            return Ok(None);
+            return self.prove_numeric_read_binding(goal, &(left, right));
         }
         let [a, b] = arguments.as_slice() else {
             return Err("indexed equality has the wrong arity".into());

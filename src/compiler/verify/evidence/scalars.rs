@@ -5,6 +5,9 @@ use super::*;
 use crate::compiler::kernel::terms::{Id, Terms, Work};
 use std::sync::Arc;
 
+mod bindings;
+pub(in crate::compiler::verify) use bindings::BindingId;
+
 #[cfg(test)]
 mod tests;
 
@@ -19,6 +22,9 @@ struct Equality {
 #[derive(Debug, Default)]
 pub(super) struct Definitions {
     equalities: BTreeMap<String, Equality>,
+    bindings: Vec<bindings::Binding>,
+    bound_names: BTreeSet<String>,
+    binding_inputs: BTreeSet<String>,
 }
 
 impl Evidence {

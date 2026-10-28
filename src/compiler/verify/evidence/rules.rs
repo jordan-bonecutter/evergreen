@@ -50,13 +50,13 @@ pub(in crate::compiler::verify) enum Rule {
         domain: NodeId,
         term: Linear,
     },
-    // Source indexed-memory elaboration will construct this congruence step.
-    #[allow(dead_code)]
+    // Source indexed-memory elaboration constructs this congruence step.
     PredicateCongruence {
         source: NodeId,
         equalities: Vec<NodeId>,
     },
     ScalarReflexivity,
+    ScalarBinding(super::BindingId),
     ScalarCongruence {
         equalities: Vec<NodeId>,
     },
@@ -69,7 +69,9 @@ pub(in crate::compiler::verify) enum Rule {
 impl Rule {
     pub(super) fn parents(&self) -> Vec<NodeId> {
         match *self {
-            Self::UnfoldPredicate { .. } | Self::ScalarReflexivity => vec![],
+            Self::UnfoldPredicate { .. } | Self::ScalarReflexivity | Self::ScalarBinding(_) => {
+                vec![]
+            }
             Self::ScalarCongruence { ref equalities } => equalities.clone(),
             Self::Reuse(p)
             | Self::AndLeft(p)
@@ -147,6 +149,7 @@ impl Rule {
         };
         let valid = match *self {
             Self::ScalarReflexivity => graph.scalar_reflexivity(goal, work, limit)?,
+            Self::ScalarBinding(binding) => graph.scalar_binding(goal, binding, work, limit)?,
             Self::ScalarCongruence { ref equalities } => {
                 graph.scalar_congruence(goal, equalities, work, limit)?
             }
@@ -321,6 +324,11 @@ impl Evidence {
                 return Err("universal freshness work limit reached".into());
             }
             match &node.rule {
+                NodeRule::Logical(Rule::ScalarBinding(binding)) => {
+                    if self.scalar_binding_mentions(*binding, variable)? {
+                        return Ok(false);
+                    }
+                }
                 NodeRule::Arithmetic {
                     context_variables, ..
                 } => {

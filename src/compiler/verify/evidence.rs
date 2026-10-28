@@ -13,6 +13,7 @@ mod facts;
 mod scalars;
 pub(super) use definitions::DefinitionId;
 use facts::{FactId, Facts};
+pub(super) use scalars::BindingId;
 mod rules;
 pub(super) use rules::{HypothesisId, Rule};
 

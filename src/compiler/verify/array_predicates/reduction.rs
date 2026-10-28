@@ -17,34 +17,7 @@ impl Context<'_> {
             return Err("selector proof reduction depth limit reached".into());
         }
         if goal.is_arithmetic() {
-            let nodes = self.proof.witnesses.values().copied().collect::<Vec<_>>();
-            self.charge_value_work(nodes.len())?;
-            let mut local = paths::Paths::unit();
-            let mut scoped = false;
-            for node in nodes {
-                if self.proof.evidence.check_closed(node).is_ok() {
-                    continue;
-                }
-                self.charge_value_work(self.proof.evidence.claim(node)?.storage_weight()?)?;
-                let claim = self.proof.evidence.claim(node)?.clone();
-                if claim.is_arithmetic() {
-                    scoped = true;
-                    local = extend_from(
-                        &local,
-                        &claim,
-                        false,
-                        paths::Origin::Evidence(node),
-                        self.session,
-                        &mut self.work.value_work,
-                    )?;
-                }
-            }
-            let support = if scoped {
-                self.probe_guard(&local, goal)?
-            } else {
-                None
-            };
-            let support = match support {
+            let support = match self.scoped_arithmetic_support(goal)? {
                 Some(support) => Some(support),
                 None => self.probe_guard(&self.proof.paths.clone(), goal)?,
             };

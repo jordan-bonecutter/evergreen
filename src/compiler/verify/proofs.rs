@@ -26,6 +26,41 @@ impl<'a> Script<'a> {
 }
 
 impl Context<'_> {
+    // Prefer the explicit local premises of a logical proof. Unrelated runtime
+    // path closures must not become dependencies of a universally valid lemma.
+    pub(super) fn scoped_arithmetic_support(
+        &mut self,
+        goal: &Formula,
+    ) -> Result<Option<paths::Support>> {
+        let nodes = self.proof.witnesses.values().copied().collect::<Vec<_>>();
+        self.charge_value_work(nodes.len())?;
+        let mut local = paths::Paths::unit();
+        let mut scoped = false;
+        for node in nodes {
+            if self.proof.evidence.check_closed(node).is_ok() {
+                continue;
+            }
+            self.charge_value_work(self.proof.evidence.claim(node)?.storage_weight()?)?;
+            let claim = self.proof.evidence.claim(node)?.clone();
+            if claim.is_arithmetic() {
+                scoped = true;
+                local = extend_from(
+                    &local,
+                    &claim,
+                    false,
+                    paths::Origin::Evidence(node),
+                    self.session,
+                    &mut self.work.value_work,
+                )?;
+            }
+        }
+        if scoped {
+            self.probe_guard(&local, goal)
+        } else {
+            Ok(None)
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn proof_script(
         &mut self,
@@ -191,6 +226,14 @@ impl Context<'_> {
     }
 
     fn unreachable_logical_goal(&mut self, goal: &Formula) -> Result<Option<evidence::NodeId>> {
+        if let Some(support) = self.scoped_arithmetic_support(&Formula::False)? {
+            let impossible = self.proof.evidence.arithmetic(Formula::False, support)?;
+            return self
+                .proof
+                .evidence
+                .derive(goal.clone(), Rule::FalseElim(impossible))
+                .map(Some);
+        }
         let paths = self.proof.paths.clone();
         let Some(support) = self.probe_guard(&paths, &Formula::False)? else {
             return Ok(None);
@@ -230,6 +273,12 @@ impl Context<'_> {
         let step = script.take()?;
         match step {
             "omega" | "rfl" | "simp_all" | "decide" => {
+                if goal.is_arithmetic() {
+                    if let Some(support) = self.scoped_arithmetic_support(goal)? {
+                        self.work.obligations += 1;
+                        return self.proof.evidence.arithmetic(goal.clone(), support);
+                    }
+                }
                 if !goal.is_arithmetic() {
                     if let Some(node) = self.logical_assumption(goal, subjects)? {
                         return self.proof.evidence.derive(goal.clone(), Rule::Reuse(node));

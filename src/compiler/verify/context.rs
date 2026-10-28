@@ -106,6 +106,7 @@ pub(super) struct EntryState {
 
 #[derive(Default)]
 pub(super) struct Arrays {
+    pub(super) numeric_bindings: BTreeMap<String, BTreeMap<Linear, array_values::ReadBinding>>,
     pub(super) value_equalities: BTreeMap<array_values::Key, array_values::Equality>,
     pub(super) value_equality_origins: BTreeMap<String, array_values::Key>,
     pub(super) value_literals: BTreeMap<String, Vec<Linear>>,

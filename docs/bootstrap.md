@@ -2462,8 +2462,9 @@ formula directly, avoiding the extra case splits previously introduced by a
 fresh Boolean result and two equivalence constraints.
 
 This is groundwork for buffer append, not yet a general UTF-8 concatenation
-proof or an append API. Symbolic sequence content, bound-dependent array reads,
-and recursive predicate unfolding still need proof support. Quantified calls
+proof or an append API. Numeric array equality and range-copy proofs are now
+available, but general recursive sequence-predicate unfolding still needs proof
+support. Quantified calls
 support the exact scalar fragment described below; bound arguments cannot be
 hidden inside opaque scalar identities. String literals still have their
 existing byte-array representation; ideal Unicode strings and encoding APIs are
@@ -2567,6 +2568,33 @@ loop's final postconditions. Callers can prove concrete reads from both ranges.
 Verification checks one arbitrary iteration: a billion-element input needs the
 same number of obligations and certificates as a small input. Empty ranges and
 empty arrays are supported; reversed or out-of-bounds ranges are rejected.
+
+[`array_copy_range.evg`](../examples/array_copy_range.evg) uses
+`arrays::copy_range(&source, &target, start, end)`. Both arrays supply their own
+lengths and their common numeric element type. The source implementation in
+`stdlib/arrays/copy.evg` proves that target elements in `[start, end)` equal the
+source's entry values at the same indices, and that all other target elements
+are unchanged. Later source writes do not change the copied values. Empty ranges
+and self-copy are explicit no-ops; an aliasing call is still checked against its
+actual incoming references. This is a same-index copy, not an offset-based move
+or a generic resource transfer. Vec's existing copy API remains separate and
+also supports nonnumeric Copy elements.
+
+An ordinary numeric read now names an immutable scalar term containing the
+array version and the observed index. A quantified proof can relate that exact
+read to its saved scalar through checked argument equalities. The definition's
+inputs remain fixed during universal introduction; a read at one index cannot
+be generalized into a value for every index. Definitions cover only observed
+reads, and store/literal definitions continue to describe the remaining contents.
+The frontend still owns the trusted connection between storage and scalar terms;
+the evidence rules check equality transport and retain its proof dependencies.
+Copies over a billion-element input use the same number of obligations and
+certificates as small inputs, without allocating a fact per element.
+
+Explicit arithmetic proof steps first try their local logical hypotheses. This
+avoids importing unrelated runtime path closures into universal lemmas. If those
+premises are insufficient, ordinary context checking still applies; universal
+introduction continues to reject unresolved or untraced dependencies.
 
 ### Demand-driven ideal aggregate reads
 

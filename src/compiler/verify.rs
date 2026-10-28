@@ -2445,6 +2445,7 @@ impl<'a> Context<'a> {
                 self.assume(&relation)?;
             }
         }
+        self.bind_numeric_array_read(identity, index, &value)?;
         self.arrays.reads.insert(key, value.clone());
         Ok(value)
     }

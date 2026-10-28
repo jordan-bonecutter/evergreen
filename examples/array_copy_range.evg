@@ -1,0 +1,12 @@
+fn main() -> u8
+    ensures
+        result == 42
+{
+    let source: [u8; 4] = [7, 42, 11, 13];
+    let target: [u8; 5] = [1, 2, 3, 4, 5];
+    arrays::copy_range(&source, &target, 1, 3);
+    proof _: target[0] == 1 && target[2] == 11 && target[3] == 4 && target[4] == 5;
+    // A later write to the source does not alter the copied value.
+    source[1] = 0;
+    target[1]
+}
