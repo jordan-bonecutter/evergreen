@@ -4,14 +4,14 @@
 use crate::compiler::kernel::Linear;
 
 mod quantified;
+mod substitution;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Formula {
     True,
     False,
     Ge(Linear),
-    // The indexed-memory elaborator will supply immutable observation symbols.
-    #[allow(dead_code)]
+    // Immutable observation symbols retain scalar dependencies as arguments.
     Predicate {
         symbol: String,
         arguments: Vec<Linear>,

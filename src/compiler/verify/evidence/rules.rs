@@ -56,11 +56,16 @@ pub(in crate::compiler::verify) enum Rule {
         source: NodeId,
         equalities: Vec<NodeId>,
     },
+    UnfoldPredicate {
+        definition: DefinitionId,
+        reverse: bool,
+    },
 }
 
 impl Rule {
     pub(super) fn parents(&self) -> Vec<NodeId> {
         match *self {
+            Self::UnfoldPredicate { .. } => vec![],
             Self::Reuse(p)
             | Self::AndLeft(p)
             | Self::AndRight(p)
@@ -135,6 +140,19 @@ impl Rule {
             claim(id.node)
         };
         let valid = match *self {
+            Self::UnfoldPredicate {
+                definition,
+                reverse,
+            } => match goal {
+                Formula::Implies(a, b) => {
+                    let (atom, body) = if reverse { (b, a) } else { (a, b) };
+                    same(
+                        &graph.predicate_definition(definition, atom, work, limit)?,
+                        body,
+                    )
+                }
+                _ => false,
+            },
             Self::Reuse(p) => same(claim(p)?, goal),
             Self::AndIntro(a, b) => {
                 matches!(goal, Formula::And(x, y) if same(claim(a)?, x) && same(claim(b)?, y))

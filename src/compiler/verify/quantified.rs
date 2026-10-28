@@ -127,10 +127,14 @@ impl Context<'_> {
             ctx.check_quantified_expression(domain, 0)?;
             ctx.check_quantified_expression(body, 0)?;
             let domain = ctx.eval(domain, Some(&Ty::Bool))?.proposition()?;
-            if domain.contains_quantifier() {
+            if !domain.is_arithmetic() {
                 return Err(format!("line {line}: a universal domain currently requires an unquantified scalar proposition"));
             }
-            let body = ctx.eval(body, Some(&Ty::Bool))?.proposition()?;
+            ctx.locals.quantified_checks.push(Vec::new());
+            let body = ctx.eval(body, Some(&Ty::Bool)).and_then(|body| body.proposition());
+            let checks = ctx.locals.quantified_checks.pop().ok_or("missing quantified well-formedness scope")?;
+            let body = body?;
+            ctx.finish_quantified_checks(&variable, &domain, checks, line)?;
             Ok(Symbol::Bool(Formula::Forall {
                 variable: variable.clone(), domain: Box::new(domain), body: Box::new(body),
             }))
@@ -141,6 +145,14 @@ impl Context<'_> {
         self.charge_value_work(1)?;
         if depth >= 32 {
             return Err("quantified expression nesting limit reached".into());
+        }
+        if let Some((base, index, target, _)) = array_predicates::indexed_type_parts(expression) {
+            self.check_quantified_place(base)?;
+            self.check_quantified_expression(index, depth + 1)?;
+            if array_predicates::literal_target(self, target).is_none() {
+                return Err("indexed type comparisons require a literal member type".into());
+            }
+            return Ok(());
         }
         let error = || {
             format!("line {}: quantified propositions currently support total scalar arithmetic; indexed reads, user calls, and other computations need structured bound-dependent terms", expression.line)

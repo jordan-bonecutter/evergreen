@@ -2,7 +2,9 @@
 //! charges expansion before cloning a replacement into an arithmetic row.
 
 use super::*;
-use crate::compiler::verify::{Result, MAX_VALUE_WORK};
+use crate::compiler::verify::Result;
+#[cfg(test)]
+use crate::compiler::verify::MAX_VALUE_WORK;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[cfg(test)]
@@ -118,6 +120,22 @@ impl Formula {
         }
         false
     }
+
+    pub(in crate::compiler::verify) fn is_arithmetic(&self) -> bool {
+        let mut pending = vec![self];
+        while let Some(part) = pending.pop() {
+            match part {
+                Self::Forall { .. } | Self::Predicate { .. } => return false,
+                Self::Not(p) => pending.push(p),
+                Self::And(a, b) | Self::Or(a, b) | Self::Implies(a, b) => {
+                    pending.push(a);
+                    pending.push(b);
+                }
+                _ => {}
+            }
+        }
+        true
+    }
     pub(in crate::compiler::verify) fn free_variables(&self) -> Result<BTreeSet<String>> {
         self.storage_weight()?;
         enum Step<'a> {
@@ -177,96 +195,4 @@ impl Formula {
         }
         Ok(variables)
     }
-
-    pub(in crate::compiler::verify) fn substitute(
-        &self,
-        variable: &str,
-        value: &Linear,
-    ) -> Result<Self> {
-        self.storage_weight()?;
-        fn replace(
-            part: &Formula,
-            variable: &str,
-            value: &Linear,
-            work: &mut usize,
-        ) -> Result<Formula> {
-            let cost = match part {
-                Formula::Ge(row) => 1usize.saturating_add(row.terms.len()).saturating_add(
-                    if row.terms.contains_key(variable) {
-                        value.terms.len()
-                    } else {
-                        0
-                    },
-                ),
-                Formula::Predicate { symbol, arguments } => {
-                    arguments
-                        .iter()
-                        .fold(1usize.saturating_add(symbol.len()), |cost, row| {
-                            cost.saturating_add(1 + row.terms.len()).saturating_add(
-                                if row.terms.contains_key(variable) {
-                                    value.terms.len()
-                                } else {
-                                    0
-                                },
-                            )
-                        })
-                }
-                Formula::Forall {
-                    variable: bound, ..
-                } if bound == variable => part.storage_weight()?,
-                _ => 1,
-            };
-            *work = work.saturating_add(cost);
-            if *work > MAX_VALUE_WORK {
-                return Err("quantified substitution work limit reached".into());
-            }
-            Ok(match part {
-                Formula::Ge(row) => Formula::Ge(substitute_row(row, variable, value)?),
-                Formula::Predicate { symbol, arguments } => Formula::Predicate {
-                    symbol: symbol.clone(),
-                    arguments: arguments
-                        .iter()
-                        .map(|row| substitute_row(row, variable, value))
-                        .collect::<Result<_>>()?,
-                },
-                Formula::Not(p) => Formula::Not(Box::new(replace(p, variable, value, work)?)),
-                Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b) => {
-                    let a = Box::new(replace(a, variable, value, work)?);
-                    let b = Box::new(replace(b, variable, value, work)?);
-                    match part {
-                        Formula::And(..) => Formula::And(a, b),
-                        Formula::Or(..) => Formula::Or(a, b),
-                        _ => Formula::Implies(a, b),
-                    }
-                }
-                Formula::Forall {
-                    variable: bound, ..
-                } if bound == variable => part.clone(),
-                Formula::Forall {
-                    variable: bound,
-                    domain,
-                    body,
-                } => {
-                    if value.terms.contains_key(bound) {
-                        return Err("quantified substitution would capture a free variable".into());
-                    }
-                    Formula::Forall {
-                        variable: bound.clone(),
-                        domain: Box::new(replace(domain, variable, value, work)?),
-                        body: Box::new(replace(body, variable, value, work)?),
-                    }
-                }
-                Formula::True | Formula::False => part.clone(),
-            })
-        }
-        replace(self, variable, value, &mut 0)
-    }
-}
-
-fn substitute_row(row: &Linear, variable: &str, value: &Linear) -> Result<Linear> {
-    let mut row = row.clone();
-    if let Some(coefficient) = row.terms.remove(variable) {
-        row = row.add(&value.scale(coefficient)?)?;
-    }
-    Ok(row)
 }

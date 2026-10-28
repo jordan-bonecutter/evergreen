@@ -195,6 +195,9 @@ impl Context<'_> {
         let step = script.take()?;
         match step {
             "omega" | "rfl" | "simp_all" | "decide" => {
+                if let Some(proven) = self.prove_indexed_predicate(goal, subjects, label, line)? {
+                    return Ok(proven);
+                }
                 let parents = self.arithmetic_support_for(goal, subjects, label, line)?;
                 self.proof.evidence.arithmetic(goal.clone(), parents)
             }

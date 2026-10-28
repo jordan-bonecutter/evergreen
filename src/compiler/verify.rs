@@ -14,6 +14,7 @@ type Result<T> = std::result::Result<T, String>;
 mod admissions;
 mod array_history;
 mod array_ports;
+mod array_predicates;
 mod assignments;
 mod uninitialized_arrays;
 
@@ -2458,6 +2459,16 @@ impl<'a> Context<'a> {
             }
         }
         match &e.kind {
+            Kind::Binary(_, _, _)
+                if self
+                    .locals
+                    .logical_bindings
+                    .iter()
+                    .any(|binding| binding.quantified)
+                    && array_predicates::indexed_type_parts(e).is_some() =>
+            {
+                self.eval_indexed_type_predicate(e)
+            }
             Kind::Forall {
                 variable,
                 domain,

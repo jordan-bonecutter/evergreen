@@ -67,8 +67,32 @@ Run [sparse_slots.evg](../examples/sparse_slots.evg),
 ordinary generic storage with the source library's ownership and destructor
 protocol; the compiler has no Rc-specific storage rule.
 
-Range initialization proofs, typed borrowing of an active arbitrary member, and
-cleanup of a dynamically initialized prefix remain unfinished. The general
-move-only Vec still needs those rules. Sparse resource arrays currently separate
+Source universal proofs can now describe slot types over integer ranges:
+
+```evg
+proof empty: forall(i: integer) where (0 <= i && i < 8) {
+    typeof((*buffer)[i]) == shape(unique(usize))
+} by {intro i; omega};
+```
+
+The checker builds a selector definition on demand from the immutable empty
+default and sparse exceptions. Its arguments retain every free integer involved
+in the index and selectors. It creates no element views or owner claims. Bounds
+are separate well-formedness obligations under the quantified domain, including
+for `!=` queries. Balanced Boolean formulas describe the exceptions; capacity is
+not enumerated. A billion-slot version uses the same number of obligations and
+certificates as the eight-slot example.
+
+[sparse_ranges.evg](../examples/sparse_ranges.evg) proves the initial empty range,
+an empty suffix after initializing one slot, and the complete empty range after
+extraction. Alias stores advance the same array's contents identity. An old
+theorem cannot describe the changed buffer. These proofs erase completely in
+native code. The selector's correspondence to storage is checked by the frontend;
+the kernel checks definitions and arithmetic, rather than a complete memory model.
+
+Typed borrowing of an active arbitrary member, resource range loop frames,
+unknown input-union selector summaries, and cleanup of a dynamically initialized
+prefix remain unfinished. The general move-only Vec still needs those rules.
+Sparse resource arrays currently separate
 incompatible branch states rather than merging them into a universal range
 summary. Proof and case work remain bounded by the bootstrap's general budgets.

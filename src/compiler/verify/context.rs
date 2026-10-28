@@ -16,6 +16,7 @@ pub(super) struct Declarations<'a> {
 
 #[derive(Default)]
 pub(super) struct Locals {
+    pub(super) quantified_checks: Vec<Vec<Formula>>,
     pub(super) logical_bindings: Vec<LogicalBinding>,
     pub(super) values: BTreeMap<String, Symbol>,
     pub(super) places: BTreeMap<String, PlaneId>,
@@ -102,6 +103,8 @@ pub(super) struct EntryState {
 
 #[derive(Default)]
 pub(super) struct Arrays {
+    pub(super) type_predicates: BTreeMap<(String, Ty), array_predicates::Selector>,
+    pub(super) predicate_definitions: BTreeMap<String, evidence::DefinitionId>,
     pub(super) reads: BTreeMap<(String, Linear), Symbol>,
     pub(super) history: BTreeMap<String, ArrayHistory>,
     pub(super) read_depth: usize,

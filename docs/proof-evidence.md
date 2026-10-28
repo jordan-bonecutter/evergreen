@@ -356,12 +356,11 @@ changes, or transferred to another plane merely because its value is equal.
 Universal theorems currently require explicit named-proof use. They are not
 inserted into arithmetic paths or the historical arithmetic candidate index.
 Using universal assumptions in function/type contracts, quantified domains,
-indexed memory propositions, and range loop invariants remains unfinished.
+and range loop invariants remains unfinished.
 Generalization through declaration summaries or imported trust with untraced
-context dependencies is rejected. User predicate calls and indexed reads inside
-quantifiers are also rejected: opaque frontend identities must not hide a bound
-argument. Those expressions need structured substitution and immutable memory
-dependencies before these rules can describe initialized resource ranges in Vec.
+context dependencies is rejected. User predicate calls and indexed payload reads
+inside quantifiers remain rejected: opaque frontend identities must not hide a
+bound argument. Indexed type observations have the implementation described below.
 
 The kernel now has structured predicate atoms as groundwork for those memory
 claims. An atom retains an uninterpreted symbol and its integer arguments.
@@ -372,10 +371,35 @@ and admissions. Changing a symbol cannot be justified by equal indices.
 
 Atoms establish no truth by their construction and have no built-in memory or
 ownership meaning. They cannot enter arithmetic paths as fresh Boolean variables.
-The source indexed-memory elaborator still needs to associate observation symbols
-with immutable array contents, retain their plane subjects, and justify selector
-facts from checked storage transitions. Predicate calls inside source quantifiers
-remain rejected until that elaboration is implemented.
+The kernel also checks closed predicate definitions. Every free integer is an
+explicit parameter, including captured array extents, stored indices, and type
+selectors. Definitions can only refer to earlier definitions, cannot be
+redefined, and unfold by a checked implication in either direction. Arguments
+substitute simultaneously; a replacement containing another parameter's name is
+not rewritten again. Capture, arithmetic overflow, and work limits are checked
+before expanded rows are retained. Defining a predicate provides no proof that
+the predicate is true.
+
+Inside source universals, `typeof(array[i]) == T` and `!= T` retain the bound
+index and the immutable array contents identity. The frontend builds a balanced
+selector definition from the known default and sparse exceptions, without
+observing a resource-bearing element at an arbitrary index. Definitions retain
+integer selectors rather than payloads or owning handles. They include the
+array extent. A separate universal obligation checks index bounds under the
+quantifier's domain, including for negative type tests and nested quantifiers.
+`omega` proves the unfolded arithmetic conditions; the kernel checks each
+definition step and universal introduction. Array writes and alias writes use
+fresh contents identities, preventing reuse of an earlier range theorem.
+
+The mapping from verified storage to a selector definition remains a frontend
+trust boundary, like the existing scalar and union observation model. These
+definitions do not independently certify memory transitions or native execution.
+Unknown input-union arrays, general store/join summaries, direct specialization
+into ordinary pointwise `typeof` queries, and typed resource borrowing from range
+claims remain unfinished. Explicit specialization into a nested or restricted
+universal works. Operational reads, empty-buffer narrowing, and destruction still
+perform their own ownership and current-state checks; a false admitted range
+does not erase an initialized owner. See [sparse_ranges.evg](../examples/sparse_ranges.evg).
 
 Explicit proof declarations now store state-subject snapshots separately from
 arithmetic formulas. Canonical claim keys retain operator structure and replace

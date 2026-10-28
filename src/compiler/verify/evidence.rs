@@ -8,7 +8,9 @@
 use super::*;
 use crate::compiler::certificate::TrustId;
 
+mod definitions;
 mod facts;
+pub(super) use definitions::DefinitionId;
 use facts::{FactId, Facts};
 mod rules;
 pub(super) use rules::{HypothesisId, Rule};
@@ -83,6 +85,7 @@ struct Node {
 
 #[derive(Default, Debug)]
 pub(super) struct Evidence {
+    definitions: definitions::Definitions,
     nodes: Vec<Node>,
     facts: Facts,
     sources: BTreeMap<TrustId, NodeId>,
