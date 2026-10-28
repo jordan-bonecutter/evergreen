@@ -10,6 +10,7 @@ impl Context<'_> {
         variable: &str,
         body: &Formula,
         observed: &Observation<'_>,
+        world: Option<state::WorldId>,
     ) -> Result<()> {
         if !matches!(
             body,
@@ -36,10 +37,10 @@ impl Context<'_> {
                         continue;
                     };
                     for (side, contents) in [&key.0, &key.1].into_iter().enumerate() {
-                        if contents
-                            .as_ref()
-                            .is_some_and(|contents| contents.identity == observed.identity)
-                        {
+                        if contents.as_ref().is_some_and(|contents| {
+                            contents.identity == observed.identity
+                                && contents.fields.starts_with(observed.fields)
+                        }) {
                             if let Some(term) = array_predicates::specialization_index(
                                 &arguments[side],
                                 observed.index,
@@ -60,16 +61,19 @@ impl Context<'_> {
         for term in terms {
             self.charge_value_work(body.storage_weight()?)?;
             let instance = body.substitute(variable, &term)?;
-            let Some(interpretation) = self.interpret_value_formula(&instance, observed, 0)? else {
+            let Some(premise) =
+                self.checked_array_specialization_in(theorem, &term, &instance, world)?
+            else {
+                continue;
+            };
+            let Some(interpretation) =
+                self.interpret_value_formula(&instance, observed, theorem, world, 0)?
+            else {
                 continue;
             };
             if !interpretation.is_arithmetic() || self.checked_entails(&interpretation)? {
                 continue;
             }
-            let Some(premise) = self.checked_array_specialization(theorem, &term, &instance)?
-            else {
-                continue;
-            };
             self.import_scalar_observation(instance, interpretation, premise, &[])?;
         }
         Ok(())
@@ -79,6 +83,8 @@ impl Context<'_> {
         &mut self,
         formula: &Formula,
         observed: &Observation<'_>,
+        theorem: evidence::NodeId,
+        world: Option<state::WorldId>,
         depth: usize,
     ) -> Result<Option<Formula>> {
         self.charge_value_work(1)?;
@@ -95,15 +101,17 @@ impl Context<'_> {
                     return Ok(None);
                 };
                 for (side, contents) in [&key.0, &key.1].into_iter().enumerate() {
-                    let Some(contents) = contents
-                        .as_ref()
-                        .filter(|contents| contents.identity == observed.identity)
-                    else {
+                    let Some(contents) = contents.as_ref().filter(|contents| {
+                        contents.identity == observed.identity
+                            && contents.fields.starts_with(observed.fields)
+                    }) else {
                         continue;
                     };
                     if arguments.get(side) == Some(observed.index) {
                         self.charge_value_work(contents.fields.len() + 1)?;
-                        let value = contents.project(observed.value)?;
+                        let Some(value) = observed.project(contents)? else {
+                            continue;
+                        };
                         if !scalar(&value.ty()) {
                             continue;
                         }
@@ -113,16 +121,21 @@ impl Context<'_> {
                             side,
                             observed.index,
                             value,
+                            Source { theorem, world },
                         );
                     }
                 }
                 return Ok(None);
             }
             Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b) => {
-                let Some(a) = self.interpret_value_formula(a, observed, depth + 1)? else {
+                let Some(a) =
+                    self.interpret_value_formula(a, observed, theorem, world, depth + 1)?
+                else {
                     return Ok(None);
                 };
-                let Some(b) = self.interpret_value_formula(b, observed, depth + 1)? else {
+                let Some(b) =
+                    self.interpret_value_formula(b, observed, theorem, world, depth + 1)?
+                else {
                     return Ok(None);
                 };
                 match formula {
@@ -132,7 +145,9 @@ impl Context<'_> {
                 }
             }
             Formula::Not(a) => {
-                let Some(a) = self.interpret_value_formula(a, observed, depth + 1)? else {
+                let Some(a) =
+                    self.interpret_value_formula(a, observed, theorem, world, depth + 1)?
+                else {
                     return Ok(None);
                 };
                 a.not()

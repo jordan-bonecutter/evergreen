@@ -20,6 +20,8 @@ mod boolean_tests;
 #[cfg(test)]
 mod field_relation_tests;
 #[cfg(test)]
+mod historical_observation_tests;
+#[cfg(test)]
 mod history_tests;
 #[cfg(test)]
 mod observation_tests;

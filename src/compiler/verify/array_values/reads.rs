@@ -32,7 +32,7 @@ impl Context<'_> {
         Ok(())
     }
 
-    fn bind_scalar_leaf(
+    pub(super) fn bind_scalar_leaf(
         &mut self,
         contents: &Contents,
         index: &Linear,

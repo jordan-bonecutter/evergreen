@@ -2705,6 +2705,25 @@ Opaque frontend contracts, unresolved recursion, and imported trust remain exclu
 automatic universal introduction where their context cannot be traced. These
 changes do not make the whole frontend formally verified.
 
+Scalar observations can compose range relations through an intermediate array
+that has never been read. The query creates only the requested scalar leaf,
+identified by immutable contents, field path, and index. A checked relation's
+`old` dependencies authorize lookup in its saved proof states. Historical
+specialization checks exact revisions and branch guards; it does not restore
+allocation authority or make an old fact available for current storage. The
+existing frontend interpretation of array contents supplies scalar equations,
+with universal elimination checked by the kernel. No new kernel axiom for Vec
+or copying is involved.
+
+The scalar cache stores identities, not proved values. Every use checks facts in
+its current context; cyclic relations cannot invent a constant, and admissions
+are excluded from automatic lookup. Queries have depth and work limits and never
+enumerate an array's extent. Tests compose three-array relations at a billion
+elements with the same obligation and certificate counts as small arrays, reject
+wrong fields and indices, and retain copied values after the intermediate buffer
+is changed and released. `record_collections.evg` exercises two consecutive Vec
+reallocations followed immediately by a pop and a proof of the original value.
+
 ### Demand-driven ideal aggregate reads
 
 The read-only ideal evaluator borrows immutable array and record views. It imports

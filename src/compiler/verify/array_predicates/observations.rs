@@ -111,9 +111,19 @@ impl Context<'_> {
 
     pub(in crate::compiler::verify) fn checked_array_specialization(
         &mut self,
+        node: evidence::NodeId,
+        term: &Linear,
+        goal: &Formula,
+    ) -> Result<Option<evidence::NodeId>> {
+        self.checked_array_specialization_in(node, term, goal, None)
+    }
+
+    pub(in crate::compiler::verify) fn checked_array_specialization_in(
+        &mut self,
         mut node: evidence::NodeId,
         term: &Linear,
         goal: &Formula,
+        world: Option<state::WorldId>,
     ) -> Result<Option<evidence::NodeId>> {
         let Formula::Forall {
             variable, domain, ..
@@ -125,7 +135,21 @@ impl Context<'_> {
             return Ok(None);
         }
         if let Some(snapshot) = self.proof.evidence.subjects(node).cloned() {
-            let scope = self.logical_claim_scope(node, &snapshot)?;
+            let scope = if let Some(world) = world {
+                let available = self.proof.subjects.availability(
+                    &snapshot,
+                    &self.storage.memory,
+                    Some(world),
+                )?;
+                self.proof
+                    .claim_guards
+                    .get(&node)
+                    .cloned()
+                    .unwrap_or(Formula::True)
+                    .and(available)
+            } else {
+                self.logical_claim_scope(node, &snapshot)?
+            };
             let Some(scoped) = self.guarded_claim_evidence(node, &scope)? else {
                 return Ok(None);
             };

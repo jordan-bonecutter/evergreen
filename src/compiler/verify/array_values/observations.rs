@@ -1,15 +1,36 @@
 //! A checked universal instance can describe an ordinary scalar read. This
 //! frontend interpretation uses exact contents identities and observed indices;
-//! it neither enumerates a range nor invents values for unobserved cells.
+//! it never enumerates a range. Intermediate scalar leaves are queried lazily.
 
 use super::*;
 
 mod compound;
+mod historical;
+
+#[derive(Clone, Copy)]
+struct Source {
+    theorem: evidence::NodeId,
+    world: Option<state::WorldId>,
+}
 
 struct Observation<'a> {
     identity: &'a str,
     index: &'a Linear,
     value: &'a Symbol,
+    fields: &'a [String],
+}
+
+impl Observation<'_> {
+    fn project<'v>(&'v self, contents: &Contents) -> Result<Option<&'v Symbol>> {
+        if contents.identity != self.identity || !contents.fields.starts_with(self.fields) {
+            return Ok(None);
+        }
+        let suffix = Contents {
+            identity: contents.identity.clone(),
+            fields: contents.fields[self.fields.len()..].to_vec(),
+        };
+        suffix.project(self.value).map(Some)
+    }
 }
 
 fn atom(formula: &Formula) -> Option<(&str, &[Linear], bool)> {
@@ -48,14 +69,31 @@ impl Context<'_> {
             identity,
             index,
             value,
+            fields: &[],
         };
-        let candidates = self
-            .proof
-            .claims
-            .iter()
-            .copied()
-            .chain(self.proof.witnesses.values().copied())
-            .collect::<BTreeSet<_>>();
+        self.observe_values(&observed, None)
+    }
+
+    fn observe_values(
+        &mut self,
+        observed: &Observation<'_>,
+        world: Option<state::WorldId>,
+    ) -> Result<()> {
+        let candidates = if let Some(world) = world {
+            let (candidates, work) = self.proof.subjects.historical_candidates(world)?;
+            self.charge_value_work(work)?;
+            candidates
+                .intersection(&self.proof.claims)
+                .copied()
+                .collect()
+        } else {
+            self.proof
+                .claims
+                .iter()
+                .copied()
+                .chain(self.proof.witnesses.values().copied())
+                .collect::<BTreeSet<_>>()
+        };
         self.charge_value_work(candidates.len())?;
         for theorem in candidates {
             self.charge_value_work(self.proof.evidence.claim(theorem)?.storage_weight()?)?;
@@ -64,7 +102,7 @@ impl Context<'_> {
             else {
                 continue;
             };
-            self.observe_compound_values(theorem, &variable, &body, &observed)?;
+            self.observe_compound_values(theorem, &variable, &body, observed, world)?;
             let mut pending = vec![(&*body, Vec::new())];
             while let Some((part, path)) = pending.pop() {
                 self.charge_value_work(1 + path.len())?;
@@ -84,39 +122,49 @@ impl Context<'_> {
                     continue;
                 };
                 for (side, contents) in [&key.0, &key.1].into_iter().enumerate() {
-                    let Some(contents) = contents
-                        .as_ref()
-                        .filter(|contents| contents.identity == identity)
-                    else {
+                    let Some(contents) = contents.as_ref() else {
                         continue;
                     };
                     self.charge_value_work(contents.fields.len() + 1)?;
-                    let value = contents.project(value)?;
+                    let Some(value) = observed.project(contents)? else {
+                        continue;
+                    };
                     if !scalar(&value.ty()) {
                         continue;
                     }
-                    let Some(term) =
-                        array_predicates::specialization_index(&arguments[side], index, &variable)?
+                    let Some(term) = array_predicates::specialization_index(
+                        &arguments[side],
+                        observed.index,
+                        &variable,
+                    )?
                     else {
                         continue;
                     };
                     self.charge_value_work(part.storage_weight()?)?;
                     let claim = part.substitute(&variable, &term)?;
-                    let Some(interpretation) =
-                        self.observed_scalar_equality(&claim, &key, side, index, value)?
+                    self.charge_value_work(body.storage_weight()?)?;
+                    let instance = body.substitute(&variable, &term)?;
+                    // Validate the source before following any of its old-state
+                    // dependencies. A stale or admitted range grants no lookup.
+                    let Some(premise) =
+                        self.checked_array_specialization_in(theorem, &term, &instance, world)?
+                    else {
+                        continue;
+                    };
+                    let Some(interpretation) = self.observed_scalar_equality(
+                        &claim,
+                        &key,
+                        side,
+                        observed.index,
+                        value,
+                        Source { theorem, world },
+                    )?
                     else {
                         continue;
                     };
                     if self.checked_entails(&interpretation)? {
                         continue;
-                    };
-                    self.charge_value_work(body.storage_weight()?)?;
-                    let instance = body.substitute(&variable, &term)?;
-                    let Some(premise) =
-                        self.checked_array_specialization(theorem, &term, &instance)?
-                    else {
-                        continue;
-                    };
+                    }
                     self.import_scalar_observation(claim, interpretation, premise, &path)?;
                 }
             }
@@ -168,6 +216,7 @@ impl Context<'_> {
         side: usize,
         index: &Linear,
         observed: &Symbol,
+        source: Source,
     ) -> Result<Option<Formula>> {
         let Some((symbol, arguments, negated)) = atom(claim) else {
             return Ok(None);
@@ -186,7 +235,13 @@ impl Context<'_> {
         let equality = match contents {
             None => self.scalar_word_equality(observed, &arguments[other])?,
             Some(contents) => {
-                let Some(value) = self.captured_scalar_value(contents, &arguments[other])? else {
+                let Some(value) = self.captured_scalar_value(
+                    contents,
+                    &arguments[other],
+                    &observed.ty(),
+                    source,
+                )?
+                else {
                     return Ok(None);
                 };
                 self.symbol_equal(observed, &value)?
@@ -200,6 +255,8 @@ impl Context<'_> {
         &mut self,
         contents: &Contents,
         index: &Linear,
+        ty: &Ty,
+        source: Source,
     ) -> Result<Option<Symbol>> {
         let mut identity = contents.identity.clone();
         loop {
@@ -244,6 +301,16 @@ impl Context<'_> {
                         return Ok(None);
                     };
                     identity = base.clone();
+                }
+                None if !self.arrays.value_literals.contains_key(&identity) => {
+                    return self
+                        .historical_scalar_value(
+                            &contents.with_identity(identity),
+                            index,
+                            ty,
+                            source,
+                        )
+                        .map(Some);
                 }
                 _ => return Ok(None),
             }

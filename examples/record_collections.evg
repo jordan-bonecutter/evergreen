@@ -16,6 +16,8 @@ fn main() -> usize {
     proof _: same_value(popped, wanted);
     v.push(popped);
     v = v.reallocate_filled(5, initial);
+    // No intermediate read is needed to compose the two copy contracts.
+    v = v.reallocate_filled(9, initial);
     let after = v.pop();
     proof _: same_value(after, wanted);
     if after.x == 42 && after.valid {42} else {1}
