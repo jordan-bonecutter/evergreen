@@ -76,6 +76,23 @@ impl Scope {
 }
 
 impl Context<'_> {
+    pub(super) fn note_cleanup_divergence(&mut self, method: &str) {
+        self.execution.partial_execution |= self
+            .declarations
+            .functions
+            .get(method)
+            .is_some_and(|function| function.partial);
+    }
+
+    pub(super) fn drop_receiver_consumed(&self) -> bool {
+        self.execution.dropping
+            && self
+                .locals
+                .places
+                .get("self")
+                .is_some_and(|plane| self.storage.memory.get(*plane).is_err())
+    }
+
     pub(super) fn finish_scope(&mut self, f: &Function) -> Result<()> {
         let mut names = f.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
         names.extend(
@@ -288,6 +305,7 @@ impl Context<'_> {
             .drop_target
             .clone()
             .ok_or("cleanup method has no receiver type")?;
+        self.note_cleanup_divergence(&method.name);
         let saved = Scope::enter(self, &method, receiver);
         let checked = (|| -> Result<BTreeSet<PlaneId>> {
             self.capture_old(&method)?;
@@ -375,3 +393,6 @@ impl Context<'_> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

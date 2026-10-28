@@ -58,3 +58,73 @@ fn read_only_destructors_check_the_actual_reference_aliases() {
     let error = verify(&source.replace("= 41;", "= usize::MAX;")).unwrap_err();
     assert!(error.contains("precondition of needs_bound"), "{error}");
 }
+
+#[test]
+fn potentially_divergent_cleanup_propagates_through_cached_summaries_and_aggregates() {
+    let spin =
+        "type Spin struct {} impl Drop for Spin {fn drop(self) {while true invariant(true) {}}}";
+    for (declarations, binding) in [
+        ("", "let value = Spin {};"),
+        (
+            "type Envelope struct {value: Spin}",
+            "let value = Envelope {value: Spin {}};",
+        ),
+        (
+            "type Envelope struct {value: Spin} impl Drop for Envelope {fn drop(self) {}}",
+            "let value = Envelope {value: Spin {}};",
+        ),
+        ("", "let value: [Spin; 2] = [Spin {}, Spin {}];"),
+    ] {
+        let source = format!("{spin} {declarations} fn produce() -> usize ensures(result == 42) {{{binding} 42}} fn main() -> usize {{produce()}}");
+        let (program, bundle) = prove(&source).unwrap();
+        for function in ["produce", "main"] {
+            assert!(
+                program
+                    .potentially_diverging_functions()
+                    .any(|name| name == function),
+                "{function}: {source}"
+            );
+        }
+        assert_eq!(
+            verify_with_certificate(&source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let invalid = source.replace(
+            "fn main() -> usize {produce()}",
+            "fn main() -> usize {proof invalid: produce() == 42; 42}",
+        );
+        assert!(verify(&invalid).unwrap_err().contains("divergent"));
+    }
+    let source = format!("{spin} fn main() -> usize {{let value = Spin {{}}; 42}}");
+    assert!(verify(&source)
+        .unwrap()
+        .run()
+        .unwrap_err()
+        .contains("limit reached"));
+}
+
+#[test]
+fn empty_arrays_and_borrows_do_not_import_divergent_element_cleanup() {
+    let source = "type Spin struct {} impl Drop for Spin {fn drop(self) {while true invariant(true) {}}} fn observe(value: &Spin) -> usize {42} fn produce() -> usize ensures(result == 42) {let values: [Spin; 0] = []; 42} fn main() -> usize {proof safe: produce() == 42; produce()}";
+    let (program, bundle) = prove(source).unwrap();
+    for name in ["observe", "produce", "main"] {
+        assert!(
+            !program
+                .potentially_diverging_functions()
+                .any(|function| function == name),
+            "{name}"
+        );
+    }
+    let (value, events) = program.run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert!(events.is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    crate::compiler::native::emit(&program).unwrap();
+}

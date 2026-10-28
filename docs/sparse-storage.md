@@ -154,8 +154,12 @@ nominal type invariant. `Slot<T>::get` uses its initialized-slot guarantee;
 frees its empty backing storage. Clearing the slot while retaining the parent
 is rejected because the parent still requires it to be initialized. Scalar-only
 quantified invariant transport across different record roots remains conservative;
-this example's range refers to the actual backing plane. General prefix cleanup
-in Drop bodies is still unfinished.
+this example's range refers to the actual backing plane.
+[range_drop.evg](../examples/range_drop.evg) now implements `Drop` for an owned
+initialized slot: decompose the parent, extract the payload, free the empty
+buffer, and let the payload's own cleanup run once. Before decomposition the
+parent still requires the slot to be initialized, so projected moves are rejected.
+General prefix cleanup in Drop bodies still needs resource loop frames.
 
 [range_store.evg](../examples/range_store.evg) proves initialized-prefix and
 empty-suffix transitions for generic push and pop. A fresh store selector records

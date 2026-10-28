@@ -95,7 +95,11 @@ impl<'a> Context<'a> {
         if self.execution.phase == Phase::Runtime && !self.storage.opened_planes.is_empty() {
             return Err("moves and drops are forbidden while invariants are open".into());
         }
+        let consumed_member = name == "move"
+            && self.drop_receiver_consumed()
+            && matches!(args, [argument] if expected.is_some_and(|target| self.union_move_place(argument, target)));
         if self.execution.dropping
+            && !consumed_member
             && !matches!(args, [argument] if matches!(&argument.kind, Kind::Name(name) if name != "self"))
         {
             return Err(

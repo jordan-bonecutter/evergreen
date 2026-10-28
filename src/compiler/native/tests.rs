@@ -135,7 +135,7 @@ fn execute_test_binary_to(
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[test]
-fn native_range_slot_loans_follow_extracted_payloads() {
+fn native_resource_ranges_and_cleanup_match_interpreter() {
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
@@ -154,6 +154,8 @@ fn native_range_slot_loans_follow_extracted_payloads() {
         include_str!("../../../examples/range_index.evg"),
         include_str!("../../../examples/range_type.evg"),
         include_str!("../../../examples/range_store.evg"),
+        include_str!("../../../examples/range_drop.evg"),
+        include_str!("../../../examples/drop_loop.evg"),
     ]
     .into_iter()
     .enumerate()

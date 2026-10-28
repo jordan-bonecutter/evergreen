@@ -1,0 +1,29 @@
+type Counter struct {count: &usize, limit: usize} where (
+    integer(*self.count) + integer(self.limit) <= integer(usize::MAX)
+);
+
+impl Drop for Counter {
+    fn drop(self)
+    modifies(self.count)
+    ensures(integer(*self.count) == integer(old(*self.count)) + integer(self.limit)) {
+        let Self {count, limit} = self;
+        let remaining = limit;
+        ideal let total = integer(*count) + integer(limit);
+        while remaining > 0
+            invariant(integer(*count) + integer(remaining) == total
+                && integer(*count) + integer(remaining) <= integer(usize::MAX))
+            modifies(count, &remaining)
+            decreases(remaining)
+        {
+            *count = *count + 1;
+            remaining = remaining - 1;
+        }
+    }
+}
+
+fn main() -> usize ensures(result == 42) {
+    let count: usize = 39;
+    let counter = Counter {count: &count, limit: 3};
+    drop(counter);
+    count
+}

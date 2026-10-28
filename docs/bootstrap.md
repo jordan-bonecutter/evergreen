@@ -222,14 +222,24 @@ records still restrict field access to their defining module. A destructor can
 also consume its entire `self` this way, without running a second parent Drop.
 After decomposition, complete local bindings can be moved or explicitly dropped;
 ordinary ownership, liveness, and effect checks still apply. `drop(self)` and
-moving the receiver directly remain rejected. Record construction, other
-destructuring, and ownership-carrying helper calls remain unsupported in Drop
-bodies. The invariant-update rules are unchanged. `Drop` postconditions
+moving the receiver directly remain rejected. After a complete receiver pattern,
+a projected raw-union extraction is permitted when its active member, matching
+shape, and write authority are proved. This lets source cleanup empty and free
+an owning slot; see `examples/range_drop.evg`. Other record construction and
+destructuring remain unsupported in Drop bodies. The invariant-update rules are unchanged. `Drop` postconditions
 use entry parameter bindings like other functions: `*self.target` follows that
 entry pointer into current memory, while `old(*self.target)` reads entry memory.
 `examples/drop_effects.evg` checks caller effects and saved return values;
 `examples/drop_children.evg` checks final child fields. These are generic cleanup
 examples, not an RC ownership or allocation implementation.
+
+Drop bodies may use runtime loops with the ordinary invariant and modifies
+checks. A decreases clause proves the loop's ranking step; omitting it marks
+cleanup and its callers as potentially divergent. Cached cleanup summaries
+preserve that distinction, including through child fields and nonempty arrays.
+`examples/drop_loop.evg` checks a finite destructor loop. Resource-array loop
+frames are still required before a destructor can consume an arbitrary prefix
+of owning elements.
 
 `evg run stdlib/counter.evg examples/drop_count.evg` demonstrates the type boundary:
 the parent's invariant requires a positive count while its body runs; after the

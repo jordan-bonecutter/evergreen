@@ -1,0 +1,42 @@
+// The initialized-slot promise belongs to the wrapper until decomposition.
+type Slot<T> struct {data: unique(T | shape(T), 1)} where (
+    fact initialized = forall(i: integer) where(0 <= i && i < 1) {
+        typeof((*self.data)[i]) == T
+    };
+    initialized
+);
+
+impl<T> Slot<T> {
+    fn new(value: T) -> Self {
+        let data: unique(T | shape(T), 1) = alloc(1, shape(T));
+        (*data)[0] = value;
+        Self {data: data}
+    }
+}
+
+impl<T> Drop for Slot<T> {
+    fn drop(self) {
+        // The parent is gone before its initialized-slot fact changes.
+        let Self {data} = self;
+        let value: T = move((*data)[0]);
+        let empty: unique(shape(T), 1) = data;
+        drop(empty);
+        // value receives normal cleanup exactly once, including its own Drop.
+    }
+}
+
+type Resource struct {value: unique(usize)}
+impl Drop for Resource {
+    fn drop(self) {
+        // The owned field receives normal cleanup after this body.
+    }
+}
+
+fn main() -> usize {
+    let value: unique(usize) = alloc(42);
+    let payload = &*value;
+    let slot = Slot::<Resource>::new(Resource {value: value});
+    let answer = *payload;
+    drop(slot);
+    answer
+}

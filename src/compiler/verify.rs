@@ -567,7 +567,20 @@ fn destructor_body(body: &[Statement]) -> bool {
         }
         Statement::Proof { proposition, .. } => destructor_expression(proposition),
         Statement::Update { body, .. } => destructor_body(body),
-        Statement::While { .. } => false,
+        Statement::While {
+            condition,
+            invariant,
+            modifies,
+            decreases,
+            body,
+            ..
+        } => {
+            destructor_expression(condition)
+                && destructor_expression(invariant)
+                && modifies.iter().all(destructor_expression)
+                && decreases.as_ref().is_none_or(destructor_expression)
+                && destructor_body(body)
+        }
     })
 }
 

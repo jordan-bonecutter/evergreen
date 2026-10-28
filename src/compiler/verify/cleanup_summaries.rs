@@ -83,6 +83,7 @@ impl Context<'_> {
             };
             if let Some(method) = record.and_then(|name| destructors.get(name)) {
                 if methods.insert(method.name.as_str()) {
+                    self.note_cleanup_divergence(&method.name);
                     let safety = self.import_summary(&method.name, summaries::Aspect::Safety)?;
                     self.proof.uses.extend(safety);
                 }

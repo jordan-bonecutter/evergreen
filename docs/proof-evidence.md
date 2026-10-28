@@ -409,6 +409,13 @@ owning payload is moved once, and the empty backing buffer is freed. An empty
 range wrapper over a billion-slot buffer uses the same obligation and certificate
 count as its eight-slot version.
 
+[range_drop.evg](../examples/range_drop.evg) implements cleanup of that owned
+slot directly in Evergreen. A complete pattern consumes the destructor receiver;
+only then may `move` extract a projected union member into its matching shape.
+Ordinary member, liveness, and write-footprint checks remain in force. The empty
+backing buffer is freed, and the moved payload receives normal local cleanup.
+A borrowed payload slot requires its own declared write footprint even inside Drop.
+
 This does not finish general invariant transport: scalar-only quantified facts
 captured under an initial `self` root cannot yet be named through a different
 borrowed parameter root. Referenced array ranges retain their actual backing
@@ -416,6 +423,16 @@ plane and work in the example above. Capacity-conditional pointer observations,
 resource range loop frames, and general destructor prefix cleanup remain pending.
 Type-invariant imports retain the same unresolved frontend substitution boundary
 as other contract imports.
+
+Destructor bodies can now use ordinary `while` statements with the same entry,
+preservation, exit, frame, and optional ranking checks as runtime functions.
+[drop_loop.evg](../examples/drop_loop.evg) proves a finite counter update during
+cleanup. An unmeasured loop marks Drop as potentially divergent, and both actual
+cleanup and cached cleanup summaries propagate that classification to callers,
+including aggregate cleanup. Such callers cannot be used as total proof
+computations. Empty arrays and borrowed references do not run element Drop and
+do not inherit its divergence. Consuming surrounding owners in a loop still
+requires a resource frame; enabling destructor syntax does not provide one.
 
 Function and loop contract instantiation remains an explicitly unresolved
 frontend import, just as scalar contract instantiation does. Logical clauses

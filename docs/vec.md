@@ -66,6 +66,9 @@ initialized prefix. Generic single-slot prefix/suffix transitions now work in
 pop extracts the last owner, and explicit frame proofs preserve the untouched
 ranges. These are general source-level storage operations; the existing Vec
 implementation has not yet switched to that representation.
+[range_drop.evg](../examples/range_drop.evg) provides source cleanup for one
+initialized owning slot. Destructor loops now use the ordinary loop checker,
+but iterating over a changing family of owners still needs a resource frame.
 
 Run [vec_generic.evg](../examples/vec_generic.evg) with:
 
