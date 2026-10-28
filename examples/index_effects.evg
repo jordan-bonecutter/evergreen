@@ -1,0 +1,18 @@
+fn replace(data: &[usize; 1], calls: &usize) -> usize
+where(*calls < usize::MAX)
+modifies(data, calls)
+ensures(result == 0 && (*data)[0] == 41 && *calls == old(*calls) + 1) {
+    *data = [41];
+    *calls = *calls + 1;
+    0
+}
+
+fn main() -> usize {
+    let data: [usize; 1] = [usize::MAX];
+    let calls: usize = 0;
+    // Select the place, evaluate the index once, then read the current element.
+    let value = data[replace(&data, &calls)];
+    proof once: calls == 1;
+    proof current: value == 41;
+    if calls == 1 {value + 1} else {0}
+}

@@ -1074,8 +1074,13 @@ cargo run -- build examples/native_layouts.evg -o /tmp/native-layouts
 `examples/native_aggregates.evg` compiles owned local records, complete patterns,
 field borrows, fixed arrays, and stable-layout replacement. Value reads preserve
 snapshot semantics when later expression evaluation can mutate the source.
-Pure stored indexing can read directly; effectful index expressions retain the
-value copy. Native tests cover this ordering and nested arrays. Destructor cleanup still needs its own lowering rules.
+Stored indexing evaluates the base place, evaluates the index once, and then
+reads the current element. An index expression may modify that array; its read
+observes the new contents. Indexing an array rvalue or an explicit prior copy
+instead reads that separate value. The checker, interpreter, and native backend
+share the same stored-place classification. See `examples/index_effects.evg`.
+Native tests cover this ordering and nested arrays. Destructor cleanup still
+needs its own lowering rules.
 
 Fixed aggregates can also be passed and returned by value. Arguments are copied
 before later arguments are evaluated; returned values are copied into storage

@@ -149,6 +149,12 @@ the single runtime write. Modifying helpers and destructors carry guarded write
 grants, checked against the caller's authority without admitted premises.
 Actual-body rechecking preserves conditional ports through nested calls.
 
+A stored array read resolves its base place before evaluating its index, then
+reads the element from the current state after index effects. It never uses an
+earlier array snapshot to justify that read's type or arithmetic safety. Explicit
+copies and array rvalues retain their value semantics. The interpreter and native
+backend use this same distinction, including through pointers and nested fields.
+
 Observing reference-array cells in only one branch adds sparse metadata to that
 array's unchanged contents identity. Joins merge only observed cells, recursively
 through nested arrays and records; they reject differences in actual stored

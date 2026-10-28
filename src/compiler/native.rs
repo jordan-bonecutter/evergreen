@@ -38,31 +38,6 @@ fn machine() -> Type {
     Type::Machine(MachineInt::parse("isize").expect("isize"))
 }
 
-// A stored read may avoid a value copy only when computing the path cannot
-// change its contents. Calls are kept on the snapshot path, including helpers.
-fn no_calls(e: &Expr) -> bool {
-    match &e.kind {
-        Kind::Call(name, args) if MachineInt::parse(name).is_some() => args.iter().all(no_calls),
-        Kind::Call(..) | Kind::Block(..) => false,
-        Kind::Unary(_, x) | Kind::Field(x, _) | Kind::FactAt(x, _) => no_calls(x),
-        Kind::Binary(_, a, b) | Kind::Index(a, b) => no_calls(a) && no_calls(b),
-        Kind::If(c, a, b) => no_calls(c) && no_calls(a) && no_calls(b),
-        Kind::Array(items) => items.iter().all(no_calls),
-        Kind::Record(_, fields) => fields.iter().all(|(_, e)| no_calls(e)),
-        _ => true,
-    }
-}
-
-fn stored(e: &Expr) -> bool {
-    match &e.kind {
-        Kind::Name(_) => true,
-        Kind::Field(base, _) => stored(base),
-        Kind::Index(base, index) => stored(base) && no_calls(index),
-        Kind::Unary(op, x) if op == "*" => no_calls(x),
-        _ => false,
-    }
-}
-
 fn patch(code: &mut [u8], displacement: usize, target: usize) -> Result<()> {
     let relative = i32::try_from(target as i64 - (displacement + 4) as i64)
         .map_err(|_| "native branch displacement overflow")?;
@@ -348,7 +323,7 @@ impl Emitter<'_> {
         match &e.kind {
             Kind::Name(name) => self.load(name),
             Kind::Field(base, name) => {
-                let direct = stored(base);
+                let direct = base.stored_place();
                 let ty = if direct {
                     self.address(base)?
                 } else {
@@ -364,7 +339,7 @@ impl Emitter<'_> {
                 Ok(field.ty)
             }
             Kind::Index(base, index) => {
-                let mode = if stored(base) && no_calls(index) {
+                let mode = if base.stored_place() {
                     ReadMode::Place
                 } else {
                     ReadMode::Storage
@@ -657,7 +632,7 @@ impl Emitter<'_> {
                 ty
             }
             Kind::Index(base, index) => {
-                let borrowed = stored(base) && no_calls(index);
+                let borrowed = base.stored_place();
                 let ty = self.index_address(
                     base,
                     index,

@@ -39,6 +39,8 @@ mod footprints;
 mod guarded_references;
 mod heap;
 mod ideal;
+#[cfg(test)]
+mod index_order_tests;
 mod layout_queries;
 mod literals;
 mod logical_contracts;
@@ -2413,7 +2415,10 @@ impl<'a> Context<'a> {
             }
             Kind::Unary(op, pointer) if op == "*" => self.dereference(pointer, e.line),
             Kind::Index(base, index) => {
-                if places::through_pointer(e) {
+                // Pure local reads can use the immutable array model without
+                // materializing nested places. Effects and pointer paths must
+                // observe storage after evaluating the complete index path.
+                if e.stored_place() && (places::through_pointer(e) || !e.pure_read()) {
                     let reference = self.place_reference(e)?;
                     return self.read_reference(&reference, e.line);
                 }

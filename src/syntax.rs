@@ -203,6 +203,31 @@ impl Expr {
         }
     }
 
+    /// A stored projection keeps its base address while evaluating indices.
+    /// Calls inside an index do not turn the containing value into a copy.
+    pub(crate) fn stored_place(&self) -> bool {
+        match &self.kind {
+            Kind::Name(_) => true,
+            Kind::Field(base, _) | Kind::Index(base, _) => base.stored_place(),
+            Kind::Unary(op, _) if op == "*" => true,
+            _ => false,
+        }
+    }
+
+    /// Simple reads contain no calls, statement blocks, or constructed
+    /// temporaries whose cleanup could change surrounding storage.
+    pub(crate) fn pure_read(&self) -> bool {
+        match &self.kind {
+            Kind::Name(_) | Kind::Number(_) | Kind::Constant(..) | Kind::Bool(_) => true,
+            Kind::Unary(_, value) | Kind::Field(value, _) | Kind::FactAt(value, _) => {
+                value.pure_read()
+            }
+            Kind::Binary(_, a, b) | Kind::Index(a, b) => a.pure_read() && b.pure_read(),
+            Kind::If(c, a, b) => c.pure_read() && a.pure_read() && b.pure_read(),
+            _ => false,
+        }
+    }
+
     // Check actual tree depth as well as parser recursion: a flat sequence of
     // left-associative operators or projections otherwise builds an unbounded
     // tree, including recursively dropped boxes on a parse error.

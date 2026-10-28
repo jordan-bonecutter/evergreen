@@ -135,6 +135,56 @@ fn execute_test_binary_to(
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[test]
+fn native_stored_index_reads_observe_current_contents_and_preserve_rvalue_copies() {
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "evergreen-index-order-{}-{stamp}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).unwrap();
+    let source = include_str!("../../../examples/index_effects.evg");
+    let pointer = source.replace(
+        "let value = data[replace(&data, &calls)];",
+        "let view = &data; let value = (*view)[replace(view, &calls)];",
+    );
+    let snapshot = source
+        .replace("[usize::MAX]", "[0]")
+        .replace("proof current: value == 41;", "proof snapshot: value == 0;")
+        .replace("value + 1", "value + 42");
+    let rvalue = snapshot.replace(
+        "let value = data[replace(&data, &calls)];",
+        "let value = (if true {data} else {data})[replace(&data, &calls)];",
+    );
+    let copied = snapshot.replace(
+        "let value = data[replace(&data, &calls)];",
+        "let saved = data; let value = saved[replace(&data, &calls)];",
+    );
+    let cleanup = include_str!("../../../examples/index_cleanup.evg");
+    for (index, source) in [source, &pointer, &rvalue, &copied, cleanup]
+        .into_iter()
+        .enumerate()
+    {
+        let program = verify(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        let status = execute_test_binary(
+            &directory.join(index.to_string()),
+            &emit(&program).unwrap(),
+            source,
+        );
+        assert_eq!(status.code(), Some(42), "{source}");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
 fn native_execution_agrees_with_the_interpreter() {
     use std::{
         fs,

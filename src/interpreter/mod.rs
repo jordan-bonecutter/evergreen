@@ -1136,6 +1136,10 @@ impl Evaluator<'_> {
                 project(self.memory.read(r)?, &path).cloned()
             }
             Kind::Index(base, index) => {
+                if e.stored_place() {
+                    let (reference, path) = self.location(e, env)?;
+                    return project(self.memory.read(reference)?, &path).cloned();
+                }
                 let Value::Array(_, items) = self.storage(base, env)? else {
                     return Err("expected array storage".into());
                 };
