@@ -134,8 +134,12 @@ impl Context<'_> {
         }
         let literal =
             constant_index(index).and_then(|i| items.as_ref().and_then(|items| items.get(i)));
-        if !cells.contains_key(index) && (literal.is_none() || self.history_element(&element)) {
-            if !self.history_element(&element) && !self.ty_has_reference(&element) {
+        let input_union =
+            self.arrays.inputs.contains(&identity) && matches!(element.as_ref(), Ty::Union(_));
+        if input_union
+            || !cells.contains_key(index) && (literal.is_none() || self.history_element(&element))
+        {
+            if !self.history_element(&element) && !self.ty_has_reference(&element) && !input_union {
                 return Err("borrowing opaque array elements requires scalars or reference-free records without runtime cleanup".into());
             }
             let value = self.read_array(&element, &identity, index, items.as_deref(), &cells)?;

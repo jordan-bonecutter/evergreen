@@ -381,6 +381,7 @@ impl Context<'_> {
         if self.execution.materializing_input {
             // This is an existing caller plane being observed for the first
             // time, not a source allocation or a change to its contents.
+            self.record_input_presence(plane)?;
             return Ok(plane);
         }
         self.record_plane_presence(plane)?;

@@ -403,8 +403,8 @@ Function and loop contract instantiation remains an explicitly unresolved
 frontend import, just as scalar contract instantiation does. Logical clauses
 retain their actual admission parents and do not become arithmetic assumptions.
 Complete independent certification of these state substitutions remains pending.
-Universal nominal type invariants, quantified domains, operational reads from
-unknown input-union selectors, and resource range loop frames remain unfinished.
+Universal nominal type invariants, quantified domains, symbolic resource input
+selection, and resource range loop frames remain unfinished.
 Generalization through declaration summaries or imported trust with untraced
 context dependencies is rejected. User predicate calls and indexed payload reads
 inside quantifiers remain rejected: opaque frontend identities must not hide a
@@ -458,11 +458,28 @@ false-elimination rule. The domain hypothesis is discharged by universal
 introduction; it cannot establish a slot type outside that domain or escape
 into the surrounding state.
 
-General store/join summaries, connecting an opaque selector to an observed cell,
-direct specialization into ordinary pointwise `typeof` queries, and typed
-resource borrowing from range claims remain unfinished. Explicit specialization
-into a nested or restricted
-universal works. Operational reads, empty-buffer narrowing, and destruction still
+At a demanded constant input index, the frontend can now link a selector
+instance to the observed cell's active-member condition. It specializes a live,
+closed range proof with no admissions or pending summaries, proves the domain
+at the point of use, then applies an explicit frontend interpretation implication
+using kernel `ForallElim` and `ImpElim`. Affine indices such as `2 * i` require
+an exact integral specialization. Negative selectors retain their precise
+meaning: excluding one member does not select another in a three-member union.
+This link remains a frontend memory import, not an independent kernel memory
+certificate. No owner is created by proving a selector.
+
+[range_slots.evg](../examples/range_slots.evg) borrows an initialized owning
+slot, extracts its real owner, and frees the now-empty backing buffer. A
+reference into the extracted payload survives; a typed slot view cannot read
+a cleared slot. Unrelated mutations invalidate a conditional range's subjects;
+an explicit proof may derive a guarantee independent of that condition before
+it changes. Deferred payload planes retain their active-member presence guard,
+independently of the branch that first observes them.
+
+General store/join summaries and symbolic resource input identities remain
+unfinished. Symbolic indices cannot manufacture independent owners for possibly
+aliased slots. Explicit specialization into a nested or restricted universal
+works. Operational reads, empty-buffer narrowing, and destruction still
 perform their own ownership and current-state checks; a false admitted range
 does not erase an initialized owner. See [sparse_ranges.evg](../examples/sparse_ranges.evg).
 Its generic allocator now advertises the initial empty range as a checked

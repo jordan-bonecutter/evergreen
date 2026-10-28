@@ -51,8 +51,11 @@ uninitialized storage and empty-buffer conversion are also implemented; see
 slot's real plane and rechecks its active type on use. Range initialization
 postconditions can now describe the known-empty result of a source allocator.
 Opaque input-union range contracts can be forwarded and restricted without
-materializing slots. Operational selector observations, resource range loop
-frames, and cleanup of a dynamically initialized prefix remain unfinished.
+materializing slots. Demanded constant input cells can use those range proofs
+for typed member loans and checked extraction; see
+[range_slots.evg](../examples/range_slots.evg). Symbolic resource input identities,
+resource range loop frames, and cleanup of a dynamically initialized prefix
+remain unfinished.
 
 Run [vec_generic.evg](../examples/vec_generic.evg) with:
 

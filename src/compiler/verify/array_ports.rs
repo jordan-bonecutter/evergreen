@@ -197,6 +197,36 @@ impl Context<'_> {
     // nominal invariants need their own revision-dependent evidence.
     pub(super) fn assume_input_bounds(&mut self, value: &Symbol) -> Result<()> {
         self.charge_value_work(1)?;
+        if let Symbol::Union {
+            members,
+            active,
+            payloads,
+        } = value
+        {
+            self.assume(&Formula::Ge(active.clone()))?;
+            self.assume(&Formula::Ge(
+                Linear::number(members.len() as i128 - 1).sub(active)?,
+            ))?;
+            let base = self.proof.paths.clone();
+            let mut alternatives = paths::Paths::default();
+            for (index, payload) in payloads.iter().enumerate() {
+                let Some(payload) = payload else { continue };
+                self.proof.paths = extend(
+                    &base,
+                    &equal(active, &Linear::number(index as i128))?,
+                    false,
+                    self.session,
+                    &mut self.work.value_work,
+                )?;
+                let result = self.assume_input_bounds(payload);
+                alternatives.extend(self.proof.paths.clone());
+                self.proof.paths = base.clone();
+                result?;
+            }
+            self.proof.paths =
+                paths::bounded(alternatives, self.session, &mut self.work.value_work)?;
+            return Ok(());
+        }
         if !self.ty_has_reference(&value.ty()) {
             return self.assume_element_type(value);
         }

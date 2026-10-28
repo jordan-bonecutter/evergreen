@@ -174,7 +174,7 @@ impl Context<'_> {
                 self.collect_subjects(&arguments[0], snapshot, depth + 1)?
                     .map(|key| ClaimKey::Unary(name.clone(), Box::new(key)))
             }
-            Kind::Call(name, _) if name == "shape" => {
+            Kind::Call(name, _) if matches!(name.as_str(), "shape" | "unique" | "shared") => {
                 self.type_literal(expression).map(ClaimKey::Type)
             }
             Kind::Call(_, arguments) => {

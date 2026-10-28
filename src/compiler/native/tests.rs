@@ -135,6 +135,33 @@ fn execute_test_binary_to(
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[test]
+fn native_range_slot_loans_follow_extracted_payloads() {
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "evergreen-range-slots-{}-{stamp}",
+        std::process::id(),
+    ));
+    fs::create_dir(&directory).unwrap();
+    let source = include_str!("../../../examples/range_slots.evg");
+    let program = verify(source).unwrap();
+    let status = execute_test_binary(
+        &directory.join("range_slots"),
+        &emit(&program).unwrap(),
+        source,
+    );
+    assert_eq!(status.code(), Some(42));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
 fn native_stored_index_reads_observe_current_contents_and_preserve_rvalue_copies() {
     use std::{
         fs,

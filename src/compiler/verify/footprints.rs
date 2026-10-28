@@ -4,6 +4,21 @@
 use super::*;
 
 impl Context<'_> {
+    pub(super) fn record_input_presence(&mut self, plane: PlaneId) -> Result<()> {
+        // Input storage existed before the branch that first observed it.
+        // A union payload still exists only under its active-member guard.
+        let guard = self
+            .storage
+            .allocation_guard
+            .clone()
+            .unwrap_or(Formula::True);
+        self.charge_value_work(guard.storage_weight()?)?;
+        if guard != Formula::True {
+            self.storage.presence.insert(plane, guard);
+        }
+        Ok(())
+    }
+
     pub(super) fn record_plane_presence(&mut self, plane: PlaneId) -> Result<()> {
         let guard = self
             .storage

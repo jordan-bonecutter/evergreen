@@ -1,0 +1,29 @@
+fn first<T, const N: usize>(data: &[T | shape(T); N]) -> &T
+where(N > 0 && (forall(i: integer) where (0 <= i && i < 1 && i < integer(N)) {
+    typeof((*data)[i]) == T
+}))
+borrows(&(*data)[0]) {
+    &(*data)[0]
+}
+
+fn take_first<T, const N: usize>(data: &[T | shape(T); N]) -> T
+where(N > 0 && (forall(i: integer) where (0 <= i && i < 1 && i < integer(N)) {
+    typeof((*data)[i]) == T
+}))
+modifies(&(*data)[0])
+ensures(typeof((*data)[0]) == shape(T)) {
+    move((*data)[0])
+}
+
+fn main() -> usize {
+    let data: unique(unique(usize) | shape(unique(usize)), 8) =
+        alloc(8, shape(unique(usize)));
+    (*data)[0] = alloc(42);
+    let view = first::<unique(usize), 8>(&*data);
+    let payload = &**view;
+    let value = take_first::<unique(usize), 8>(&*data);
+    let empty: unique(shape(unique(usize)), 8) = data;
+    drop(empty);
+    // payload follows the allocation still owned by value, rather than the slot.
+    *payload
+}

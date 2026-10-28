@@ -2284,6 +2284,16 @@ impl<'a> Context<'a> {
         ) {
             return self.read_uninitialized_array(identity, index, cells);
         }
+        if self.arrays.inputs.contains(identity) && matches!(element, Ty::Union(_)) {
+            let value = if let Some(value) = cells.get(index) {
+                self.charge_value_work(symbol_weight(value)?)?;
+                value.clone()
+            } else {
+                self.input_array_port(element, identity, index)?
+            };
+            self.observe_input_slot_types(identity, index, &value)?;
+            return Ok(value);
+        }
         if self.ty_has_reference(element) {
             if let Some(index) = constant_index(index) {
                 if let Some(value) = items.and_then(|items| items.get(index)) {

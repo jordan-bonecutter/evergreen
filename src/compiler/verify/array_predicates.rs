@@ -3,8 +3,12 @@
 
 use super::*;
 
+mod observations;
+
 #[cfg(test)]
 mod input_tests;
+#[cfg(test)]
+mod observation_tests;
 #[cfg(test)]
 mod tests;
 
@@ -322,13 +326,31 @@ impl Context<'_> {
             }
             let mut steps = Vec::new();
             let mut tail = &goal;
-            while let Formula::Forall { body, .. } = tail {
+            let mut domains = paths::Paths::unit();
+            while let Formula::Forall { domain, body, .. } = tail {
+                domains = extend(
+                    &domains,
+                    domain,
+                    false,
+                    self.session,
+                    &mut self.work.value_work,
+                )?;
                 steps.push(format!("intro evg_index_check_{}", steps.len()));
                 tail = body;
             }
             steps.push("omega".into());
-            let node =
-                self.proof_script_for(&goal, "quantified array index bounds", line, &steps, None)?;
+            // Bounds often follow from the quantified domains alone. Prove
+            // those in an independent context so unrelated storage case splits
+            // cannot introduce imported dependencies into ForallIntro.
+            let independent = self.probe_guard(&domains, tail)?.is_some();
+            let saved =
+                independent.then(|| std::mem::replace(&mut self.proof.paths, paths::Paths::unit()));
+            let result =
+                self.proof_script_for(&goal, "quantified array index bounds", line, &steps, None);
+            if let Some(saved) = saved {
+                self.proof.paths = saved;
+            }
+            let node = result?;
             self.proof.uses.push(node);
         }
         Ok(())

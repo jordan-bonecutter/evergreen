@@ -97,8 +97,19 @@ identity and is invalidated by later writes. This works from the allocator's
 known empty default. Arbitrary input-union arrays can now carry and forward
 opaque range guarantees without materializing their elements; see
 [input_ranges.evg](../examples/input_ranges.evg). The checker does not infer any
-slot type from the mere existence of such a selector. Connecting these promises
-to operational cell observations remains unfinished.
+slot type from the mere existence of such a selector. A demanded constant cell
+can use a live, closed range proof with no admissions or pending summaries to
+establish its current member interpretation. Its domain must hold at that
+point; writes use fresh contents identities.
+
+[range_slots.evg](../examples/range_slots.evg) uses that rule to return a typed
+member loan and to extract an owner from an input buffer. Extraction still
+requires the declared write authority and leaves the actual slot as a shape.
+The billion-slot variant has the same obligation and certificate count;
+unobserved cells are never materialized. The selector-to-cell correspondence
+remains an explicit frontend import, rather than an independent kernel memory
+proof. Symbolic resource input selection remains rejected until potentially
+aliased indices have a shared conditional plane model.
 
 An active slot also supports a contextual member borrow:
 
@@ -129,8 +140,8 @@ freeing the buffer, until the extracted payload owner is released. Moving a
 non-Copy owner out through a typed member reference remains rejected; extraction
 uses the raw union slot and its checked shape transition.
 
-Resource range loop frames, operational input-union selector observations, and
-cleanup of a dynamically initialized prefix remain unfinished. The general
+Resource range loop frames, symbolic resource input identities, and cleanup of
+a dynamically initialized prefix remain unfinished. The general
 move-only Vec still needs those rules. Sparse resource arrays currently separate
 incompatible branch states rather than merging them into a universal range
 summary. Proof and case work remain bounded by the bootstrap's general budgets.
