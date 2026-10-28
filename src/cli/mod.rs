@@ -1,6 +1,7 @@
 //! CLI orchestration: load sources once and dispatch one command handler.
 
 mod args;
+mod diagnostics;
 mod format;
 mod output;
 mod sources;
@@ -8,12 +9,14 @@ mod sources;
 use args::{Action, Cli};
 use clap::Parser;
 use evergreen::compiler::{certificate::ProofBundle, verify::VerifiedProgram};
+use evergreen::shared::diagnostics::Diagnostic;
+type Result<T> = std::result::Result<T, Diagnostic>;
 use std::{
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub fn run() -> Result<(), String> {
+pub fn run() -> std::result::Result<(), String> {
     let cli = Cli::parse();
     if let Action::Fmt {
         files,
@@ -22,12 +25,15 @@ pub fn run() -> Result<(), String> {
         ..
     } = &cli.command
     {
-        return format::run(files, *check, *staged);
+        return format::run(files, *check, *staged).map_err(|message| {
+            diagnostics::render(&Diagnostic::from(message), &[], "", cli.color)
+        });
     }
-    let loaded = sources::load(cli.command.files(), cli.package_root.as_deref())?;
+    let loaded = sources::load(cli.command.files(), cli.package_root.as_deref())
+        .map_err(|error| diagnostics::render(&error, &[], "", cli.color))?;
     let files = loaded.files;
     let source = loaded.source;
-    match &cli.command {
+    let result = match &cli.command {
         Action::Fmt { .. } => unreachable!("format dispatched before source loading"),
         Action::Build { output, proof, .. } => {
             let destination = match output {
@@ -48,19 +54,20 @@ pub fn run() -> Result<(), String> {
         Action::Check { proof, .. } => check(&source, &files, proof.as_deref(), cli.deny_trust),
         Action::Prove { output, .. } => prove(&source, &files, output, cli.deny_trust),
         Action::Run { .. } => run_program(&source, cli.deny_trust),
-    }
+    };
+    result.map_err(|error| diagnostics::render(&error, &files, &source, cli.color))
 }
 
 fn checked_program(
     source: &str,
     proof: Option<&Path>,
     deny_trust: bool,
-) -> Result<VerifiedProgram, String> {
+) -> Result<VerifiedProgram> {
     let program = if let Some(path) = proof {
         let bundle = ProofBundle::read(path)?;
-        evergreen::compiler::verify::verify_with_certificate(source, &bundle)?
+        evergreen::compiler::verify::verify_with_certificate_diagnostic(source, &bundle)?
     } else {
-        evergreen::compiler::verify::verify(source)?
+        evergreen::compiler::verify::verify_diagnostic(source)?
     };
     enforce_trust(&program, deny_trust)?;
     Ok(program)
@@ -72,7 +79,7 @@ fn build(
     destination: &Path,
     proof: Option<&Path>,
     deny_trust: bool,
-) -> Result<(), String> {
+) -> Result<()> {
     let program = checked_program(source, proof, deny_trust)?;
     let binary = evergreen::compiler::native::emit(&program)?;
     output::write_executable(destination, &binary, files)?;
@@ -85,12 +92,7 @@ fn build(
     Ok(())
 }
 
-fn check(
-    source: &str,
-    files: &[PathBuf],
-    proof: Option<&Path>,
-    deny_trust: bool,
-) -> Result<(), String> {
+fn check(source: &str, files: &[PathBuf], proof: Option<&Path>, deny_trust: bool) -> Result<()> {
     let program = checked_program(source, proof, deny_trust)?;
     let names = files
         .iter()
@@ -113,13 +115,8 @@ fn check(
     Ok(())
 }
 
-fn prove(
-    source: &str,
-    files: &[PathBuf],
-    destination: &Path,
-    deny_trust: bool,
-) -> Result<(), String> {
-    let (program, bundle) = evergreen::compiler::verify::prove(source)?;
+fn prove(source: &str, files: &[PathBuf], destination: &Path, deny_trust: bool) -> Result<()> {
+    let (program, bundle) = evergreen::compiler::verify::prove_diagnostic(source)?;
     enforce_trust(&program, deny_trust)?;
     output::write_text(destination, &bundle.to_text(), files)?;
     println!(
@@ -132,7 +129,7 @@ fn prove(
     Ok(())
 }
 
-fn run_program(source: &str, deny_trust: bool) -> Result<(), String> {
+fn run_program(source: &str, deny_trust: bool) -> Result<()> {
     let program = checked_program(source, None, deny_trust)?;
     println!("{}", evergreen::interpreter::run(&program)?);
     report_trust(&program);
@@ -156,7 +153,7 @@ fn status(program: &VerifiedProgram) -> String {
     }
 }
 
-fn enforce_trust(program: &VerifiedProgram, deny: bool) -> Result<(), String> {
+fn enforce_trust(program: &VerifiedProgram, deny: bool) -> Result<()> {
     if deny && !program.trusted_assumptions().is_empty() {
         return Err("--deny-trust rejects this program's trustme assumptions".into());
     }
@@ -169,7 +166,7 @@ fn report_trust(program: &VerifiedProgram) {
     }
 }
 
-fn temporary_id() -> Result<String, String> {
+fn temporary_id() -> std::result::Result<String, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?

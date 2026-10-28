@@ -1,7 +1,14 @@
 //! Command syntax and input-file selection.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+
+#[derive(Clone, Copy, ValueEnum)]
+pub(super) enum Color {
+    Auto,
+    Always,
+    Never,
+}
 
 #[derive(Parser)]
 #[command(
@@ -10,6 +17,9 @@ use std::path::PathBuf;
     about = "Evergreen proof-oriented language compiler"
 )]
 pub(super) struct Cli {
+    /// Color compiler diagnostics: auto, always, or never.
+    #[arg(long, global = true, value_enum, default_value = "auto")]
+    pub(super) color: Color,
     /// Reject any use of trustme, including in unused definitions.
     #[arg(long, global = true)]
     pub(super) deny_trust: bool,

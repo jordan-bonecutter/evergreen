@@ -381,8 +381,11 @@ impl Loader {
                     "source and standard-library dependencies exceed 1 MB bootstrap limit".into(),
                 );
             }
-            let program = syntax::parse(library.source)
+            let mut program = syntax::parse(library.source)
                 .map_err(|error| format!("{}: {error}", library.path))?;
+            program.set_source_origin(crate::shared::diagnostics::SourceOrigin::Bundled(
+                library.path,
+            ));
             self.output
                 .fingerprint
                 .push_str(&format!("\n// bundled {}\n", library.path));
@@ -534,6 +537,14 @@ pub(super) fn load(source: &str) -> Result<Loaded> {
 
 pub(super) fn is_bundled_module(name: &str) -> bool {
     LIBRARIES.iter().any(|library| library.module == Some(name))
+}
+
+/// Embedded source for diagnostics; no filesystem lookup is performed.
+pub(super) fn bundled_source(path: &str) -> Option<&'static str> {
+    LIBRARIES
+        .iter()
+        .find(|library| library.path == path)
+        .map(|library| library.source)
 }
 
 #[cfg(test)]

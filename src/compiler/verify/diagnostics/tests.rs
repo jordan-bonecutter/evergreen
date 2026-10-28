@@ -1,0 +1,94 @@
+use super::super::*;
+use crate::shared::diagnostics::SourceOrigin;
+
+#[test]
+fn generic_invariant_failures_retain_callsite_definition_and_obligation() {
+    let source = syntax::join_source_units(&[
+        "type MyPair<T> struct {data: [T; 2]} where self.data[0] < self.data[1];".into(),
+        "fn main() {\n    let pair = MyPair::<usize> {data: [2, 1]};\n}".into(),
+    ])
+    .unwrap();
+    let error = verify_diagnostic(&source).unwrap_err();
+    assert_eq!(error.origin, SourceOrigin::Input(1));
+    assert_eq!(error.line, Some(2));
+    let requirement = error.requirement.unwrap();
+    assert_eq!(requirement.kind, "invariant");
+    assert_eq!(requirement.origin, SourceOrigin::Input(0));
+    assert_eq!(requirement.line, 1);
+    assert!(
+        requirement.text.contains("self.data[0] < self.data[1]"),
+        "{}",
+        requirement.text
+    );
+    assert!(error.obligation.is_some());
+}
+
+#[test]
+fn callee_preconditions_keep_the_callsite_and_the_declared_requirement() {
+    let source = syntax::join_source_units(&[
+        "fn require_positive(n: usize) where n > 0 {}".into(),
+        "fn main() {\n    require_positive(0);\n}".into(),
+    ])
+    .unwrap();
+    let error = verify_diagnostic(&source).unwrap_err();
+    assert_eq!(error.origin, SourceOrigin::Input(1));
+    assert_eq!(error.line, Some(2));
+    let requirement = error.requirement.unwrap();
+    assert_eq!(requirement.kind, "precondition");
+    assert_eq!(requirement.origin, SourceOrigin::Input(0));
+    assert_eq!(requirement.text, "(n > 0)");
+    assert_eq!(error.obligation.as_deref(), Some("-1 >= 0"));
+}
+
+#[test]
+fn diagnostics_do_not_survive_into_an_unrelated_error_or_verification() {
+    let source = "fn good() {proof _: false || true;} fn main() {no_such_function();}";
+    let error = verify_diagnostic(source).unwrap_err();
+    assert!(error.message.contains("unknown function"));
+    assert!(error.obligation.is_none());
+    assert!(error.requirement.is_none());
+    assert!(verify_diagnostic("fn main() -> usize {42}").is_ok());
+    let error = verify_diagnostic("fn main() {missing();}").unwrap_err();
+    assert!(error.message.contains("unknown function"));
+    assert!(error.obligation.is_none());
+}
+
+#[test]
+fn diagnostic_rendering_is_bounded_and_preserves_pointer_projection_precedence() {
+    use crate::syntax::{Expr, Kind};
+    let pointer = Expr {
+        kind: Kind::Unary(
+            "*".into(),
+            Box::new(Expr {
+                kind: Kind::Name("data".into()),
+                line: 1,
+            }),
+        ),
+        line: 1,
+    };
+    let indexed = Expr {
+        kind: Kind::Index(
+            Box::new(pointer),
+            Box::new(Expr {
+                kind: Kind::Number(0),
+                line: 1,
+            }),
+        ),
+        line: 1,
+    };
+    assert_eq!(syntax::display::expression(&indexed), "(*data)[0]");
+    let value = Expr {
+        kind: Kind::Array(
+            (0..10000)
+                .map(|n| Expr {
+                    kind: Kind::Number(n),
+                    line: 1,
+                })
+                .collect(),
+        ),
+        line: 1,
+    };
+    let rendered = syntax::display::expression(&value);
+    assert!(rendered.len() < 100);
+    assert!(rendered.contains('…'));
+}

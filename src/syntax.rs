@@ -1,5 +1,6 @@
 //! Shared, source-located syntax for the internal compiler pipeline.
 
+use crate::shared::diagnostics::SourceOrigin;
 use lexer::{lex, Token};
 
 mod lexer;
@@ -8,6 +9,7 @@ mod representation;
 mod strings;
 pub use representation::{Endianness, IntegralEncoding, Representation, ScalarDefinition};
 
+pub(crate) mod display;
 pub mod format;
 mod functions;
 mod generics;
@@ -405,6 +407,7 @@ impl Statement {
 
 #[derive(Clone, Debug)]
 pub struct Struct {
+    pub(crate) source: SourceOrigin,
     pub copy: bool,
     pub name: String,
     pub fields: Vec<(String, Type)>,
@@ -471,6 +474,7 @@ pub enum MethodReceiver {
 
 #[derive(Clone, Debug)]
 pub struct Function {
+    pub(crate) source: SourceOrigin,
     pub impl_target: Option<String>,
     pub receiver: Option<MethodReceiver>,
     pub name: String,
@@ -1186,6 +1190,7 @@ impl Parser {
         Ok((
             generics,
             Struct {
+                source: SourceOrigin::Input(0),
                 copy: false,
                 name,
                 fields,
@@ -1440,6 +1445,31 @@ fn parse_unit_with_hints(
     ))
 }
 
+impl Program {
+    pub(crate) fn set_source_origin(&mut self, origin: SourceOrigin) {
+        for function in &mut self.functions {
+            function.source = origin;
+        }
+        for (_, function) in &mut self.destructors {
+            function.source = origin;
+        }
+        for record in &mut self.structs {
+            record.source = origin;
+        }
+        for declaration in &mut self.generics {
+            match declaration {
+                GenericDeclaration::Function { definition, .. } => definition.source = origin,
+                GenericDeclaration::Record { definition, .. } => definition.source = origin,
+                GenericDeclaration::Implementation(implementation) => {
+                    for function in &mut implementation.functions {
+                        function.source = origin;
+                    }
+                }
+            }
+        }
+    }
+}
+
 // An internal framing character, forbidden inside individual source files.
 // Keeping unit boundaries preserves file-module scope without rewriting code.
 const UNIT_SEPARATOR: char = '\u{1e}';
@@ -1463,8 +1493,9 @@ pub fn parse(source: &str) -> Result<Program, String> {
         .split(UNIT_SEPARATOR)
         .filter(|unit| !unit.trim().is_empty());
     let mut program = parse_unit(units.next().unwrap_or_default())?;
-    for unit in units {
-        let unit = parse_unit(unit)?;
+    for (index, unit) in units.enumerate() {
+        let mut unit = parse_unit(unit)?;
+        unit.set_source_origin(SourceOrigin::Input(index + 1));
         program.copy_impls.extend(unit.copy_impls);
         program.imports.extend(unit.imports);
         program.scalar_types.extend(unit.scalar_types);

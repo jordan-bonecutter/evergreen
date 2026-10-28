@@ -306,6 +306,7 @@ impl Context<'_> {
             .clone()
             .ok_or("cleanup method has no receiver type")?;
         self.note_cleanup_divergence(&method.name);
+        let owner_scope = self.storage.memory.owner_scope();
         let saved = Scope::enter(self, &method, receiver);
         let checked = (|| -> Result<BTreeSet<PlaneId>> {
             self.capture_old(&method)?;
@@ -336,6 +337,7 @@ impl Context<'_> {
             let value = self.scoped_eval(&method.result, Some(&Ty::Unit))?;
             self.validate_live(method.result.line)?;
             self.finish_scope(&method)?;
+            self.storage.memory.require_owner_scope(&owner_scope)?;
             if let Some(post) = &method.post {
                 self.execution.phase = Phase::Specification;
                 self.locals.values = entry;
@@ -355,8 +357,10 @@ impl Context<'_> {
         })();
         saved.restore(self);
         self.execution.cleanup_depth -= 1;
-        let changed =
-            checked.map_err(|error| format!("line {line}: cleanup of {name}: {error}"))?;
+        let changed = checked.map_err(|error| {
+            self.session.note_source(&error, method.source, method.line);
+            format!("line {line}: cleanup of {name}: {error}")
+        })?;
         if self.execution.replacing_cleanup != 0 {
             self.execution.deferred_cleanup_roots.extend(changed);
             return Ok(());

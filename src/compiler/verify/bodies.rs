@@ -104,6 +104,24 @@ impl Context<'_> {
         inputs: &[InputReference],
         declaration: bool,
     ) -> Result<(Symbol, Option<Formula>)> {
+        self.session.clear_diagnostic();
+        let checked = self.check_function_body_inner(function, result_type, inputs, declaration);
+        if checked.is_ok() {
+            self.session.clear_diagnostic();
+        }
+        checked.inspect_err(|error| {
+            self.session
+                .note_source(error, function.source, function.line);
+        })
+    }
+
+    fn check_function_body_inner(
+        &mut self,
+        function: &Function,
+        result_type: &Ty,
+        inputs: &[InputReference],
+        declaration: bool,
+    ) -> Result<(Symbol, Option<Formula>)> {
         let owner_scope = self.storage.memory.owner_scope();
         let entry = self.clone_env()?;
         // Only the independent entry configuration of a heap declaration may
@@ -188,7 +206,10 @@ impl Context<'_> {
                 post.line,
                 function.proof.as_deref(),
                 Some(&post_subjects),
-            )?;
+            )
+            .map_err(|error| {
+                self.requirement_error(error, post, function.source, "postcondition")
+            })?;
             Some(proposition)
         } else if function.proof.is_some() {
             return Err(format!(

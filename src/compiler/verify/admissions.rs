@@ -189,6 +189,24 @@ impl Context<'_> {
         label: &str,
         line: usize,
     ) -> Result<evidence::NodeId> {
+        self.session.clear_diagnostic();
+        let checked = self.prove_subjects_inner(goal, subjects, label, line);
+        if checked.is_ok() {
+            self.session.clear_diagnostic();
+        }
+        checked.inspect_err(|error| {
+            self.session
+                .note_obligation(error, diagnostics::obligation(goal));
+        })
+    }
+
+    fn prove_subjects_inner(
+        &mut self,
+        goal: &Formula,
+        subjects: Option<&subjects::Snapshot>,
+        label: &str,
+        line: usize,
+    ) -> Result<evidence::NodeId> {
         if !goal.is_arithmetic() {
             let node = self.prove_logical_contract(goal, subjects, label, line)?;
             self.proof.evidence.check_closed(node)?;

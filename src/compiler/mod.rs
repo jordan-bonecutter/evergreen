@@ -20,3 +20,8 @@ pub mod verify;
 pub fn is_bundled_module(name: &str) -> bool {
     sources::is_bundled_module(name)
 }
+
+/// Read the embedded source named by a bundled-library diagnostic.
+pub fn bundled_source(path: &str) -> Option<&'static str> {
+    sources::bundled_source(path)
+}

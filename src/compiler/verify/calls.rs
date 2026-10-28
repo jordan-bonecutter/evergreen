@@ -395,12 +395,14 @@ impl<'a> Context<'a> {
         if let Some(pre) = &f.pre {
             let subjects = self.call_subjects(pre, &actuals.subjects, line, false)?;
             let p = self.proposition(pre)?;
-            let evidence = self.prove_subjects(
-                &p,
-                subjects.as_ref(),
-                &format!("precondition of {name}"),
-                line,
-            )?;
+            let evidence = self
+                .prove_subjects(
+                    &p,
+                    subjects.as_ref(),
+                    &format!("precondition of {name}"),
+                    line,
+                )
+                .map_err(|error| self.requirement_error(error, pre, f.source, "precondition"))?;
             if !self.evidence_dependencies(evidence)?.admissions.is_empty() {
                 call_dependencies.push(evidence);
             }

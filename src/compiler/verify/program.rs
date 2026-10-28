@@ -41,17 +41,26 @@ pub(super) fn verify(
                     &verification.structs,
                     &verification.drops,
                 )?;
-                check_record(record, verification.declarations(), session)?;
+                check_record(record, verification.declarations(), session).inspect_err(
+                    |error| {
+                        session.note_source(error, record.source, record.line);
+                    },
+                )?;
                 verification
                     .structs
                     .insert(record.name.clone(), record.clone());
-                check_record_copy(record, verification.declarations(), session)?;
+                check_record_copy(record, verification.declarations(), session).inspect_err(
+                    |error| {
+                        session.note_source(error, record.source, record.line);
+                    },
+                )?;
             }
             crate::compiler::declarations::Declaration::Function(index) => {
                 let function = &mut functions[index];
                 verification
                     .check_function(function, session)
                     .map_err(|error| {
+                        session.note_source(&error, function.source, function.line);
                         if error.starts_with("line ") {
                             error
                         } else {

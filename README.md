@@ -25,6 +25,13 @@ payload. `examples/raw_union_owner.evg` adds conditional owning pointers, and
 contract using `old()`. [Raw-union notes](docs/raw-unions.md) describe active-type
 proofs and the remaining limitations.
 
+### Diagnostics
+
+Errors show the source file and line, with colors in a terminal. Use
+`--color always` to force colors or `--color never` for plain output. Failed
+invariants, preconditions, and postconditions include the required predicate
+and the normalized unproved obligation. Generic errors use readable type names.
+
 ### Formatting
 
 `cargo run -- fmt path/to/file.evg` formats Evergreen source. `cargo run -- fmt

@@ -7,7 +7,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-type Result<T> = std::result::Result<T, String>;
+use evergreen::shared::diagnostics::Diagnostic;
+
+type Result<T> = std::result::Result<T, Diagnostic>;
 const SOURCE_LIMIT: usize = 1_000_000;
 
 pub(super) struct Loaded {
@@ -96,17 +98,15 @@ impl Loader {
         if self.bytes > SOURCE_LIMIT {
             return Err("source and local packages exceed 1 MB bootstrap limit".into());
         }
-        let program =
-            evergreen::syntax::parse(&source).map_err(|e| format!("{}: {e}", path.display()))?;
+        let program = evergreen::syntax::parse(&source).map_err(|error| {
+            Diagnostic::from(error).with_source(path.to_owned(), source.clone())
+        })?;
         if program
             .imports
             .iter()
             .any(|name| program.modules.contains(name))
         {
-            return Err(format!(
-                "{}: a package cannot import itself",
-                path.display()
-            ));
+            return Err(format!("{}: a package cannot import itself", path.display()).into());
         }
         let unit = Unit {
             path: path.to_owned(),
@@ -133,7 +133,8 @@ impl Loader {
                 return Err(format!(
                     "unresolved import {name} under package root {}",
                     self.root.display()
-                ));
+                )
+                .into());
             }
         }
         Ok(())
@@ -150,7 +151,7 @@ impl Loader {
             return Ok(());
         }
         if !self.visiting.insert(directory.to_owned()) {
-            return Err(format!("cyclic package imports at {}", directory.display()));
+            return Err(format!("cyclic package imports at {}", directory.display()).into());
         }
         if self.visiting.len() > 64 {
             return Err("package import depth limit reached (64)".into());
@@ -177,7 +178,7 @@ impl Loader {
                     .iter()
                     .all(|module| module == expected || module == "main")
             {
-                return Err(format!("{}: directory {} requires one module named {expected} (or main for an executable)", path.display(), directory.display()));
+                return Err(format!("{}: directory {} requires one module named {expected} (or main for an executable)", path.display(), directory.display()).into());
             }
             let module = unit.program.modules.first().unwrap();
             if name.as_ref().is_some_and(|previous| previous != module) {
@@ -216,10 +217,7 @@ fn package_files(directory: &Path) -> Result<Vec<PathBuf>> {
     }
     paths.sort();
     if paths.is_empty() {
-        return Err(format!(
-            "{}: package contains no .evg files",
-            directory.display()
-        ));
+        return Err(format!("{}: package contains no .evg files", directory.display()).into());
     }
     Ok(paths)
 }

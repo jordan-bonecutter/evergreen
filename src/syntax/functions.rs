@@ -141,6 +141,7 @@ impl Parser {
         Ok((
             generics,
             Function {
+                source: crate::shared::diagnostics::SourceOrigin::Input(0),
                 impl_target: None,
                 receiver: if method {
                     Some(if by_reference {

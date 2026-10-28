@@ -258,7 +258,10 @@ impl ProofBundle {
     }
 }
 
+mod diagnostics;
+
 pub(crate) struct Session {
+    diagnostic: Option<crate::shared::diagnostics::Diagnostic>,
     replay: Option<ProofBundle>,
     cursor: usize,
     recording: bool,
@@ -272,6 +275,7 @@ pub(crate) struct Session {
 impl Session {
     pub(crate) fn search() -> Self {
         Self {
+            diagnostic: None,
             replay: None,
             cursor: 0,
             recording: false,

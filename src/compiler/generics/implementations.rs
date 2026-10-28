@@ -263,6 +263,7 @@ fn bind(
 
 fn header(source: &Function) -> Function {
     Function {
+        source: source.source,
         impl_target: source.impl_target.clone(),
         receiver: source.receiver,
         name: source.name.clone(),

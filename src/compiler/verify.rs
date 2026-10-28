@@ -17,6 +17,7 @@ mod array_history;
 mod array_ports;
 mod array_predicates;
 mod assignments;
+mod diagnostics;
 mod uninitialized_arrays;
 
 #[cfg(test)]
@@ -2085,7 +2086,14 @@ impl<'a> Context<'a> {
         subjects: Option<&subjects::Snapshot>,
     ) -> Result<()> {
         if let Some(steps) = steps {
-            let node = self.proof_script_for(goal, label, line, steps, subjects)?;
+            self.session.clear_diagnostic();
+            let node = self
+                .proof_script_for(goal, label, line, steps, subjects)
+                .inspect_err(|error| {
+                    self.session
+                        .note_obligation(error, diagnostics::obligation(goal));
+                })?;
+            self.session.clear_diagnostic();
             self.proof.uses.push(node);
         } else {
             self.prove_subjects(goal, subjects, label, line)?;
@@ -3010,28 +3018,60 @@ impl VerifiedProgram {
 }
 
 pub fn verify(source: &str) -> Result<VerifiedProgram> {
-    let source = super::sources::load(source)?;
+    verify_diagnostic(source).map_err(|diagnostic| diagnostic.to_string())
+}
+
+pub fn verify_diagnostic(
+    source: &str,
+) -> std::result::Result<VerifiedProgram, crate::shared::diagnostics::Diagnostic> {
     let mut session = Session::search();
-    let program = verify_using(source.program, &mut session)?;
-    session.finish()?;
-    Ok(program)
+    let checked = (|| {
+        let source = super::sources::load(source)?;
+        let program = verify_using(source.program, &mut session)?;
+        session.finish()?;
+        Ok(program)
+    })();
+    checked.map_err(|error| session.report(error))
 }
 
 pub fn prove(source: &str) -> Result<(VerifiedProgram, ProofBundle)> {
-    let source = super::sources::load(source)?;
+    prove_diagnostic(source).map_err(|diagnostic| diagnostic.to_string())
+}
+
+pub fn prove_diagnostic(
+    source: &str,
+) -> std::result::Result<(VerifiedProgram, ProofBundle), crate::shared::diagnostics::Diagnostic> {
     let mut session = Session::recording();
-    let program = verify_using(source.program, &mut session)?;
-    session.finish()?;
-    Ok((program, session.bundle(&source.fingerprint)?))
+    let checked = (|| {
+        let source = super::sources::load(source)?;
+        let program = verify_using(source.program, &mut session)?;
+        session.finish()?;
+        Ok((program, source.fingerprint))
+    })();
+    let (program, fingerprint) = checked.map_err(|error| session.report(error))?;
+    let bundle = session
+        .bundle(&fingerprint)
+        .map_err(crate::shared::diagnostics::Diagnostic::from)?;
+    Ok((program, bundle))
 }
 
 pub fn verify_with_certificate(source: &str, bundle: &ProofBundle) -> Result<VerifiedProgram> {
-    let source = super::sources::load(source)?;
-    bundle.check_source(&source.fingerprint)?;
+    verify_with_certificate_diagnostic(source, bundle).map_err(|diagnostic| diagnostic.to_string())
+}
+
+pub fn verify_with_certificate_diagnostic(
+    source: &str,
+    bundle: &ProofBundle,
+) -> std::result::Result<VerifiedProgram, crate::shared::diagnostics::Diagnostic> {
     let mut session = Session::replay(bundle);
-    let program = verify_using(source.program, &mut session)?;
-    session.finish()?;
-    Ok(program)
+    let checked = (|| {
+        let source = super::sources::load(source)?;
+        bundle.check_source(&source.fingerprint)?;
+        let program = verify_using(source.program, &mut session)?;
+        session.finish()?;
+        Ok(program)
+    })();
+    checked.map_err(|error| session.report(error))
 }
 
 // Bound the unfolded type graph before recursive property checks or symbolic

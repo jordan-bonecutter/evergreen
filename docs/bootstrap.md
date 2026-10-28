@@ -2343,3 +2343,26 @@ events and concurrency checks still need work.
 `examples/pair_updates.evg` also demonstrates per-reference write footprints,
 overflow preconditions, and a constructor postcondition preserving array values
 for callers.
+
+
+### Proof diagnostics
+
+Compiler diagnostics show the source file, a line excerpt, and an underline.
+They track source units through generic instantiation and bundled-library
+loading, so an error in another file is not attributed to the entry file.
+The underline currently covers the source line rather than a precise token span.
+
+A failed invariant includes the declared predicate and its definition location.
+Failed preconditions and postconditions similarly identify their declarations.
+The normalized unproved obligation is also printed; failure to prove it does not
+necessarily mean the statement is false. Proof diagnostics do not change proof
+search or the contents of a certificate.
+
+Colors are automatic when stderr is a terminal. `--color always` forces ANSI
+colors, `--color never` disables them, and `NO_COLOR` disables automatic colors.
+Output captured by a pipe is plain by default.
+
+Library clients can use `verify_diagnostic`, `prove_diagnostic`, and
+`verify_with_certificate_diagnostic` for structured details. The existing
+String-returning entry points remain available and include the proof details
+in their error text.
