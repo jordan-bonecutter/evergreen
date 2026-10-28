@@ -194,6 +194,7 @@ fn arithmetic_imports_preserve_scope_and_open_evidence_cannot_be_published() {
             paths::Support {
                 parents: BTreeSet::from([hypothesis]),
                 unresolved: false,
+                context_variables: BTreeSet::new(),
             },
         )
         .unwrap();
@@ -261,6 +262,7 @@ fn accepted_inferences_have_no_counterexample_in_two_atom_truth_tables() {
             Formula::Or(a, b) => truth(a, assignment) || truth(b, assignment),
             Formula::Not(a) => !truth(a, assignment),
             Formula::Implies(a, b) => !truth(a, assignment) || truth(b, assignment),
+            Formula::Forall { .. } => panic!("unexpected quantifier in propositional truth table"),
         }
     }
     let p = atom("p");

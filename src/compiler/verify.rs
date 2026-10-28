@@ -236,6 +236,21 @@ fn symbol_weight(value: &Symbol) -> Result<usize> {
                 pending.push(Node::Formula(a, depth + 1));
                 pending.push(Node::Formula(b, depth + 1));
             }
+            Node::Formula(
+                Formula::Forall {
+                    variable,
+                    domain,
+                    body,
+                },
+                depth,
+            ) => {
+                if variable.is_empty() || variable.len() > 256 {
+                    return Err("invalid quantified variable name".into());
+                }
+                weight = weight.saturating_add(variable.len());
+                pending.push(Node::Formula(domain, depth + 1));
+                pending.push(Node::Formula(body, depth + 1));
+            }
             _ => {}
         }
     }

@@ -15,6 +15,32 @@ fn snapshot(stamp: Stamp) -> Snapshot {
     }
 }
 
+#[test]
+fn saved_quantified_scalars_track_free_parameters_but_not_bound_indices() {
+    let formula = Formula::Forall {
+        variable: "index".into(),
+        domain: Box::new(Formula::Ge(Linear::variable("length"))),
+        body: Box::new(Formula::Ge(Linear::variable("index"))),
+    };
+    let saved =
+        Snapshot::saved_scalar(state::WorldId::default(), None, &Symbol::Bool(formula)).unwrap();
+    assert!(saved.complete);
+    assert_eq!(
+        saved.values[&state::WorldId::default()],
+        BTreeSet::from(["length".into()])
+    );
+
+    let invalid = Formula::Forall {
+        variable: String::new(),
+        domain: Box::new(Formula::True),
+        body: Box::new(Formula::True),
+    };
+    let saved =
+        Snapshot::saved_scalar(state::WorldId::default(), None, &Symbol::Bool(invalid)).unwrap();
+    assert!(!saved.complete);
+    assert!(saved.key.is_none());
+}
+
 fn with_source(source: &str, check: impl FnOnce(&mut Context<'_>, &[Statement])) {
     let parsed = syntax::parse(source).unwrap();
     let structs = parsed

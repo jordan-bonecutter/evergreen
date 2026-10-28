@@ -5,6 +5,8 @@
 use super::*;
 
 #[cfg(test)]
+mod quantified_tests;
+#[cfg(test)]
 mod tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -36,6 +38,19 @@ pub(in crate::compiler::verify) enum Rule {
         right: NodeId,
     },
     FalseElim(NodeId),
+    // The kernel rules precede their source quantifier elaborator.
+    #[allow(dead_code)]
+    ForallIntro {
+        hypothesis: HypothesisId,
+        body: NodeId,
+        eigenvariable: String,
+    },
+    #[allow(dead_code)]
+    ForallElim {
+        theorem: NodeId,
+        domain: NodeId,
+        term: Linear,
+    },
 }
 
 impl Rule {
@@ -63,16 +78,39 @@ impl Rule {
                 right_hypothesis.node,
                 right,
             ],
+            Self::ForallIntro {
+                hypothesis, body, ..
+            } => vec![hypothesis.node, body],
+            Self::ForallElim {
+                theorem, domain, ..
+            } => vec![theorem, domain],
         }
     }
 
-    pub(super) fn check(&self, graph: &Evidence, goal: &Formula) -> Result<BTreeSet<HypothesisId>> {
+    pub(super) fn storage_weight(&self) -> usize {
+        match self {
+            Self::ForallIntro { eigenvariable, .. } => 1usize.saturating_add(eigenvariable.len()),
+            Self::ForallElim { term, .. } => term
+                .terms
+                .keys()
+                .fold(1usize, |cost, name| cost.saturating_add(1 + name.len())),
+            _ => 0,
+        }
+    }
+
+    pub(super) fn check(
+        &self,
+        graph: &Evidence,
+        goal: &Formula,
+        work: &mut usize,
+        limit: usize,
+    ) -> Result<BTreeSet<HypothesisId>> {
         // Validate all references before any indexing, including binder IDs.
         let parents = self.parents();
         if parents.iter().any(|id| id.0 >= graph.nodes.len()) {
             return Err("logical rule refers to a missing premise".into());
         }
-        let mut open = BTreeSet::new();
+        let mut open: BTreeSet<HypothesisId> = BTreeSet::new();
         for parent in &parents {
             open.extend(&graph.nodes[parent.0].hypotheses);
         }
@@ -134,10 +172,122 @@ impl Rule {
                     && same(claim(right)?, goal)
                     && matches!(claim(source)?, Formula::Or(a, b) if same(a, lp) && same(b, rp))
             }
+            Self::ForallIntro {
+                hypothesis: h,
+                body,
+                ref eigenvariable,
+            } => {
+                let premise = hypothesis(h)?;
+                open.remove(&h);
+                match goal {
+                    Formula::Forall {
+                        variable,
+                        domain,
+                        body: consequence,
+                    } => {
+                        if eigenvariable.is_empty() || eigenvariable.len() > 256 {
+                            return Err("invalid universal eigenvariable".into());
+                        }
+                        let value = Linear::variable(eigenvariable);
+                        let expected_domain = domain.substitute(variable, &value)?;
+                        let expected_body = consequence.substitute(variable, &value)?;
+                        let mut fresh = !goal.free_variables()?.contains(eigenvariable);
+                        for other in &open {
+                            *work = work
+                                .saturating_add(graph.nodes[other.node.0].weight.saturating_mul(2));
+                            if *work > limit {
+                                return Err("universal freshness work limit reached".into());
+                            }
+                            fresh &= !hypothesis(*other)?
+                                .free_variables()?
+                                .contains(eigenvariable);
+                        }
+                        fresh &= graph.eigenvariable_is_fresh(body, eigenvariable, work, limit)?;
+                        fresh
+                            && same(premise, &expected_domain)
+                            && same(claim(body)?, &expected_body)
+                    }
+                    _ => false,
+                }
+            }
+            Self::ForallElim {
+                theorem,
+                domain,
+                ref term,
+            } => match claim(theorem)? {
+                Formula::Forall {
+                    variable,
+                    domain: bounds,
+                    body,
+                } => {
+                    same(claim(domain)?, &bounds.substitute(variable, term)?)
+                        && same(goal, &body.substitute(variable, term)?)
+                }
+                _ => false,
+            },
         };
         if !valid {
             return Err("logical rule does not establish its claimed conclusion".into());
         }
         Ok(open)
+    }
+}
+
+impl Evidence {
+    // Conclusions may mention the eigenvariable; external assumptions may not.
+    // Discharged hypotheses stay inside the DAG, so only the root's open
+    // hypotheses are checked by ForallIntro above.
+    fn eigenvariable_is_fresh(
+        &self,
+        root: NodeId,
+        variable: &str,
+        work: &mut usize,
+        limit: usize,
+    ) -> Result<bool> {
+        let mut pending = vec![root];
+        let mut seen = BTreeSet::new();
+        while let Some(id) = pending.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let node = self
+                .nodes
+                .get(id.0)
+                .ok_or("missing universal proof dependency")?;
+            *work = work.saturating_add(1 + node.parents.len() + node.rule.storage_weight());
+            if *work > limit {
+                return Err("universal freshness work limit reached".into());
+            }
+            match &node.rule {
+                NodeRule::Arithmetic {
+                    context_variables, ..
+                } => {
+                    if context_variables.contains(variable) {
+                        return Ok(false);
+                    }
+                }
+                NodeRule::ImportedTrust(_)
+                | NodeRule::Contract(_)
+                | NodeRule::Reference {
+                    pending: Some(_), ..
+                } => {
+                    return Err(
+                        "universal introduction requires fully traced context dependencies".into(),
+                    );
+                }
+                NodeRule::Admission(_) => {
+                    *work = work.saturating_add(node.weight.saturating_mul(2));
+                    if *work > limit {
+                        return Err("universal freshness work limit reached".into());
+                    }
+                    if self.claim(id)?.free_variables()?.contains(variable) {
+                        return Ok(false);
+                    }
+                }
+                _ => {}
+            }
+            pending.extend(&node.parents);
+        }
+        Ok(true)
     }
 }

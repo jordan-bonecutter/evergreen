@@ -62,6 +62,7 @@ impl<'a> IntoIterator for &'a Path {
 pub(super) struct Support {
     pub(super) parents: BTreeSet<evidence::NodeId>,
     pub(super) unresolved: bool,
+    pub(super) context_variables: BTreeSet<String>,
 }
 
 impl Support {
@@ -78,12 +79,17 @@ impl Support {
     pub(super) fn add_rows(&mut self, path: &Path, rows: &[usize]) {
         for &index in rows {
             self.add_origin(path.origin(index));
+            if path.origin(index) == Origin::Unresolved {
+                self.context_variables
+                    .extend(path[index].terms.keys().cloned());
+            }
         }
     }
 
     fn merge(&mut self, other: Self) {
         self.parents.extend(other.parents);
         self.unresolved |= other.unresolved;
+        self.context_variables.extend(other.context_variables);
     }
 }
 
@@ -196,6 +202,11 @@ fn extend_normalized(
                 path.push(row.clone(), origin);
             }
             result
+        }
+        Formula::Forall { .. } => {
+            return Err(
+                "quantified propositions require universal proof rules before arithmetic".into(),
+            )
         }
         Formula::Not(p) => return extend_normalized(paths, p, !negated, origin, session, work),
         Formula::Implies(a, b) => {

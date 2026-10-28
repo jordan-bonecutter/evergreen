@@ -27,26 +27,12 @@ pub(in crate::compiler::verify) enum Scalar {
 }
 
 impl Scalar {
-    fn variables(&self) -> BTreeSet<String> {
-        let mut names = BTreeSet::new();
-        let mut pending = Vec::new();
+    fn variables(&self) -> Result<BTreeSet<String>> {
         match self {
-            Self::Number(n) => names.extend(n.terms.keys().cloned()),
-            Self::Bool(p) => pending.push(p),
-            Self::Unit => {}
+            Self::Number(n) => Ok(n.terms.keys().cloned().collect()),
+            Self::Bool(p) => p.free_variables(),
+            Self::Unit => Ok(BTreeSet::new()),
         }
-        while let Some(p) = pending.pop() {
-            match p {
-                Formula::Ge(n) => names.extend(n.terms.keys().cloned()),
-                Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b) => {
-                    pending.push(a);
-                    pending.push(b);
-                }
-                Formula::Not(p) => pending.push(p),
-                _ => {}
-            }
-        }
-        names
     }
 }
 
@@ -127,8 +113,12 @@ impl Snapshot {
                     past.entry(*world).or_default().insert(*stamp);
                 }
                 ClaimKey::SavedScalar(world, source, scalar) => {
+                    let Ok(names) = scalar.variables() else {
+                        // Missing dependencies must never look like a complete snapshot.
+                        return Self::default();
+                    };
                     past.entry(*world).or_default().extend(source);
-                    values.entry(*world).or_default().extend(scalar.variables());
+                    values.entry(*world).or_default().extend(names);
                 }
                 ClaimKey::Unary(_, value) => pending.push(value),
                 ClaimKey::Binary(_, a, b) => {

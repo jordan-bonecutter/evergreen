@@ -35,7 +35,10 @@ enum NodeRule {
         pending: Option<summaries::Aspect>,
     },
     Hypothesis,
-    Arithmetic(Vec<NodeId>),
+    Arithmetic {
+        parents: Vec<NodeId>,
+        context_variables: BTreeSet<String>,
+    },
     Contract(Vec<NodeId>),
     Logical(Rule),
     #[cfg(test)]
@@ -47,10 +50,22 @@ impl NodeRule {
         match self {
             Self::Admission(_) | Self::ImportedTrust(_) | Self::Hypothesis => vec![],
             Self::Reference { parents, .. } => parents.clone(),
-            Self::Arithmetic(parents) | Self::Contract(parents) => parents.clone(),
+            Self::Arithmetic { parents, .. } | Self::Contract(parents) => parents.clone(),
             Self::Logical(rule) => rule.parents(),
             #[cfg(test)]
             Self::Fixture(parents) => parents.clone(),
+        }
+    }
+
+    fn storage_weight(&self) -> usize {
+        match self {
+            Self::Arithmetic {
+                context_variables, ..
+            } => context_variables
+                .iter()
+                .fold(0usize, |cost, name| cost.saturating_add(1 + name.len())),
+            Self::Logical(rule) => rule.storage_weight(),
+            _ => 0,
         }
     }
 }
@@ -161,7 +176,12 @@ impl Evidence {
         if work > MAX_INFERENCE_WORK.saturating_sub(self.rule_work) {
             return Err("logical inference work limit reached".into());
         }
-        let hypotheses = rule.check(self, &claim)?;
+        work = work.saturating_add(rule.storage_weight());
+        let limit = MAX_INFERENCE_WORK.saturating_sub(self.rule_work);
+        let hypotheses = rule.check(self, &claim, &mut work, limit)?;
+        if work > limit {
+            return Err("logical inference work limit reached".into());
+        }
         let id = self.insert_node(Some(claim), NodeRule::Logical(rule), hypotheses)?;
         self.rule_work += work;
         Ok(id)
@@ -262,7 +282,9 @@ impl Evidence {
             .as_ref()
             .is_some_and(|claim| self.facts.find(claim).is_none());
         let formula_storage = if fresh_formula { weight } else { 0 };
-        let storage = formula_storage.saturating_add(hypotheses.len());
+        let storage = formula_storage
+            .saturating_add(hypotheses.len())
+            .saturating_add(rule.storage_weight());
         if storage > MAX_VALUE_WORK.saturating_sub(self.storage_weight) {
             return Err("proof evidence claim storage limit reached".into());
         }
@@ -320,7 +342,11 @@ impl Evidence {
     pub(super) fn arithmetic(&mut self, claim: Formula, support: paths::Support) -> Result<NodeId> {
         let parents = support.parents.into_iter().collect::<Vec<_>>();
         let hypotheses = self.inherited_hypotheses(&parents)?;
-        let id = self.insert_node(Some(claim), NodeRule::Arithmetic(parents), hypotheses)?;
+        let rule = NodeRule::Arithmetic {
+            parents,
+            context_variables: support.context_variables,
+        };
+        let id = self.insert_node(Some(claim), rule, hypotheses)?;
         self.nodes[id.0].unresolved_context = support.unresolved;
         Ok(id)
     }

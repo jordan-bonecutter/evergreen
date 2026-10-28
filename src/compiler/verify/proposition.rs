@@ -3,6 +3,8 @@
 
 use crate::compiler::kernel::Linear;
 
+mod quantified;
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Formula {
     True,
@@ -12,6 +14,11 @@ pub(super) enum Formula {
     Or(Box<Self>, Box<Self>),
     Not(Box<Self>),
     Implies(Box<Self>, Box<Self>),
+    Forall {
+        variable: String,
+        domain: Box<Self>,
+        body: Box<Self>,
+    },
 }
 
 impl Formula {
@@ -42,6 +49,17 @@ impl Formula {
                 out.push(6);
                 a.encode(out);
                 b.encode(out);
+            }
+            Self::Forall {
+                variable,
+                domain,
+                body,
+            } => {
+                out.push(7);
+                out.extend((variable.len() as u64).to_le_bytes());
+                out.extend(variable.as_bytes());
+                domain.encode(out);
+                body.encode(out);
             }
         }
     }
@@ -83,6 +101,15 @@ impl Formula {
             Self::Or(a, b) => a.normalized().or(b.normalized()),
             Self::Implies(a, b) => a.normalized().not().or(b.normalized()),
             Self::Not(p) => p.normalized().not(),
+            Self::Forall {
+                variable,
+                domain,
+                body,
+            } => Self::Forall {
+                variable: variable.clone(),
+                domain: Box::new(domain.normalized()),
+                body: Box::new(body.normalized()),
+            },
             _ => self.clone(),
         }
     }
@@ -103,6 +130,18 @@ impl Formula {
                 Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b) => {
                     pending.push((a, depth + 1));
                     pending.push((b, depth + 1));
+                }
+                Formula::Forall {
+                    variable,
+                    domain,
+                    body,
+                } => {
+                    if variable.is_empty() || variable.len() > 256 {
+                        return Err("invalid quantified variable name".into());
+                    }
+                    weight = weight.saturating_add(variable.len());
+                    pending.push((domain, depth + 1));
+                    pending.push((body, depth + 1));
                 }
                 _ => {}
             }

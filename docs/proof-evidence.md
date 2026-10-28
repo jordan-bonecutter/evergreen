@@ -316,6 +316,24 @@ row-origin translation; declaration imports remain explicitly unresolved. Graph
 node/edge/storage limits also bound formula depth, open hypotheses, and aggregate
 logical checking work.
 
+The evidence kernel also checks guarded universal introduction and specialization
+over mathematical integers. A universal claim stores its bound variable, domain,
+and conclusion once; it does not enumerate the domain. Introduction discharges
+the domain hypothesis and checks that its arbitrary index occurs in no remaining
+open hypothesis or used external assumption. Arithmetic imports retain the free
+variables of the unresolved rows actually used by their certificates for this
+check. Specialization substitutes a checked integer term and requires evidence
+of the corresponding domain. Substitution respects nested binders, rejects
+variable capture, checks arithmetic overflow, and bounds expansion work.
+
+These universal rules are kernel groundwork: source quantifier syntax, indexed
+memory propositions, range invariants, and automatic specialization are not yet
+implemented. Generalization through declaration summaries or imported trust with
+untraced context dependencies is rejected. Opaque frontend predicate identities
+must not stand in for expressions depending on a bound index. Those expressions
+need structured substitution and immutable memory dependencies before the rules
+can describe initialized resource ranges in Vec.
+
 Explicit proof declarations now store state-subject snapshots separately from
 arithmetic formulas. Canonical claim keys retain operator structure and replace
 storage reads with projection/revision stamps. Different subjects or different
