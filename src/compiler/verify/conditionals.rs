@@ -627,10 +627,7 @@ impl Context<'_> {
                 Ok(relation)
             }
             (Symbol::Number(_, a), Symbol::Number(_, b)) => equal(a, b),
-            (Symbol::Bool(a), Symbol::Bool(b)) => Ok(a
-                .clone()
-                .and(b.clone())
-                .or(a.clone().not().and(b.clone().not()))),
+            (Symbol::Bool(a), Symbol::Bool(b)) => self.boolean_value_equality(a, b),
             (Symbol::Unit, Symbol::Unit) => Ok(Formula::True),
             (a, b) if matches!(a.ty(), Ty::Ref(_)) && matches!(b.ty(), Ty::Ref(_)) => guarded_references::identity_equal(a, b),
             (Symbol::Record(an, a), Symbol::Record(bn, b)) if an == bn && a.len() == b.len() => {

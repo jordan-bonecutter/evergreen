@@ -1,0 +1,21 @@
+type Pair struct {x: usize, valid: bool}
+impl Copy for Pair {}
+fn main() -> usize {
+    let initial = Pair {x: 0, valid: false};
+    let wanted = Pair {x: 42, valid: true};
+    let a: [Pair; 3] = [initial, wanted, initial];
+    let b: [Pair; 3] = [initial, initial, initial];
+    arrays::copy_range(&a, &b, 1, 2);
+    proof _: same_value(b[1], wanted);
+    proof _: same_value(b[0], initial) && same_value(b[2], initial);
+    arrays::fill_range(&b, 0, 3, wanted);
+    proof _: same_value(b[0], wanted) && same_value(b[2], wanted);
+    let v = vec::Vec::<Pair>::filled(2, initial);
+    v.push(wanted);
+    let popped = v.pop();
+    proof _: same_value(popped, wanted);
+    v.push(popped);
+    v = v.reallocate_filled(5, initial);
+    let after = v.pop();
+    if after.x == 42 && after.valid {42} else {1}
+}

@@ -23,6 +23,9 @@ impl<'a> Context<'a> {
         expected: Option<&Ty>,
         line: usize,
     ) -> Result<Symbol> {
+        if name == "same_value" {
+            return self.eval_same_value(args, line);
+        }
         if matches!(name, "size_of" | "align_of") {
             return self.layout_query(name, args);
         }

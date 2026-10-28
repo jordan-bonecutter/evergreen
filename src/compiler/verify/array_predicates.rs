@@ -143,6 +143,9 @@ impl Context<'_> {
         label: &str,
         line: usize,
     ) -> Result<Option<evidence::NodeId>> {
+        if let Some(instance) = self.scoped_selector_instance(goal, 0)? {
+            return Ok(Some(instance));
+        }
         let (atom, negated) = match goal {
             Formula::Predicate { .. } => (goal, false),
             Formula::Not(atom) if matches!(atom.as_ref(), Formula::Predicate { .. }) => {

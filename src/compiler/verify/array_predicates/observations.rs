@@ -74,8 +74,9 @@ pub(in crate::compiler::verify) fn specialization_index(
 
 impl Context<'_> {
     fn unadmitted_evidence(&mut self, node: evidence::NodeId) -> Result<bool> {
-        let dependencies = self.evidence_dependencies(node)?;
-        Ok(dependencies.admissions.is_empty() && dependencies.pending_summaries.is_empty())
+        self.charge_value_work(1)?;
+        Ok(!self.proof.evidence.has_admissions(node)
+            && !self.proof.evidence.has_pending_summaries(node))
     }
 
     fn input_selector_instance(&mut self, goal: &Formula) -> Result<Option<evidence::NodeId>> {

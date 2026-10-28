@@ -2571,14 +2571,13 @@ empty arrays are supported; reversed or out-of-bounds ranges are rejected.
 
 [`array_copy_range.evg`](../examples/array_copy_range.evg) uses
 `arrays::copy_range(&source, &target, start, end)`. Both arrays supply their own
-lengths and their common numeric or Boolean element type. The source implementation in
+lengths and their common scalar or reference-free Copy-record element type. The source implementation in
 `stdlib/arrays/copy.evg` proves that target elements in `[start, end)` equal the
 source's entry values at the same indices, and that all other target elements
 are unchanged. Later source writes do not change the copied values. Empty ranges
 and self-copy are explicit no-ops; an aliasing call is still checked against its
 actual incoming references. This is a same-index copy, not an offset-based move
-or a generic resource transfer. Vec's existing copy API remains separate and
-also supports Copy records, whose general equality interface remains unfinished.
+or a generic resource transfer. Vec reallocation now uses this verified routine.
 
 An ordinary numeric or Boolean read now names an immutable scalar term containing the
 array version and the observed index. A quantified proof can relate that exact
@@ -2610,9 +2609,8 @@ does not establish either branch by itself. Every array atom must refer to an
 available observation at the exact revision and index, and substituted captures
 must match. Domain, admission, and stale-state checks still apply before the
 derived observation enters the current proof state. Boolean range proofs remain
-sparse for billion-element inputs. Vec still uses its existing copy helper;
-general Copy-record equality is needed before that path can adopt these stronger
-contracts for all of its supported types.
+sparse for billion-element inputs. The same history machinery now supports
+ideal whole-record equality through scalar field projections.
 
 [`array_field_proofs.evg`](../examples/array_field_proofs.evg) extends these proofs
 to explicit numeric and Boolean fields of reference-free records without runtime
@@ -2629,8 +2627,8 @@ invalidates earlier claims unless their preservation is proved again. The same
 field-store proof over eight and a billion elements needs the same number of
 obligations and certificates. An observed record currently materializes its scalar
 fields; this does not yet provide demand-driven storage for individual fields of
-large records. Whole-record source equality and generic record copy contracts
-remain unfinished.
+large records. Ideal whole-record equality and generic record copy contracts
+are described below; runtime equality traits remain unfinished.
 
 [`boolean_record_history.evg`](../examples/boolean_record_history.evg) keeps a
 compound Boolean field unchanged while two branches update numeric fields.
@@ -2651,6 +2649,34 @@ fallback case. Observation projects only the fields mentioned by the contract;
 unused sibling fields do not multiply observation work. Initial record
 materialization still visits its fields. The example explicitly specializes an
 index lemma and splits its cases to establish the input contract.
+
+### Ideal exact value equality
+
+`same_value(a, b)` is an ideal operation: it compares scalar values or every field
+of a reference-free record without runtime cleanup. Nested record products and
+empty records are supported; reference, resource, union, and nested-array
+payloads need their own rules and are currently rejected. Both operands must
+have compatible types and valid storage. Observation does not grant Copy
+permission, revive a moved value, or expose private fields to source code.
+Runtime `==` traits remain separate work.
+
+Inside a quantifier, `same_value(data[i], old(data)[i])` retains array contents
+identities, indices, and field paths. It elaborates to existing scalar equality
+and conjunction rules, checks bounds even for empty records, and never creates
+a cell for each member of the range. Equality definitions share both operand
+orders. Scoped universal premises can supply individual conjuncts through
+checked specialization and projection. Ordinary reads can then recover the
+proved field values. The record collection example is
+[`record_collections.evg`](../examples/record_collections.evg).
+
+Registered Boolean inputs use their zero-or-one word for equality; compound
+formulas still retain their Boolean semantics. Reobserving a saved Boolean word
+restores its type bounds, just as for numeric machine values. This avoids truth
+case expansion for each record field without treating arbitrary integers as
+Boolean words. Declaration trust summaries visit shared proof dependencies once
+across their roots. Admission/pending-summary presence is also stored as two
+flags derived from immutable parent edges; full provenance and mutable subject
+completeness still use the evidence graph.
 
 ### Demand-driven ideal aggregate reads
 

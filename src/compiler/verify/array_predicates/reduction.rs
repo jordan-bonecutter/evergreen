@@ -134,7 +134,7 @@ impl Context<'_> {
         self.proof.evidence.derive(Formula::False, rule)
     }
 
-    fn scoped_selector_instance(
+    pub(super) fn scoped_selector_instance(
         &mut self,
         goal: &Formula,
         depth: usize,
@@ -156,25 +156,47 @@ impl Context<'_> {
             else {
                 continue;
             };
-            let Some(term) = observations::specialization_term(&body, goal, &variable)? else {
-                continue;
-            };
-            let domain = domain.substitute(&variable, &term)?;
-            let Some(domain) = self.reduce_selector_formula(&domain, depth + 1)? else {
-                continue;
-            };
-            return self
-                .proof
-                .evidence
-                .derive(
-                    goal.clone(),
+            let mut pending = vec![(&*body, Vec::new())];
+            while let Some((part, path)) = pending.pop() {
+                self.charge_value_work(1 + path.len())?;
+                if let Formula::And(a, b) = part {
+                    let mut left = path.clone();
+                    left.push(false);
+                    let mut right = path;
+                    right.push(true);
+                    pending.extend([(&**a, left), (&**b, right)]);
+                    continue;
+                }
+                let Some(term) = observations::specialization_term(part, goal, &variable)? else {
+                    continue;
+                };
+                let domain = domain.substitute(&variable, &term)?;
+                let Some(domain) = self.reduce_selector_formula(&domain, depth + 1)? else {
+                    continue;
+                };
+                let mut instance = self.proof.evidence.derive(
+                    body.substitute(&variable, &term)?,
                     evidence::Rule::ForallElim {
                         theorem,
                         domain,
                         term,
                     },
-                )
-                .map(Some);
+                )?;
+                for right in path {
+                    let Formula::And(a, b) = self.proof.evidence.claim(instance)?.clone() else {
+                        return Err("universal projection lost its conjunction".into());
+                    };
+                    instance = self.proof.evidence.derive(
+                        if right { *b } else { *a },
+                        if right {
+                            evidence::Rule::AndRight(instance)
+                        } else {
+                            evidence::Rule::AndLeft(instance)
+                        },
+                    )?;
+                }
+                return Ok(Some(instance));
+            }
         }
         Ok(None)
     }

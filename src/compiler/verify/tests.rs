@@ -2397,6 +2397,11 @@ fn scalar_write_contracts_update_aliases_and_frame_other_fields() {
 
 #[test]
 fn compound_old_snapshots_freeze_entry_storage_and_pointer_targets() {
+    let quantified = "type Buffer struct {data: [usize; 2]} fn replace(b: &Buffer) -> usize modifies(&b.data[0]) ensures forall(i: integer) where(i == 0) {old(b.data)[i] == result} {let saved = b.data[0]; b.data[0] = 7; saved} fn main() -> usize {let buffer = Buffer {data: [42, 0]}; replace(&buffer)}";
+    let (old_program, old_bundle) = prove(quantified).unwrap();
+    assert_eq!(old_program.run().unwrap().to_string(), "42");
+    verify_with_certificate(quantified, &old_bundle).unwrap();
+    assert!(verify(&quantified.replace("old(b.data)[i]", "b.data[i]")).is_err());
     let source = include_str!("../../../examples/old_places.evg");
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
@@ -3237,7 +3242,7 @@ fn owned_word_vectors_check_capacity_and_reference_lifetimes() {
     let copy = program
         .functions
         .iter()
-        .find(|f| f.module.as_deref() == Some("vec") && f.name.ends_with("_copy_prefix"))
+        .find(|f| f.module.as_deref() == Some("arrays") && f.name.ends_with("_copy_range"))
         .unwrap();
     assert!(!crate::compiler::effects::recursive(copy));
     assert!(!copy.partial);

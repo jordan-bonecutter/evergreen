@@ -50,6 +50,7 @@ pub(crate) fn is_builtin_name(name: &str) -> bool {
                 | "typeof"
                 | "shape"
                 | "owner_count"
+                | "same_value"
                 | "size_of"
                 | "align_of"
         )

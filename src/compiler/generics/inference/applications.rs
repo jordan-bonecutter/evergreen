@@ -74,6 +74,7 @@ impl Engine {
         }
         let first = actual.first_mut().and_then(|(_, ty)| ty.take());
         let builtin = match name.as_str() {
+            "same_value" => Some(Type::Bool),
             "integer" => Some(Type::Int),
             "nat" | "owner_count" => Some(Type::Nat),
             "size_of" | "align_of" => Some(Type::Machine(MachineInt::parse("usize").unwrap())),

@@ -1,6 +1,6 @@
 module arrays;
 
-// Copy numeric or Boolean elements at [start, end), preserving the target's rest.
+// Copy scalar or reference-free Copy-record elements at [start, end), preserving the target's rest.
 // Both pointers supply their capacities. Copying an array onto itself is valid.
 fn copy_range<T = usize>(
     source_capacity: usize,
@@ -16,20 +16,24 @@ fn copy_range<T = usize>(
         end <= source_capacity
     modifies(target)
     ensures
-        (forall(i: integer) where (0 <= i &&
-        integer::from(start) <= i &&
-        i < integer::from(end) &&
-        i < integer::from(target_capacity) &&
-        i < integer::from(source_capacity)) {(*target)[i] == old(*source)[i]}) &&
-        (forall(i: integer) where (0 <= i &&
-        i < integer::from(target_capacity) &&
-        (i < integer::from(start) || integer::from(end) <= i)) {(*target)[i] == old(*target)[i]})
+        (
+            forall(i: integer) where (0 <= i &&
+            integer::from(start) <= i &&
+            i < integer::from(end) &&
+            i < integer::from(target_capacity) &&
+            i < integer::from(source_capacity)) {same_value((*target)[i], old(*source)[i])}
+        ) &&
+        (
+            forall(i: integer) where (0 <= i &&
+            i < integer::from(target_capacity) &&
+            (i < integer::from(start) || integer::from(end) <= i)) {same_value((*target)[i], old(*target)[i])}
+        )
 {
     // No bytes need writing for an empty range or the same source and target.
     let distinct = if start < end {&(*source)[start] != &(*target)[start]} else {false};
     let cursor = if distinct {start} else {end};
-    fact copied = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(cursor) && i < integer::from(target_capacity) && i < integer::from(source_capacity)) {(*target)[i] == old(*source)[i]};
-    fact untouched = forall(i: integer) where (0 <= i && i < integer::from(target_capacity) && (i < integer::from(start) || integer::from(cursor) <= i)) {(*target)[i] == old(*target)[i]};
+    fact copied = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(cursor) && i < integer::from(target_capacity) && i < integer::from(source_capacity)) {same_value((*target)[i], old(*source)[i])};
+    fact untouched = forall(i: integer) where (0 <= i && i < integer::from(target_capacity) && (i < integer::from(start) || integer::from(cursor) <= i)) {same_value((*target)[i], old(*target)[i])};
     while cursor < end
         invariant
             start <= cursor &&
@@ -45,8 +49,8 @@ fn copy_range<T = usize>(
         // These snapshots are proof-only; no array copy executes at runtime.
         ideal let before = *target;
         ideal let completed = integer::from(cursor);
-        fact before_copied = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < completed && i < integer::from(target_capacity) && i < integer::from(source_capacity)) {before[i] == old(*source)[i]};
-        fact before_untouched = forall(i: integer) where (0 <= i && i < integer::from(target_capacity) && (i < integer::from(start) || completed <= i)) {before[i] == old(*target)[i]};
+        fact before_copied = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < completed && i < integer::from(target_capacity) && i < integer::from(source_capacity)) {same_value(before[i], old(*source)[i])};
+        fact before_untouched = forall(i: integer) where (0 <= i && i < integer::from(target_capacity) && (i < integer::from(start) || completed <= i)) {same_value(before[i], old(*target)[i])};
         proof prior: before_copied by {assumption};
         proof rest: before_untouched by {assumption};
 
@@ -88,8 +92,8 @@ fn copy_range<T = usize>(
     // At loop exit the copied prefix is exactly the requested range.
     proof prefix: copied by {assumption};
     proof suffix: untouched by {assumption};
-    fact final_copied = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(end) && i < integer::from(target_capacity) && i < integer::from(source_capacity)) {(*target)[i] == old(*source)[i]};
-    fact final_untouched = forall(i: integer) where (0 <= i && i < integer::from(target_capacity) && (i < integer::from(start) || integer::from(end) <= i)) {(*target)[i] == old(*target)[i]};
+    fact final_copied = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(end) && i < integer::from(target_capacity) && i < integer::from(source_capacity)) {same_value((*target)[i], old(*source)[i])};
+    fact final_untouched = forall(i: integer) where (0 <= i && i < integer::from(target_capacity) && (i < integer::from(start) || integer::from(end) <= i)) {same_value((*target)[i], old(*target)[i])};
     proof finish: (cursor == end && copied) => final_copied by {
         intro premise;
         cases premise with at_end,

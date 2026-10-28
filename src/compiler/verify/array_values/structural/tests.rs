@@ -1,0 +1,98 @@
+use super::*;
+
+const TYPES: &str = "type Pair struct {x: usize, valid: bool} type Item struct {pair: Pair, tag: u8} impl Copy for Pair {} impl Copy for Item {}";
+
+fn replay(body: &str) {
+    let source = format!("{TYPES} {body}");
+    let (program, bundle) = prove(&source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(&source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+}
+
+#[test]
+fn structural_values_replay_without_runtime_equality_or_copy_permission() {
+    replay("fn duplicate(x: Item) -> Item ensures same_value(result, x) {x} fn main() {let item = Item {pair: Pair {x: 7, valid: true}, tag: 3}; let other = duplicate(item); proof _: same_value(item, other); proof _: other.pair.x == 7;}");
+    replay("fn check(x: Item, y: Item) where same_value(x, y) ensures x.tag == y.tag && x.pair.x == y.pair.x && x.pair.valid == y.pair.valid {}");
+    replay("fn check(x: Item) {proof _: same_value(x, x);}");
+    let source = format!("{TYPES} fn check(x: Item) {{proof _: same_value(x, x);}}")
+        .replace("impl Copy for Item {}", "");
+    verify(&source).unwrap();
+}
+
+#[test]
+fn structural_indexed_values_preserve_fields_and_bounds() {
+    replay("fn check(data: &[Item; 8], at: usize, initial: Item) -> bool where at < 8 && (forall(i: integer) where(0 <= i && i < 8) {same_value((*data)[i], initial)}) ensures result {(*data)[at].tag == initial.tag && (*data)[at].pair.x == initial.pair.x && (*data)[at].pair.valid == initial.pair.valid}");
+    replay("fn check(a: &[Item; 8], b: &[Item; 8]) {proof _: (forall(i: integer) where(0 <= i && i < 8) {same_value((*a)[i], (*b)[i])}) => (forall(j: integer) where(0 <= j && j < 8) {same_value((*b)[j], (*a)[j])}) by {intro all; intro j; omega};}");
+    for body in [
+        "fn check(x: Item, y: Item) {proof _: same_value(x, y);}",
+        "fn check(x: Item, y: Item) where x.pair.x == y.pair.x && x.tag == y.tag {proof _: same_value(x, y);}",
+        "fn check(data: &[Item; 8]) {proof _: forall(i: integer) {same_value((*data)[i], (*data)[i])};}",
+        "fn check(x: Item) -> bool {same_value(x, x)}",
+        "fn check(x: &Item) {proof _: same_value(x, x);}",
+    ] {
+        assert!(verify(&format!("{TYPES} {body}")).is_err(), "{body}");
+    }
+}
+
+#[test]
+fn structural_admissions_keep_subjects_and_revisions() {
+    let source = format!("{TYPES} fn main() {{let x = Pair {{x: 1, valid: true}}; let y = Pair {{x: 2, valid: false}}; proof assumed: same_value(x, y) by {{trustme}}; proof used: same_value(x, y) by {{exact assumed}};}}");
+    let (_, bundle) = prove(&source).unwrap();
+    verify_with_certificate(&source, &bundle).unwrap();
+    for bad in [
+        source.replace("proof used:", "x.x = 3; proof used:"),
+        source.replace("proof used: same_value(x, y)", "proof used: false"),
+    ] {
+        assert!(verify(&bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn record_collection_contracts_execute_replay_and_remain_sparse() {
+    let source = include_str!("../../../../../examples/record_collections.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    for bad in [
+        source.replace("same_value(b[1], wanted)", "same_value(b[1], initial)"),
+        source.replace("same_value(popped, wanted)", "same_value(popped, initial)"),
+    ] {
+        let error = verify(&bad).unwrap_err();
+        assert!(error.contains("cannot prove"), "{error}");
+    }
+    let small = format!("{TYPES} fn copy(a: &[Item; 8], b: &[Item; 8]) modifies(b) {{arrays::copy_range(a, b, 0, 8);}}");
+    let large = small
+        .replace("; 8]", "; 1000000000]")
+        .replace(", 0, 8)", ", 0, 1000000000)");
+    let (small, a) = prove(&small).unwrap();
+    let (large_program, b) = prove(&large).unwrap();
+    assert_eq!(small.obligations, large_program.obligations);
+    assert_eq!(a.certificate_count(), b.certificate_count());
+    verify_with_certificate(&large, &b).unwrap();
+}
+
+#[test]
+fn structural_equality_does_not_mint_authority_or_observe_invalid_storage() {
+    for source in [
+        "type Value struct {n: usize} fn main() {let a = Value {n: 7}; let b = a; proof _: same_value(a, b);}",
+        "type R struct {n: usize} impl Drop for R {fn drop({n}) {}} fn check(x: R) {proof _: same_value(x, x);}",
+        "type Empty struct {} fn check(data: &[Empty; 0]) {proof _: forall(i: integer) where(i == 0) {same_value((*data)[i], (*data)[i])};}",
+        "fn main() {proof _: same_value(usize::MAX + 1, usize::MAX + 1);}",
+        "fn main() {proof _: same_value(true, 1);}",
+    ] {
+        assert!(verify(source).is_err(), "{source}");
+    }
+    replay("module hidden {opaque type Value struct {x: usize} fn make(x: usize) -> Value {Value {x: x}}} fn check(x: hidden::Value) {proof _: same_value(x, x);}");
+    replay("type Empty struct {} fn check(data: &[Empty; 0]) {proof _: forall(i: integer) where(0 <= i && i < 0) {same_value((*data)[i], (*data)[i])} by {intro i; omega};}");
+}

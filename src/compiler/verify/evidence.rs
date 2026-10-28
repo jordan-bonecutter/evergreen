@@ -83,6 +83,8 @@ struct Node {
     parents: Vec<NodeId>,
     unresolved_context: bool,
     subjects: Option<subjects::Snapshot>,
+    has_admissions: bool,
+    has_pending_summaries: bool,
 }
 
 #[derive(Default, Debug)]
@@ -301,6 +303,17 @@ impl Evidence {
         self.edges += parents.len();
         self.storage_weight += storage;
         let claim = claim.map(|claim| self.facts.intern(claim));
+        let has_admissions = matches!(rule, NodeRule::Admission(_) | NodeRule::ImportedTrust(_))
+            || parents.iter().any(|id| self.nodes[id.0].has_admissions);
+        let has_pending_summaries = matches!(
+            rule,
+            NodeRule::Reference {
+                pending: Some(_),
+                ..
+            }
+        ) || parents
+            .iter()
+            .any(|id| self.nodes[id.0].has_pending_summaries);
         self.nodes.push(Node {
             claim,
             rule,
@@ -309,6 +322,8 @@ impl Evidence {
             parents,
             unresolved_context: false,
             subjects: None,
+            has_admissions,
+            has_pending_summaries,
         });
         Ok(id)
     }
@@ -336,6 +351,16 @@ impl Evidence {
         self.nodes[node.0].subjects.as_ref()
     }
 
+    /// These two flags depend only on immutable parent edges and rule kinds.
+    /// Subject attachment can change completeness, but never these flags.
+    pub(super) fn has_admissions(&self, node: NodeId) -> bool {
+        self.nodes[node.0].has_admissions
+    }
+
+    pub(super) fn has_pending_summaries(&self, node: NodeId) -> bool {
+        self.nodes[node.0].has_pending_summaries
+    }
+
     pub(super) fn contract(&mut self, claim: Formula, parents: Vec<NodeId>) -> Result<NodeId> {
         let hypotheses = self.inherited_hypotheses(&parents)?;
         let id = self.insert_node(Some(claim), NodeRule::Contract(parents), hypotheses)?;
@@ -360,7 +385,13 @@ impl Evidence {
     /// Historical dependencies remain meaningful after lexical witnesses leave
     /// scope. Traverse iteratively and visit shared premises only once.
     pub(super) fn admissions(&self, root: NodeId) -> AdmissionDependencies {
-        let mut pending = vec![root];
+        self.admissions_many(&[root])
+    }
+
+    /// A declaration exports the union of its used roots. Shared subproofs
+    /// need only one visit, regardless of how many obligations reuse them.
+    pub(super) fn admissions_many(&self, roots: &[NodeId]) -> AdmissionDependencies {
+        let mut pending = roots.to_vec();
         let mut seen = BTreeSet::new();
         let mut admissions = BTreeSet::new();
         let mut complete = true;
@@ -426,6 +457,50 @@ mod tests {
         assert_eq!(graph.admissions(root).admissions, BTreeSet::from([used]));
         assert!(!graph.admissions(root).admissions.contains(&unused));
         assert_eq!(graph.nodes[root.0].parents, vec![left, right]);
+    }
+
+    #[test]
+    fn declaration_roots_share_dependency_traversal_without_losing_trust() {
+        let mut graph = Evidence::default();
+        let used = graph.insert(Formula::True, vec![], true).unwrap();
+        let unused = graph.insert(Formula::False, vec![], true).unwrap();
+        let mut shared = used;
+        for _ in 0..100 {
+            shared = graph.insert(Formula::True, vec![shared], false).unwrap();
+        }
+        let roots = (0..100)
+            .map(|_| graph.insert(Formula::True, vec![shared], false).unwrap())
+            .collect::<Vec<_>>();
+        let separately = roots
+            .iter()
+            .map(|&root| graph.admissions(root).work)
+            .sum::<usize>();
+        let combined = graph.admissions_many(&roots);
+        assert_eq!(combined.admissions, BTreeSet::from([used]));
+        assert!(!combined.admissions.contains(&unused));
+        assert!(combined.work < separately / 10);
+        let pending = graph
+            .reference(vec![shared], Some(summaries::Aspect::Contract))
+            .unwrap();
+        let mixed = graph.admissions_many(&[roots[0], pending]);
+        assert_eq!(mixed.admissions, BTreeSet::from([used]));
+        assert_eq!(
+            mixed.pending_summaries,
+            BTreeSet::from([summaries::Aspect::Contract])
+        );
+        assert!(!mixed.complete);
+        for index in 0..graph.nodes.len() {
+            let node = NodeId(index);
+            let dependencies = graph.admissions(node);
+            assert_eq!(
+                graph.has_admissions(node),
+                !dependencies.admissions.is_empty()
+            );
+            assert_eq!(
+                graph.has_pending_summaries(node),
+                !dependencies.pending_summaries.is_empty()
+            );
+        }
     }
 
     #[test]

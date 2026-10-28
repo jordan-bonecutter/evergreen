@@ -10,6 +10,26 @@ pub(super) enum Argument {
 }
 
 impl Context<'_> {
+    pub(in crate::compiler::verify) fn boolean_word(&self, predicate: &Formula) -> Option<Linear> {
+        match predicate {
+            Formula::True => Some(Linear::number(1)),
+            Formula::False => Some(Linear::number(0)),
+            _ => self.arrays.boolean_words.get(predicate).cloned(),
+        }
+    }
+
+    pub(in crate::compiler::verify) fn boolean_value_equality(
+        &self,
+        a: &Formula,
+        b: &Formula,
+    ) -> Result<Formula> {
+        if let (Some(a), Some(b)) = (self.boolean_word(a), self.boolean_word(b)) {
+            return equal(&a, &b);
+        }
+        Ok(a.clone()
+            .and(b.clone())
+            .or(a.clone().not().and(b.clone().not())))
+    }
     pub(super) fn scalar_argument(&self, value: &Symbol) -> Result<Argument> {
         match value {
             Symbol::Number(_, value) => Ok(Argument::Word(value.clone())),
@@ -49,6 +69,9 @@ impl Context<'_> {
         match value {
             Symbol::Number(_, value) => equal(value, word),
             Symbol::Bool(predicate) => {
+                if let Some(value) = self.boolean_word(predicate) {
+                    return equal(&value, word);
+                }
                 // A rewritten predicate argument need not be zero or one.
                 // In that case both branches are false, rather than treating
                 // every non-one argument as Boolean false.

@@ -204,11 +204,12 @@ impl Context<'_> {
                 self.type_literal(expression).map(ClaimKey::Type)
             }
             Kind::Call(name, arguments)
-                if self
-                    .declarations
-                    .functions
-                    .get(name)
-                    .is_some_and(|function| self.is_verified_scalar_definition(function)) =>
+                if name == "same_value"
+                    || self
+                        .declarations
+                        .functions
+                        .get(name)
+                        .is_some_and(|function| self.is_verified_scalar_definition(function)) =>
             {
                 // A pure scalar definition observes only these values. Keep its
                 // identity and every argument revision without evaluating it.

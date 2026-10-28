@@ -1,6 +1,6 @@
 module arrays;
 
-// Fill [start, end), preserving the remaining numeric or Boolean elements. The extent can
+// Fill [start, end), preserving the remaining scalar or reference-free Copy-record elements. The extent can
 // be supplied by the pointer type, including when its capacity is runtime data.
 fn fill_range<T = usize>(
     capacity: usize,
@@ -14,17 +14,21 @@ fn fill_range<T = usize>(
         end <= capacity
     modifies(data)
     ensures
-        (forall(i: integer) where (0 <= i &&
-        integer::from(start) <= i &&
-        i < integer::from(end) &&
-        i < integer::from(capacity)) {(*data)[i] == value}) &&
-        (forall(i: integer) where (0 <= i &&
-        i < integer::from(capacity) &&
-        (i < integer::from(start) || integer::from(end) <= i)) {(*data)[i] == old(*data)[i]})
+        (
+            forall(i: integer) where (0 <= i &&
+            integer::from(start) <= i &&
+            i < integer::from(end) &&
+            i < integer::from(capacity)) {same_value((*data)[i], value)}
+        ) &&
+        (
+            forall(i: integer) where (0 <= i &&
+            i < integer::from(capacity) &&
+            (i < integer::from(start) || integer::from(end) <= i)) {same_value((*data)[i], old(*data)[i])}
+        )
 {
     let cursor = start;
-    fact filled = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(cursor) && i < integer::from(capacity)) {(*data)[i] == value};
-    fact untouched = forall(i: integer) where (0 <= i && i < integer::from(capacity) && (i < integer::from(start) || integer::from(cursor) <= i)) {(*data)[i] == old(*data)[i]};
+    fact filled = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(cursor) && i < integer::from(capacity)) {same_value((*data)[i], value)};
+    fact untouched = forall(i: integer) where (0 <= i && i < integer::from(capacity) && (i < integer::from(start) || integer::from(cursor) <= i)) {same_value((*data)[i], old(*data)[i])};
     while cursor < end
         invariant
             start <= cursor &&
@@ -38,8 +42,8 @@ fn fill_range<T = usize>(
         // These snapshots are proof-only; no array copy executes at runtime.
         ideal let before = *data;
         ideal let completed = integer::from(cursor);
-        fact before_filled = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < completed && i < integer::from(capacity)) {before[i] == value};
-        fact before_untouched = forall(i: integer) where (0 <= i && i < integer::from(capacity) && (i < integer::from(start) || completed <= i)) {before[i] == old(*data)[i]};
+        fact before_filled = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < completed && i < integer::from(capacity)) {same_value(before[i], value)};
+        fact before_untouched = forall(i: integer) where (0 <= i && i < integer::from(capacity) && (i < integer::from(start) || completed <= i)) {same_value(before[i], old(*data)[i])};
         proof prior: before_filled by {assumption};
         proof rest: before_untouched by {assumption};
 
@@ -73,8 +77,8 @@ fn fill_range<T = usize>(
     // At loop exit the completed prefix is exactly the requested range.
     proof prefix: filled by {assumption};
     proof suffix: untouched by {assumption};
-    fact final_filled = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(end) && i < integer::from(capacity)) {(*data)[i] == value};
-    fact final_untouched = forall(i: integer) where (0 <= i && i < integer::from(capacity) && (i < integer::from(start) || integer::from(end) <= i)) {(*data)[i] == old(*data)[i]};
+    fact final_filled = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(end) && i < integer::from(capacity)) {same_value((*data)[i], value)};
+    fact final_untouched = forall(i: integer) where (0 <= i && i < integer::from(capacity) && (i < integer::from(start) || integer::from(end) <= i)) {same_value((*data)[i], old(*data)[i])};
     proof finish: (cursor == end && filled) => final_filled by {
         intro premise;
         cases premise with at_end,

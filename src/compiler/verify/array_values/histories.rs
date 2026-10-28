@@ -37,6 +37,11 @@ impl Context<'_> {
         right: &Linear,
         depth: usize,
     ) -> Result<Formula> {
+        // Equality is symmetric. Keep one definition for both operand orders,
+        // including record projections elaborated by same_value.
+        if key.0 > key.1 {
+            return self.value_equality(&(key.1.clone(), key.0.clone()), right, left, depth);
+        }
         self.charge_value_work(1)?;
         if depth >= 64 {
             return Err("array value equality history depth limit reached".into());

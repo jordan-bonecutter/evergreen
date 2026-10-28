@@ -404,6 +404,7 @@ impl Shapes {
                     return Some(Type::Machine(machine));
                 }
                 match name.as_str() {
+                    "same_value" => Some(Type::Bool),
                     "size_of" | "align_of" => {
                         Some(Type::Machine(MachineInt::parse("usize").unwrap()))
                     }

@@ -678,6 +678,7 @@ fn needs_old_memory(function: &Function) -> bool {
             Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => expression(e),
             Kind::Binary(_, a, b) | Kind::Index(a, b) => expression(a) || expression(b),
             Kind::If(c, a, b) => expression(c) || expression(a) || expression(b),
+            Kind::Forall { domain, body, .. } => expression(domain) || expression(body),
             Kind::Block(body, tail) => body.iter().any(statement) || expression(tail),
             Kind::Array(items) | Kind::Call(_, items) => items.iter().any(expression),
             Kind::Record(_, fields) => fields.iter().any(|(_, e)| expression(e)),
@@ -2013,6 +2014,7 @@ impl<'a> Context<'a> {
                 Some(Ty::Machine(MachineInt::parse("usize").unwrap()))
             }
             Kind::Call(name, _) if name == "typeof" => Some(Ty::Type),
+            Kind::Call(name, _) if name == "same_value" => Some(Ty::Bool),
             Kind::Call(name, args) if name == "shape" && args.len() == 1 => self
                 .type_literal(&args[0])
                 .map(|ty| Ty::Shape(Box::new(ty))),
@@ -2281,6 +2283,10 @@ impl<'a> Context<'a> {
                 vec![n.sub(&Linear::number(lo))?, Linear::number(hi).sub(n)?]
             }
             Symbol::Number(Ty::Nat, n) => vec![n.clone()],
+            Symbol::Bool(predicate) => match self.boolean_word(predicate) {
+                Some(word) => vec![word.clone(), Linear::number(1).sub(&word)?],
+                None => Vec::new(),
+            },
             Symbol::Array { len, .. } => vec![len.clone()],
             _ => Vec::new(),
         };

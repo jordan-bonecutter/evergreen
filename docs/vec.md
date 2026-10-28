@@ -29,22 +29,27 @@ storage, copies the live prefix, and retains logical length. Assigning the resul
 over the original releases the old allocation and invalidates its element
 references. Borrowed header storage remains valid across replacement.
 
-Integer and Boolean instances support push, pop, get, and explicit reallocation.
-Flat scalar records with an explicit Copy implementation can initialize backing
-storage and transfer it using `into_data()`. Their push/pop contracts still need
-a general equality interface. Constructors use explicit type arguments such as
-`vec::Vec::<u8>::new(2)`; methods use the receiver's specialization. The API is
-implemented directly on Vec, with reusable copying in `vec::copy_prefix`.
-Omitting type arguments selects the default `usize`.
+Integer, Boolean, and reference-free Copy-record instances support push, pop,
+get, and explicit reallocation. Their value contracts use ideal `same_value`,
+which compares every scalar field of a record, including nested records. It
+requires no runtime equality implementation and grants no Copy or ownership
+permission. Constructors use explicit type arguments such as
+`vec::Vec::<u8>::new(2)`; methods use the receiver's specialization. Omitting type
+arguments selects the default `usize`.
 
-The separate `arrays::copy_range` and `arrays::fill_range` functions now prove
-element values and preservation for numeric and Boolean arrays, including
-compound Boolean values. Vec's existing copy helper remains in place until
-general Copy-record equality is available, so its reallocation contract still
-guarantees length and capacity rather than preservation of every element value.
-Quantified claims about explicit record fields now work, as shown in
-[`array_field_proofs.evg`](../examples/array_field_proofs.evg). They provide part
-of the proof machinery needed for records without defining whole-record equality.
+`arrays::copy_range` and `arrays::fill_range` now prove exact element values and
+preservation for these records as well as scalar arrays. Reallocation uses that
+verified source copy routine. Its public contract still guarantees only length
+and capacity: exporting the element relation across its empty/nonempty branch
+join needs further work on conditional logical facts. The older
+`vec::copy_prefix` API remains available for existing callers.
+
+[`record_collections.evg`](../examples/record_collections.evg) proves record
+copy/fill results and Vec push/pop results, then executes a reallocation and
+checks its values at runtime. The native and interpreter tests both exercise it.
+Sparse range proofs over nested records verify at a billion-element capacity
+with the same obligation and certificate counts as small arrays; tests do not
+allocate the large buffer.
 
 This is a precursor to the README's vector, not its full implementation. Repeated
 initialization requires actual Copy permission; pointers with unique authority

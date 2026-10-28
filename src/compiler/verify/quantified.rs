@@ -174,7 +174,15 @@ impl Context<'_> {
             }
             return Ok(());
         }
-        if let Some((a, b, _)) = array_values::parts(expression) {
+        let operands = array_values::parts(expression)
+            .map(|(a, b, _)| (a, b))
+            .or_else(|| match &expression.kind {
+                Kind::Call(name, args) if name == "same_value" && args.len() == 2 => {
+                    Some((&args[0], &args[1]))
+                }
+                _ => None,
+            });
+        if let Some((a, b)) = operands {
             for operand in [a, b] {
                 if let Some((base, index)) = array_values::indexed_base(operand) {
                     self.check_quantified_place(base)?;

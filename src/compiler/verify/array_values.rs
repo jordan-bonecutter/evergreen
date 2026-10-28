@@ -11,6 +11,7 @@ mod observations;
 mod projections;
 mod reads;
 mod scalars;
+mod structural;
 pub(super) use projections::Contents;
 pub(super) use reads::ReadBinding;
 

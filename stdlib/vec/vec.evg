@@ -103,8 +103,10 @@ impl<T> Vec<T> {
             (self.len < self.cap)
         modifies(&self.len, &(*self.data)[self.len])
         ensures
-            (self.len == old(self.len) + 1 &&
-            (*self.data)[old(self.len)] == item)
+            (
+                self.len == old(self.len) + 1 &&
+                same_value((*self.data)[old(self.len)], item)
+            )
     {
         (*self.data)[self.len] = item;
         self.len = self.len + 1;
@@ -115,8 +117,10 @@ impl<T> Vec<T> {
             (self.len > 0)
         modifies(&self.len)
         ensures
-            (self.len + 1 == old(self.len) &&
-            result == old((*self.data)[self.len - 1]))
+            (
+                self.len + 1 == old(self.len) &&
+                same_value(result, old((*self.data)[self.len - 1]))
+            )
     {
         let item = (*self.data)[self.len - 1];
         self.len = self.len - 1;
@@ -146,7 +150,7 @@ impl<T> Vec<T> {
     {
         let grown = Self::filled(new_capacity, initial);
         if self.len == 0 {()} else {
-            copy_prefix::<T>(self.cap, &*self.data, new_capacity, &*grown.data, self.len, 0)
+            arrays::copy_range::<T>(self.cap, &*self.data, new_capacity, &*grown.data, 0, self.len);
         };
         grown.len = self.len;
         grown

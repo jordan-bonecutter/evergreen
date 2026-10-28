@@ -25,13 +25,12 @@ struct Dependencies {
 impl Context<'_> {
     fn roots_dependencies(&mut self, roots: &[evidence::NodeId]) -> Result<Dependencies> {
         let mut out = Dependencies::default();
-        for &node in roots {
-            let dependencies = self.evidence_dependencies(node)?;
-            for source in dependencies.admissions {
-                out.trusts.insert(self.proof.evidence.trust(source)?);
-            }
-            out.recursive.extend(dependencies.pending_summaries);
+        let dependencies = self.proof.evidence.admissions_many(roots);
+        self.charge_value_work(dependencies.work)?;
+        for source in dependencies.admissions {
+            out.trusts.insert(self.proof.evidence.trust(source)?);
         }
+        out.recursive.extend(dependencies.pending_summaries);
         Ok(out)
     }
 
