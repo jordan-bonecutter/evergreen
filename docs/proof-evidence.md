@@ -572,12 +572,25 @@ Automatic observation requires a closed theorem with no admission or pending
 summary dependencies, and its source state must still be available. Domain
 evidence passes the same dependency check. Both numeric and typed-slot reads
 share this specialization gate. The resulting arithmetic evidence retains its
-theorem and domain parents. Equality with another contents version uses only
-already observed numeric cells; it never invents a default for the unobserved
-remainder. Every read rechecks availability and the domain, including cache hits,
+theorem and domain parents. Equality with another contents version can use an
+already observed numeric cell or a known immutable literal/fill/store value. The
+latter lookup follows only exact stored indices or definitely distinct affine
+indices; unknown aliases and branch choices remain unresolved. It selects one
+value and never invents a default for an unknown input's unobserved remainder.
+Every read rechecks availability and the domain, including cache hits,
 so a branch-specific observation cannot escape through a cached value. Tests
 cover wrong arrays, expired revisions, absent proofs, guarded domains, and
 shifted or scaled indices, with search-free replay and billion-element inputs.
+
+`stdlib/arrays/fill.evg` exercises these rules in an Evergreen implementation of
+range fill. Its invariant describes an initialized prefix of the requested range
+and preservation of the remaining contents. Each iteration takes an erased
+snapshot, proves the prefix extension and preservation implications, then applies
+them to the previous checked facts. Completion uses an explicit implication from
+the final cursor and range facts. Loop summary instantiation remains a frontend
+trust boundary; these proofs do not make an unresolved summary a valid universal
+context. Tests check runtime-sized buffers, zero iterations, signed values, wrong
+writes, skipped indices, sparse billion-slot inputs, and native execution.
 
 This source slice covers direct `==` and `!=` comparisons. General payload
 arithmetic and ordering remain unfinished. An unknown equality does not become

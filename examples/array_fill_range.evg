@@ -1,0 +1,10 @@
+fn main() -> u8
+    ensures
+        result == 42
+{
+    let data: [u8; 4] = [7, 9, 11, 13];
+    // The pointer supplies its extent. Only indices 1 and 2 are written.
+    arrays::fill_range::<u8>(&data, 1, 3, 42);
+    proof _: data[0] == 7 && data[1] == 42 && data[3] == 13;
+    data[2]
+}

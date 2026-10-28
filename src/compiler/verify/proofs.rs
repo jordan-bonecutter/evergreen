@@ -76,7 +76,15 @@ impl Context<'_> {
             label,
             line,
         };
-        let node = self.proof_goal(goal, &mut script, 0, subjects)?;
+        let node = self
+            .proof_goal(goal, &mut script, 0, subjects)
+            .map_err(|error| {
+                if error.starts_with("line ") {
+                    error
+                } else {
+                    format!("line {line}: cannot prove {label}: {error}")
+                }
+            })?;
         if script.next != steps.len() {
             return Err(format!(
                 "line {line}: unused proof steps after the goal was closed"

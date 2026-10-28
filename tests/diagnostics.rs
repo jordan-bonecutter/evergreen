@@ -101,6 +101,23 @@ fn failures_inside_another_file_do_not_highlight_the_entry_file() {
 }
 
 #[test]
+fn proof_kernel_failures_highlight_the_proof_statement() {
+    let fixture = Fixture::new();
+    let path = fixture.write(
+        "proof.evg",
+        "fn check(limit: usize) {\n    let cursor: usize = 0;\n    while cursor < limit invariant(cursor <= limit) modifies(&cursor) decreases(limit - cursor) {cursor = cursor + 1;}\n    proof after: forall(i: integer) {integer(cursor) == integer(limit)} by {intro i; omega};\n}\n",
+    );
+    let output = fixture.check("never", std::slice::from_ref(&path));
+    assert!(!output.status.success());
+    let error = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        error.contains(&format!("{}:4:5", path.display())),
+        "{error}"
+    );
+    assert!(error.contains("cannot prove proof after: universal introduction requires fully traced context dependencies"), "{error}");
+}
+
+#[test]
 fn syntax_errors_have_source_excerpts_and_color_is_controllable() {
     let fixture = Fixture::new();
     let source = "fn main() {let text = \"λ🦀\"; @}\n";

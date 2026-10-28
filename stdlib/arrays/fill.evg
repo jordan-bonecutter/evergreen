@@ -1,0 +1,106 @@
+module arrays;
+
+// Fill [start, end), preserving the remaining numeric elements. The extent can
+// be supplied by the pointer type, including when its capacity is runtime data.
+fn fill_range<T = usize>(
+    capacity: usize,
+    data: linear_plane(T, capacity),
+    start: usize,
+    end: usize,
+    value: T
+)
+    where
+        start <= end &&
+        end <= capacity
+    modifies(data)
+    ensures
+        (forall(i: integer) where (0 <= i &&
+        integer::from(start) <= i &&
+        i < integer::from(end) &&
+        i < integer::from(capacity)) {(*data)[i] == value}) &&
+        (forall(i: integer) where (0 <= i &&
+        i < integer::from(capacity) &&
+        (i < integer::from(start) || integer::from(end) <= i)) {(*data)[i] == old(*data)[i]})
+{
+    let cursor = start;
+    fact filled = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(cursor) && i < integer::from(capacity)) {(*data)[i] == value};
+    fact untouched = forall(i: integer) where (0 <= i && i < integer::from(capacity) && (i < integer::from(start) || integer::from(cursor) <= i)) {(*data)[i] == old(*data)[i]};
+    while cursor < end
+        invariant
+            start <= cursor &&
+            cursor <= end &&
+            end <= capacity &&
+            filled &&
+            untouched
+        modifies(data, &cursor)
+        decreases(end - cursor)
+    {
+        // These snapshots are proof-only; no array copy executes at runtime.
+        ideal let before = *data;
+        ideal let completed = integer::from(cursor);
+        fact before_filled = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < completed && i < integer::from(capacity)) {before[i] == value};
+        fact before_untouched = forall(i: integer) where (0 <= i && i < integer::from(capacity) && (i < integer::from(start) || completed <= i)) {before[i] == old(*data)[i]};
+        proof prior: before_filled by {assumption};
+        proof rest: before_untouched by {assumption};
+
+        (*data)[cursor] = value;
+        cursor = cursor + 1;
+
+        proof extend_prefix: before_filled => filled by {
+            intro previous;
+            intro i;
+            omega
+        };
+        proof extended: filled by {
+            apply extend_prefix;
+            exact prior
+        };
+        proof preserve_rest: (integer::from(start) <= completed && before_untouched) => untouched by {
+            intro premise;
+            cases premise with started,
+            previous;
+            intro i;
+            omega
+        };
+        proof preserved: untouched by {
+            apply preserve_rest;
+            constructor;
+            omega;
+            exact rest
+        };
+    }
+
+    // At loop exit the completed prefix is exactly the requested range.
+    proof prefix: filled by {assumption};
+    proof suffix: untouched by {assumption};
+    fact final_filled = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(end) && i < integer::from(capacity)) {(*data)[i] == value};
+    fact final_untouched = forall(i: integer) where (0 <= i && i < integer::from(capacity) && (i < integer::from(start) || integer::from(end) <= i)) {(*data)[i] == old(*data)[i]};
+    proof finish: (cursor == end && filled) => final_filled by {
+        intro premise;
+        cases premise with at_end,
+        all;
+        intro i;
+        specialize all(i);
+        omega
+    };
+    proof complete: final_filled by {
+        apply finish;
+        constructor;
+        omega;
+        exact prefix
+    };
+    proof keep: (cursor == end && untouched) => final_untouched by {
+        intro premise;
+        cases premise with at_end,
+        all;
+        intro i;
+        specialize all(i);
+        omega
+    };
+    proof unchanged: final_untouched by {
+        apply keep;
+        constructor;
+        omega;
+        exact suffix
+    };
+}

@@ -165,21 +165,71 @@ impl Context<'_> {
         let other = 1 - side;
         let contents = if other == 0 { &key.0 } else { &key.1 };
         let other_value = match contents {
-            None => &arguments[other],
+            None => arguments[other].clone(),
             Some(contents) => {
-                let Some(Symbol::Number(_, value)) = self
-                    .arrays
-                    .reads
-                    .get(&(contents.clone(), arguments[other].clone()))
-                else {
+                let Some(value) = self.captured_numeric_value(contents, &arguments[other])? else {
                     return Ok(None);
                 };
                 value
             }
         };
-        let equality = equal(observed, other_value)?;
+        let equality = equal(observed, &other_value)?;
         self.charge_value_work(equality.storage_weight()?)?;
         Ok(Some(if negated { equality.not() } else { equality }))
+    }
+
+    fn captured_numeric_value(&mut self, identity: &str, index: &Linear) -> Result<Option<Linear>> {
+        let mut identity = identity.to_owned();
+        loop {
+            self.charge_value_work(
+                identity
+                    .len()
+                    .saturating_add(index.terms.len())
+                    .saturating_add(1),
+            )?;
+            let known = self
+                .arrays
+                .reads
+                .get(&(identity.clone(), index.clone()))
+                .and_then(|value| match value {
+                    Symbol::Number(_, value) => Some(value),
+                    _ => None,
+                })
+                .or_else(|| {
+                    constant_index(index)
+                        .and_then(|index| self.arrays.value_literals.get(&identity)?.get(index))
+                });
+            if let Some(value) = known {
+                let value = value.clone();
+                self.charge_value_work(value.terms.len() + 1)?;
+                return Ok(Some(value));
+            }
+            match self.arrays.history.get(&identity) {
+                Some(ArrayHistory::Fill(Symbol::Number(_, value))) => {
+                    let value = value.clone();
+                    self.charge_value_work(value.terms.len() + 1)?;
+                    return Ok(Some(value));
+                }
+                Some(ArrayHistory::Store {
+                    base,
+                    index: written,
+                    value,
+                }) => {
+                    if written == index {
+                        let value = value.number()?;
+                        self.charge_value_work(value.terms.len() + 1)?;
+                        return Ok(Some(value));
+                    }
+                    // Different affine constants with identical terms cannot
+                    // alias. Other relationships need a checked case proof.
+                    if written.terms != index.terms {
+                        return Ok(None);
+                    };
+                    identity = base.clone();
+                }
+                _ => return Ok(None),
+            }
+        }
     }
 }
 

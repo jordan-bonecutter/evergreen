@@ -9,6 +9,8 @@ mod head;
 use head::Head;
 
 #[cfg(test)]
+mod fill_tests;
+#[cfg(test)]
 mod termination_tests;
 #[cfg(test)]
 mod tests;

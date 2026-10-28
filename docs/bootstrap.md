@@ -2549,6 +2549,22 @@ materialized. Branch-dependent domains must hold again on each read, and old
 proofs cannot describe changed contents or another plane. This automatic path
 does not import `trustme` or unfinished summary dependencies.
 
+[`array_fill_range.evg`](../examples/array_fill_range.evg) uses the source library's
+`arrays::fill_range::<u8>(&data, start, end, value)`. It fills `[start, end)` and
+guarantees that elements outside that range equal their old values. The pointer's
+type supplies the extent; runtime-sized planes are also supported. The current
+implementation supports numeric elements, with `usize` as the default element
+type and explicit type arguments for other machine types.
+
+The implementation in `stdlib/arrays/fill.evg` uses a terminating `while` loop,
+named facts for the filled and untouched ranges, and proof-only snapshots of each
+iteration's incoming contents. Those snapshots produce no runtime array copies.
+Explicit implication proofs carry the ranges across a store and discharge the
+loop's final postconditions. Callers can prove concrete reads from both ranges.
+Verification checks one arbitrary iteration: a billion-element input needs the
+same number of obligations and certificates as a small input. Empty ranges and
+empty arrays are supported; reversed or out-of-bounds ranges are rejected.
+
 ### Demand-driven ideal aggregate reads
 
 The read-only ideal evaluator borrows immutable array and record views. It imports
