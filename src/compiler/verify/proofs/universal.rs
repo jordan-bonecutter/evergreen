@@ -3,6 +3,9 @@
 
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 impl Context<'_> {
     pub(super) fn introduce_universal(
         &mut self,
@@ -67,10 +70,15 @@ impl Context<'_> {
     ) -> Result<evidence::NodeId> {
         let line = script.line;
         let parts = step.split_whitespace().collect::<Vec<_>>();
-        let ["specialize", name, argument] = parts.as_slice() else {
-            return Err(format!("line {line}: malformed specialization step"));
+        let (name, argument, binding) = match parts.as_slice() {
+            ["specialize", name, argument] => (*name, *argument, None),
+            ["specialize", name, argument, "as", binding] => (*name, *argument, Some(*binding)),
+            _ => return Err(format!("line {line}: malformed specialization step")),
         };
-        let theorem = self.proof.witnesses.get(*name).copied().ok_or_else(|| {
+        if let Some(binding) = binding {
+            self.fresh_binding(binding, line)?;
+        }
+        let theorem = self.proof.witnesses.get(name).copied().ok_or_else(|| {
             format!("line {line}: specialize {name} requires a checked universal proof")
         })?;
         self.require_live_witness(theorem, name, line)?;
@@ -86,22 +94,28 @@ impl Context<'_> {
         };
         let (term, term_subjects) = self.quantified_argument(argument, line)?;
         let expected = body.substitute(&variable, &term)?;
-        if !self.same_proposition(&expected, goal)? {
+        if binding.is_none() && !self.same_proposition(&expected, goal)? {
             return Err(format!(
                 "line {line}: specialize {name} proves a different proposition"
             ));
         }
-        let parts = match self.proof.evidence.subjects(theorem) {
+        let parts = match self
+            .proof
+            .evidence
+            .subjects(theorem)
+            .or_else(|| self.proof.scoped_subjects.get(&theorem))
+        {
             Some(subjects) => {
                 subjects.universal_parts(&term_subjects, &mut self.work.value_work)?
             }
             None => None,
         };
-        if !self.evidence_dependencies(theorem)?.admissions.is_empty()
-            && !parts.as_ref().is_some_and(|(_, body)| {
-                body.complete && subjects.is_some_and(|goal| goal.complete && goal.key == body.key)
-            })
-        {
+        let preserves_subjects = parts.as_ref().is_some_and(|(_, body)| {
+            body.complete
+                && (binding.is_some()
+                    || subjects.is_some_and(|goal| goal.complete && goal.key == body.key))
+        });
+        if !self.evidence_dependencies(theorem)?.admissions.is_empty() && !preserves_subjects {
             return Err(format!(
                 "line {line}: specialize {name} concludes a different subject or state"
             ));
@@ -112,13 +126,32 @@ impl Context<'_> {
             depth + 1,
             parts.as_ref().map(|(domain, _)| domain),
         )?;
-        self.proof.evidence.derive(
-            goal.clone(),
+        let instance = self.proof.evidence.derive(
+            if binding.is_some() {
+                expected
+            } else {
+                goal.clone()
+            },
             Rule::ForallElim {
                 theorem,
                 domain,
                 term,
             },
-        )
+        )?;
+        if let Some(binding) = binding {
+            // Intermediate subjects stay local, including when the instance
+            // depends on an open quantifier domain. Nothing is published yet.
+            if let Some((_, body)) = parts {
+                self.charge_value_work(body.storage_weight()?)?;
+                self.proof.scoped_subjects.insert(instance, body);
+            }
+            let result = self.with_proof_hypotheses(&[(binding, instance)], line, |ctx| {
+                ctx.proof_goal(goal, script, depth + 1, subjects)
+            });
+            self.proof.scoped_subjects.remove(&instance);
+            result
+        } else {
+            Ok(instance)
+        }
     }
 }

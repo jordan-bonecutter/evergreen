@@ -368,6 +368,25 @@ A billion-element integer range uses the same number of proof obligations as a
 ten-element one. These propositions have no executable Boolean representation.
 See [universal.evg](../examples/universal.evg) for a runnable example.
 
+`specialize range(index) as selected` instead names the instance for the rest of
+the current proof. First prove its domain, then continue proving the original
+goal with `selected` available to `exact`, `apply`, or `cases`. The name cannot
+escape the proof or shadow an existing binding. For example:
+
+```evg
+proof selected_pair: integer(index) <= 9 && integer(index) < 10 by {
+    specialize range(index) as bound;
+    omega;
+    constructor;
+    exact bound;
+    omega
+};
+```
+
+The instance uses the existing universal-elimination rule. Its plane/revision
+subjects and admission dependencies remain attached, including under an open
+quantifier domain; it is not published as an independent closed proof.
+
 Bound indices use lexical scope and mathematical integer arithmetic. Machine and
 natural values need `integer::from(value)` (or the bootstrap `integer(value)`)
 before arithmetic inside a quantifier.

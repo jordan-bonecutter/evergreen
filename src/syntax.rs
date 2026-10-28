@@ -1123,7 +1123,12 @@ impl Parser {
                         self.name()?
                     };
                     self.expect(")")?;
-                    format!("specialize {name} {argument}")
+                    if self.eat("as") {
+                        let instance = self.name()?;
+                        format!("specialize {name} {argument} as {instance}")
+                    } else {
+                        format!("specialize {name} {argument}")
+                    }
                 }
                 "cases" => {
                     let proof = self.name()?;

@@ -6,6 +6,12 @@ use super::*;
 
 mod compound;
 
+struct Observation<'a> {
+    identity: &'a str,
+    index: &'a Linear,
+    value: &'a Symbol,
+}
+
 fn atom(formula: &Formula) -> Option<(&str, &[Linear], bool)> {
     match formula {
         Formula::Predicate { symbol, arguments } => Some((symbol, arguments, false)),
@@ -38,22 +44,11 @@ impl Context<'_> {
         if self.arrays.value_equality_origins.is_empty() {
             return Ok(());
         }
-        for (fields, value) in self.scalar_leaves(value)? {
-            let contents = Contents {
-                identity: identity.into(),
-                fields,
-            };
-            self.observe_scalar_leaf(&contents, index, value)?;
-        }
-        Ok(())
-    }
-
-    fn observe_scalar_leaf(
-        &mut self,
-        identity: &Contents,
-        index: &Linear,
-        value: &Symbol,
-    ) -> Result<()> {
+        let observed = Observation {
+            identity,
+            index,
+            value,
+        };
         let candidates = self
             .proof
             .claims
@@ -69,7 +64,7 @@ impl Context<'_> {
             else {
                 continue;
             };
-            self.observe_compound_values(theorem, &variable, &body, identity, index, value)?;
+            self.observe_compound_values(theorem, &variable, &body, &observed)?;
             let mut pending = vec![(&*body, Vec::new())];
             while let Some((part, path)) = pending.pop() {
                 self.charge_value_work(1 + path.len())?;
@@ -89,9 +84,17 @@ impl Context<'_> {
                     continue;
                 };
                 for (side, contents) in [&key.0, &key.1].into_iter().enumerate() {
-                    if contents.as_ref() != Some(identity) {
+                    let Some(contents) = contents
+                        .as_ref()
+                        .filter(|contents| contents.identity == identity)
+                    else {
                         continue;
                     };
+                    self.charge_value_work(contents.fields.len() + 1)?;
+                    let value = contents.project(value)?;
+                    if !scalar(&value.ty()) {
+                        continue;
+                    }
                     let Some(term) =
                         array_predicates::specialization_index(&arguments[side], index, &variable)?
                     else {

@@ -1,0 +1,49 @@
+type Reading struct {value: usize, fallback: usize, valid: bool}
+impl Copy for Reading {}
+
+// Every element has either a valid primary value or a usable fallback.
+fn read(
+    data: &[Reading; 2],
+    at: usize
+) -> usize
+    where
+        at < 2 &&
+        (forall(i: integer) where (0 <= i &&
+        i < 2) {
+            ((*data)[i].value == 42 &&
+            (*data)[i].valid == true) || (*data)[i].fallback == 42
+        })
+    ensures
+        result == 42
+{
+    if (*data)[at].valid && (*data)[at].value == 42 {(*data)[at].value} else {(*data)[at].fallback}
+}
+
+fn main() -> usize
+    ensures
+        result == 42
+{
+    let data: [Reading; 2] = [
+        Reading {value: 42, fallback: 0, valid: true},
+        Reading {value: 0, fallback: 42, valid: false}
+    ];
+    proof indices: forall(i: integer) where (0 <= i && i < 2) {i == 0 || i == 1} by {
+        intro i;
+        omega
+    };
+    proof usable: forall(i: integer) where (0 <= i && i < 2) {
+        (data[i].value == 42 && data[i].valid == true) || data[i].fallback == 42
+    }
+    by {
+        intro i;
+        specialize indices(i) as either;
+        omega;
+        cases either with first | second;
+        omega;
+        omega
+    };
+    let first = read(&data, 0);
+    let second = read(&data, 1);
+    proof _: first == second;
+    second
+}

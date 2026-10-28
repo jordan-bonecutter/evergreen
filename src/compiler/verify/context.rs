@@ -36,6 +36,8 @@ pub(super) struct LogicalBinding {
 pub(super) struct ProofState {
     pub(super) facts: BTreeMap<String, Expr>,
     pub(super) witnesses: BTreeMap<String, evidence::NodeId>,
+    // Subjects of named intermediate proofs live only for their proof scope.
+    pub(super) scoped_subjects: BTreeMap<evidence::NodeId, subjects::Snapshot>,
     pub(super) evidence: evidence::Evidence,
     pub(super) subjects: subjects::Subjects,
     pub(super) claims: BTreeSet<evidence::NodeId>,

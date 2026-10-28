@@ -9,9 +9,7 @@ impl Context<'_> {
         theorem: evidence::NodeId,
         variable: &str,
         body: &Formula,
-        identity: &Contents,
-        index: &Linear,
-        observed: &Symbol,
+        observed: &Observation<'_>,
     ) -> Result<()> {
         if !matches!(
             body,
@@ -38,10 +36,13 @@ impl Context<'_> {
                         continue;
                     };
                     for (side, contents) in [&key.0, &key.1].into_iter().enumerate() {
-                        if contents.as_ref() == Some(identity) {
+                        if contents
+                            .as_ref()
+                            .is_some_and(|contents| contents.identity == observed.identity)
+                        {
                             if let Some(term) = array_predicates::specialization_index(
                                 &arguments[side],
-                                index,
+                                observed.index,
                                 variable,
                             )? {
                                 terms.insert(term);
@@ -59,9 +60,7 @@ impl Context<'_> {
         for term in terms {
             self.charge_value_work(body.storage_weight()?)?;
             let instance = body.substitute(variable, &term)?;
-            let Some(interpretation) =
-                self.interpret_value_formula(&instance, identity, index, observed, 0)?
-            else {
+            let Some(interpretation) = self.interpret_value_formula(&instance, observed, 0)? else {
                 continue;
             };
             if !interpretation.is_arithmetic() || self.checked_entails(&interpretation)? {
@@ -79,9 +78,7 @@ impl Context<'_> {
     fn interpret_value_formula(
         &mut self,
         formula: &Formula,
-        identity: &Contents,
-        index: &Linear,
-        observed: &Symbol,
+        observed: &Observation<'_>,
         depth: usize,
     ) -> Result<Option<Formula>> {
         self.charge_value_work(1)?;
@@ -98,21 +95,34 @@ impl Context<'_> {
                     return Ok(None);
                 };
                 for (side, contents) in [&key.0, &key.1].into_iter().enumerate() {
-                    if contents.as_ref() == Some(identity) && arguments.get(side) == Some(index) {
-                        return self.observed_scalar_equality(formula, &key, side, index, observed);
+                    let Some(contents) = contents
+                        .as_ref()
+                        .filter(|contents| contents.identity == observed.identity)
+                    else {
+                        continue;
+                    };
+                    if arguments.get(side) == Some(observed.index) {
+                        self.charge_value_work(contents.fields.len() + 1)?;
+                        let value = contents.project(observed.value)?;
+                        if !scalar(&value.ty()) {
+                            continue;
+                        }
+                        return self.observed_scalar_equality(
+                            formula,
+                            &key,
+                            side,
+                            observed.index,
+                            value,
+                        );
                     }
                 }
                 return Ok(None);
             }
             Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b) => {
-                let Some(a) =
-                    self.interpret_value_formula(a, identity, index, observed, depth + 1)?
-                else {
+                let Some(a) = self.interpret_value_formula(a, observed, depth + 1)? else {
                     return Ok(None);
                 };
-                let Some(b) =
-                    self.interpret_value_formula(b, identity, index, observed, depth + 1)?
-                else {
+                let Some(b) = self.interpret_value_formula(b, observed, depth + 1)? else {
                     return Ok(None);
                 };
                 match formula {
@@ -122,9 +132,7 @@ impl Context<'_> {
                 }
             }
             Formula::Not(a) => {
-                let Some(a) =
-                    self.interpret_value_formula(a, identity, index, observed, depth + 1)?
-                else {
+                let Some(a) = self.interpret_value_formula(a, observed, depth + 1)? else {
                     return Ok(None);
                 };
                 a.not()

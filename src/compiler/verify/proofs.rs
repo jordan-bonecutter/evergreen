@@ -149,7 +149,12 @@ impl Context<'_> {
         if dependencies.admissions.is_empty() {
             return Ok(true);
         }
-        let Some(snapshot) = self.proof.evidence.subjects(node) else {
+        let Some(snapshot) = self
+            .proof
+            .evidence
+            .subjects(node)
+            .or_else(|| self.proof.scoped_subjects.get(&node))
+        else {
             return Ok(true);
         };
         Ok(self
@@ -168,7 +173,12 @@ impl Context<'_> {
         if self.evidence_dependencies(node)?.admissions.is_empty() {
             return Ok(());
         }
-        if let Some(snapshot) = self.proof.evidence.subjects(node) {
+        if let Some(snapshot) = self
+            .proof
+            .evidence
+            .subjects(node)
+            .or_else(|| self.proof.scoped_subjects.get(&node))
+        {
             if !self
                 .proof
                 .subjects
@@ -446,7 +456,12 @@ impl Context<'_> {
                     })?;
                 self.require_live_witness(source, name, line)?;
                 let mut theorem = self.proof.evidence.claim(source)?.clone();
-                let mut theorem_subjects = self.proof.evidence.subjects(source).cloned();
+                let mut theorem_subjects = self
+                    .proof
+                    .evidence
+                    .subjects(source)
+                    .or_else(|| self.proof.scoped_subjects.get(&source))
+                    .cloned();
                 let mut premises = Vec::new();
                 while !self.same_proposition(&theorem, goal)? {
                     match theorem {

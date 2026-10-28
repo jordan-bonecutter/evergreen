@@ -2643,6 +2643,15 @@ Bounds, type checks, and the existing work limits remain in force. The example
 also verifies at a billion-element capacity with the same obligation and
 certificate counts; tests execute only its small allocation.
 
+[`record_field_relations.evg`](../examples/record_field_relations.evg) uses a
+contract relating several fields of the same array element: either its primary
+value is valid and equals 42, or its fallback equals 42. Ordinary reads preserve
+that complete alternative, so branching on the primary fields establishes the
+fallback case. Observation projects only the fields mentioned by the contract;
+unused sibling fields do not multiply observation work. Initial record
+materialization still visits its fields. The example explicitly specializes an
+index lemma and splits its cases to establish the input contract.
+
 ### Demand-driven ideal aggregate reads
 
 The read-only ideal evaluator borrows immutable array and record views. It imports
