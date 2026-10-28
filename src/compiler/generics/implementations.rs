@@ -287,6 +287,7 @@ fn header(source: &Function) -> Function {
         ideal_params: source.ideal_params.clone(),
         module: source.module.clone(),
         partial: false,
+        unspecified_arithmetic: false,
         entry_memory: false,
     }
 }

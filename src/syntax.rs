@@ -497,6 +497,8 @@ pub struct Function {
     pub module: Option<String>,
     /// Derived by verification: contracts hold on return, but totality is unproved.
     pub partial: bool,
+    /// Derived by verification: runtime arithmetic can produce an unspecified value.
+    pub(crate) unspecified_arithmetic: bool,
     /// Derived once during verification; compound old(...) needs an entry store.
     pub(crate) entry_memory: bool,
 }

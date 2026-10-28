@@ -40,7 +40,7 @@ fn stored_index_reads_observe_index_effects_once_through_locals_and_pointers() {
 }
 
 #[test]
-fn an_index_write_cannot_hide_overflow_behind_the_previous_array_contents() {
+fn an_index_write_cannot_prove_a_result_using_the_previous_array_contents() {
     let source = include_str!("../../../examples/index_effects.evg")
         .replace_evg("[usize::MAX]", "[0]")
         .replace_evg("== 41", "== usize::MAX")
@@ -53,8 +53,12 @@ fn an_index_write_cannot_hide_overflow_behind_the_previous_array_contents() {
             "let view = &data; let value = (*view)[replace(view, &calls)];",
         ),
     ] {
-        let error = verify(&source).unwrap_err();
-        assert!(error.contains("no overflow"), "{error}");
+        let bad = source.replace_evg(
+            "fn main() -> usize",
+            "fn main() -> usize ensures result == 1",
+        );
+        let error = verify(&bad).unwrap_err();
+        assert!(error.contains("postcondition"), "{error}");
     }
 }
 
@@ -95,6 +99,10 @@ fn index_condition_cleanup_runs_before_the_element_read() {
         .replace_evg("== 41", "== usize::MAX")
         .replace_evg("= 41;", "= usize::MAX;")
         .replace_evg("proof current: value == usize::MAX;", "");
+    let bad = bad.replace_evg(
+        "fn main() -> usize",
+        "fn main() -> usize ensures result == 1",
+    );
     let error = verify(&bad).unwrap_err();
-    assert!(error.contains("no overflow"), "{error}");
+    assert!(error.contains("postcondition"), "{error}");
 }

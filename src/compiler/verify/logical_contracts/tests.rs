@@ -93,7 +93,9 @@ fn admitted_universal_contracts_keep_their_subjects_and_runtime_dependencies() {
             .proof_search_count(),
         0
     );
-    assert!(program.run().is_err());
+    // The admitted contract is false, but machine underflow itself is defined
+    // to produce a type-valid value. It no longer traps in this interpreter.
+    program.run().unwrap();
     let stale = source.replace_evg("external_bound(&b);", "external_bound(&b); b.limit = 0;");
     assert!(verify(&stale).is_err());
     let unrelated = source.replace_evg(

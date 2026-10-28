@@ -66,12 +66,13 @@ pub(super) fn check(
     function: &Function,
     declarations: Declarations<'_>,
     session: &mut Session,
-) -> Result<(usize, bool, summaries::Summary)> {
+) -> Result<(usize, bool, bool, summaries::Summary)> {
     let mut pending = vec![None];
     let mut requirements = summaries::Requirements::default();
     let mut output_types: HashMap<ResultKey, (Site, Ty)> = HashMap::new();
     let mut obligations = 0;
     let mut partial = false;
+    let mut unspecified = false;
     let mut value_work = 0;
     let mut eval_steps = 0;
     while let Some(plan) = pending.pop() {
@@ -106,6 +107,7 @@ pub(super) fn check(
                     return Err("resource case replay ended before its saved decisions".into());
                 }
                 partial |= context.execution.partial_execution;
+                unspecified |= context.execution.unspecified_arithmetic;
                 requirements.extend(context.declaration_requirements()?);
             }
         }
@@ -124,7 +126,7 @@ pub(super) fn check(
             }
         }
     }
-    Ok((obligations, partial, requirements.summary()))
+    Ok((obligations, partial, unspecified, requirements.summary()))
 }
 
 impl Context<'_> {

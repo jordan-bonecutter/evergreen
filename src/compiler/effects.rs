@@ -244,7 +244,7 @@ pub(crate) fn invariant_independent(
     safe: &BTreeSet<String>,
     structs: &BTreeMap<String, Struct>,
 ) -> bool {
-    scalar_effects(f, functions, safe, structs, false)
+    !f.unspecified_arithmetic && scalar_effects(f, functions, safe, structs, false)
 }
 
 /// Calls with scalar/reference interfaces and no creation, transfer, or cleanup

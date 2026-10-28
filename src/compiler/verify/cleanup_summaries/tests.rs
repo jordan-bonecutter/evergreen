@@ -1,6 +1,6 @@
 use super::*;
 
-const ADMITTED_DROP: &str = "type Resource struct {value: usize} impl Drop for Resource {fn drop(self) {proof nonmax: self.value < usize::MAX by {trustme}; let next = self.value + 1;}}";
+const ADMITTED_DROP: &str = "fn require_bound(n: usize) where n < usize::MAX {} type Resource struct {value: usize} impl Drop for Resource {fn drop(self) {proof nonmax: self.value < usize::MAX by {trustme}; require_bound(self.value); let next = self.value + 1;}}";
 
 #[test]
 fn implicit_read_only_cleanup_imports_safety_dependencies() {

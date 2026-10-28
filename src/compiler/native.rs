@@ -675,6 +675,7 @@ impl Emitter<'_> {
                 }
                 self.expr(x, Some(&ty))?;
                 self.code.extend([0x48, 0xf7, 0xd8]);
+                self.normalize_machine(&ty)?;
                 ty
             }
             Kind::Binary(op, a, b) => {
@@ -740,6 +741,7 @@ impl Emitter<'_> {
                     }
                 }
                 if arithmetic {
+                    self.normalize_machine(&operand)?;
                     operand
                 } else {
                     Type::Bool

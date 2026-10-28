@@ -9,7 +9,7 @@ fn unused_admissions_do_not_make_unrelated_obligations_vacuous() {
     for body in [
         "proof poison: false by {trustme}; needs(43);",
         "let x: usize = 43; let y: usize = 43; proof poison: x == 42 by {trustme}; needs(y);",
-        "proof poison: false by {trustme}; let value = usize::MAX + 1;",
+        "proof poison: false by {trustme}; let value = usize::MAX + 1; proof _: value == 0;",
     ] {
         let source = format!("{NEEDS} fn main() -> usize {{{body} 0}}");
         assert!(verify(&source).is_err(), "{source}");

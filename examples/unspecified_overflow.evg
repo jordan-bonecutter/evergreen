@@ -1,0 +1,12 @@
+// Overflow produces a value of the machine type, with no specified value.
+fn increment(n: usize) -> usize {
+    n + 1
+}
+
+fn main() -> usize {
+    let value = increment(usize::MAX);
+    proof _: typeof(value) == usize;
+    proof _: value >= 0 && value <= usize::MAX;
+    // Neither value == 0 nor value == usize::MAX is provable.
+    value
+}

@@ -12,7 +12,7 @@ const MAX_RECORDS: usize = 20_000;
 const MAX_WEIGHTS: usize = 2048;
 const MAX_CHECK_WORK: usize = 2_000_000;
 const HEADER: &str = "evergreen-proof 1";
-const MODEL: &str = "model bootstrap64-linear-v1";
+const MODEL: &str = "model bootstrap64-linear-v2";
 
 fn source_hash(source: &str) -> String {
     let mut h = Sha256::new();

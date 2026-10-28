@@ -170,6 +170,7 @@ impl Parser {
                 ideal_params: parameters.ideal,
                 module: None,
                 partial: false,
+                unspecified_arithmetic: false,
                 entry_memory: false,
             },
         ))

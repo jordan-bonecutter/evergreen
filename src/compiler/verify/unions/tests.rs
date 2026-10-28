@@ -292,13 +292,13 @@ fn a_source_flag_proves_an_optional_payloads_active_type() {
 }
 
 #[test]
-fn inactive_member_refinements_cannot_erase_live_overflow_obligations() {
+fn inactive_member_refinements_cannot_prove_an_exact_overflow_result() {
     for source in [
-        "type Empty struct {} where false; fn bad(value: Empty | usize) -> usize where typeof(value) == usize {let n: usize = value; n + 1}",
-        "type Empty struct {} where false; fn bad(flag: bool, n: usize) -> usize {let value: Empty | usize = if flag {n} else {n}; let live: usize = value; live + 1}",
+        "type Empty struct {} where false; fn bad(value: Empty | usize) -> usize where typeof(value) == usize ensures result > 0 {let n: usize = value; n + 1}",
+        "type Empty struct {} where false; fn bad(flag: bool, n: usize) -> usize ensures integer(result) == integer(n) + 1 {let value: Empty | usize = if flag {n} else {n}; let live: usize = value; live + 1}",
     ] {
         let error = verify(source).unwrap_err();
-        assert!(error.contains("no overflow"), "{error}");
+        assert!(error.contains("postcondition"), "{error}");
     }
 }
 

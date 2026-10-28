@@ -1899,7 +1899,7 @@ fn ideal_bindings_are_erased_and_keep_move_only_ownership() {
         "ideal let n: usize = 1; let r = &n; *r",
         "ideal let n: usize = 1; n = 2; 42",
         "ideal let n = false; proof unsound: n; 42",
-        "ideal let n: usize = usize::MAX + 1; 42",
+        "ideal let n: usize = usize::MAX + 1; proof _: n == 0; 42",
     ] {
         assert!(
             verify(&format!("fn main() -> usize {{{body}}}")).is_err(),
@@ -2735,7 +2735,7 @@ fn runtime_divergence_is_inferred_and_cannot_become_proof_evidence() {
         "{namespaced} ideal fn bad() -> nat {{nat(looping::spin())}}"
     ))
     .is_err());
-    assert!(verify("fn unsafe_loop(n: usize) -> usize {unsafe_loop(n + 1)}").is_err());
+    verify("fn unbounded_loop(n: usize) -> usize {unbounded_loop(n + 1)}").unwrap();
     let run =
         verify("fn spin() -> usize ensures(false) {spin()} fn main() -> usize {spin()}").unwrap();
     assert!(run.run().unwrap_err().contains("execution"));
@@ -2772,21 +2772,14 @@ fn verifies_well_founded_recursion() {
 }
 
 #[test]
-fn machine_overflow_requires_a_proof() {
-    assert!(verify("fn increment(n: usize) -> usize { n + 1 }").is_err());
+fn machine_arithmetic_preserves_exact_values_when_bounds_are_proven() {
+    verify("fn increment(n: usize) -> usize { n + 1 }").unwrap();
     let p = "fn increment(n: usize) -> usize where (n < usize::MAX) ensures (result == n + 1) { n + 1 } fn main() -> usize ensures (result == usize::MAX) { increment(usize::MAX - 1) }";
     assert_eq!(
         verify(p).unwrap().run().unwrap().to_string(),
         u64::MAX.to_string()
     );
-    for s in [
-        "fn main() -> usize {usize::MAX + 1}",
-        "fn main() -> u8 {256}",
-        "fn main() -> u8 {0 - 1}",
-        "fn abs(n: isize) -> isize {if n >= 0 {n} else {-n}}",
-        "fn main() -> i8 {-129}",
-        "fn main() -> i8 {-i8::MIN}",
-    ] {
+    for s in ["fn main() -> u8 {256}", "fn main() -> i8 {-129}"] {
         assert!(verify(s).is_err(), "{s}");
     }
     assert_eq!(

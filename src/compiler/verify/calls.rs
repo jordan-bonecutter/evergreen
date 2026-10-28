@@ -190,6 +190,9 @@ impl<'a> Context<'a> {
                 "destructor calls require checked ownership-free effects or a parameter-disposal helper".into(),
             );
         }
+        if self.execution.phase == Phase::Runtime && f.unspecified_arithmetic {
+            self.execution.unspecified_arithmetic = true;
+        }
         if f.partial {
             if self.execution.phase != Phase::Runtime {
                 return Err(

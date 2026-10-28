@@ -69,7 +69,7 @@ mod tests {
             "fn main() -> u8 {ideal let n: nat = 42; u8(n)}",
             "fn main() -> u8 {u8(nat(42))}",
             "fn narrow(n: usize) -> u8 {u8(n)} fn main() -> u8 {narrow(42)}",
-            "fn main() -> i16 {i16(i8::MAX + 1)}",
+            "fn main() -> i16 ensures result == 128 {i16(i8::MAX + 1)}",
             "fn u8() -> usize {42} fn main() -> usize {42}",
             "module m {fn usize() -> usize {42}} fn main() -> usize {42}",
         ] {

@@ -876,3 +876,44 @@ fn native_heap_storage_is_independent_of_inline_and_interpreter_budgets() {
     std::fs::remove_file(path).unwrap();
     assert_eq!(status.code(), Some(42));
 }
+
+// These are implementation tests, not language-level modular arithmetic laws.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn machine_overflow_chooses_low_bits_and_preserves_every_scalar_width() {
+    let directory = std::env::temp_dir().join(format!("evergreen-overflow-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("program");
+    for ty in [
+        "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize",
+    ] {
+        let signed = ty.starts_with('i');
+        let after_max = if signed {
+            format!("{ty}::MIN")
+        } else {
+            "0".into()
+        };
+        let below_min = format!("{ty}::MAX");
+        let product = "1";
+        let mut cases = vec![
+            (format!("{ty}::MAX + 1"), after_max),
+            (format!("{ty}::MIN - 1"), below_min),
+            (format!("{ty}::MAX * {ty}::MAX"), product.into()),
+        ];
+        if signed {
+            cases.push((format!("-{ty}::MIN"), format!("{ty}::MIN")));
+        }
+        for (expression, chosen) in cases {
+            let source = format!("fn main() -> usize {{let value: {ty} = {expression}; if value == {chosen} {{42}} else {{1}}}}");
+            let program = verify(&source).unwrap_or_else(|error| panic!("{error}: {source}"));
+            assert_eq!(program.run().unwrap().to_string(), "42", "{source}");
+            let binary = emit(&program).unwrap();
+            assert_eq!(
+                execute_test_binary(&path, &binary, &source).code(),
+                Some(42),
+                "{source}"
+            );
+        }
+    }
+    std::fs::remove_dir_all(&directory).unwrap();
+}

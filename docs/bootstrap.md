@@ -125,11 +125,27 @@ named propositions and their instance references are supported.
 
 The bootstrap target is 64-bit: `usize` is `u64`, and `isize` is `i64`.
 Explicit `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, and `i64` types are
-supported. Every machine arithmetic result must be proved within its type's
-bounds. There is no implicit wrapping. `T::MIN` and `T::MAX` denote bounds.
-For example, `fn increment(n: usize) -> usize { n + 1 }` is rejected; adding
-`where (n < usize::MAX)` supplies the required proof assumption. Negating a
-signed minimum is rejected as well.
+supported. Machine arithmetic has its exact mathematical result when that result
+fits the type. Otherwise its value is unspecified, but remains a valid value of
+the same machine type. `T::MIN` and `T::MAX` denote bounds.
+For example, `fn increment(n: usize) -> usize { n + 1 }` accepts every `usize`,
+including `usize::MAX`. The checker knows only the type bounds of a potentially
+overflowing result; it cannot prove that `usize::MAX + 1` equals zero. A stored
+result has one stable value, while separate evaluations need not agree.
+
+Add `where n < usize::MAX` to retain the exact relation to the input, or require
+it with `ensures integer(result) == integer(n) + 1`. Without a sufficient input
+bound, that postcondition fails. Refinements and memory safety requirements
+remain checked, so an unspecified index still needs a bounds proof and an
+unspecified reference count cannot satisfy an exact owner census. Out-of-range
+literals remain errors. Ideal functions require defined arithmetic; use
+mathematical integers or prove the machine bounds to make computation reusable
+in proofs. Runtime functions that may produce unspecified arithmetic results
+cannot be erased as pure scalar helpers.
+
+The interpreter and x86-64 backend currently choose the low result bits on
+overflow, then extend to the type's signedness. This is an implementation choice,
+not a source guarantee or a proof rule.
 
 `integer` and `nat` are proof-only mathematical integers and naturals. They may occur
 in `ideal fn` and `ideal type` definitions and proof expressions, but cannot be
@@ -463,9 +479,10 @@ checker in `src/compiler/kernel.rs` accepts nonnegative weighted sums of integer
 inequalities that establish a contradiction. Proof search uses bounded
 Fourier–Motzkin elimination. Search failure, overflow, and resource limits all
 fail verification. Integer strict inequalities are normalized with a unit gap.
-The solver is incomplete for general integer arithmetic and rejects nonlinear
-products of symbolic values. Boolean conditions retain at most 64 paths. When an expansion exceeds that
-limit, the verifier deduplicates conjunctions with exactly the same rows,
+The solver is incomplete for general integer arithmetic and cannot prove general
+nonlinear products. Runtime machine products can still compile with an unknown,
+type-bounded result when an exact value cannot be established. Boolean conditions
+retain at most 64 paths. When an expansion exceeds that limit, the verifier deduplicates conjunctions with exactly the same rows,
 ignoring order and repetitions only in the comparison key. It retains the first
 path's original rows for certificate indexing. If necessary it then probes the
 remaining paths and discards only contradictions accepted by the independent
@@ -475,9 +492,10 @@ search is limited to 2,048 constraints and 64 elimination steps.
 
 The parser, type elaborator, condition generator, certificate checker, evaluator,
 and native backend remain trusted Rust code. The kernel is not a full dependent type
-theory yet. There is no theorem of compiler correctness. Arithmetic is
-mathematical in verification; the reference evaluator uses checked i128 and
-reports an error for values beyond its range. It never wraps silently.
+theory yet. There is no theorem of compiler correctness. Ideal arithmetic is
+mathematical in verification; the reference evaluator uses checked i128 for ideal integers and reports values beyond its range. Machine
+arithmetic follows the specified-or-unknown rules above; proof coefficients
+always use checked arithmetic.
 The interpreter has a 100,000-unit expression/value-work budget, a 128-call depth
 limit, and a combined
 expression-depth limit of 256. It uses one worker with a bounded 16 MiB stack
@@ -1446,8 +1464,9 @@ when equality follows from the function's precondition.
 Place contracts also accept checked linear arithmetic, scalar field/dereference
 reads, and array lookups in indices. For example,
 `borrows(&(*data)[index + 1])` and `modifies(&(*data)[index + 1])` capture the
-entry value of that expression. Ordinary machine overflow and index bounds
-must be proved, including for the contract itself. Proof-only `integer`/`nat`
+entry value of that expression. Index bounds must be proved, including for the
+contract itself. Arithmetic that selects a contract's place needs a precise,
+representable result so the body can prove it selects that same place. Proof-only `integer`/`nat`
 conversions can express mathematical indices; the body must still prove that
 its runtime index selects the same cell. User function calls and statement
 blocks are not place expressions in this bootstrap.
@@ -1908,8 +1927,9 @@ ensures(nat(result) == nat(value)) {u8(value)}
 A branch checking a signed result is nonnegative can use `usize(result)` inside
 that branch. Narrowing a value whose range has not been proved fails even if a
 particular caller currently passes a small constant. Conversions do not widen
-arithmetic inside their argument: `i16(i8::MAX + 1)` still rejects the overflowing
-`i8` addition; widen the operand before performing that addition instead.
+arithmetic inside their argument: `i16(i8::MAX + 1)` converts an unspecified
+`i8` result, so it cannot establish the mathematical value 128. Widen the operand
+before the addition to preserve that exact value.
 Untyped literals receive the destination's contextual type.
 
 Conversions are pure and permitted in checked entry snapshots and scalar cleanup

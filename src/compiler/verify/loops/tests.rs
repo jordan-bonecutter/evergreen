@@ -58,7 +58,7 @@ fn loop_invariants_require_initialization_and_preservation() {
     for (source, label) in [
         ("fn main() {let x: usize = 0; while x < 42 invariant(x == 42) modifies(&x) {x = x + 1;}}", "loop invariant on entry"),
         ("fn main() {let x: usize = 0; while x < 42 invariant(x <= 41) modifies(&x) {x = x + 1;}}", "loop invariant after iteration"),
-        ("fn main() {let x: usize = 0; while x <= usize::MAX invariant(true) modifies(&x) {x = x + 1;}}", "no overflow"),
+        ("fn main() {let x: usize = 0; while x <= usize::MAX invariant(x == 0) modifies(&x) {x = x + 1;}}", "loop invariant after iteration"),
     ] {
         let error = verify(source).unwrap_err();
         assert!(error.contains(label), "{error}");

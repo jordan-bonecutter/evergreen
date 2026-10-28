@@ -289,10 +289,12 @@ impl Verification {
         if f.decreases.is_some() || f.partial {
             self.functions.insert(f.name.clone(), f.clone());
         }
-        let (obligations, partial, summary) = cases::check(f, self.declarations(), session)?;
+        let (obligations, partial, unspecified, summary) =
+            cases::check(f, self.declarations(), session)?;
         self.summaries.insert(f.name.clone(), summary);
         self.obligations += obligations;
         f.partial = partial;
+        f.unspecified_arithmetic = unspecified;
         if crate::compiler::effects::invariant_independent(
             f,
             &self.functions,

@@ -12,6 +12,25 @@ pub(super) fn argument_size(ty: &Type, structs: &BTreeMap<String, Struct>) -> Re
 }
 
 impl Emitter<'_> {
+    /// Choose the low result bits, then restore the signed/unsigned register
+    /// representation. Overflow is unspecified in source; this is a target choice.
+    pub(super) fn normalize_machine(&mut self, ty: &Type) -> Result<()> {
+        let Type::Machine(integer) = ty else {
+            return Err("native arithmetic requires a machine integer".into());
+        };
+        self.code.extend(match (integer.bits, integer.signed) {
+            (8, false) => &[0x0f, 0xb6, 0xc0][..],
+            (8, true) => &[0x48, 0x0f, 0xbe, 0xc0],
+            (16, false) => &[0x0f, 0xb7, 0xc0],
+            (16, true) => &[0x48, 0x0f, 0xbf, 0xc0],
+            (32, false) => &[0x89, 0xc0],
+            (32, true) => &[0x48, 0x63, 0xc0],
+            (64, _) => &[],
+            _ => return Err("invalid native arithmetic width".into()),
+        });
+        Ok(())
+    }
+
     /// Load a scalar at rax, extending it to the register representation.
     pub(super) fn load_scalar(&mut self, ty: &Type) -> Result<()> {
         let size = layout::of(ty, self.structs)?.size;

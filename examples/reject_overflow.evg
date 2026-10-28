@@ -1,4 +1,7 @@
-// Missing n < usize::MAX: the arithmetic operation cannot be proved safe.
-fn increment(n: usize) -> usize {
+// An exact mathematical contract forbids overflow; its input needs a bound.
+fn increment(n: usize) -> usize
+    ensures
+        integer(result) == integer(n) + 1
+{
     n + 1
 }

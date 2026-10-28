@@ -185,7 +185,7 @@ fn source_rc_rejects_counter_drift_overflow_and_missing_claims() {
             "data.count = data.count - 2;",
             "postcondition",
         ),
-        ("where self.data.count < usize::MAX", "", "upper bound"),
+        ("where self.data.count < usize::MAX", "", "invariant of"),
     ] {
         let wrong = library.replace_evg(from, to);
         assert_ne!(wrong, library);

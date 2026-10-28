@@ -832,7 +832,7 @@ impl Evaluator<'_> {
                         .checked_neg()
                         .ok_or("bootstrap evaluator integer overflow")?;
                     Ok(if let Type::Machine(t) = ty {
-                        Value::Machine(t, n)
+                        Value::Machine(t, machine_bits(t, n))
                     } else {
                         Value::Int(n)
                     })
@@ -877,6 +877,17 @@ impl Evaluator<'_> {
                 }
                 let a = self.expr(a, env, Some(&ty))?.number()?;
                 let b = self.expr(b, env, Some(&ty))?.number()?;
+                if let Type::Machine(t) = ty {
+                    let value = match op.as_str() {
+                        "+" => Some(a.wrapping_add(b)),
+                        "-" => Some(a.wrapping_sub(b)),
+                        "*" => Some(a.wrapping_mul(b)),
+                        _ => None,
+                    };
+                    if let Some(value) = value {
+                        return Ok(Value::Machine(t, machine_bits(t, value)));
+                    }
+                }
                 let number = match op.as_str() {
                     "+" => a.checked_add(b),
                     "-" if ty == Type::Nat => Some(if a < b { 0 } else { a - b }),
@@ -893,15 +904,7 @@ impl Evaluator<'_> {
                 .ok_or("bootstrap evaluator integer overflow")?;
                 Ok(match ty {
                     Type::Nat => Value::Nat(number),
-                    Type::Machine(t) => {
-                        let (lo, hi) = t.bounds();
-                        if number < lo || number > hi {
-                            return Err(
-                                "verified machine overflow: compiler/runtime disagreement".into()
-                            );
-                        }
-                        Value::Machine(t, number)
-                    }
+                    Type::Machine(t) => Value::Machine(t, machine_bits(t, number)),
                     _ => Value::Int(number),
                 })
             }
@@ -1311,3 +1314,15 @@ fn evaluate(program: &VerifiedProgram) -> Result<(Value, Vec<String>)> {
 
 #[cfg(test)]
 mod tests;
+
+/// This interpreter chooses low bits for otherwise unspecified machine results.
+/// The verifier does not expose this implementation choice as a language theorem.
+fn machine_bits(integer: MachineInt, value: i128) -> i128 {
+    let modulus = 1_i128 << integer.bits;
+    let bits = value.rem_euclid(modulus);
+    if integer.signed && bits >= modulus / 2 {
+        bits - modulus
+    } else {
+        bits
+    }
+}

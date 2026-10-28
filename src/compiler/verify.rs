@@ -46,6 +46,7 @@ mod layout_queries;
 mod literals;
 mod logical_contracts;
 mod loops;
+mod machine_arithmetic;
 #[cfg(test)]
 mod match_tests;
 mod ownership;
@@ -2170,7 +2171,7 @@ impl<'a> Context<'a> {
             )?;
             self.prove(
                 &Formula::Ge(Linear::number(hi).sub(n)?),
-                "machine integer upper bound (no overflow)",
+                "machine integer upper bound",
                 e.line,
             )?;
         }
@@ -2802,7 +2803,11 @@ impl<'a> Context<'a> {
                 } else {
                     self.eval(x, Some(&ty))?.number()?
                 };
-                Ok(Symbol::Number(ty, n.scale(-1)?))
+                if matches!(ty, Ty::Machine(_)) && !matches!(x.kind, Kind::Number(_)) {
+                    self.machine_arithmetic(&ty, n.scale(-1).ok())
+                } else {
+                    Ok(Symbol::Number(ty, n.scale(-1)?))
+                }
             }
             Kind::Binary(op, a, b) if matches!(op.as_str(), "&&" | "||" | "=>") => {
                 let a = self.eval(a, Some(&Ty::Bool))?.proposition()?;
@@ -2850,6 +2855,16 @@ impl<'a> Context<'a> {
                 }
                 let a = self.eval(a, Some(&ty))?.number()?;
                 let b = self.eval(b, Some(&ty))?.number()?;
+                if matches!(ty, Ty::Machine(_)) && matches!(op.as_str(), "+" | "-" | "*") {
+                    let exact = match op.as_str() {
+                        "+" => a.add(&b).ok(),
+                        "-" => a.sub(&b).ok(),
+                        "*" if a.terms.is_empty() => b.scale(a.constant).ok(),
+                        "*" if b.terms.is_empty() => a.scale(b.constant).ok(),
+                        _ => None,
+                    };
+                    return self.machine_arithmetic(&ty, exact);
+                }
                 match op.as_str() {
                     "+" => Ok(Symbol::Number(ty, a.add(&b)?)),
                     "-" if matches!(ty, Ty::Nat) => {
