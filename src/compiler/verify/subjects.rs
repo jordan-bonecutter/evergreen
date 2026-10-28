@@ -13,6 +13,7 @@ pub(super) struct Stamp {
     revision: state::Revision,
 }
 
+mod branches;
 mod snapshot;
 pub(super) use snapshot::{ClaimKey, Snapshot};
 

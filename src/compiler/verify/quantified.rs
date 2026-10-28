@@ -236,6 +236,17 @@ impl Context<'_> {
             Kind::Call(name, args) if name == "integer" && args.len() == 1 => {
                 self.check_quantified_expression(&args[0], depth + 1)
             }
+            Kind::Call(name, args) if name == "old" && args.len() == 1 => {
+                self.check_quantified_place(&args[0])?;
+                if matches!(
+                    self.hint(&args[0]),
+                    Some(Ty::Int | Ty::Nat | Ty::Machine(_) | Ty::Bool)
+                ) {
+                    Ok(())
+                } else {
+                    Err(error())
+                }
+            }
             Kind::Call(name, args) if self.declarations.functions.contains_key(name) => {
                 self.quantified_scalar_function(name, expression.line)?;
                 for argument in args {

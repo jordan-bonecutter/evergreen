@@ -33,6 +33,16 @@ impl Context<'_> {
                     pending.push((left, left_snapshot));
                 }
                 Formula::True => {}
+                Formula::Or(a, b) => {
+                    if let Some(selected) = self.select_contract_alternative(proof, &a, &b)? {
+                        pending.push((selected, snapshot));
+                    } else {
+                        if self.proof.evidence.subjects(proof).is_none() {
+                            self.publish_evidence(proof, snapshot)?;
+                        }
+                        clauses.push(proof);
+                    }
+                }
                 _ => {
                     if self.proof.evidence.subjects(proof).is_none() {
                         self.publish_evidence(proof, snapshot)?;
@@ -42,5 +52,57 @@ impl Context<'_> {
             }
         }
         Ok(clauses)
+    }
+
+    // A conditional guarantee may expose its live arm only after the other
+    // arm has been ruled out. Keep that checked condition in the proof DAG.
+    fn select_contract_alternative(
+        &mut self,
+        source: evidence::NodeId,
+        left: &Formula,
+        right: &Formula,
+    ) -> Result<Option<evidence::NodeId>> {
+        for (rejected, selected, reject_left) in [(left, right, true), (right, left, false)] {
+            if !rejected.is_arithmetic() {
+                continue;
+            }
+            let negative = rejected.clone().not();
+            let Some(support) = self.probe_guard(&self.proof.paths.clone(), &negative)? else {
+                continue;
+            };
+            if support.parents.iter().any(|&node| {
+                self.proof.evidence.has_admissions(node)
+                    || self.proof.evidence.has_pending_summaries(node)
+            }) {
+                continue;
+            }
+            self.work.obligations += 1;
+            let negative = self.proof.evidence.arithmetic(negative, support)?;
+            let (left_hypothesis, left_case) = self.proof.evidence.hypothesis(left.clone())?;
+            let (right_hypothesis, right_case) = self.proof.evidence.hypothesis(right.clone())?;
+            let impossible = self.selector_contradiction(
+                negative,
+                if reject_left { left_case } else { right_case },
+            )?;
+            let impossible = self
+                .proof
+                .evidence
+                .derive(selected.clone(), evidence::Rule::FalseElim(impossible))?;
+            return self
+                .proof
+                .evidence
+                .derive(
+                    selected.clone(),
+                    evidence::Rule::OrElim {
+                        source,
+                        left_hypothesis,
+                        right_hypothesis,
+                        left: if reject_left { impossible } else { left_case },
+                        right: if reject_left { right_case } else { impossible },
+                    },
+                )
+                .map(Some);
+        }
+        Ok(None)
     }
 }

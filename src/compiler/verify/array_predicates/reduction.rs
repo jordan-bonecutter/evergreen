@@ -39,6 +39,38 @@ impl Context<'_> {
             return Ok(Some(node));
         }
         match goal {
+            Formula::Forall {
+                variable,
+                domain,
+                body,
+            } => {
+                let eigenvariable = self.fresh_name();
+                let term = Linear::variable(&eigenvariable);
+                let domain = domain.substitute(variable, &term)?;
+                let body = body.substitute(variable, &term)?;
+                let (hypothesis, premise) = self.proof.evidence.hypothesis(domain)?;
+                let name = self.fresh_name();
+                let result =
+                    self.with_logical_binding(&eigenvariable, &eigenvariable, false, |ctx| {
+                        ctx.with_proof_hypotheses(&[(&name, premise)], 0, |ctx| {
+                            ctx.reduce_selector_formula(&body, depth + 1)
+                        })
+                    })?;
+                let Some(body) = result else {
+                    return Ok(None);
+                };
+                self.proof
+                    .evidence
+                    .derive(
+                        goal.clone(),
+                        evidence::Rule::ForallIntro {
+                            hypothesis,
+                            body,
+                            eigenvariable,
+                        },
+                    )
+                    .map(Some)
+            }
             Formula::And(a, b) => {
                 let Some(left) = self.reduce_selector_formula(a, depth + 1)? else {
                     return Ok(None);
@@ -106,7 +138,7 @@ impl Context<'_> {
         }
     }
 
-    pub(super) fn selector_contradiction(
+    pub(in crate::compiler::verify) fn selector_contradiction(
         &mut self,
         first: evidence::NodeId,
         second: evidence::NodeId,
@@ -139,12 +171,24 @@ impl Context<'_> {
         goal: &Formula,
         depth: usize,
     ) -> Result<Option<evidence::NodeId>> {
-        let nodes = self.proof.witnesses.values().copied().collect::<Vec<_>>();
+        let candidates = self
+            .proof
+            .witnesses
+            .values()
+            .copied()
+            .chain(self.proof.claims.iter().copied())
+            .collect::<BTreeSet<_>>();
+        let (open, closed): (Vec<_>, Vec<_>) = candidates
+            .into_iter()
+            .partition(|&node| self.proof.evidence.check_closed(node).is_err());
+        let nodes = open.into_iter().chain(closed).collect::<Vec<_>>();
         self.charge_value_work(nodes.len())?;
         for theorem in nodes {
-            // Generalize from explicit local premises, never automatically
-            // carry an imported range across a write to its source plane.
-            if self.proof.evidence.check_closed(theorem).is_ok() {
+            // A live, checked contract can be restricted to a smaller domain.
+            // Historical or admitted ranges still need explicit transport.
+            if self.proof.evidence.check_closed(theorem).is_ok()
+                && !self.unadmitted_evidence(theorem)?
+            {
                 continue;
             }
             self.charge_value_work(self.proof.evidence.claim(theorem)?.storage_weight()?)?;
@@ -170,6 +214,17 @@ impl Context<'_> {
                 let Some(term) = observations::specialization_term(part, goal, &variable)? else {
                     continue;
                 };
+                let mut source = theorem;
+                if self.proof.evidence.check_closed(theorem).is_ok() {
+                    let Some(snapshot) = self.proof.evidence.subjects(theorem).cloned() else {
+                        continue;
+                    };
+                    let scope = self.logical_claim_scope(theorem, &snapshot)?;
+                    let Some(scoped) = self.guarded_claim_evidence(theorem, &scope)? else {
+                        continue;
+                    };
+                    source = scoped;
+                }
                 let domain = domain.substitute(&variable, &term)?;
                 let Some(domain) = self.reduce_selector_formula(&domain, depth + 1)? else {
                     continue;
@@ -177,7 +232,7 @@ impl Context<'_> {
                 let mut instance = self.proof.evidence.derive(
                     body.substitute(&variable, &term)?,
                     evidence::Rule::ForallElim {
-                        theorem,
+                        theorem: source,
                         domain,
                         term,
                     },

@@ -39,14 +39,19 @@ arguments selects the default `usize`.
 
 `arrays::copy_range` and `arrays::fill_range` now prove exact element values and
 preservation for these records as well as scalar arrays. Reallocation uses that
-verified source copy routine. Its public contract still guarantees only length
-and capacity: exporting the element relation across its empty/nonempty branch
-join needs further work on conditional logical facts. The older
+verified source copy routine. Its public contract preserves length and every
+element of the old live prefix, and sets the requested capacity. The empty case
+does not read through `Null`. Both the range and the input contents use entry
+snapshots, so the specification describes the values being copied. The older
 `vec::copy_prefix` API remains available for existing callers.
 
 [`record_collections.evg`](../examples/record_collections.evg) proves record
-copy/fill results and Vec push/pop results, then executes a reallocation and
-checks its values at runtime. The native and interpreter tests both exercise it.
+copy/fill results and Vec push/pop results, then proves a record read from the
+grown buffer equals the original record. It also checks the subsequent pop.
+The native and interpreter tests both exercise it. The example names the new
+vector separately and observes its element before popping: automatic contract
+transport through replacement assignment and through an immediately following
+owning body recheck still needs work.
 Sparse range proofs over nested records verify at a billion-element capacity
 with the same obligation and certificate counts as small arrays; tests do not
 allocate the large buffer.

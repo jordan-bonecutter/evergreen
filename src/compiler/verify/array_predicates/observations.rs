@@ -73,7 +73,7 @@ pub(in crate::compiler::verify) fn specialization_index(
 }
 
 impl Context<'_> {
-    fn unadmitted_evidence(&mut self, node: evidence::NodeId) -> Result<bool> {
+    pub(super) fn unadmitted_evidence(&mut self, node: evidence::NodeId) -> Result<bool> {
         self.charge_value_work(1)?;
         Ok(!self.proof.evidence.has_admissions(node)
             && !self.proof.evidence.has_pending_summaries(node))
@@ -111,7 +111,7 @@ impl Context<'_> {
 
     pub(in crate::compiler::verify) fn checked_array_specialization(
         &mut self,
-        node: evidence::NodeId,
+        mut node: evidence::NodeId,
         term: &Linear,
         goal: &Formula,
     ) -> Result<Option<evidence::NodeId>> {
@@ -125,13 +125,11 @@ impl Context<'_> {
             return Ok(None);
         }
         if let Some(snapshot) = self.proof.evidence.subjects(node).cloned() {
-            let scope = self
-                .proof
-                .subjects
-                .availability(&snapshot, &self.storage.memory, None)?;
-            if !self.checked_entails(&scope)? {
+            let scope = self.logical_claim_scope(node, &snapshot)?;
+            let Some(scoped) = self.guarded_claim_evidence(node, &scope)? else {
                 return Ok(None);
-            }
+            };
+            node = scoped;
         }
         let domain = domain.substitute(&variable, term)?;
         let paths = self.proof.paths.clone();

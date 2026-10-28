@@ -9,6 +9,54 @@ mod tests;
 mod type_tests;
 
 impl Context<'_> {
+    pub(super) fn guarded_claim_evidence(
+        &mut self,
+        node: evidence::NodeId,
+        scope: &Formula,
+    ) -> Result<Option<evidence::NodeId>> {
+        if *scope == Formula::True {
+            return Ok(Some(node));
+        }
+        let Some(support) = self.probe_guard(&self.proof.paths.clone(), scope)? else {
+            return Ok(None);
+        };
+        if support.parents.iter().any(|&parent| {
+            self.proof.evidence.has_admissions(parent)
+                || self.proof.evidence.has_pending_summaries(parent)
+        }) {
+            return Ok(None);
+        }
+        self.work.obligations += 1;
+        let condition = self.proof.evidence.arithmetic(scope.clone(), support)?;
+        let theorem = self.proof.evidence.guard(node, scope)?;
+        self.proof
+            .evidence
+            .derive(
+                self.proof.evidence.claim(node)?.clone(),
+                evidence::Rule::ImpElim {
+                    theorem,
+                    argument: condition,
+                },
+            )
+            .map(Some)
+    }
+    pub(super) fn logical_claim_scope(
+        &mut self,
+        node: evidence::NodeId,
+        snapshot: &subjects::Snapshot,
+    ) -> Result<Formula> {
+        if let Some(guard) = self.proof.claim_guards.get(&node).cloned() {
+            let available = self
+                .proof
+                .subjects
+                .branch_availability(snapshot, &self.storage.memory)?;
+            Ok(guard.and(available))
+        } else {
+            self.proof
+                .subjects
+                .availability(snapshot, &self.storage.memory, None)
+        }
+    }
     pub(super) fn assume_declared_invariant(&mut self, expression: &Expr) -> Result<()> {
         let proposition = self.proposition(expression)?;
         if proposition.is_arithmetic() {
@@ -83,28 +131,12 @@ impl Context<'_> {
             if trusted && !subjects.is_some_and(|goal| goal.complete && goal.key == snapshot.key) {
                 continue;
             }
-            let available =
-                self.proof
-                    .subjects
-                    .availability(&snapshot, &self.storage.memory, None)?;
+            let available = self.logical_claim_scope(node, &snapshot)?;
             let scope = self
                 .reference_claim_scope(&snapshot, subjects)?
                 .and(available);
-            if !self.checked_entails(&scope)? {
+            let Some(node) = self.guarded_claim_evidence(node, &scope)? else {
                 continue;
-            }
-            let node = if scope == Formula::True {
-                node
-            } else {
-                let guarded = self.proof.evidence.guard(node, &scope)?;
-                let condition = self.prove_subjects(&scope, None, "logical contract scope", 0)?;
-                self.proof.evidence.derive(
-                    goal.clone(),
-                    evidence::Rule::ImpElim {
-                        theorem: guarded,
-                        argument: condition,
-                    },
-                )?
             };
             if !trusted {
                 return Ok(Some(node));

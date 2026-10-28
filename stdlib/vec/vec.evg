@@ -134,8 +134,16 @@ impl<T> Vec<T> {
             (self.len <= new_capacity &&
             integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
         ensures
-            (result.len == self.len &&
-            result.cap == new_capacity)
+            (
+                result.len == old(self.len) &&
+                result.cap == new_capacity &&
+                (
+                    if old(self.len) > 0 {
+                        forall(i: integer) where (0 <= i &&
+                        i < integer::from(old(self.len))) {same_value((*result.data)[i], old(*self.data)[i])}
+                    } else {true}
+                )
+            )
     {
         self.reallocate_filled(new_capacity, 0)
     }
@@ -145,8 +153,16 @@ impl<T> Vec<T> {
             (self.len <= new_capacity &&
             integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
         ensures
-            (result.len == self.len &&
-            result.cap == new_capacity)
+            (
+                result.len == old(self.len) &&
+                result.cap == new_capacity &&
+                (
+                    if old(self.len) > 0 {
+                        forall(i: integer) where (0 <= i &&
+                        i < integer::from(old(self.len))) {same_value((*result.data)[i], old(*self.data)[i])}
+                    } else {true}
+                )
+            )
     {
         let grown = Self::filled(new_capacity, initial);
         if self.len == 0 {()} else {

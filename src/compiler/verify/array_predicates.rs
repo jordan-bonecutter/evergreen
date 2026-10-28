@@ -16,6 +16,8 @@ mod observation_tests;
 mod store_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod transport_tests;
 
 pub(super) struct Selector {
     symbol: String,

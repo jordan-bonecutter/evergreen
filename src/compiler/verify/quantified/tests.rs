@@ -107,6 +107,7 @@ fn source_universals_reject_single_index_proofs_wrong_instances_and_effects() {
         ("fn main() -> usize {let bad = forall(i: integer) {i == i}; 0}", "proof-only"),
         ("fn main() -> usize {let n: usize = 1; fact bad = forall(i: integer) {n + 1 >= n}; 0}", "quantified arithmetic uses integer"),
         ("fn main() -> usize {fact bad = forall(i: integer) where(forall(j: integer) {true}) {true}; 0}", "unquantified scalar proposition"),
+        ("fn check(n: usize) {proof bad: forall(i: integer) {integer(old(i)) == i} by {trustme};}", "independent of the bound index"),
     ] {
         let error = verify(source).unwrap_err();
         assert!(error.contains(fragment), "expected {fragment}: {error}");

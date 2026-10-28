@@ -41,6 +41,8 @@ pub(super) struct ProofState {
     pub(super) evidence: evidence::Evidence,
     pub(super) subjects: subjects::Subjects,
     pub(super) claims: BTreeSet<evidence::NodeId>,
+    // A branch-local logical claim remains usable only in its original arm.
+    pub(super) claim_guards: BTreeMap<evidence::NodeId, Formula>,
     pub(super) value_claims: Vec<evidence::NodeId>,
     pub(super) uses: Vec<evidence::NodeId>,
     pub(super) contract_uses: Vec<evidence::NodeId>,

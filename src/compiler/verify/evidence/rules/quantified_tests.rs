@@ -263,6 +263,73 @@ fn untraced_contracts_and_imported_trust_cannot_claim_eigenvariable_freshness() 
 }
 
 #[test]
+fn applied_contracts_expose_claim_control_and_precondition_inputs() {
+    let mut graph = Evidence::default();
+    let (h, domain) = graph.hypothesis(range("k")).unwrap();
+    let original = forall(range("i"), nonnegative("i"));
+    let checked = graph
+        .applied_contract(original, vec![], &Formula::True)
+        .unwrap();
+    let selected = graph
+        .derive(
+            nonnegative("k"),
+            Rule::ForallElim {
+                theorem: checked,
+                domain,
+                term: Linear::variable("k"),
+            },
+        )
+        .unwrap();
+    graph
+        .derive(forall(range("i"), nonnegative("i")), introduce(h, selected))
+        .unwrap();
+
+    let captured = graph
+        .applied_contract(nonnegative("k"), vec![], &Formula::True)
+        .unwrap();
+    reject_without_mutation(
+        &mut graph,
+        forall(range("i"), nonnegative("i")),
+        introduce(h, captured),
+    );
+    let controlled = graph
+        .applied_contract(Formula::False, vec![], &nonnegative("k"))
+        .unwrap();
+    reject_without_mutation(
+        &mut graph,
+        forall(range("i"), Formula::False),
+        introduce(h, controlled),
+    );
+    let premise = graph
+        .arithmetic(
+            Formula::True,
+            paths::Support {
+                unresolved: true,
+                context_variables: BTreeSet::from(["k".into()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let dependent = graph
+        .applied_contract(Formula::False, vec![premise], &Formula::True)
+        .unwrap();
+    reject_without_mutation(
+        &mut graph,
+        forall(range("i"), Formula::False),
+        introduce(h, dependent),
+    );
+    let opaque = graph.contract(Formula::True, vec![]).unwrap();
+    let unresolved = graph
+        .applied_contract(Formula::False, vec![opaque], &Formula::True)
+        .unwrap();
+    reject_without_mutation(
+        &mut graph,
+        forall(range("i"), Formula::False),
+        introduce(h, unresolved),
+    );
+}
+
+#[test]
 fn specialization_terms_are_charged_even_when_the_body_does_not_use_them() {
     let mut graph = Evidence::default();
     let theorem = graph.admit(forall(Formula::True, Formula::True)).unwrap();

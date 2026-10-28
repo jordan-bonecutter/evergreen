@@ -59,10 +59,13 @@ impl Context<'_> {
             // Only this function's advertised postcondition crosses its call
             // boundary. Inner calls cannot masquerade as its returned value.
             self.proof.results.truncate(results);
-            if let Some(proposition) = post {
-                let mut parents = self.proof.contract_parents.clone();
-                parents.extend(self.proof.contract_uses.iter().copied());
-                let node = self.proof.evidence.contract(proposition.clone(), parents)?;
+            if let Some((proposition, checked)) = post {
+                // This body was checked against the actual arguments. Export
+                // its proof, rather than replacing it with an opaque contract.
+                let node = self
+                    .proof
+                    .evidence
+                    .derive(proposition.clone(), evidence::Rule::Reuse(checked))?;
                 if proposition.is_arithmetic()
                     && self.evidence_dependencies(node)?.admissions.is_empty()
                 {
@@ -103,7 +106,7 @@ impl Context<'_> {
         result_type: &Ty,
         inputs: &[InputReference],
         declaration: bool,
-    ) -> Result<(Symbol, Option<Formula>)> {
+    ) -> Result<(Symbol, Option<(Formula, evidence::NodeId)>)> {
         self.session.clear_diagnostic();
         let checked = self.check_function_body_inner(function, result_type, inputs, declaration);
         if checked.is_ok() {
@@ -121,7 +124,7 @@ impl Context<'_> {
         result_type: &Ty,
         inputs: &[InputReference],
         declaration: bool,
-    ) -> Result<(Symbol, Option<Formula>)> {
+    ) -> Result<(Symbol, Option<(Formula, evidence::NodeId)>)> {
         let owner_scope = self.storage.memory.owner_scope();
         let entry = self.clone_env()?;
         // Only the independent entry configuration of a heap declaration may
@@ -200,17 +203,18 @@ impl Context<'_> {
             let local_facts = std::mem::take(&mut self.proof.facts);
             let proposition = self.proposition(post)?;
             self.proof.facts = local_facts;
-            self.prove_with_subjects(
-                &proposition,
-                &format!("postcondition of {}", function.name),
-                post.line,
-                function.proof.as_deref(),
-                Some(&post_subjects),
-            )
-            .map_err(|error| {
-                self.requirement_error(error, post, function.source, "postcondition")
-            })?;
-            Some(proposition)
+            let checked = self
+                .prove_with_subjects(
+                    &proposition,
+                    &format!("postcondition of {}", function.name),
+                    post.line,
+                    function.proof.as_deref(),
+                    Some(&post_subjects),
+                )
+                .map_err(|error| {
+                    self.requirement_error(error, post, function.source, "postcondition")
+                })?;
+            Some((proposition, checked))
         } else if function.proof.is_some() {
             return Err(format!(
                 "line {}: a function proof block requires an ensures proposition",

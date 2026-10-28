@@ -434,6 +434,45 @@ fn observing_a_region_in_one_branch_does_not_change_the_other_branch() {
 }
 
 #[test]
+fn branch_availability_preserves_siblings_but_not_writes_or_new_generations() {
+    let mut memory = Memory::default();
+    let plane = memory.allocate(value(0)).unwrap();
+    let reference = memory.borrow(plane).unwrap();
+    let mut subjects = Subjects::default();
+    let left = vec![Projection::Field("left".into())];
+    let right = vec![Projection::Field("right".into())];
+    let base = subjects.snapshot();
+    subjects.write(plane, &left).unwrap();
+    let claim = snapshot(subjects.observe(&memory, reference, left.clone()).unwrap());
+    let branch = subjects.snapshot();
+    let guard = Formula::Ge(Linear::variable("flag"));
+    subjects.merge(&base, &branch, &base, &guard).unwrap();
+    assert!(!subjects.current(&claim, &memory).unwrap());
+    assert_eq!(
+        subjects.branch_availability(&claim, &memory).unwrap(),
+        guard
+    );
+    subjects.write(plane, &right).unwrap();
+    assert_eq!(
+        subjects.branch_availability(&claim, &memory).unwrap(),
+        guard
+    );
+    let before = subjects.snapshot();
+    subjects.write(plane, &left).unwrap();
+    assert_eq!(
+        subjects.branch_availability(&claim, &memory).unwrap(),
+        Formula::False
+    );
+    subjects.restore(before);
+    memory.take(plane).unwrap();
+    memory.write(plane, value(0), false).unwrap();
+    assert_eq!(
+        subjects.branch_availability(&claim, &memory).unwrap(),
+        Formula::False
+    );
+}
+
+#[test]
 fn statement_snapshots_preserve_old_facts_without_making_them_current() {
     let source = "fn main() -> usize {let x: usize = 43; proof p: x == 42 by {trustme}; x = x; 0}";
     with_source(source, |ctx, body| {
@@ -609,4 +648,70 @@ fn old_pointee_uses_the_saved_world_while_dereferencing_an_old_pointer_is_live()
             .current(&snapshot(stamp), &ctx.storage.memory)
             .unwrap());
     });
+}
+
+#[test]
+fn complex_old_subjects_resolve_saved_storage_without_changing_live_revisions() {
+    with_source(
+        "fn main() {let data: [usize; 2] = [7, 9]; let pointer = &data;}",
+        |ctx, body| {
+            for statement in body {
+                ctx.statement(statement).unwrap();
+            }
+            let mut function = syntax::parse("fn checkpoint(pointer: &[usize; 2]) -> usize ensures result == old((*pointer)[0]) {0}")
+            .unwrap().functions.remove(0);
+            function.entry_memory = true;
+            ctx.capture_old(&function).unwrap();
+            let Kind::Binary(_, _, old) = &function.post.as_ref().unwrap().kind else {
+                panic!()
+            };
+            let Kind::Call(_, args) = &old.kind else {
+                panic!()
+            };
+            let place = &args[0];
+            let before = ctx.claim_subjects(place).unwrap();
+            let historical = ctx.claim_subjects(old).unwrap();
+            assert!(historical.complete);
+            assert!(historical.reads.is_empty());
+            assert_eq!(historical.past.len(), 1);
+            ctx.assign_starting_owners(
+                place,
+                &Expr {
+                    kind: Kind::Number(42),
+                    line: 1,
+                },
+                &[],
+            )
+            .unwrap();
+            let live = ctx.claim_subjects(place).unwrap();
+            assert_ne!(before.key, live.key);
+            let again = ctx.claim_subjects(old).unwrap();
+            assert_eq!(again.key, historical.key);
+            assert!(ctx
+                .proof
+                .subjects
+                .current(&live, &ctx.storage.memory)
+                .unwrap());
+            assert!(!ctx
+                .proof
+                .subjects
+                .current(&before, &ctx.storage.memory)
+                .unwrap());
+            assert_eq!(
+                ctx.old_expression(place, None).unwrap().number().unwrap(),
+                Linear::number(7)
+            );
+        },
+    );
+}
+
+#[test]
+fn conditional_admissions_depend_on_the_condition_and_both_value_footprints() {
+    let source = "fn main() {let flag = true; let a: usize = 1; let b: usize = 2; proof assumed: if flag {a == 42} else {b == 42} by {trustme}; proof reused: if flag {a == 42} else {b == 42} by {exact assumed};}";
+    let (_, bundle) = prove(source).unwrap();
+    verify_with_certificate(source, &bundle).unwrap();
+    for change in ["flag = false;", "a = 2;", "b = 3;"] {
+        let stale = source.replace("proof reused:", &format!("{change} proof reused:"));
+        assert!(verify(&stale).is_err(), "{stale}");
+    }
 }

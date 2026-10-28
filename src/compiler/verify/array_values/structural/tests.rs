@@ -67,6 +67,15 @@ fn record_collection_contracts_execute_replay_and_remain_sparse() {
     for bad in [
         source.replace("same_value(b[1], wanted)", "same_value(b[1], initial)"),
         source.replace("same_value(popped, wanted)", "same_value(popped, initial)"),
+        source.replace(
+            "same_value(*grown.get(0), wanted)",
+            "same_value(*grown.get(0), initial)",
+        ),
+        source.replace("same_value(after, wanted)", "same_value(after, initial)"),
+        source.replace(
+            "proof _: same_value(*grown.get(0), wanted);",
+            "*grown.get(0) = initial; proof _: same_value(*grown.get(0), wanted);",
+        ),
     ] {
         let error = verify(&bad).unwrap_err();
         assert!(error.contains("cannot prove"), "{error}");

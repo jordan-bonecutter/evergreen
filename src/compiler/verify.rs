@@ -1240,6 +1240,33 @@ impl<'a> Context<'a> {
                 "old snapshots require entry storage or total scalar/reference observations without write or ownership effects".into(),
             );
         }
+        let facts = std::mem::take(&mut self.proof.facts);
+        let proofs = std::mem::take(&mut self.proof.witnesses);
+        let claims = std::mem::take(&mut self.proof.claims);
+        let value_claims = std::mem::take(&mut self.proof.value_claims);
+        let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
+        let ownership_epoch = self.work.ownership_transitions;
+        let value = self.with_entry_storage(|ctx| ctx.eval(expression, expected));
+        let changed_claims = self.work.ownership_transitions != ownership_epoch;
+        self.execution.phase = phase;
+        self.proof.facts = facts;
+        self.proof.witnesses = proofs;
+        self.proof.claims = claims;
+        self.proof.value_claims = value_claims;
+        if changed_claims {
+            return Err("old observations cannot change allocation lifetime claims".into());
+        }
+        // Entry addresses refer to pre-existing slots or incoming storage.
+        // Conditional selections may introduce a new symbolic cell path on an
+        // incoming handle. Materialize its LIVE view separately from the read.
+        if let Ok(value) = &value {
+            self.materialize_input_planes()?;
+            self.materialize_live_reference_views(value, expression.line)?;
+        }
+        value
+    }
+
+    fn with_entry_storage<T>(&mut self, check: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         let mut entry = self
             .entry
             .memory
@@ -1252,19 +1279,7 @@ impl<'a> Context<'a> {
         std::mem::swap(&mut self.censuses, &mut entry.censuses);
         let live_state = self.proof.subjects.snapshot();
         self.proof.subjects.restore(entry.facts.clone());
-        let facts = std::mem::take(&mut self.proof.facts);
-        let proofs = std::mem::take(&mut self.proof.witnesses);
-        let claims = std::mem::take(&mut self.proof.claims);
-        let value_claims = std::mem::take(&mut self.proof.value_claims);
-        let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
-        let ownership_epoch = self.work.ownership_transitions;
-        let value = self.eval(expression, expected);
-        let changed_claims = self.work.ownership_transitions != ownership_epoch;
-        self.execution.phase = phase;
-        self.proof.facts = facts;
-        self.proof.witnesses = proofs;
-        self.proof.claims = claims;
-        self.proof.value_claims = value_claims;
+        let result = check(self);
         std::mem::swap(&mut self.locals.values, &mut entry.env);
         std::mem::swap(&mut self.locals.places, &mut entry.roots);
         std::mem::swap(&mut self.storage.memory, &mut entry.memory);
@@ -1273,17 +1288,7 @@ impl<'a> Context<'a> {
         entry.facts = self.proof.subjects.snapshot();
         self.proof.subjects.restore(live_state);
         self.entry.memory = Some(entry);
-        if changed_claims {
-            return Err("old observations cannot change allocation lifetime claims".into());
-        }
-        // Entry addresses refer to pre-existing slots or incoming storage.
-        // Conditional selections may introduce a new symbolic cell path on an
-        // incoming handle. Materialize its LIVE view separately from the read.
-        if let Ok(value) = &value {
-            self.materialize_input_planes()?;
-            self.materialize_live_reference_views(value, expression.line)?;
-        }
-        value
+        result
     }
 
     fn old_key(e: &Expr) -> Option<String> {
@@ -2087,6 +2092,7 @@ impl<'a> Context<'a> {
         steps: Option<&[String]>,
     ) -> Result<()> {
         self.prove_with_subjects(goal, label, line, steps, None)
+            .map(|_| ())
     }
 
     fn prove_with_subjects(
@@ -2096,7 +2102,7 @@ impl<'a> Context<'a> {
         line: usize,
         steps: Option<&[String]>,
         subjects: Option<&subjects::Snapshot>,
-    ) -> Result<()> {
+    ) -> Result<evidence::NodeId> {
         if let Some(steps) = steps {
             self.session.clear_diagnostic();
             let node = self
@@ -2107,10 +2113,10 @@ impl<'a> Context<'a> {
                 })?;
             self.session.clear_diagnostic();
             self.proof.uses.push(node);
+            Ok(node)
         } else {
-            self.prove_subjects(goal, subjects, label, line)?;
+            self.prove_subjects(goal, subjects, label, line)
         }
-        Ok(())
     }
 
     fn eval(&mut self, e: &Expr, expected: Option<&Ty>) -> Result<Symbol> {

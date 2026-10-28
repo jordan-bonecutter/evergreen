@@ -188,9 +188,20 @@ impl Context<'_> {
                         }
                     }
                 }
-                Self::old_key(&arguments[0])
+                let simple = Self::old_key(&arguments[0])
                     .filter(|key| self.entry.values.contains_key(key))
-                    .map(|key| ClaimKey::Entry(self.entry.world, key))
+                    .map(|key| ClaimKey::Entry(self.entry.world, key));
+                if simple.is_some() || self.entry.memory.is_none() {
+                    simple
+                } else {
+                    // Resolve complex entry places in the saved memory, never
+                    // by executing the old expression a second time.
+                    self.with_entry_storage(|ctx| {
+                        let mut entry = Snapshot::default();
+                        let key = ctx.collect_subjects(&arguments[0], &mut entry, depth + 1)?;
+                        Ok(key.and_then(|key| Snapshot::from_key(key).old_at(ctx.entry.world).key))
+                    })?
+                }
             }
             Kind::Call(name, arguments)
                 if arguments.len() == 1
@@ -231,7 +242,17 @@ impl Context<'_> {
                 }
                 None
             }
-            Kind::If(condition, _, _) | Kind::FactAt(condition, _) => {
+            Kind::If(condition, yes, no) => {
+                let condition = self.collect_subjects(condition, snapshot, depth + 1)?;
+                let yes = self.collect_subjects(yes, snapshot, depth + 1)?;
+                let no = self.collect_subjects(no, snapshot, depth + 1)?;
+                // Conservatively retain all three footprints. In particular,
+                // changing the condition must invalidate a selected arm.
+                condition.zip(yes).zip(no).map(|((condition, yes), no)| {
+                    ClaimKey::Call("if".into(), vec![condition, yes, no])
+                })
+            }
+            Kind::FactAt(condition, _) => {
                 self.collect_subjects(condition, snapshot, depth + 1)?;
                 None
             }
@@ -250,6 +271,11 @@ impl Context<'_> {
         depth: usize,
     ) -> Result<Option<ClaimKey>> {
         if let Some((reference, path)) = self.subject_place(expression, depth)? {
+            // Saved entry storage may not have materialized a deferred input
+            // port yet. Missing provenance makes this snapshot incomplete.
+            if self.storage.memory.plane(reference).is_err() {
+                return Ok(None);
+            }
             self.charge_value_work(1usize.saturating_add(path.len()))?;
             let stamp = self
                 .proof
@@ -265,6 +291,9 @@ impl Context<'_> {
             for case in cases {
                 if self.checked_entails(&case.guard.clone().not())? {
                     continue;
+                }
+                if self.storage.memory.plane(case.reference).is_err() {
+                    return Ok(None);
                 }
                 let stamp =
                     self.proof

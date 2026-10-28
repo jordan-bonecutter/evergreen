@@ -2678,6 +2678,28 @@ across their roots. Admission/pending-summary presence is also stored as two
 flags derived from immutable parent edges; full provenance and mutable subject
 completeness still use the evidence graph.
 
+Checked range contracts can now be restricted to smaller domains by universal
+elimination and introduction. A logical fact established in a runtime branch
+remains a candidate after the join, guarded by that branch and by the exact
+memory revisions it observed. A later overlapping write or dead allocation
+prevents reuse; nested joins retain their conditions. Admissions and unresolved
+recursive summaries are not imported by this automatic range propagation.
+
+Conditional guarantees can expose an applicable arm when arithmetic proves the
+other arm impossible. The case split and its condition are explicit kernel
+proof edges. Conditional expression snapshots conservatively depend on the
+condition and both arms. Complex `old(...)` subjects resolve places in saved
+entry storage without executing the expression again; fixed entry scalar reads
+can also appear in quantified domains. Unsupported subject expressions still
+produce incomplete snapshots and cannot silently become independent facts.
+
+Verified call applications retain their precondition evidence, declaration trust
+summary, and free claim/control variables for universal freshness checking.
+Actual-body rechecks export the checked postcondition proof. Opaque frontend
+contracts, unresolved recursion, and imported trust remain excluded from
+automatic universal introduction where their context cannot be traced. These
+changes do not make the whole frontend formally verified.
+
 ### Demand-driven ideal aggregate reads
 
 The read-only ideal evaluator borrows immutable array and record views. It imports

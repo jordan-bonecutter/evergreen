@@ -331,6 +331,9 @@ impl Evidence {
                 }
                 NodeRule::Arithmetic {
                     context_variables, ..
+                }
+                | NodeRule::AppliedContract {
+                    context_variables, ..
                 } => {
                     if context_variables.contains(variable) {
                         return Ok(false);

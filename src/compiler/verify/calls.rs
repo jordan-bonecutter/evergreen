@@ -412,17 +412,22 @@ impl<'a> Context<'a> {
                     line,
                 )
                 .map_err(|error| self.requirement_error(error, pre, f.source, "precondition"))?;
-            if !self.evidence_dependencies(evidence)?.admissions.is_empty() {
-                call_dependencies.push(evidence);
-            }
+            // Freshness depends on precondition inputs even when no trustme
+            // was used to establish them.
+            call_dependencies.push(evidence);
             if !p.is_arithmetic() {
                 logical_precondition = Some((p, self.claim_subjects(pre)?));
             }
         }
         let inherited_contracts = self.proof.contract_parents.clone();
-        self.proof
-            .contract_parents
-            .extend(call_dependencies.iter().copied());
+        // Ordinary checked inputs belong to this call's proof, not to every
+        // subsequent storage observation. Ambient parents carry admissions
+        // whose use must remain visible even through frontend assumptions.
+        for &node in &call_dependencies {
+            if !self.evidence_dependencies(node)?.admissions.is_empty() {
+                self.proof.contract_parents.push(node);
+            }
+        }
         let inputs = if f
             .params
             .iter()
@@ -516,7 +521,7 @@ impl<'a> Context<'a> {
             self.proof.uses.extend(safety);
             let contract = self.import_summary(name, summaries::Aspect::Contract)?;
             self.proof.contract_parents.extend(contract);
-            call_dependencies = self.proof.contract_parents.clone();
+            call_dependencies.extend(self.proof.contract_parents.iter().copied());
             let value = if let Some(value) = self.reduce_ideal(f)? {
                 value
             } else if let Some(value) = self.model_ideal_scalar(f)? {

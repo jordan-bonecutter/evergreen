@@ -44,6 +44,10 @@ enum NodeRule {
         context_variables: BTreeSet<String>,
     },
     Contract(Vec<NodeId>),
+    AppliedContract {
+        parents: Vec<NodeId>,
+        context_variables: BTreeSet<String>,
+    },
     Logical(Rule),
     #[cfg(test)]
     Fixture(Vec<NodeId>),
@@ -54,7 +58,9 @@ impl NodeRule {
         match self {
             Self::Admission(_) | Self::ImportedTrust(_) | Self::Hypothesis => vec![],
             Self::Reference { parents, .. } => parents.clone(),
-            Self::Arithmetic { parents, .. } | Self::Contract(parents) => parents.clone(),
+            Self::Arithmetic { parents, .. }
+            | Self::Contract(parents)
+            | Self::AppliedContract { parents, .. } => parents.clone(),
             Self::Logical(rule) => rule.parents(),
             #[cfg(test)]
             Self::Fixture(parents) => parents.clone(),
@@ -64,6 +70,9 @@ impl NodeRule {
     fn storage_weight(&self) -> usize {
         match self {
             Self::Arithmetic {
+                context_variables, ..
+            }
+            | Self::AppliedContract {
                 context_variables, ..
             } => context_variables
                 .iter()
@@ -368,6 +377,28 @@ impl Evidence {
         // still pending; never report this instantiation as fully traced.
         self.nodes[id.0].unresolved_context = true;
         Ok(id)
+    }
+
+    /// A verified, non-recursive call has fixed actual inputs. Its precondition
+    /// proof and declaration trust summary are parents; the claim and control
+    /// variables remain visible to universal freshness checking.
+    pub(super) fn applied_contract(
+        &mut self,
+        claim: Formula,
+        parents: Vec<NodeId>,
+        control: &Formula,
+    ) -> Result<NodeId> {
+        let mut context_variables = claim.free_variables()?;
+        context_variables.extend(control.free_variables()?);
+        let hypotheses = self.inherited_hypotheses(&parents)?;
+        self.insert_node(
+            Some(claim),
+            NodeRule::AppliedContract {
+                parents,
+                context_variables,
+            },
+            hypotheses,
+        )
     }
 
     pub(super) fn arithmetic(&mut self, claim: Formula, support: paths::Support) -> Result<NodeId> {

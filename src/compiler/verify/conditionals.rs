@@ -3,6 +3,8 @@
 
 use super::*;
 
+mod claims;
+
 struct BranchView {
     memory: Memory<Symbol>,
     facts: state::State,
@@ -127,6 +129,7 @@ impl Context<'_> {
         self.proof.control = Some(control.clone().and(p.clone()));
         let a = yes(self, expected)?;
         let a_paths = self.proof.paths.clone();
+        let a_claims = self.proof.claims.difference(&claims).copied().collect();
         let mut a_store = self.branch_view()?;
         self.proof.claims = claims.clone();
         self.proof.value_claims = value_claims.clone();
@@ -138,6 +141,7 @@ impl Context<'_> {
         self.proof.control = Some(control.clone().and(p.clone().not()));
         let b = no(self, Some(&a.ty()))?;
         let b_paths = self.proof.paths.clone();
+        let b_claims = self.proof.claims.difference(&claims).copied().collect();
         let mut b_store = self.branch_view()?;
         // A deferred input was present before the branch even if only one
         // arm first observed it. Join its actual contents against the initial
@@ -261,7 +265,7 @@ impl Context<'_> {
                 let value = if a == b {
                     a.clone()
                 } else {
-                    p.clone().and(a.clone()).or(p.not().and(b.clone()))
+                    p.clone().and(a.clone()).or(p.clone().not().and(b.clone()))
                 };
                 Ok((Symbol::Bool(value), Formula::True, Formula::True))
             }
@@ -310,6 +314,7 @@ impl Context<'_> {
                 self.locals.values.insert(name.clone(), value.clone());
             }
         }
+        self.retain_conditional_claims(a_claims, b_claims, &p)?;
         Ok(result)
     }
 
