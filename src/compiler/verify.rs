@@ -2429,6 +2429,11 @@ impl<'a> Context<'a> {
             return Ok(value);
         }
         let value = if self.history_element(element) {
+            if let Some(value) = self.defined_array_read(identity, index)? {
+                self.assume_history_type(&value, false)?;
+                self.arrays.reads.insert(key, value.clone());
+                return Ok(value);
+            }
             let value = self.history_value(element)?;
             self.assume_history_type(&value, !self.arrays.history.contains_key(identity))?;
             value

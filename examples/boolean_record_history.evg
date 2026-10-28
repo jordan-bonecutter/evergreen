@@ -1,0 +1,43 @@
+type Pair struct {left: u8, right: u8}
+type Sample struct {pair: Pair, flag: bool}
+impl Copy for Pair {}
+impl Copy for Sample {}
+
+fn check(branch: bool, a: bool, b: bool) -> bool
+    ensures
+        result == (a &&
+        !b)
+{
+    let data: unique(Sample, 8) = alloc(8, Sample {
+        pair: Pair {left: 7, right: 9},
+        flag: a && !b
+    });
+    if branch {
+        (*data)[0].pair.left = 42;
+    } else {
+        (*data)[1].pair.left = 43;
+    } proof _: forall(i: integer) where (0 <= i && i < 8) {(*data)[i].pair.right == 9} by {
+        intro i;
+        omega
+    };
+    proof _: forall(i: integer) where (2 <= i && i < 8) {(*data)[i].pair.left == 7} by {
+        intro i;
+        omega
+    };
+    proof _: forall(i: integer) where (0 <= i && i < 8) {(*data)[i].flag == (a && !b)} by {
+        intro i;
+        omega
+    };
+    (*data)[3].flag
+}
+
+fn main() -> usize
+    ensures
+        result == 42
+{
+    let a = check(true, true, false);
+    let b = check(false, true, true);
+    let c = check(true, false, false);
+    let d = check(false, false, true);
+    if a && !b && !c && !d {42} else {0}
+}

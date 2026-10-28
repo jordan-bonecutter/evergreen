@@ -204,3 +204,38 @@ fn quantified_field_admissions_expire_with_their_array_revision() {
         assert!(error.contains("earlier state"), "{error}");
     }
 }
+
+#[test]
+fn captured_boolean_fills_survive_record_stores_and_branch_joins() {
+    let source = include_str!("../../../../examples/boolean_record_history.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    for bad in [
+        source.replace(
+            "(*data)[0].pair.left = 42;",
+            "(*data)[0].pair.left = 42; (*data)[0].flag = !(a && !b);",
+        ),
+        source.replace(
+            "(*data)[1].pair.left = 43;",
+            "(*data)[1].pair.left = 43; (*data)[1].pair.right = 11;",
+        ),
+        source.replace("2 <= i", "0 <= i"),
+    ] {
+        assert!(verify(&bad).is_err(), "{bad}");
+    }
+    let huge = source
+        .replace(", 8", ", 1000000000")
+        .replace("alloc(8,", "alloc(1000000000,")
+        .replace("< 8", "< 1000000000");
+    let (large, large_bundle) = prove(&huge).unwrap();
+    assert_eq!(program.obligations, large.obligations);
+    assert_eq!(bundle.certificate_count(), large_bundle.certificate_count());
+    verify_with_certificate(&huge, &large_bundle).unwrap();
+}

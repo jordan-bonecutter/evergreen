@@ -2629,9 +2629,19 @@ invalidates earlier claims unless their preservation is proved again. The same
 field-store proof over eight and a billion elements needs the same number of
 obligations and certificates. An observed record currently materializes its scalar
 fields; this does not yet provide demand-driven storage for individual fields of
-large records. Combining compound Boolean fields with branching histories can
-still exhaust the bounded path-normalization work budget and needs simplification.
-Whole-record source equality and generic record copy contracts remain unfinished.
+large records. Whole-record source equality and generic record copy contracts
+remain unfinished.
+
+[`boolean_record_history.evg`](../examples/boolean_record_history.evg) keeps a
+compound Boolean field unchanged while two branches update numeric fields.
+Immutable fills and definite stores reuse their captured values, avoiding fresh
+Boolean words and repeated truth-value case splits. A projected field can also
+remain uniform through stores or branch joins when all definitions contain the
+same value. This reduction uses no observed-cell defaults, branch-local facts,
+or admitted proofs; unknown values continue through the ordinary proof path.
+Bounds, type checks, and the existing work limits remain in force. The example
+also verifies at a billion-element capacity with the same obligation and
+certificate counts; tests execute only its small allocation.
 
 ### Demand-driven ideal aggregate reads
 

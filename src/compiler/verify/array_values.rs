@@ -5,6 +5,7 @@ use super::*;
 use crate::compiler::kernel::terms::{Terms, Work};
 use std::sync::Arc;
 
+mod defined;
 mod histories;
 mod observations;
 mod projections;
@@ -103,8 +104,7 @@ impl Context<'_> {
             element,
             len,
             identity,
-            items,
-            cells,
+            ..
         } = &array
         else {
             return Err("indexed value equalities require array storage".into());
@@ -122,21 +122,11 @@ impl Context<'_> {
             identity: identity.clone(),
             fields,
         };
-        // Only context-independent contents justify a uniform value. A branch's
-        // observed cell is not a definition of the unobserved remainder.
-        let uniform = match self.arrays.history.get(identity) {
-            Some(ArrayHistory::Fill(value)) => Some(value),
-            None if cells.is_empty() => items.as_ref().and_then(|items| {
-                let first = items.first()?;
-                items.iter().all(|item| item == first).then_some(first)
-            }),
-            _ => None,
-        };
-        if let Some(value) = uniform {
+        if let Some(value) = self.defined_array_value(&contents, None, 0)? {
             return Ok(Operand {
                 ty,
                 contents: None,
-                argument: self.scalar_argument(contents.project(value)?)?,
+                argument: self.scalar_argument(&value)?,
             });
         }
         Ok(Operand {
