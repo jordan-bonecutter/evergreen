@@ -2,7 +2,7 @@
 //! Shape inference here grants no authority: the verifier checks the result.
 
 use crate::syntax::{Expr, Function, Kind, MachineInt, MethodReceiver, Program, Statement, Type};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 type Scope = BTreeMap<String, Type>;
 
@@ -74,6 +74,41 @@ struct Shapes {
     methods: BTreeMap<(String, String), (String, Type, MethodReceiver)>,
 }
 
+fn extent(ty: &Type) -> Option<&Expr> {
+    match ty {
+        Type::Array(_, count) => Some(count),
+        Type::Ref(inner) | Type::Unique(inner) | Type::Shared(inner) => extent(inner),
+        _ => None,
+    }
+}
+
+// Generic inference and value elaboration must agree on argument positions.
+// Omit all eligible extent parameters or none; partial omission is ambiguous.
+pub(super) fn omitted_lengths(
+    parameters: &[(String, Type)],
+    supplied: usize,
+) -> Option<Vec<usize>> {
+    if supplied >= parameters.len() {
+        return None;
+    }
+    let named_extents = parameters
+        .iter()
+        .filter_map(|(_, ty)| match extent(ty).map(|e| &e.kind) {
+            Some(Kind::Name(name)) => Some(name.as_str()),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    let usize_type = Type::Machine(MachineInt::parse("usize").expect("usize"));
+    let inferred = parameters
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (name, ty))| {
+            (*ty == usize_type && named_extents.contains(name.as_str())).then_some(index)
+        })
+        .collect::<Vec<_>>();
+    (supplied + inferred.len() == parameters.len()).then_some(inferred)
+}
+
 impl Shapes {
     // Fill runtime lengths from the actual array's type. This only proposes
     // ordinary expressions; the verifier still proves every dependent bound.
@@ -84,13 +119,6 @@ impl Shapes {
         types: &[Option<Type>],
         scope: &Scope,
     ) {
-        fn extent(ty: &Type) -> Option<&Expr> {
-            match ty {
-                Type::Array(_, count) => Some(count),
-                Type::Ref(inner) | Type::Unique(inner) | Type::Shared(inner) => extent(inner),
-                _ => None,
-            }
-        }
         fn stable(e: &Expr, scope: &Scope) -> bool {
             match &e.kind {
                 Kind::Name(n) => scope.contains_key(n),
@@ -109,12 +137,13 @@ impl Shapes {
         if args.len() >= parameters.len() {
             return;
         }
-        let inferred = parameters.iter().filter(|(name, ty)| {
-            *ty == Type::Machine(MachineInt::parse("usize").expect("usize")) && parameters.iter().any(|(_, t)| matches!(extent(t).map(|e| &e.kind), Some(Kind::Name(n)) if n == name))
-        }).map(|(n, _)| n.clone()).collect::<Vec<_>>();
-        if args.len() + inferred.len() != parameters.len() {
+        let Some(omitted) = omitted_lengths(parameters, args.len()) else {
             return;
-        }
+        };
+        let inferred = omitted
+            .iter()
+            .map(|&index| parameters[index].0.clone())
+            .collect::<BTreeSet<_>>();
         let supplied = parameters
             .iter()
             .filter(|(n, _)| !inferred.contains(n))

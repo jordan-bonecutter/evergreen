@@ -2550,11 +2550,14 @@ proofs cannot describe changed contents or another plane. This automatic path
 does not import `trustme` or unfinished summary dependencies.
 
 [`array_fill_range.evg`](../examples/array_fill_range.evg) uses the source library's
-`arrays::fill_range::<u8>(&data, start, end, value)`. It fills `[start, end)` and
+`arrays::fill_range(&data, start, end, value)`. It fills `[start, end)` and
 guarantees that elements outside that range equal their old values. The pointer's
-type supplies the extent; runtime-sized planes are also supported. The current
-implementation supports numeric elements, with `usize` as the default element
-type and explicit type arguments for other machine types.
+type supplies both the extent and the generic element type; runtime-sized planes
+are also supported. The current implementation supports numeric elements.
+Generic inference matches supplied arguments after accounting for omitted length
+parameters, so a typed byte pointer overrides the weak `usize` default. Explicit
+type arguments remain authoritative. All eligible lengths must be supplied or
+omitted together; dependent bounds and ownership checks still apply normally.
 
 The implementation in `stdlib/arrays/fill.evg` uses a terminating `while` loop,
 named facts for the filled and untouched ranges, and proof-only snapshots of each

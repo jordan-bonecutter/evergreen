@@ -98,3 +98,37 @@ fn inference_preserves_unspecified_machine_arithmetic() {
     verify(source).unwrap();
     assert!(verify("fn identity<T>(value: T) -> T ensures result == value {value} fn main() {let unknown = identity(usize::MAX + 1); proof _: unknown == 0;}").is_err());
 }
+
+#[test]
+fn omitted_runtime_lengths_preserve_generic_argument_positions() {
+    for source in [
+        include_str!("../../../../examples/array_fill_range.evg"),
+        "fn first<T>(capacity: usize, data: linear_plane(T, capacity)) -> T where capacity > 0 {(*data)[0]} fn main() -> u8 {let data: [u8; 2] = [42, 7]; first(&data)}",
+        "fn first<T = usize>(capacity: usize, data: linear_plane(T, capacity)) -> T where capacity > 0 {(*data)[0]} fn main() -> i16 {let data: [i16; 2] = [42, -7]; first(&data)}",
+        "fn first<T>(capacity: usize, data: linear_plane(T, capacity)) -> T where capacity > 0 {(*data)[0]} fn main() -> u8 {let data: [u8; 2] = [42, 7]; first(2, &data)}",
+        "fn first<T>(capacity: usize, data: linear_plane(T, capacity)) -> T where capacity > 0 {(*data)[0]} fn forward(n: usize, data: linear_plane(u8, n)) -> u8 where n > 0 {first(data)} fn main() -> u8 {let data: [u8; 2] = [42, 7]; forward(&data)}",
+        "fn choose<T>(left_len: usize, left: linear_plane(T, left_len), index: usize, right_len: usize, right: linear_plane(T, right_len)) -> T where index < right_len {(*right)[index]} fn main() -> u8 {let left: [u8; 1] = [7]; let right: [u8; 2] = [0, 42]; choose(&left, 1, &right)}",
+    ] {
+        let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
+        crate::compiler::native::emit(&program).unwrap();
+    }
+}
+
+#[test]
+fn inferred_lengths_do_not_bypass_conflicts_bounds_or_ownership() {
+    for source in [
+        "fn same<T>(n: usize, a: linear_plane(T, n), b: linear_plane(T, n)) {} fn main() {let a: [u8; 1] = [1]; let b: [u16; 1] = [1]; same(&a, &b);}",
+        "fn same<T>(n: usize, a: linear_plane(T, n), b: linear_plane(T, n)) {} fn main() {let a: [u8; 1] = [1]; let b: [u8; 2] = [1, 2]; same(&a, &b);}",
+        "fn first<T>(n: usize, data: linear_plane(T, n)) -> T where n > 0 {(*data)[0]} fn main() {let data: [u8; 1] = [42]; first::<usize>(&data);}",
+        "fn first<T>(n: usize, data: linear_plane(T, n)) -> T where n > 0 {(*data)[0]} fn main() {let data: [u8; 0] = []; first(&data);}",
+        "fn choose<T>(n: usize, a: linear_plane(T, n), m: usize, b: linear_plane(T, m)) {} fn main() {let data: [u8; 1] = [42]; choose(1, &data, &data);}",
+        "fn first<T>(n: usize, data: linear_plane(T, n), index: usize) -> T where index < n {(*data)[index]} fn main() {let data: [u8; 1] = [42]; first(&data);}",
+        "type Pair<T> struct {length: usize, data: T} fn main() {let data: u8 = 42; let pair = Pair {data: data};}",
+        "fn duplicate<T>(n: usize, data: linear_plane(T, n)) -> T where n > 0 {let moved = (*data)[0]; (*data)[0]} fn main() {let data: [unique(usize); 1] = [alloc(42)]; duplicate(&data);}",
+    ] {
+        assert!(verify(source).is_err(), "accepted {source}");
+    }
+}

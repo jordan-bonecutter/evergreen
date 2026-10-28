@@ -17,26 +17,37 @@ impl Engine {
             &mut self.work,
             template.parameter_work + template.signature_work,
         )?;
-        let (parameters, formal) = match &template.declaration {
+        let (parameters, formal, function) = match &template.declaration {
             GenericDeclaration::Function {
                 parameters,
                 definition,
-            } => (parameters.clone(), definition.params.clone()),
+            } => (parameters.clone(), definition.params.clone(), true),
             GenericDeclaration::Record {
                 parameters,
                 definition,
-            } => (parameters.clone(), definition.fields.clone()),
+            } => (parameters.clone(), definition.fields.clone(), false),
             _ => return Err("implementation is not a generic call".into()),
         };
         let mut bindings = BTreeMap::new();
-        // Missing runtime-length arguments are elaborated later. Do not pair a
-        // shifted argument list with the wrong parameters.
-        if actual.len() == formal.len() {
+        // Length expressions are inserted later, but their positions must be
+        // removed now so supplied pointers still infer their element types.
+        let omitted = if function {
+            crate::compiler::field_sugar::omitted_lengths(&formal, actual.len()).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if actual.len() + omitted.len() == formal.len() {
+            let supplied = formal
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| omitted.binary_search(index).is_err())
+                .map(|(_, parameter)| parameter)
+                .collect::<Vec<_>>();
             for (index, (field, ty)) in actual.iter().enumerate() {
                 let Some(ty) = ty else { continue };
                 let parameter = match field {
                     Some(field) => formal.iter().find(|(name, _)| name == field),
-                    None => formal.get(index),
+                    None => supplied.get(index).copied(),
                 };
                 if let Some((_, pattern)) = parameter {
                     self.unify(pattern, ty, &parameters, &mut bindings, 0)
