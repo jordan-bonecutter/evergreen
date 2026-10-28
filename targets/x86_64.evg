@@ -83,3 +83,11 @@ impl Copy for isize {}
 impl Copy for bool {}
 impl Copy for unit {}
 impl Copy for pointer {}
+
+// Null has the usize representation and a compiler-checked singleton domain.
+type Null = make_type(
+    size: 8,
+    align: 8,
+    represents: repr::Integral {signed: false, bits: 64, encoding: repr::Binary, endian: repr::Little}
+);
+impl Copy for Null {}

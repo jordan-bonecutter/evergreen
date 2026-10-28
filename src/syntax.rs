@@ -25,6 +25,14 @@ mod statements;
 pub struct MachineInt {
     pub signed: bool,
     pub bits: u8,
+    pub domain: IntegerDomain,
+}
+
+/// A scalar's valid values are distinct from the bits in its representation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum IntegerDomain {
+    Full,
+    Zero,
 }
 
 pub(crate) fn is_builtin_name(name: &str) -> bool {
@@ -49,16 +57,25 @@ pub(crate) fn is_builtin_name(name: &str) -> bool {
 
 impl MachineInt {
     pub fn parse(s: &str) -> Option<Self> {
+        if s == "Null" {
+            return Some(Self {
+                signed: false,
+                bits: 64,
+                domain: IntegerDomain::Zero,
+            });
+        }
         if s == "usize" {
             return Some(Self {
                 signed: false,
                 bits: 64,
+                domain: IntegerDomain::Full,
             });
         }
         if s == "isize" {
             return Some(Self {
                 signed: true,
                 bits: 64,
+                domain: IntegerDomain::Full,
             });
         }
         let signed = match s.as_bytes().first()? {
@@ -70,10 +87,32 @@ impl MachineInt {
         if !matches!(bits, 8 | 16 | 32 | 64) {
             return None;
         }
-        Some(Self { signed, bits })
+        Some(Self {
+            signed,
+            bits,
+            domain: IntegerDomain::Full,
+        })
+    }
+
+    pub(crate) fn representation(self) -> Self {
+        Self {
+            domain: IntegerDomain::Full,
+            ..self
+        }
+    }
+
+    pub(crate) fn primitive_name(self) -> String {
+        if self.domain == IntegerDomain::Zero {
+            "Null".into()
+        } else {
+            format!("{}{}", if self.signed { 'i' } else { 'u' }, self.bits)
+        }
     }
 
     pub fn bounds(self) -> (i128, i128) {
+        if self.domain == IntegerDomain::Zero {
+            return (0, 0);
+        }
         if self.signed {
             let half = 1_i128 << (self.bits - 1);
             (-half, half - 1)
@@ -106,6 +145,7 @@ impl Type {
             Box::new(Self::Machine(MachineInt {
                 signed: false,
                 bits: 8,
+                domain: IntegerDomain::Full,
             })),
             Box::new(Expr {
                 kind: Kind::Number(length as i128),
@@ -152,6 +192,7 @@ impl Expr {
         let element = MachineInt {
             signed: false,
             bits: 8,
+            domain: IntegerDomain::Full,
         };
         Self {
             kind: Kind::Array(

@@ -106,6 +106,7 @@ fn type_name(ty: &Type, budget: &mut usize) -> String {
     *budget -= 1;
     match ty {
         Type::Named(name) => name.clone(),
+        Type::Machine(integer) if integer.domain == super::IntegerDomain::Zero => "Null".into(),
         Type::Machine(integer) => match (integer.signed, integer.bits) {
             (false, 64) => "usize".into(),
             (true, 64) => "isize".into(),

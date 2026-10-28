@@ -9,6 +9,7 @@ impl Context<'_> {
         let element = Ty::Machine(MachineInt {
             signed: false,
             bits: 8,
+            domain: crate::syntax::IntegerDomain::Full,
         });
         Ok(Symbol::Array {
             element: Box::new(element.clone()),

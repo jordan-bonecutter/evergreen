@@ -69,7 +69,12 @@ impl Target {
                         "x86-64 pointers require a 64-bit little-endian representation".into(),
                     );
                 }
-            } else if ty != expected {
+            } else if ty
+                != expected.as_ref().map(|ty| match ty {
+                    Type::Machine(integer) => Type::Machine(integer.representation()),
+                    other => other.clone(),
+                })
+            {
                 return Err(format!(
                     "representation of {name} does not match its declared integer meaning"
                 ));
@@ -89,13 +94,13 @@ impl Target {
         }
         for name in [
             "u8", "i8", "u16", "i16", "u32", "i32", "u64", "i64", "usize", "isize", "bool", "unit",
-            "pointer",
+            "pointer", "Null",
         ] {
             if !layouts.contains_key(name) {
                 return Err(format!("missing target layout for {name}"));
             }
         }
-        for (alias, base) in [("usize", "u64"), ("isize", "i64")] {
+        for (alias, base) in [("usize", "u64"), ("isize", "i64"), ("Null", "usize")] {
             if layouts[alias] != layouts[base] {
                 return Err(format!("{alias} must share the {base} layout on x86-64"));
             }
@@ -135,9 +140,7 @@ impl Target {
     /// even when the raw pointer representation implements Copy.
     pub(crate) fn is_copy(&self, ty: &Type) -> bool {
         let name = match ty {
-            Type::Machine(integer) => {
-                format!("{}{}", if integer.signed { 'i' } else { 'u' }, integer.bits)
-            }
+            Type::Machine(integer) => integer.primitive_name(),
             Type::Bool => "bool".into(),
             Type::Unit => "unit".into(),
             Type::Ref(_) | Type::Shared(_) => "pointer".into(),
@@ -148,9 +151,7 @@ impl Target {
 
     pub(crate) fn scalar(&self, ty: &Type) -> Result<ScalarLayout> {
         let name = match ty {
-            Type::Machine(integer) => {
-                format!("{}{}", if integer.signed { 'i' } else { 'u' }, integer.bits)
-            }
+            Type::Machine(integer) => integer.primitive_name(),
             Type::Bool => "bool".into(),
             Type::Unit => "unit".into(),
             Type::Ref(_) | Type::Unique(_) | Type::Shared(_) => "pointer".into(),
@@ -170,7 +171,11 @@ pub(crate) fn representation_type(representation: &Representation) -> Result<Opt
             bits,
             endian: Endianness::Little,
             ..
-        } => Ok(Some(Type::Machine(MachineInt { signed, bits }))),
+        } => Ok(Some(Type::Machine(MachineInt {
+            signed,
+            bits,
+            domain: syntax::IntegerDomain::Full,
+        }))),
         Representation::Boolean => Ok(Some(Type::Bool)),
         Representation::Unit => Ok(Some(Type::Unit)),
         Representation::Pointer {
@@ -241,7 +246,8 @@ mod tests {
         assert!(target
             .scalar(&Type::Machine(MachineInt {
                 signed: false,
-                bits: 7
+                bits: 7,
+                domain: syntax::IntegerDomain::Full
             }))
             .is_err());
     }
@@ -261,6 +267,10 @@ mod copy_tests {
         let source = X86_64.replace_evg("impl Copy for u8 {}", "");
         let target = Target::decode(&source).unwrap();
         assert!(!target.is_copy(&machine("u8")));
+        let source = X86_64.replace_evg("impl Copy for Null {}", "");
+        let without_null_copy = Target::decode(&source).unwrap();
+        assert!(!without_null_copy.is_copy(&machine("Null")));
+        assert!(without_null_copy.is_copy(&machine("usize")));
         assert!(target.is_copy(&machine("u16")));
         let source = X86_64.replace_evg("impl Copy for pointer {}", "");
         let target = Target::decode(&source).unwrap();

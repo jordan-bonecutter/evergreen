@@ -147,6 +147,16 @@ The interpreter and x86-64 backend currently choose the low result bits on
 overflow, then extend to the type's signedness. This is an implementation choice,
 not a source guarantee or a proof rule.
 
+`Null` is a built-in scalar with the representation of `usize` and the single
+valid value zero: conceptually `usize where self == 0`. `let empty: Null = 0`
+constructs it; `Null(value)` requires a proof that the input is zero, and
+`usize(empty)` exposes its numeric value. Nonzero construction, mutation, and
+conversions fail. It has no dereference, borrowing, allocation, or destruction
+authority over another plane. It can be used as the empty case of a raw union
+such as `Null | unique(T, capacity)`. Its layout and Copy permission are declared
+in the target file. This built-in singleton does not enable general scalar
+refinement aliases. See `examples/null.evg`.
+
 `integer` and `nat` are proof-only mathematical integers and naturals. They may occur
 in `ideal fn` and `ideal type` definitions and proof expressions, but cannot be
 stored in executable variables, structs, or function interfaces. Ideal functions
@@ -2040,9 +2050,10 @@ place remain unfinished.
 ### Owned vector with initialized backing storage
 
 `stdlib/vec/vec.evg` supplies `vec::Vec<T = usize>` with an opaque three-word
-representation: capacity, length, and `Zero | unique(T, cap)`. `Zero` is a
-source-defined, machine-word-sized record constrained to zero. The invariant
-selects `Zero` exactly when capacity is zero; otherwise the pointer's extent
+representation: capacity, length, and `Null | unique(T, cap)`. `Null` is a
+pointer-sized scalar constrained to zero, with target-defined layout and an
+explicit target Copy implementation. The invariant selects `Null` exactly when
+capacity is zero; otherwise the pointer's extent
 depends on capacity. The raw union has no runtime discriminator.
 `examples/vec.evg` checks and runs without explicitly supplying library
 files:

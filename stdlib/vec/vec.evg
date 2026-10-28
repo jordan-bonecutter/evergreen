@@ -1,12 +1,9 @@
 // An owned vector of initialized elements. Capacity changes are explicit.
 module vec;
 
-// A target-sized word whose only value is zero.
-type Zero struct {word: usize} where word == 0;
-impl Copy for Zero {}
-opaque type Vec<T = usize> struct {cap: usize, len: usize, data: Zero | unique(T, cap)} where (
+opaque type Vec<T = usize> struct {cap: usize, len: usize, data: Null | unique(T, cap)} where (
     fact length_fits = len <= cap;
-    fact storage_matches_capacity = (cap == 0) == (typeof(data) == Zero);
+    fact storage_matches_capacity = (cap == 0) == (typeof(data) == Null);
     length_fits && storage_matches_capacity
 );
 
@@ -18,7 +15,7 @@ fn allocate_buffer<T = usize>(capacity: usize, initial: T) -> unique(T, capacity
     alloc(capacity, initial)
 }
 
-fn discard_zero(value: Zero) {}
+fn discard_zero(value: Null) {}
 fn discard_buffer<T>(ideal n: nat, value: unique(T, n)) {}
 impl<T> Drop for Vec<T> {
     fn drop({cap, len, data}) {
@@ -65,9 +62,7 @@ impl<T> Vec<T> {
             (result.len == 0 &&
             result.cap == capacity)
     {
-        let data: Zero | unique(T, capacity) = if capacity == 0 {
-            Zero {word: 0}
-        } else {allocate_buffer::<T>(capacity, initial)};
+        let data: Null | unique(T, capacity) = if capacity == 0 {0} else {allocate_buffer::<T>(capacity, initial)};
         Self {cap: capacity, len: 0, data: data}
     }
 

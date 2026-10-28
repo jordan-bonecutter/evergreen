@@ -1,0 +1,20 @@
+// Null is a pointer-sized scalar constrained to zero. It grants no authority.
+fn zero(value: usize) -> Null
+    where
+        value == 0
+{
+    Null(value)
+}
+
+fn discard_empty(value: Null) {}
+
+fn main() -> usize {
+    let empty = zero(0);
+    proof _: typeof(empty) == Null;
+    proof _: empty == 0;
+    proof _: size_of(Null) == size_of(usize);
+    let words: [Null; 2] = [empty, empty];
+    let storage: Null | unique(usize) = words[0];
+    discard_empty(storage);
+    42
+}

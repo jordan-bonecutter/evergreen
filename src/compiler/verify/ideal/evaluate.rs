@@ -298,6 +298,7 @@ impl<'a> Machine<'a, '_, '_> {
                 let element = Ty::Machine(MachineInt {
                     signed: false,
                     bits: 8,
+                    domain: crate::syntax::IntegerDomain::Full,
                 });
                 let mut array = Vec::with_capacity(bytes.len());
                 for &byte in bytes {

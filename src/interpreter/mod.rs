@@ -737,6 +737,7 @@ impl Evaluator<'_> {
                 let element = MachineInt {
                     signed: false,
                     bits: 8,
+                    domain: crate::syntax::IntegerDomain::Full,
                 };
                 Ok(Value::Array(
                     Arc::new(Type::Machine(element)),

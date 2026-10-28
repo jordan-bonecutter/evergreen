@@ -37,6 +37,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn null_is_a_zero_only_word_without_pointer_authority() {
+        let source = include_str!("../../../examples/null.evg");
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert!(program.trusted_assumptions().is_empty());
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        for source in [
+            "fn main() -> Null {1}",
+            "fn main() {let value: Null = 1;}",
+            "fn main() {let value: Null = 0; value = 1;}",
+            "fn set(value: &Null) modifies(value) {*value = 1;}",
+            "fn null(value: usize) -> Null {Null(value)}",
+            "fn main() -> Null {Null(usize::MAX + 1)}",
+            "fn main() {let value: Null = 0; proof _: typeof(value) == usize;}",
+            "fn main() {let pointer: unique(usize) = 0;}",
+            "fn main() {let pointer: &usize = Null(0);}",
+            "fn main() {let value: Null | unique(usize) = 0; let pointer: unique(usize) = move(value);}",
+        ] {
+            assert!(verify(source).is_err(), "accepted {source}");
+        }
+    }
+
+    #[test]
     fn checked_conversions_preserve_values_and_replay() {
         let source = include_str!("../../../examples/integer_conversions.evg");
         let (program, bundle) = prove(source).unwrap();

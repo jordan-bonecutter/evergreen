@@ -29,7 +29,7 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
             ));
         }
         let ty = super::target::representation_type(&definition.represents)?;
-        let Some(ty) = ty else {
+        let Some(mut ty) = ty else {
             if profile
                 && definition.module.as_deref() == Some("x86_64")
                 && definition.name == "pointer"
@@ -39,12 +39,13 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
             return Err("pointer representations describe target storage; make_type cannot fabricate reference or allocation authority".into());
         };
         if let Some(integer) = MachineInt::parse(&definition.name) {
-            if ty != Type::Machine(integer) {
+            if ty != Type::Machine(integer.representation()) {
                 return Err(format!(
                     "{} has a different declared integer representation",
                     definition.name
                 ));
             }
+            ty = Type::Machine(integer);
         } else if definition.name == "bool" {
             if ty != Type::Bool {
                 return Err("bool requires repr::Boolean".into());
@@ -229,7 +230,7 @@ impl Aliases<'_> {
                     self.expr(arg, module);
                 }
                 if let Some(Type::Machine(integer)) = self.lookup(name, module) {
-                    *name = format!("{}{}", if integer.signed { 'i' } else { 'u' }, integer.bits);
+                    *name = integer.primitive_name();
                 }
             }
             Kind::FactAt(base, field) => {

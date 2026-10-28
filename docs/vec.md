@@ -14,8 +14,9 @@ fn main() -> u8 {
 }
 ```
 
-The header contains capacity, length, and `Zero | unique(T, cap)`. Zero capacity
-stores a source-defined zero word and does not allocate. The source destructor
+The header contains capacity, length, and `Null | unique(T, cap)`. Zero capacity
+stores the pointer-sized `Null` scalar, whose only valid value is zero, and does
+not allocate. `Null` grants no reference or allocation authority. The source destructor
 releases the allocated case. Allocation bounds use `size_of(T)` from the target,
 so byte vectors use byte-sized elements. Bounds, borrows, and sparse array
 histories do not require expanding every capacity slot.

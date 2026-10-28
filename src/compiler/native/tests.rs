@@ -238,6 +238,7 @@ fn native_execution_agrees_with_the_interpreter() {
         std::env::temp_dir().join(format!("evergreen-native-{}-{stamp}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     let mut cases = [
+        include_str!("../../../examples/null.evg"),
         include_str!("../../../examples/string_bytes.evg"),
         include_str!("../../../examples/utf8_literal.evg"),
         include_str!("../../../examples/utf8_view.evg"),
