@@ -236,3 +236,47 @@ fn ordinary_copies_fulfill_nested_obligations_before_caller_obligations() {
     assert_eq!(memory.owner_count(owner.reference()).unwrap(), 4);
     assert!(!memory.census_is_current(census));
 }
+
+#[test]
+fn many_live_pointers_do_not_hide_pending_tokens_in_this_or_another_plane() {
+    let mut memory = Memory::default();
+    let origin = memory.allocate(42).unwrap();
+    let origin = memory.share_owner(origin).unwrap();
+    let waiting = memory.begin_owner(origin).unwrap();
+    let inherited = memory.owner_scope();
+    let other = memory.allocate(7).unwrap();
+    let other = memory.share_owner(other).unwrap();
+    let mut copies = Vec::new();
+    for _ in 0..20_000 {
+        assert!(!memory.has_early_owner(other).unwrap());
+        let copy = memory.copy_owner(other).unwrap();
+        assert!(copy.started_lifetime());
+        copies.push(copy.owner());
+    }
+    let nested = memory.begin_owner(other).unwrap();
+    let before = memory.owner_census(other.reference()).unwrap();
+    assert!(memory.require_owner_scope(&inherited).is_err());
+    let completed = memory.copy_owner(other).unwrap();
+    assert!(!completed.started_lifetime());
+    assert_eq!(completed.owner().token, nested.token);
+    assert!(memory.census_is_current(before));
+    assert!(!memory.has_early_owner(other).unwrap());
+    memory.require_owner_scope(&inherited).unwrap();
+    let caller_copy = memory.copy_owner(origin).unwrap();
+    assert!(!caller_copy.started_lifetime());
+    assert_eq!(caller_copy.owner().token, waiting.token);
+    memory.require_materialized_owners().unwrap();
+    assert_eq!(
+        memory.owner_count(other.reference()).unwrap(),
+        copies.len() + 2
+    );
+    for copy in copies {
+        memory.release_owner(copy).unwrap();
+    }
+    memory.release_owner(completed.owner()).unwrap();
+    let plane = memory.recover_unique_owner(other).unwrap();
+    assert_eq!(memory.take(plane).unwrap(), 7);
+    memory.release_owner(caller_copy.owner()).unwrap();
+    let plane = memory.recover_unique_owner(origin).unwrap();
+    assert_eq!(memory.take(plane).unwrap(), 42);
+}

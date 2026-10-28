@@ -3,7 +3,7 @@
 //! the same token; only duplicate_owner creates another owner.
 
 use super::*;
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 mod census;
 mod early;
@@ -31,23 +31,31 @@ impl OwnedReference {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Ownership {
     Unique,
-    Shared(BTreeMap<u64, OwnerState>),
+    Shared(SharedOwners),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OwnerState {
-    Early,
-    Materialized,
+/// Disjoint token sets preserve phase membership while making pending-owner
+/// lookup and scope collection independent of the number of live pointers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct SharedOwners {
+    materialized: BTreeSet<u64>,
+    early: BTreeSet<u64>,
+}
+
+impl SharedOwners {
+    fn len(&self) -> Result<usize, String> {
+        self.materialized
+            .len()
+            .checked_add(self.early.len())
+            .ok_or_else(|| "shared owner count exhausted".into())
+    }
 }
 
 impl Ownership {
     pub(super) fn early_count(&self) -> usize {
         match self {
             Self::Unique => 0,
-            Self::Shared(tokens) => tokens
-                .values()
-                .filter(|state| **state == OwnerState::Early)
-                .count(),
+            Self::Shared(tokens) => tokens.early.len(),
         }
     }
 
@@ -75,8 +83,10 @@ impl<T> Memory<T> {
         }
         let token = fresh_token()?;
         let revision = fresh_revision()?;
-        self.planes[id.slot].ownership =
-            Ownership::Shared(BTreeMap::from([(token, OwnerState::Materialized)]));
+        self.planes[id.slot].ownership = Ownership::Shared(SharedOwners {
+            materialized: BTreeSet::from([token]),
+            early: BTreeSet::new(),
+        });
         self.planes[id.slot].census_revision = revision;
         Ok(OwnedReference { reference, token })
     }
@@ -84,11 +94,7 @@ impl<T> Memory<T> {
     fn owner_plane(&self, owner: OwnedReference) -> Result<PlaneId, String> {
         let id = self.plane(owner.reference)?;
         match &self.planes[id.slot].ownership {
-            Ownership::Shared(tokens)
-                if tokens.get(&owner.token) == Some(&OwnerState::Materialized) =>
-            {
-                Ok(id)
-            }
+            Ownership::Shared(tokens) if tokens.materialized.contains(&owner.token) => Ok(id),
             _ => Err("owning reference was consumed or does not belong to this plane".into()),
         }
     }
@@ -112,7 +118,7 @@ impl<T> Memory<T> {
         let Ownership::Shared(tokens) = &mut self.planes[id.slot].ownership else {
             unreachable!()
         };
-        tokens.remove(&owner.token);
+        tokens.materialized.remove(&owner.token);
         self.planes[id.slot].census_revision = revision;
         Ok(())
     }
@@ -124,7 +130,7 @@ impl<T> Memory<T> {
         let Ownership::Shared(tokens) = &self.planes[id.slot].ownership else {
             unreachable!()
         };
-        if tokens.len() != 1 {
+        if tokens.len()? != 1 {
             return Err("unique recovery requires exactly one owner".into());
         }
         let revision = fresh_revision()?;

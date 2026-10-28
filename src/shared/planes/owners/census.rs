@@ -37,7 +37,7 @@ impl<T> Memory<T> {
         let id = self.plane(reference)?;
         let count = match &self.planes[id.slot].ownership {
             Ownership::Unique => 1,
-            Ownership::Shared(tokens) => tokens.len(),
+            Ownership::Shared(tokens) => tokens.len()?,
         };
         Ok(OwnerCensus {
             reference,

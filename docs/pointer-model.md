@@ -112,3 +112,11 @@ update, with no event on failure; ordinary function-return boundaries are not
 substitutes for that machine event. Atomic annotations and concurrent interference
 remain unfinished. Ownership transitions in loops and while invariants are lifted
 still require additional resource frames and are rejected.
+
+The host store indexes pending and materialized owner tokens in separate sets.
+Finding the newest pending token and checking whether a plane has a pending
+owner therefore do not scan its live pointers. Scope capture visits planes and
+collects only pending tokens; count observations use the two set lengths. Each
+token belongs to exactly one set, and fulfillment preserves its identity and
+the census revision. The generation, arena, authority, and scope checks above
+still apply. This is verifier/interpreter bookkeeping and adds no native field.

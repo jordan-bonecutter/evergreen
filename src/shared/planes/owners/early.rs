@@ -43,7 +43,7 @@ impl<T> Memory<T> {
             unreachable!()
         };
         tokens
-            .len()
+            .len()?
             .checked_add(1)
             .ok_or("shared owner count exhausted")?;
         let outstanding = self
@@ -55,7 +55,7 @@ impl<T> Memory<T> {
         let Ownership::Shared(tokens) = &mut self.planes[id.slot].ownership else {
             unreachable!()
         };
-        tokens.insert(token, OwnerState::Early);
+        tokens.early.insert(token);
         self.early_owners = outstanding;
         self.planes[id.slot].census_revision = revision;
         Ok(EarlyOwner {
@@ -73,15 +73,15 @@ impl<T> Memory<T> {
         let Ownership::Shared(tokens) = &mut self.planes[id.slot].ownership else {
             return Err("early owner does not belong to shared storage".into());
         };
-        let state = tokens
-            .get_mut(&early.token)
-            .filter(|state| **state == OwnerState::Early)
-            .ok_or("early owner was already materialized or belongs to another plane")?;
+        if !tokens.early.contains(&early.token) || tokens.materialized.contains(&early.token) {
+            return Err("early owner was already materialized or belongs to another plane".into());
+        }
         let outstanding = self
             .early_owners
             .checked_sub(1)
             .ok_or("early owner bookkeeping is inconsistent")?;
-        *state = OwnerState::Materialized;
+        tokens.early.remove(&early.token);
+        tokens.materialized.insert(early.token);
         self.early_owners = outstanding;
         Ok(OwnedReference {
             reference: early.reference,
@@ -97,7 +97,7 @@ impl<T> Memory<T> {
         let Ownership::Shared(tokens) = &self.planes[id.slot].ownership else {
             unreachable!()
         };
-        Ok(tokens.values().any(|state| *state == OwnerState::Early))
+        Ok(!tokens.early.is_empty())
     }
 
     /// A normal source-level copy fulfills the most recent pending owner of this
@@ -113,11 +113,9 @@ impl<T> Memory<T> {
         let Ownership::Shared(tokens) = &self.planes[id.slot].ownership else {
             unreachable!()
         };
-        let early = tokens.iter().rev().find_map(|(&token, &state)| {
-            (state == OwnerState::Early).then_some(EarlyOwner {
-                reference: owner.reference,
-                token,
-            })
+        let early = tokens.early.last().map(|&token| EarlyOwner {
+            reference: owner.reference,
+            token,
         });
         match early {
             Some(early) => Ok(OwnerCopy {
@@ -179,8 +177,7 @@ impl<T> Memory<T> {
             };
             tokens
                 .into_iter()
-                .flat_map(|tokens| tokens.iter())
-                .filter_map(|(&token, &state)| (state == OwnerState::Early).then_some(token))
+                .flat_map(|tokens| tokens.early.iter().copied())
         })
     }
 }
