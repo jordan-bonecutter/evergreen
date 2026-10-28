@@ -81,15 +81,14 @@ live allocation is invented. See
 [`conditional_ownership.evg`](../examples/conditional_ownership.evg).
 
 [`owning_references.evg`](../examples/owning_references.evg) runs in the interpreter
-and native backend without admissions. The existing source Rc uses
-allocation-backed, move-only credits; the loan-scoped arithmetic reservation
-proposal is described separately in [pointer-model.md](pointer-model.md). `allocation_credits::Credit` now wraps real
-generic lifetime claims in an opaque source API for duplication, merging, payload
-borrowing, and unique recovery. The earlier arithmetic credit libraries still
-grant no allocation authority. The [source Rc](rc.md) now couples these claims
-to a checked runtime counter, an automatic source destructor, and generic
-payloads. Concurrent ownership still needs work.
-See [allocation-backed credits](allocation-credits.md).
+and native backend without admissions. The [source Rc](rc.md) uses ordinary shared pointers and checked runtime count
+updates, with no Credit wrapper. Its clone helper creates the new shared local
+before incrementing the runtime count. A source destructor selects final or
+nonfinal release for generic payloads. Early ownership scheduling and concurrent
+interference still need work; see [pointer-model.md](pointer-model.md).
+The separate [`allocation_credits::Credit`](allocation-credits.md) example wraps
+real lifetime claims in an opaque source API. The earlier arithmetic credit
+libraries grant no allocation authority.
 Invariant lifting remains a separate general language facility.
 
 ## Reference contracts: intended direction

@@ -1,12 +1,12 @@
-# Pointer authority and sequential credit design
+# Pointer authority and early ownership
 
 The bootstrap now implements `unique(T)`, `shared(T)`, and `owner_count(pointer)`.
 Ordinary shared-pointer copies create census claims, moves transfer claims, and
 contextual conversion to unique authority requires a current sole-owner proof.
 The special owner-operation intrinsics have been removed. See
 [owning-references.md](owning-references.md) for executable syntax and cleanup.
-The loan-scoped reservation model below remains a proposal; the current source
-Rc uses credits which already hold owning pointers.
+The current source Rc returns ordinary shared pointers from its clone helper.
+It has no Credit wrapper or publication step.
 
 ## Pointer kinds
 
@@ -33,48 +33,30 @@ destroying its allocation uses `leak(handle)`. Shared scope exit relinquishes
 the claim without reclaiming the allocation; unique scope exit destroys it. Neither route may retain a usable copy of a
 consumed handle or create authority from raw address equality.
 
-## Sequential Rc credits
+## Early ownership
 
-Rc's runtime counter and credit protocol belong in source code. A proposed
-accounting relation is:
+A future shared owner may count toward an allocation's lifetime before its
+pointer value is materialized. It must be tied to that allocation and generation,
+fulfilled exactly once, and accounted for on every returning path. An early
+owner prevents unique recovery and deallocation; it supplies no early access or
+drop authority. Materialization fulfills the existing ownership claim without
+adding another owner. Unfulfilled obligations cannot silently disappear.
 
-```
-nat(data.count) = owner_count(data) + reserved_credits(data)
-```
+The source Rc helper currently makes this order explicit using a real shared
+local: copy the pointer, increment the count, and return the local. It exposes no
+Rc view during the temporary mismatch and restores the caller's full invariant
+at return. Compiler scheduling of a future owner's logical start, independently
+of runtime pointer construction, is the next step. Such scheduling belongs to
+generic ownership checking and must not recognize Rc's counter or layout.
 
-The additive form also states that credits do not exceed the count. Natural
-subtraction is truncated, so `count - credits == owners` alone would also admit
-`count == 0, credits == 1, owners == 0`.
-
-For one synchronous clone with a loan-scoped reservation:
-
-| Boundary | Runtime count | Owning pointers | Credits |
-| --- | --- | --- | --- |
-| Entry | n | n | 0 |
-| Reservation produced | n + 1 | n | 1 |
-| Credit published as pointer | n + 1 | n + 1 | 0 |
-
-Counter increment and credit creation must form one checked logical operation;
-publication must consume the credit when it creates the new pointer. These are
-proof-state transitions. A sequential implementation can use an ordinary
-counter store and erased bookkeeping; no runtime transaction is implied.
-
-A reservation confined to clone cannot be interleaved by another sequential
-caller when it does not escape or invoke client callbacks. The checker must
-establish the required loan and effect boundaries rather than recognizing Rc.
-How source credits are associated with a plane and conserved is still an
-implementation obligation; this proposal adds no compiler-known credit class.
-
-Credits that can escape as independent promises of future owning pointers need
-a lifetime argument of their own. Counting only published pointers would permit
-a sole published pointer to satisfy the upgrade test while such a promise
-remains. Either that credit participates in lifetime ownership, or its loan
-must prevent a later publication after the original handle is consumed. This
-is separate from the nonescaping sequential case.
+For Arc, the successful atomic increment must establish the corresponding early
+owner at the same logical event. A failed update supplies no new ownership.
+This removes the need for a source-level credit type, but still requires checked
+atomic semantics, publication, and interference rules.
 
 ## Concurrent work still required
 
-The sequential accounting relation is not a concurrency proof. Arc needs a
+The sequential implementation is not a concurrency proof. Arc needs a
 specification for interference, atomic counter observations, publication, and
 destruction. A previous count-one observation is not automatically stable.
 Borrowed accesses in other threads must also have a checked lifetime argument.

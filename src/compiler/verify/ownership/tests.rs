@@ -169,10 +169,14 @@ fn generic_rc_payloads_keep_their_ownership_and_borrow_lifetimes() {
 fn source_rc_rejects_counter_drift_overflow_and_missing_claims() {
     let library = include_str!("../../../../stdlib/rc/rc.evg");
     for (from, to, expected) in [
-        ("allocation.count = allocation.count + 1;", "", "invariant"),
         (
-            "Credit::<T> {data: *allocation}",
-            "Credit::<T> {data: shape(shared(Data::<T>))}",
+            "allocation.count = allocation.count + 1;",
+            "",
+            "postcondition",
+        ),
+        (
+            "let cloned = *allocation;",
+            "let cloned = shape(shared(Data::<T>));",
             "type mismatch",
         ),
         ("data.count = data.count - 1;", "", "postcondition"),

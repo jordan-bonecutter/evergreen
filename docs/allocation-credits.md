@@ -44,10 +44,10 @@ no allocation authority. This library instead carries actual lifetime claims;
 it does not implement fractional splitting of those arithmetic budgets.
 
 This library is a lifetime-capability layer without a runtime counter.
-The separate [source Rc](rc.md) now combines allocation-backed credits with
+The separate [source Rc](rc.md) uses ordinary shared pointers with
 checked runtime count updates and a source destructor that automatically selects
 final or nonfinal release for generic payloads. Generalizing this standalone
-credit wrapper and fractional credit splitting still need work. Arc additionally requires atomic transitions and interference
+capability example and fractional credit splitting still need work. Arc additionally requires atomic transitions and interference
 rules.
 
 Run the complete example with:

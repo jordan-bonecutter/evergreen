@@ -19,18 +19,16 @@ drop(second);
 
 `clone` checks that incrementing the counter cannot overflow. Its source helper
 borrows the underlying owner slot, with write permission only for the counter.
-The helper has no `Rc` view from which it could use the accuracy invariant during
-the two steps: incrementing the counter and duplicating the allocation claim.
-It returns an opaque unpublished `Credit` whose refinement proves equality has
-been restored. Publishing that credit as an `Rc` moves its claim without changing
-the counter. There is no lifted invariant or runtime transaction in this path.
-Caller invariants are checked at the call boundary. This is sequential reasoning;
-it establishes no atomicity under concurrent interference.
+It creates the new shared owner first, increments the runtime count, and returns
+that owner directly. `clone` constructs the new Rc from the returned pointer.
+There is no Credit wrapper or separate publication operation.
 
-The credit is an actual allocation-backed claim, not an arithmetic allowance.
-Claims include hidden caller handles. `Credit<T>` stores `shared(Data<T>)`.
-The standalone [`allocation_credits`](allocation-credits.md) library still
-specializes its separate payload to `usize`; its wrapper is not used here.
+The helper has no `Rc` view from which it could use the accuracy invariant
+between those steps. Caller invariants are checked at the call boundary. This
+is sequential reasoning; it establishes no atomicity under concurrent
+interference. Early ownership scheduling across atomic events remains separate
+compiler work. The standalone [`allocation_credits`](allocation-credits.md)
+library is an independent capability example and is not used by Rc.
 
 The source `Drop` implementation consumes and completely destructures its handle.
 When the count is one, it proves uniqueness, recovers the unique plane, and
@@ -52,7 +50,7 @@ it live. No fictitious live allocation is created to join those states. See
 [resource case proofs](resource-cases.md) for how continuations, trust dependencies,
 and replay work.
 
-The native representation is one pointer per handle or unpublished credit and
+The native representation is one pointer per handle and
 a `usize` count followed by `T` with its ordinary target size, alignment, and
 padding. Runtime increments and decrements compile
 from the library source. Generic lifetime-claim bookkeeping and census

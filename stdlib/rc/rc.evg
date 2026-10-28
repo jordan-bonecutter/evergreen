@@ -5,9 +5,6 @@ module rc;
 
 opaque type Data<T> struct {count: usize, value: T}
 
-// An unpublished handle already owns its allocation-backed lifetime credit.
-opaque type Credit<T> struct {data: shared(Data<T>)} where (nat(self.data.count) == owner_count(self.data));
-
 opaque type Rc<T = usize> struct {data: shared(Data<T>)} where (
     fact reference_count_is_accurate = nat(self.data.count) == owner_count(self.data);
     fact zero_count_has_no_owners = self.data.count == 0 => owner_count(self.data) == 0;
@@ -23,25 +20,21 @@ fn new<T = usize>(value: T) -> Rc<T>
     }
 }
 
-// The projected loans expose no Rc view whose accuracy fact could be used
-// between these steps. The caller's complete invariant is restored at return.
-fn reserve<T = usize>(allocation: &shared(Data<T>)) -> Credit<T>
+// The new owning pointer exists before the count changes. This helper exposes
+// only the allocation; the caller's complete invariant is checked at return.
+fn clone_allocation<T = usize>(allocation: &shared(Data<T>)) -> shared(Data<T>)
     where
         allocation.count < usize::MAX &&
         nat(allocation.count) == owner_count(allocation)
     modifies(&allocation.count)
     ensures
-        owner_count(result.data) == old(owner_count(allocation)) + 1 &&
-        result.data.count == old(allocation.count) + 1 &&
-        &*result.data == &**allocation
+        owner_count(result) == old(owner_count(allocation)) + 1 &&
+        result.count == old(allocation.count) + 1 &&
+        &*result == &**allocation
 {
+    let cloned = *allocation;
     allocation.count = allocation.count + 1;
-    Credit::<T> {data: *allocation}
-}
-
-fn publish<T = usize>(credit: Credit<T>) -> Rc<T> {
-    let Credit::<T> {data} = credit;
-    Rc::<T> {data: move(data)}
+    cloned
 }
 
 impl<T> Drop for Rc<T> {
@@ -84,8 +77,7 @@ impl<T> Rc<T> {
             result.data.count == old(self.data.count) + 1 &&
             owner_count(result.data) == old(owner_count(self.data)) + 1
     {
-        let credit = reserve::<T>(&self.data);
-        publish::<T>(credit)
+        Self {data: clone_allocation::<T>(&self.data)}
     }
 
     method release_nonfinal()
