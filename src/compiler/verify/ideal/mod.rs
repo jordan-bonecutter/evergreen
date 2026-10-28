@@ -26,7 +26,7 @@ impl Context<'_> {
         {
             return Ok(None);
         }
-        let application = self.predicate_application(function)?;
+        let application = self.scalar_application(function)?;
         if let Some(value) = application
             .as_ref()
             .and_then(|key| self.applications.computed.get(key))

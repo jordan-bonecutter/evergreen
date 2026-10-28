@@ -2427,3 +2427,15 @@ handle frame slots, addressing, and width-correct memory access. `cleanup.rs`,
 `liveness.rs`, and `blocks.rs` preserve destruction order and scoped results.
 Allocation, untagged unions, atomic instructions, syscalls, and ELF output have
 separate modules. This remains a trusted x86-64 backend.
+
+### Reusing ideal scalar computations
+
+Ideal scalar observations reuse computed results by definition identity and input
+values. References additionally key the exact projected read revision, so a
+write or a dropped plane cannot reuse its old observation. Symbolic ideal
+integers and Booleans also share one result for the same application, avoiding
+repeated unfolding of a definition. Bounded symbolic results
+retain ordinary type-bound handling; concrete bounded results can be cached
+across branches. Every call still checks preconditions and imports its safety and
+contract dependencies, including on a cache hit. This reuse applies to verified
+pure ideal definitions, not unspecified runtime arithmetic.

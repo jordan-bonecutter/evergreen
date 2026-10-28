@@ -91,3 +91,52 @@ fn cached_computations_still_import_safety_admissions_at_every_call() {
     ))
     .is_err());
 }
+
+#[test]
+fn symbolic_integer_applications_reuse_values_for_the_same_observation() {
+    let source = "ideal fn value(n: integer) -> integer {n + 1} ideal fn observe(p: &usize) -> integer {integer(*p)} ideal fn same(n: integer) {proof _: value(n) == value(n);} fn check(p: &usize) {proof _: observe(p) == observe(p);} fn main() -> usize {let n: usize = 42; check(&n); 42}";
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let changed = "ideal fn observe(p: &usize) -> integer {integer(*p)} fn check(p: &usize) modifies(p) {ideal let before = observe(p); *p = 43; proof _: before == observe(p);}";
+    assert!(verify(changed).is_err());
+    let changed_scalar = "ideal fn value(n: usize) -> integer {integer(n) + 1} fn check(n: usize) {ideal let before = value(n); n = 43; proof _: before == value(n);}";
+    assert!(verify(changed_scalar).is_err());
+}
+
+#[test]
+fn numeric_computation_caches_keep_trust_and_pointee_generations_visible() {
+    let source = "ideal fn needs(n: usize) where n == 42 {} ideal fn observe(n: usize) -> integer {proof admitted: n == 42 by {trustme}; needs(n); integer(n)} fn main() -> usize {ideal let first = observe(43); ideal let second = observe(43); proof _: first == second; 42}";
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(
+        program.function_safety_assumptions("main").unwrap().count(),
+        1
+    );
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let stale = "ideal fn observe(p: &usize) -> integer {integer(*p)} fn main() {let n: usize = 42; ideal let before = observe(&n); drop(n); ideal let after = observe(&n);}";
+    assert!(verify(stale).is_err());
+}
+
+#[test]
+fn concrete_bounded_ideal_results_remain_valid_across_branch_restoration() {
+    let source = "ideal fn byte() -> u8 {42} ideal fn natural() -> nat {42} fn checks(flag: bool) {if flag {proof _: byte() == 42; proof _: natural() == 42;} else {proof _: byte() == 42; proof _: natural() == 42;}}";
+    let (program, bundle) = prove(source).unwrap();
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+}

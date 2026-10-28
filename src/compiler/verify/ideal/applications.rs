@@ -1,4 +1,4 @@
-//! Congruent propositions for pure observations. References include their exact
+//! Congruent scalar results for pure observations. References include their exact
 //! projection revision; materializing a view cannot keep a result after a write.
 
 use super::*;
@@ -25,11 +25,18 @@ pub(in crate::compiler::verify) struct Applications {
 }
 
 impl Context<'_> {
-    pub(in crate::compiler::verify) fn model_ideal_predicate(
+    pub(in crate::compiler::verify) fn model_ideal_scalar(
         &mut self,
         function: &Function,
     ) -> Result<Option<Symbol>> {
-        let Some(key) = self.predicate_application(function)? else {
+        // Unbounded integers and Booleans need no path-local range assumptions.
+        // Bounded symbolic results still use the ordinary call result path.
+        let ty = match function.ret {
+            Type::Bool => Ty::Bool,
+            Type::Int => Ty::Int,
+            _ => return Ok(None),
+        };
+        let Some(key) = self.scalar_application(function)? else {
             return Ok(None);
         };
         if let Some(value) = self
@@ -40,16 +47,22 @@ impl Context<'_> {
         {
             return Ok(Some(value.clone()));
         }
-        let value = self.arbitrary(&Ty::Bool)?;
+        let value = self.arbitrary(&ty)?;
         self.applications.model.insert(key, value.clone());
         Ok(Some(value))
     }
 
-    pub(super) fn predicate_application(
+    pub(super) fn scalar_application(
         &mut self,
         function: &Function,
     ) -> Result<Option<Application>> {
-        if !function.ideal || function.ret != Type::Bool || !eligible(self, function) {
+        if !function.ideal
+            || !matches!(
+                function.ret,
+                Type::Int | Type::Nat | Type::Bool | Type::Unit | Type::Machine(_)
+            )
+            || !eligible(self, function)
+        {
             return Ok(None);
         }
         self.charge_value_work(1 + function.name.len() / 32)?;
@@ -59,14 +72,14 @@ impl Context<'_> {
                 .locals
                 .values
                 .get(name)
-                .ok_or("missing predicate argument")?;
+                .ok_or("missing scalar observation argument")?;
             // Charge type/value-key clones without expanding array contents.
             self.charge_value_work(symbol_weight(&Symbol::Shape(Box::new(value.ty())))?)?;
             let value = self
                 .locals
                 .values
                 .get(name)
-                .ok_or("missing predicate argument")?;
+                .ok_or("missing scalar observation argument")?;
             let argument = match value {
                 Symbol::Number(ty, n) => {
                     let value = Argument::Number(ty.clone(), n.clone());
