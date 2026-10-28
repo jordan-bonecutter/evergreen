@@ -64,4 +64,13 @@ impl Emitter<'_> {
         }
         Ok(got)
     }
+    pub(super) fn shape_value(&mut self, value: &Expr) -> Result<Type> {
+        let ty = Type::Shape(Box::new(
+            value.literal_type().ok_or("shape requires a type")?,
+        ));
+        let home = self.allocate(&ty)?;
+        self.zero_storage(home, layout::of(&ty, self.structs)?.size);
+        self.frame_address(home);
+        Ok(ty)
+    }
 }

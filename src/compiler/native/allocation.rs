@@ -31,9 +31,7 @@ impl Emitter<'_> {
         self.code.extend([0x48, 0x85, 0xc0]);
         self.heap_guard(0x79);
     }
-}
 
-impl Emitter<'_> {
     pub(super) fn allocate_filled(
         &mut self,
         args: &[Expr],
@@ -102,5 +100,35 @@ impl Emitter<'_> {
         self.frame_address(home);
         self.load_scalar(&result)?;
         Ok(result)
+    }
+
+    pub(super) fn heap_guard(&mut self, success: u8) {
+        self.code.extend([success, 14]);
+        self.code.extend([
+            0xbf, 126, 0, 0, 0, 0xb8, 60, 0, 0, 0, 0x0f, 0x05, 0x0f, 0x0b,
+        ]);
+    }
+    pub(super) fn allocate_value(&mut self, value: &Expr, expected: Option<&Type>) -> Result<Type> {
+        let hint = match expected.and_then(Type::pointer_member) {
+            Some(Type::Unique(inner) | Type::Shared(inner)) => Some(inner.as_ref()),
+            _ => None,
+        };
+        let payload = self.expr(value, hint)?;
+        let saved = self.allocate(&payload)?;
+        self.copy_frame(saved, &payload)?;
+        let size = layout::of(&payload, self.structs)?.size;
+        self.immediate(size as u64);
+        self.map_payload();
+        let home = self.allocate(&Type::Unique(Box::new(payload.clone())))?;
+        self.copy_frame(home, &Type::Ref(Box::new(payload.clone())))?;
+        self.code.extend([0x48, 0x89, 0xc1]); // destination rcx
+        self.frame_address(saved);
+        if !layout::aggregate(&payload) {
+            self.load_scalar(&payload)?;
+        }
+        self.copy_address(&payload)?;
+        self.frame_address(home);
+        self.code.extend([0x48, 0x8b, 0x00]);
+        Ok(Type::Unique(Box::new(payload)))
     }
 }

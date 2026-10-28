@@ -2397,3 +2397,15 @@ Library clients can use `verify_diagnostic`, `prove_diagnostic`, and
 `verify_with_certificate_diagnostic` for structured details. The existing
 String-returning entry points remain available and include the proof details
 in their error text.
+
+### Reading the native backend
+
+`src/compiler/native.rs` defines the emission state and entry point.
+`native/program.rs` orders checked functions and builds the executable;
+`expressions.rs` dispatches value lowering, while `statements.rs` handles bindings,
+writes, and loops. Scalar operation encodings live in `scalars.rs`; calls and
+argument passing live in `calls.rs`. `frame.rs`, `places.rs`, and `storage.rs`
+handle frame slots, addressing, and width-correct memory access. `cleanup.rs`,
+`liveness.rs`, and `blocks.rs` preserve destruction order and scoped results.
+Allocation, untagged unions, atomic instructions, syscalls, and ELF output have
+separate modules. This remains a trusted x86-64 backend.
