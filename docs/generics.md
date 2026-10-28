@@ -15,13 +15,26 @@ where index < N {
 
 fn main() -> usize {
     let buffer = Buffer::<usize, 3> {data: [7, 42, 9]};
-    get::<usize, 3>(&buffer, 1)
+    get(&buffer, 1)
 }
 ```
 
 Use `Buffer<usize, 3>` in types and `Buffer::<usize, 3>` or `get::<usize, 3>`
-in expressions. Explicit arguments are required unless the declaration supplies
-trailing defaults, such as `fn identity<T = usize>(value: T) -> T {value}`.
+in expressions. Free function calls and record literals can omit the generic
+arguments when their typed inputs determine them. `get(&buffer, 1)` above infers
+both `T = usize` and `N = 3`; `Wrapper {value: byte}` infers the type of a typed
+`byte` binding. References, owning pointers, array elements/extents, and nested
+generic records match structurally. Ordinary function and method return types,
+field projections, and block results can provide input types too.
+
+Explicit arguments stay authoritative. Otherwise inferred arguments take
+precedence over trailing defaults, such as `fn identity<T = usize>(value: T) -> T
+{value}`. Conflicting typed inputs fail with an inference diagnostic; there is
+no implicit numeric widening. Bare number literals contribute no type constraint:
+`identity(42)` uses that default, while a declaration without a default needs an
+explicit type argument or a typed input. Inference does not yet use the expected
+result type, infer associated constructor arguments, or perform whole-function
+constraint solving. Annotate an otherwise ambiguous input binding.
 Nested applications and module qualification work. Type parameters can appear in
 refinements as ideal type values: `ensures (typeof(result) == T)`.
 
@@ -65,7 +78,7 @@ An explicit generic Copy implementation still needs Copy fields and must
 preserve refinements under shared-pointer census changes.
 
 Method-level generic parameters, trait bounds, specialized impl patterns, and
-argument inference remain unfinished. [Rc](rc.md) now uses generic payloads;
+full contextual argument inference remain unfinished. [Rc](rc.md) now uses generic payloads;
 [Vec](vec.md) specializes initialized backing storage and scalar copy operations.
 Move-only vector elements still need initialization and consumption proofs. Arrays still
 use their existing layout rule; replacing it with a source const-generic
@@ -100,3 +113,17 @@ Reference type observations use the same angle syntax as annotations:
 `Pair::<usize>::new(...)` and `Pair::<usize> {...}`. A type proof does not change
 an expression's static type or restore access to a dropped plane. See
 [`examples/rc_generic_view.evg`](../examples/rc_generic_view.evg).
+
+See [`inferred_generics.evg`](../examples/inferred_generics.evg) for a generic
+packet passed into `rc::new` and read through an inferred borrowed call. Numeric
+views such as `integer::from(byte)` and `nat::from(nonnegative)` infer their input
+type too; they remain ideal computations, and `nat::from` still requires a proof
+of nonnegativity. Inference adds no facts or pointer authority. Every selected
+instance is verified normally, including its preconditions, Copy requirements,
+borrows, and destructor. A proof-dependent union selection may still require
+explicit arguments.
+
+Const inference uses closed compile-time extents. A runtime length cannot be
+inferred as a const parameter, even if a surrounding proof knows its value.
+Inferring the extent of a billion-element array visits its type, not its elements.
+Repeated inferred and explicit instances share the same canonical identity.

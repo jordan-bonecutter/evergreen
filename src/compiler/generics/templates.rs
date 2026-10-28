@@ -6,11 +6,18 @@ use super::*;
 pub(super) struct Template {
     pub declaration: GenericDeclaration,
     pub parameter_work: usize,
+    pub signature_work: usize,
     pub body_work: usize,
 }
 
 struct Counter {
     work: usize,
+}
+
+pub(super) fn type_work(ty: &mut Type) -> Result<usize> {
+    let mut counter = Counter { work: 0 };
+    counter.ty(ty)?;
+    Ok(counter.work)
 }
 
 pub(super) fn function_work(function: &mut Function) -> Result<usize> {
@@ -97,8 +104,18 @@ impl Template {
             GenericDeclaration::Record { definition, .. } => count.record(definition)?,
             GenericDeclaration::Function { definition, .. } => count.function(definition)?,
         }
+        let mut signature_work = 0;
+        let fields = match &mut probe {
+            GenericDeclaration::Record { definition, .. } => &mut definition.fields,
+            GenericDeclaration::Function { definition, .. } => &mut definition.params,
+            _ => unreachable!("implementation rejected above"),
+        };
+        for (_, ty) in fields {
+            charge_copy(&mut signature_work, type_work(ty)?)?;
+        }
         Ok(Self {
             declaration,
+            signature_work,
             parameter_work,
             body_work: count.work,
         })

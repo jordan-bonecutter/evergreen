@@ -3,7 +3,7 @@ module nat;
 
 ideal fn from<T = usize>(value: T) -> nat
     where
-        integer::from::<T>(value) >= 0
+        integer::from(value) >= 0
     ensures
         integer(result) == integer(value)
 {

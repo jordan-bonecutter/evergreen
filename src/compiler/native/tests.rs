@@ -241,6 +241,7 @@ fn native_execution_agrees_with_the_interpreter() {
         include_str!("../../../examples/null.evg"),
         include_str!("../../../examples/non_overflowing_sum.evg"),
         include_str!("../../../examples/rc_generic_view.evg"),
+        include_str!("../../../examples/inferred_generics.evg"),
         include_str!("../../../examples/string_bytes.evg"),
         include_str!("../../../examples/utf8_literal.evg"),
         include_str!("../../../examples/utf8_view.evg"),

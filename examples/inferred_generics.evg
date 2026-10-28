@@ -1,0 +1,22 @@
+// Known input types supply generic type and const arguments.
+type Packet<T, const N: usize> struct {
+    data: [T; N]
+}
+
+fn first<T, const N: usize>(packet: &Packet<T, N>) -> T
+    where
+        N > 0
+{
+    packet.data[0]
+}
+
+fn main() -> u8 {
+    let bytes: [u8; 2] = [42, 7];
+    let packet = Packet {data: bytes};
+    let owner = rc::new(packet);
+    let view = owner.value();
+    let answer = first(view);
+    proof _: typeof(answer) == u8;
+    proof _: integer::from(answer) <= integer::from(u8::MAX);
+    answer
+}

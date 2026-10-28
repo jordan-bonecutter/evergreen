@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 mod constants;
 mod discovery;
 mod implementations;
+mod inference;
 mod substitute;
 mod templates;
 #[cfg(test)]
@@ -67,6 +68,7 @@ enum Concrete {
 
 struct Engine {
     implementations: implementations::Registry,
+    inference: inference::Inference,
     known_types: BTreeSet<String>,
     templates: BTreeMap<String, Template>,
     instances: HashMap<(String, Vec<GenericArgument>), String>,
@@ -81,6 +83,7 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
     }
     let mut engine = Engine {
         implementations: implementations::Registry::default(),
+        inference: inference::Inference::default(),
         known_types: program
             .structs
             .iter()
@@ -132,6 +135,9 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
             .implementations
             .register(implementation, &engine.templates, &mut engine.work)?;
     }
+    engine
+        .inference
+        .register_program(program, &mut engine.work)?;
     for record in &mut program.structs {
         engine.record(record)?;
     }
@@ -244,6 +250,9 @@ impl Engine {
             }
         }
         let actual = key.1.clone();
+        self.inference
+            .instances
+            .insert(generated.clone(), key.clone());
         self.instances.insert(key, generated.clone());
         if record {
             self.known_types.insert(generated.clone());
@@ -270,6 +279,7 @@ impl Engine {
                 }
                 definition.name = generated.clone();
                 substitution.record(&mut definition)?;
+                let first_header = self.implementations.headers.len();
                 self.implementations.install(
                     name,
                     &actual,
@@ -278,6 +288,11 @@ impl Engine {
                     &mut self.pending,
                     &mut self.work,
                 )?;
+                self.inference
+                    .register_record(&definition, &mut self.work)?;
+                for header in &self.implementations.headers[first_header..] {
+                    self.inference.register_function(header, &mut self.work)?;
+                }
                 Concrete::Record(definition)
             }
             GenericDeclaration::Function { mut definition, .. } => {
@@ -290,6 +305,8 @@ impl Engine {
                 }
                 definition.name = generated.clone();
                 substitution.function(&mut definition)?;
+                self.inference
+                    .register_function(&definition, &mut self.work)?;
                 Concrete::Function(definition)
             }
         };
@@ -348,79 +365,18 @@ impl Visitor for Engine {
     }
 
     fn expr(&mut self, expression: &mut Expr) -> Result<()> {
-        charge(&mut self.work)?;
-        if self.depth >= 128 {
-            return Err("generic expansion depth limit reached".into());
-        }
-        self.depth += 1;
-        let result = (|| {
-            if let Kind::Generic {
-                arguments,
-                member,
-                value,
-            } = &mut expression.kind
-            {
-                for argument in arguments.iter_mut() {
-                    self.argument(argument)?;
-                }
-                match &mut value.kind {
-                    Kind::Call(name, _) => {
-                        *name = if let Some(member) = member.take() {
-                            let target = self.specialize(name, std::mem::take(arguments), true)?;
-                            format!("{target}::{member}")
-                        } else {
-                            self.specialize(name, std::mem::take(arguments), false)?
-                        };
-                    }
-                    Kind::Record(name, _) => {
-                        *name = self.specialize(name, std::mem::take(arguments), true)?;
-                    }
-                    Kind::Name(name) => {
-                        let name = self.specialize(name, std::mem::take(arguments), true)?;
-                        value.kind = Kind::Type(Type::Named(name));
-                    }
-                    _ => return Err("invalid generic expression".into()),
-                }
-                *expression = std::mem::replace(
-                    value.as_mut(),
-                    Expr {
-                        kind: Kind::Unit,
-                        line: expression.line,
-                    },
-                );
-            }
-            let record = matches!(&expression.kind, Kind::Record(..));
-            if let Kind::Call(name, _) | Kind::Record(name, _) = &mut expression.kind {
-                if self.templates.contains_key(name) {
-                    *name = self.specialize(name, Vec::new(), record)?;
-                }
-            }
-            if let Kind::Call(name, _) = &mut expression.kind {
-                if let Some((base, member)) = name.rsplit_once("::") {
-                    if self.templates.get(base).is_some_and(|template| {
-                        matches!(template.declaration, GenericDeclaration::Record { .. })
-                    }) {
-                        let target = self.specialize(base, Vec::new(), true)?;
-                        *name = format!("{target}::{member}");
-                    }
-                }
-            }
-            visit::walk_expr(self, expression)
-        })();
-        self.depth -= 1;
-        result
+        self.expression(expression).map(|_| ())
+    }
+
+    fn function(&mut self, function: &mut Function) -> Result<()> {
+        self.infer_function(function)
+    }
+
+    fn record(&mut self, record: &mut Struct) -> Result<()> {
+        self.infer_record(record)
     }
 
     fn statement(&mut self, statement: &mut Statement) -> Result<()> {
-        visit::walk_statement(self, statement)?;
-        if let Statement::Destructure {
-            record, arguments, ..
-        } = statement
-        {
-            if !arguments.is_empty() || self.templates.contains_key(record) {
-                *record = self.specialize(record, std::mem::take(arguments), true)?;
-            }
-        }
-        Ok(())
+        self.infer_statement(statement)
     }
 }

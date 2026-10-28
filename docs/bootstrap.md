@@ -158,8 +158,9 @@ contract does not give primitive `a + b` a wrapping guarantee.
 `integer::from(value)` and `nat::from(value)` are source-defined ideal generic
 functions over the existing numeric-view primitives. Natural conversion requires
 nonnegativity. Their type parameter defaults to `usize`; use an explicit argument
-for other types until generic argument inference is implemented, such as
-`integer::from::<i8>(value)` or `nat::from::<integer>(value)`. The bootstrap
+only when the input type cannot be inferred. Typed inputs now infer their
+arguments, so `integer::from(value)` works for an `i8` binding and
+`nat::from(value)` works for a nonnegative `integer` binding. The bootstrap
 `integer(value)` and `nat(value)` primitives remain available and implement these
 wrappers. Ideal values still cannot supply runtime data. Primitive namespaces
 can contain ordinary library functions without changing primitive type meanings.
