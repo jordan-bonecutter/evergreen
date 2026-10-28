@@ -1,0 +1,61 @@
+use super::*;
+
+#[test]
+fn contracts_have_indented_keywords_and_trailing_conjunctions() {
+    let input = "fn reserve(x: &usize) -> usize where *x < usize::MAX && *x > 0 modifies(x) ensures result == old(*x) { *x }";
+    let expected = "fn reserve(x: &usize) -> usize\n    where\n        *x < usize::MAX &&\n        *x > 0\n    modifies(x)\n    ensures\n        result == old(*x)\n{\n    *x\n}\n";
+    assert_eq!(source(input).unwrap(), expected);
+    assert_eq!(source(expected).unwrap(), expected);
+}
+
+#[test]
+fn concrete_literals_comments_and_distinct_operators_survive() {
+    let input = "// leading λ\nfn main(){let text=\"// 🦀 \\\" \\n\"; // trailing\nlet p=& &text;\n// final\n0}";
+    let formatted = source(input).unwrap();
+    assert!(formatted.contains("\"// 🦀 \\\" \\n\""));
+    assert!(formatted.contains("// trailing\n"));
+    assert!(formatted.contains("& &text"));
+    assert_eq!(source(&formatted).unwrap(), formatted);
+}
+
+#[test]
+fn conditional_contracts_and_generic_receiver_patterns_are_stable() {
+    for input in [
+        "type R struct {v: usize} impl Drop for R {fn drop({v}) ensures if old(self.v)>0 {true} else {true} {}}",
+        "type Pair<T> struct {a:T,b:T} impl<T> Drop for Pair<T> {fn drop({a,b}) {}}",
+        "fn max(a: &usize,b: &usize)->&usize borrows(a) when *a>=*b else borrows(b) ensures *result>=*a && *result>=*b {if *a>=*b {a} else {b}}",
+        "type A struct {v:[usize;10]} where (fact ok = true; ok); fn main(){0}",
+        "fn test(x:usize) ensures forall(i: integer) where(i>=0) {i>=0} {0}",
+    ] {
+        let formatted = source(input).unwrap();
+        assert_eq!(source(&formatted).unwrap(), formatted, "{input}");
+        assert!(super::super::parse(&formatted).is_ok(), "{formatted}");
+    }
+}
+
+#[test]
+fn bundled_sources_format_idempotently() {
+    fn visit(path: &std::path::Path) {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(&path);
+            } else if path.extension().is_some_and(|ext| ext == "evg") {
+                let original = std::fs::read_to_string(&path).unwrap();
+                let formatted =
+                    source(&original).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                assert_eq!(source(&formatted).unwrap(), formatted, "{}", path.display());
+                if super::super::parse(&original).is_ok() {
+                    assert!(
+                        super::super::parse(&formatted).is_ok(),
+                        "{}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+    for dir in ["stdlib", "targets", "examples", "proofs"] {
+        visit(std::path::Path::new(dir));
+    }
+}

@@ -1,5 +1,7 @@
 //! UTF-8 is a source-library refinement over borrowed ordinary bytes.
 
+use crate::syntax::format::test_edit::SourceEdit;
+
 use super::*;
 
 #[test]
@@ -66,7 +68,7 @@ fn computed_predicates_do_not_survive_a_pointee_write() {
             .proof_search_count(),
         0
     );
-    assert!(verify(&source.replace("!valid(&value)", "valid(&value)")).is_err());
+    assert!(verify(&source.replace_evg("!valid(&value)", "valid(&value)")).is_err());
 }
 
 #[test]
@@ -83,7 +85,7 @@ fn cached_computations_still_import_safety_admissions_at_every_call() {
             .proof_search_count(),
         0
     );
-    assert!(verify(&source.replace(
+    assert!(verify(&source.replace_evg(
         "proof second: valid(43);",
         "proof second: valid(43); proof unrelated: false;"
     ))

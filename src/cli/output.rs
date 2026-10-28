@@ -7,7 +7,7 @@ use std::{
 };
 
 pub(super) fn write_text(path: &Path, content: &str, inputs: &[PathBuf]) -> Result<(), String> {
-    write_bytes(path, content.as_bytes(), inputs, false)
+    write_bytes(path, content.as_bytes(), inputs, Mode::Text)
 }
 
 pub(super) fn write_executable(
@@ -15,15 +15,20 @@ pub(super) fn write_executable(
     content: &[u8],
     inputs: &[PathBuf],
 ) -> Result<(), String> {
-    write_bytes(path, content, inputs, true)
+    write_bytes(path, content, inputs, Mode::Executable)
 }
 
-fn write_bytes(
-    path: &Path,
-    content: &[u8],
-    inputs: &[PathBuf],
-    executable: bool,
-) -> Result<(), String> {
+pub(super) fn replace_source(path: &Path, content: &str) -> Result<(), String> {
+    write_bytes(path, content.as_bytes(), &[], Mode::Source)
+}
+
+enum Mode {
+    Text,
+    Executable,
+    Source,
+}
+
+fn write_bytes(path: &Path, content: &[u8], inputs: &[PathBuf], mode: Mode) -> Result<(), String> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -44,7 +49,15 @@ fn write_bytes(
             .open(&temp)
             .map_err(|e| e.to_string())?;
         file.write_all(content).map_err(|e| e.to_string())?;
-        if executable {
+        if matches!(mode, Mode::Source) {
+            let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+            if !metadata.is_file() {
+                return Err("format input must be a regular file".into());
+            }
+            file.set_permissions(metadata.permissions())
+                .map_err(|e| e.to_string())?;
+        }
+        if matches!(mode, Mode::Executable) {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;

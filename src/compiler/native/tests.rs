@@ -1,5 +1,7 @@
 //! Native execution, layouts, cleanup ordering, and resource-budget regressions.
 
+use crate::syntax::format::test_edit::SourceEdit;
+
 use super::*;
 use crate::compiler::verify::verify;
 
@@ -9,8 +11,8 @@ fn native_loop_termination_measures_are_erased() {
     let measured = verify(source).unwrap();
     let unmeasured = verify(
         &source
-            .replace("decreases(limit - count)", "")
-            .replace("proof total_contract: count_to(42) == 42;", ""),
+            .replace_evg("decreases(limit - count)", "")
+            .replace_evg("proof total_contract: count_to(42) == 42;", ""),
     )
     .unwrap();
     assert_eq!(emit(&measured).unwrap(), emit(&unmeasured).unwrap());
@@ -70,7 +72,7 @@ fn native_stack_bound_includes_the_call_tree() {
     ));
     let program = verify(&source).unwrap();
     assert!(emit(&program).unwrap_err().contains("stack budget"));
-    let recursive = "fn recurse(n: usize) -> usize ensures(result == n) decreases(n) {let a: [usize; 128] = [VALUES]; if n == 0 {0} else {recurse(n - 1) + 1}} fn main() -> usize {recurse(1)}".replace("VALUES", &vec!["0"; 128].join(","));
+    let recursive = "fn recurse(n: usize) -> usize ensures(result == n) decreases(n) {let a: [usize; 128] = [VALUES]; if n == 0 {0} else {recurse(n - 1) + 1}} fn main() -> usize {recurse(1)}".replace_evg("VALUES", &vec!["0"; 128].join(","));
     assert!(emit(&verify(&recursive).unwrap())
         .unwrap_err()
         .contains("stack budget"));
@@ -188,19 +190,19 @@ fn native_stored_index_reads_observe_current_contents_and_preserve_rvalue_copies
     ));
     fs::create_dir(&directory).unwrap();
     let source = include_str!("../../../examples/index_effects.evg");
-    let pointer = source.replace(
+    let pointer = source.replace_evg(
         "let value = data[replace(&data, &calls)];",
         "let view = &data; let value = (*view)[replace(view, &calls)];",
     );
     let snapshot = source
-        .replace("[usize::MAX]", "[0]")
-        .replace("proof current: value == 41;", "proof snapshot: value == 0;")
-        .replace("value + 1", "value + 42");
-    let rvalue = snapshot.replace(
+        .replace_evg("[usize::MAX]", "[0]")
+        .replace_evg("proof current: value == 41;", "proof snapshot: value == 0;")
+        .replace_evg("value + 1", "value + 42");
+    let rvalue = snapshot.replace_evg(
         "let value = data[replace(&data, &calls)];",
         "let value = (if true {data} else {data})[replace(&data, &calls)];",
     );
-    let copied = snapshot.replace(
+    let copied = snapshot.replace_evg(
         "let value = data[replace(&data, &calls)];",
         "let saved = data; let value = saved[replace(&data, &calls)];",
     );
@@ -509,19 +511,19 @@ fn native_execution_agrees_with_the_interpreter() {
         "fn sum(a: usize,b: usize,c: usize,d: usize,e: usize,f: usize,g: usize,h: usize) -> usize where (a <= 10 && b <= 10 && c <= 10 && d <= 10 && e <= 10 && f <= 10 && g <= 10 && h <= 10) {a+b+c+d+e+f+g+h} fn main() -> usize {sum(1,2,3,4,5,6,7,8)}",
     ].map(str::to_owned).to_vec();
     cases.push(
-        include_str!("../../../examples/raw_union_owner_drop.evg").replace(
+        include_str!("../../../examples/raw_union_owner_drop.evg").replace_evg(
             "if present {discard_owner(data)} else {discard_empty(data)}",
             "match present {true => discard_owner(data), false => discard_empty(data)}",
         ),
     );
     cases.push(
-        include_str!("../../../examples/drop_receiver_pattern.evg").replace(
+        include_str!("../../../examples/drop_receiver_pattern.evg").replace_evg(
             "drop(resource);",
             "let Resource {data, child} = resource; drop(child);",
         ),
     );
     cases.push(
-        include_str!("../../../examples/drop_receiver_pattern.evg").replace(
+        include_str!("../../../examples/drop_receiver_pattern.evg").replace_evg(
             "proof local_owner_is_valid: *data == 42;",
             "proof local_owner_is_valid: *data == 42; let moved = data; drop(child); drop(moved);",
         ),
@@ -612,7 +614,7 @@ fn native_execution_agrees_with_the_interpreter() {
     }
     // A factory exists only in this test fixture; the shipped credit API
     // intentionally has no public minting operation.
-    let credit_test = concat!(include_str!("../../../stdlib/credits/credits.evg"), "\u{1e}").replace(
+    let credit_test = concat!(include_str!("../../../stdlib/credits/credits.evg"), "\u{1e}").replace_evg(
         "module credits;",
         "module credits;ideal fn issue() -> Credit ensures(result.units == 42) {Credit {units: 42}}",
     );
@@ -686,7 +688,7 @@ fn native_execution_agrees_with_the_interpreter() {
     let declarations = "type Resource struct {tag: usize} where (tag == 7); impl Drop for Resource {fn drop(self){}} fn make() -> Resource {Resource {tag: 7}} fn consume(r: Resource) -> usize {r.tag}";
     cases.push(
         include_str!("../../../examples/replacement_rhs.evg")
-            .replace("    value = {", "    drop(value);\n    value = {"),
+            .replace_evg("    value = {", "    drop(value);\n    value = {"),
     );
     for choice in ["false", "true"] {
         for body in [

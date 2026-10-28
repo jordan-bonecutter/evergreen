@@ -1,5 +1,6 @@
 use super::tests::check;
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn runtime_indices_borrow_and_extract_range_backed_resources() {
@@ -15,10 +16,10 @@ fn runtime_indices_borrow_and_extract_range_backed_resources() {
     );
     crate::compiler::native::emit(&program).unwrap();
     for bad in [
-        source.replacen("    &(*data)[index]", "    &(*data)[index + 1]", 1),
-        source.replace("let empty:", "proof stale: **view == 42; let empty:"),
-        source.replace("modifies(&(*data)[index])", ""),
-        source.replace(
+        source.replacen_evg("    &(*data)[index]", "    &(*data)[index + 1]", 1),
+        source.replace_evg("let empty:", "proof stale: **view == 42; let empty:"),
+        source.replace_evg("modifies(&(*data)[index])", ""),
+        source.replace_evg(
             "take::<unique(usize), 8>(&*data, 3)",
             "take::<unique(usize), 8>(&*data, 2)",
         ),
@@ -64,8 +65,8 @@ fn runtime_input_indices_require_unadmitted_current_alias_relations() {
     "#;
     for source in [
         source.to_owned(),
-        source.replace("let right", "proof alias: i == j by {trustme}; let right"),
-        source.replace(
+        source.replace_evg("let right", "proof alias: i == j by {trustme}; let right"),
+        source.replace_evg(
             "let right",
             "proof separate: i != j by {trustme}; let right",
         ),
@@ -86,7 +87,7 @@ fn runtime_input_indices_require_unadmitted_current_alias_relations() {
     assert!(verify(changed_scope)
         .unwrap_err()
         .contains("indices may alias"));
-    let overlapping = changed_scope.replace(
+    let overlapping = changed_scope.replace_evg(
         "let later = &(*data)[index];",
         "if index == 0 {let later = &(*data)[index];}",
     );
@@ -111,14 +112,14 @@ fn distinct_array_slots_do_not_assert_distinct_borrowed_pointees_at_calls() {
         }
     "#;
     check(source);
-    let aliased = source.replace("[&a, &b]", "[&a, &a]");
+    let aliased = source.replace_evg("[&a, &b]", "[&a, &a]");
     assert!(verify(&aliased).unwrap_err().contains("body recheck"));
 }
 
 #[test]
 fn runtime_index_observations_stay_sparse_and_cannot_gain_nested_write_grants() {
     let source = include_str!("../../../../examples/range_index.evg");
-    let huge = source.replace('8', "1000000000");
+    let huge = source.replace_evg('8', "1000000000");
     let (small, certificate) = prove(source).unwrap();
     let (large, large_certificate) = prove(&huge).unwrap();
     assert_eq!(small.obligations, large.obligations);

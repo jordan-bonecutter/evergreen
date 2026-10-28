@@ -185,6 +185,7 @@ pub(crate) fn representation_type(representation: &Representation) -> Result<Opt
 mod tests {
     use super::*;
     use crate::compiler::verify::{prove, verify_with_certificate};
+    use crate::syntax::format::test_edit::SourceEdit;
 
     #[test]
     fn target_data_is_checked_evergreen_and_replays_without_trust() {
@@ -204,7 +205,7 @@ mod tests {
             ScalarLayout { size: 2, align: 2 }
         );
         // Alignment is data, not reconstructed from the integer width.
-        let source = X86_64.replace("size: 8, align: 8", "size: 8, align: 4");
+        let source = X86_64.replace_evg("size: 8, align: 8", "size: 8, align: 4");
         assert!(prove(&source).unwrap().0.trusted_assumptions().is_empty());
         let target = Target::decode(&source).unwrap();
         assert_eq!(
@@ -218,18 +219,18 @@ mod tests {
     #[test]
     fn malformed_or_incompatible_target_data_fails_closed() {
         for source in [
-            X86_64.replace("size: 1, align: 1", "size: 2, align: 1"),
-            X86_64.replace("size: 8, align: 8", "size: 8, align: 3"),
-            X86_64.replace("size: 8, align: 8", "size: 8, align: 0"),
-            X86_64.replace("size: 8, align: 8", "size: 8, align: 16"),
-            X86_64.replace("size: 1, align: 1", "size: 1 + 0, align: 1"),
-            X86_64.replace("type u8 =", "type unknown ="),
-            X86_64.replace("type i8 =", "type u8 ="),
-            X86_64.replace("align: 1", "size: 1"),
-            X86_64.replace("repr::Little", "repr::Big"),
-            X86_64.replace("signed: true", "signed: false"),
-            X86_64.replace("bits: 64", "bits: 32"),
-            X86_64.replace("repr::TwosComplement", "repr::Binary"),
+            X86_64.replace_evg("size: 1, align: 1", "size: 2, align: 1"),
+            X86_64.replace_evg("size: 8, align: 8", "size: 8, align: 3"),
+            X86_64.replace_evg("size: 8, align: 8", "size: 8, align: 0"),
+            X86_64.replace_evg("size: 8, align: 8", "size: 8, align: 16"),
+            X86_64.replace_evg("size: 1, align: 1", "size: 1 + 0, align: 1"),
+            X86_64.replace_evg("type u8 =", "type unknown ="),
+            X86_64.replace_evg("type i8 =", "type u8 ="),
+            X86_64.replace_evg("align: 1", "size: 1"),
+            X86_64.replace_evg("repr::Little", "repr::Big"),
+            X86_64.replace_evg("signed: true", "signed: false"),
+            X86_64.replace_evg("bits: 64", "bits: 32"),
+            X86_64.replace_evg("repr::TwosComplement", "repr::Binary"),
         ] {
             assert!(
                 Target::decode(&source).is_err(),
@@ -249,6 +250,7 @@ mod tests {
 #[cfg(test)]
 mod copy_tests {
     use super::*;
+    use crate::syntax::format::test_edit::SourceEdit;
 
     fn machine(name: &str) -> Type {
         Type::Machine(MachineInt::parse(name).unwrap())
@@ -256,17 +258,17 @@ mod copy_tests {
 
     #[test]
     fn copying_requires_an_explicit_primitive_trait_implementation() {
-        let source = X86_64.replace("impl Copy for u8 {}", "");
+        let source = X86_64.replace_evg("impl Copy for u8 {}", "");
         let target = Target::decode(&source).unwrap();
         assert!(!target.is_copy(&machine("u8")));
         assert!(target.is_copy(&machine("u16")));
-        let source = X86_64.replace("impl Copy for pointer {}", "");
+        let source = X86_64.replace_evg("impl Copy for pointer {}", "");
         let target = Target::decode(&source).unwrap();
         assert!(!target.is_copy(&Type::Ref(Box::new(Type::Unit))));
         let target = Target::decode(X86_64).unwrap();
         assert!(target.is_copy(&Type::Ref(Box::new(Type::Unit))));
         assert!(!target.is_copy(&Type::Unique(Box::new(Type::Unit))));
-        let source = X86_64.replace("impl Copy for bool {}", "");
+        let source = X86_64.replace_evg("impl Copy for bool {}", "");
         assert!(!Target::decode(&source).unwrap().is_copy(&Type::Bool));
     }
 
@@ -275,8 +277,8 @@ mod copy_tests {
         for source in [
             format!("{X86_64} impl Copy for u8 {{}}"),
             format!("{X86_64} impl Copy for Unknown {{}}"),
-            X86_64.replace("impl Copy for usize {}", ""),
-            X86_64.replace("impl Copy for isize {}", ""),
+            X86_64.replace_evg("impl Copy for usize {}", ""),
+            X86_64.replace_evg("impl Copy for isize {}", ""),
         ] {
             assert!(Target::decode(&source).is_err());
         }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn member_view_proof_subjects_follow_the_separate_payload_plane() {
@@ -12,9 +13,9 @@ fn member_view_proof_subjects_follow_the_separate_payload_plane() {
             .proof_search_count(),
         0
     );
-    let changed = source.replace("process(payload)", "*payload = 99; process(payload)");
+    let changed = source.replace_evg("process(payload)", "*payload = 99; process(payload)");
     assert!(verify(&changed).is_err());
-    let unrelated = source.replace(
+    let unrelated = source.replace_evg(
         "process(payload)",
         "let other = alloc(42); process(&*other)",
     );
@@ -61,19 +62,19 @@ fn extraction_invalidates_the_slot_view_and_preserves_a_separate_payload_plane()
         0
     );
     crate::compiler::native::emit(&program).unwrap();
-    let stale = source.replace(
+    let stale = source.replace_evg(
         "let empty: unique(shape(unique(usize)), 8) = buffer;",
         "proof invalid: **view == 42; let empty: unique(shape(unique(usize)), 8) = buffer;",
     );
     assert!(verify(&stale).unwrap_err().contains("member view"));
-    let census = source.replace(
+    let census = source.replace_evg(
         "let empty: unique(shape(unique(usize)), 8) = buffer;",
         "proof invalid: owner_count(view) == 1; let empty: unique(shape(unique(usize)), 8) = buffer;",
     );
     assert!(verify(&census).unwrap_err().contains("member view"));
-    let freed = source.replace("    *payload", "    drop(value); *payload");
+    let freed = source.replace_evg("    *payload", "    drop(value); *payload");
     assert!(verify(&freed).unwrap_err().contains("never"));
-    let stolen = source.replace(
+    let stolen = source.replace_evg(
         "    let payload = &**view;",
         "    let stolen: unique(usize) = *view; let payload = &**view;",
     );
@@ -106,7 +107,7 @@ fn member_views_require_the_current_tag_and_recheck_after_rhs_effects() {
 #[test]
 fn conditional_member_borrows_retain_each_incoming_plane() {
     let source = "fn choose(flag: bool, a: &(usize | shape(usize)), b: &(usize | shape(usize))) -> &usize where(typeof(*a) == usize && typeof(*b) == usize) borrows(a) when flag else borrows(b) {if flag {a} else {b}} fn main() -> usize {let a: usize | shape(usize) = 7; let b: usize | shape(usize) = 42; let view = choose(false, &a, &b); let seen = *view; let a: usize = a; let b: usize = b; seen}";
-    let source = source.replace(
+    let source = source.replace_evg(
         "let a: usize = a; let b: usize = b;",
         "let av: usize = a; let bv: usize = b;",
     );
@@ -133,7 +134,7 @@ fn member_view_facts_expire_on_alias_writes_and_reinitialization() {
         0
     );
     crate::compiler::native::emit(&program).unwrap();
-    let stale = source.replace(
+    let stale = source.replace_evg(
         "proof current: *view == 42;",
         "proof stale: *view == 7 by {exact saved};",
     );
@@ -154,8 +155,8 @@ fn member_array_borrows_keep_bounds_and_expire_projected_views() {
         0
     );
     crate::compiler::native::emit(&program).unwrap();
-    assert!(verify(&source.replace("(*view)[1]", "(*view)[2]")).is_err());
-    let extracted = source.replace(
+    assert!(verify(&source.replace_evg("(*view)[1]", "(*view)[2]")).is_err());
+    let extracted = source.replace_evg(
         "let seen = *cell; let data: [usize; 2] = slot; seen",
         "let data: [usize; 2] = slot; *cell",
     );

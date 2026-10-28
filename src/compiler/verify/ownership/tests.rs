@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn shared_pointer_values_copy_claims_and_move_to_unique_authority() {
@@ -186,7 +187,7 @@ fn source_rc_rejects_counter_drift_overflow_and_missing_claims() {
             "upper bound",
         ),
     ] {
-        let wrong = library.replace(from, to);
+        let wrong = library.replace_evg(from, to);
         assert_ne!(wrong, library);
         let wrong = format!("{wrong}\nfn exercise_counter() -> usize {{let first = new(42); let second = first.clone(); second.release_nonfinal(); *first.value()}}");
         let error = verify(&wrong).unwrap_err();
@@ -299,7 +300,7 @@ fn a_visible_input_owner_does_not_establish_uniqueness() {
             .proof_search_count(),
         0
     );
-    let invalid = valid.replace(
+    let invalid = valid.replace_evg(
         "let recovered = reclaim(move(owned));",
         "let another = owned; let recovered = reclaim(move(owned));",
     );
@@ -338,12 +339,12 @@ fn cloning_and_entry_snapshots_preserve_opaque_caller_counts() {
 fn borrowed_views_survive_handle_moves_and_expire_after_final_destruction() {
     let source = "fn main() -> usize {let unique: unique(usize) = alloc(42); let first: shared(usize) = move(unique); let view = &*first; let second = first; let moved = move(first); leak(moved); proof sole: owner_count(second) == 1; let recovered: unique(usize) = move(second); *view}";
     assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
-    let dead = source.replace(
+    let dead = source.replace_evg(
         "let recovered: unique(usize) = move(second);",
         "let recovered: unique(usize) = move(second); drop(recovered);",
     );
     assert!(verify(&dead).is_err());
-    let moved = source.replace("leak(moved);", "leak(first);");
+    let moved = source.replace_evg("leak(moved);", "leak(first);");
     assert!(verify(&moved).is_err());
 }
 
@@ -385,7 +386,7 @@ fn raw_shared_cleanup_leaks_and_promotion_enables_payload_destruction() {
             1,
         ),
     ] {
-        let source = source.replace("CLEANUP", cleanup);
+        let source = source.replace_evg("CLEANUP", cleanup);
         let (program, bundle) = prove(&source).unwrap_or_else(|error| panic!("{error}\n{source}"));
         let (value, events) = program.run_with_events().unwrap();
         assert_eq!(value.to_string(), "42");
@@ -410,7 +411,7 @@ fn ordinary_borrows_do_not_count_and_keep_the_original_allocation_provenance() {
             .proof_search_count(),
         0
     );
-    let invalid = source.replace(
+    let invalid = source.replace_evg(
         "leak(first); *view",
         "leak(first); let final: unique(usize) = move(second); drop(final); *view",
     );

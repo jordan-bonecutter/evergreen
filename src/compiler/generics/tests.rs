@@ -1,4 +1,5 @@
 use crate::compiler::verify::{prove, verify, verify_with_certificate};
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn source_vectors_specialize_storage_and_copy_operations() {
@@ -29,7 +30,7 @@ fn source_vectors_reject_implicit_copies_stale_borrows_and_byte_overflow() {
     ] {
         assert!(verify(source).is_err(), "accepted {source}");
     }
-    let library = include_str!("../../../stdlib/vec/vec.evg").replace(
+    let library = include_str!("../../../stdlib/vec/vec.evg").replace_evg(
         "integer(capacity) * integer(size_of(T)) <= integer(isize::MAX)",
         "true",
     );
@@ -73,7 +74,7 @@ fn generic_method_bodies_are_instantiated_only_when_used() {
     let program = verify(source).unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(program.functions.len(), 2);
     assert_eq!(program.run().unwrap().to_string(), "42");
-    let called = source.replace("*value.get()", "Box::<usize>::invalid()");
+    let called = source.replace_evg("*value.get()", "Box::<usize>::invalid()");
     assert!(verify(&called).is_err());
 }
 

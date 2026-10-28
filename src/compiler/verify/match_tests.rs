@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn match_blocks_preserve_results_and_clean_up_only_arm_locals() {
@@ -56,7 +57,7 @@ fn loops_nested_in_expression_blocks_cannot_claim_totality() {
             .unwrap()
             .partial
     );
-    let rejected = source.replace(
+    let rejected = source.replace_evg(
         "fn main() -> usize {0}",
         "fn main() -> usize {proof bad: diverge() == 42; 0}",
     );
@@ -71,7 +72,7 @@ fn loops_nested_in_expression_blocks_cannot_claim_totality() {
             .unwrap()
             .partial
     );
-    assert!(verify(&recursive.replace(
+    assert!(verify(&recursive.replace_evg(
         "fn main() -> usize {0}",
         "fn main() -> usize {proof bad: recur(0) == 0; 0}"
     ))
@@ -84,7 +85,7 @@ fn boolean_matches_share_branch_proofs_effects_and_ownership_rules() {
     let (program, bundle) = prove(source).unwrap();
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.trusted_assumptions().is_empty());
-    let wrong_member = source.replace("true => flag(value)", "true => word(value)");
+    let wrong_member = source.replace_evg("true => flag(value)", "true => word(value)");
     assert!(verify(&wrong_member)
         .unwrap_err()
         .contains("active raw union member"));
@@ -94,7 +95,7 @@ fn boolean_matches_share_branch_proofs_effects_and_ownership_rules() {
             .proof_search_count(),
         0
     );
-    let owning = include_str!("../../../examples/raw_union_owner_drop.evg").replace(
+    let owning = include_str!("../../../examples/raw_union_owner_drop.evg").replace_evg(
         "if present {discard_owner(data)} else {discard_empty(data)}",
         "match present {true => discard_owner(data), false => discard_empty(data)}",
     );

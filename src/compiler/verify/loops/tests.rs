@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn library_buffer_copy_uses_a_checked_loop_with_explicit_bounds() {
@@ -23,7 +24,7 @@ fn library_buffer_copy_uses_a_checked_loop_with_explicit_bounds() {
         0
     );
     for invalid in ["5, 1", "3, 4"] {
-        let error = verify(&source.replace("3, 1", invalid)).unwrap_err();
+        let error = verify(&source.replace_evg("3, 1", invalid)).unwrap_err();
         assert!(
             error.contains("precondition") && error.contains("copy_prefix"),
             "{error}"
@@ -49,7 +50,7 @@ fn runtime_while_checks_induction_and_replays_without_unrolling() {
             .proof_search_count(),
         0
     );
-    assert!(verify(&source.replace("count_to(42)", "count_to(usize::MAX)")).is_ok());
+    assert!(verify(&source.replace_evg("count_to(42)", "count_to(usize::MAX)")).is_ok());
 }
 
 #[test]
@@ -70,14 +71,17 @@ fn loop_frame_applies_to_aliases_and_callees() {
     assert!(verify(source)
         .unwrap_err()
         .contains("outside its modifies frame"));
-    let call = source.replace("*alias = 42;", "set(alias);");
+    let call = source.replace_evg("*alias = 42;", "set(alias);");
     assert!(verify(&call)
         .unwrap_err()
         .contains("outside its modifies frame"));
+    assert!(verify(
+        &source.replace_evg("invariant(x <= 42)", "invariant(x <= 42) modifies(alias)")
+    )
+    .is_ok());
     assert!(
-        verify(&source.replace("invariant(x <= 42)", "invariant(x <= 42) modifies(alias)")).is_ok()
+        verify(&call.replace_evg("invariant(x <= 42)", "invariant(x <= 42) modifies(&x)")).is_ok()
     );
-    assert!(verify(&call.replace("invariant(x <= 42)", "invariant(x <= 42) modifies(&x)")).is_ok());
 }
 
 #[test]
@@ -129,7 +133,7 @@ fn nested_loops_and_cleanup_preserve_the_invariant() {
     assert_eq!(value.to_string(), "42");
     assert_eq!(events, ["drop Guard", "drop Guard"]);
     assert!(
-        verify(&cleanup.replace("modifies(&i, &out)", "modifies(&i)"))
+        verify(&cleanup.replace_evg("modifies(&i, &out)", "modifies(&i)"))
             .unwrap_err()
             .contains("outside its modifies frame")
     );

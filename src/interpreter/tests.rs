@@ -1,5 +1,7 @@
 //! Interpreter execution, ownership, and cleanup regressions.
 
+use crate::syntax::format::test_edit::SourceEdit;
+
 use super::{copy_value, Value};
 use crate::syntax::Type;
 
@@ -161,7 +163,7 @@ fn destructured_owned_fields_are_cleaned_up_once() {
     let source = "type First struct {} impl Drop for First {fn drop(self){}} type Second struct {} impl Drop for Second {fn drop(self){}} type Pair struct {left: First, right: Second} fn main() -> usize {let p = Pair {left: First {}, right: Second {}}; let Pair {left, right} = p; 0}";
     let (_, events) = verify(source).unwrap().run_with_events().unwrap();
     assert_eq!(events, ["drop Second", "drop First"]);
-    let source = source.replace(
+    let source = source.replace_evg(
         "let Pair {left, right} = p;",
         "let Pair {left, right} = p; drop(left);",
     );

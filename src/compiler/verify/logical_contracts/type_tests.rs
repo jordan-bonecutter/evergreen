@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn nominal_range_invariants_authorize_reads_and_complete_consumption() {
@@ -14,22 +15,22 @@ fn nominal_range_invariants_authorize_reads_and_complete_consumption() {
     );
     crate::compiler::native::emit(&program).unwrap();
     for invalid in [
-        source.replace("(*data)[0] = value;", ""),
-        source.replace("    *payload", "    **view"),
-        source.replace(
+        source.replace_evg("(*data)[0] = value;", ""),
+        source.replace_evg("    *payload", "    **view"),
+        source.replace_evg(
             "let payload = &**view;",
             "let stolen: unique(usize) = *view; let payload = &**view;",
         ),
     ] {
         assert!(verify(&invalid).is_err(), "accepted {invalid}");
     }
-    let steal = source.replace(
+    let steal = source.replace_evg(
         "let view = slot.get();",
         "let stolen: unique(usize) = move((*slot.data)[0]); let view = slot.get();",
     );
     let error = verify(&steal).unwrap_err();
     assert!(error.contains("invariant"), "{error}");
-    let invented = source.replace("(*data)[0] = value;", "proof invented: forall(i: integer) where(0 <= i && i < 1) {typeof((*data)[i]) == T} by {trustme};");
+    let invented = source.replace_evg("(*data)[0] = value;", "proof invented: forall(i: integer) where(0 <= i && i < 1) {typeof((*data)[i]) == T} by {trustme};");
     assert!(
         verify(&invented).is_err(),
         "an admitted type fact created an owner"
@@ -82,8 +83,8 @@ fn nominal_scalar_universals_are_checked_at_construction_and_mutation() {
         0
     );
     for invalid in [
-        source.replace("Bound {limit: 46}", "Bound {limit: 2}"),
-        source.replace("bound.limit - 4", "bound.limit = 0; bound.limit - 4"),
+        source.replace_evg("Bound {limit: 46}", "Bound {limit: 2}"),
+        source.replace_evg("bound.limit - 4", "bound.limit = 0; bound.limit - 4"),
     ] {
         assert!(verify(&invalid).is_err(), "accepted {invalid}");
     }
@@ -116,7 +117,7 @@ fn empty_nominal_range_invariants_do_not_materialize_their_extents() {
     "#;
     let (small, certificate) = prove(source).unwrap();
     assert_eq!(small.run().unwrap().to_string(), "42");
-    let huge = source.replace('8', "1000000000");
+    let huge = source.replace_evg('8', "1000000000");
     let (large, large_certificate) = prove(&huge).unwrap();
     assert_eq!(small.obligations, large.obligations);
     assert_eq!(

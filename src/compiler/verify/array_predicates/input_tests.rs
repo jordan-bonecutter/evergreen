@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn opaque_range_claims_over_empty_domains_need_no_slot_observations() {
@@ -13,7 +14,9 @@ fn opaque_range_claims_over_empty_domains_need_no_slot_observations() {
         0
     );
     crate::compiler::native::emit(&program).unwrap();
-    let nonempty = source.replace("; 0]", "; 1]").replace("i < 0", "i < 1");
+    let nonempty = source
+        .replace_evg("; 0]", "; 1]")
+        .replace_evg("i < 0", "i < 1");
     assert!(verify(&nonempty).is_err());
 }
 
@@ -30,7 +33,7 @@ fn unknown_input_ranges_forward_checked_premises_and_replay() {
         0
     );
     crate::compiler::native::emit(&program).unwrap();
-    let initialized = source.replace("let view =", "(*data)[0] = alloc(7); let view =");
+    let initialized = source.replace_evg("let view =", "(*data)[0] = alloc(7); let view =");
     let error = verify(&initialized).unwrap_err();
     assert!(error.contains("precondition"), "{error}");
 }
@@ -50,7 +53,7 @@ fn opaque_input_selectors_do_not_invent_empty_defaults_or_other_planes() {
 #[test]
 fn opaque_input_range_contracts_remain_sparse_at_a_billion_elements() {
     let small = include_str!("../../../../examples/input_ranges.evg");
-    let huge = small.replace('8', "1000000000");
+    let huge = small.replace_evg('8', "1000000000");
     let (program, bundle) = prove(small).unwrap();
     let (large, large_bundle) = prove(&huge).unwrap();
     assert_eq!(program.obligations, large.obligations);

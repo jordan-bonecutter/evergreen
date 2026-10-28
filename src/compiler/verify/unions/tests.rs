@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn raw_union_member_moves_leave_a_shape_in_existing_storage() {
@@ -120,21 +121,21 @@ fn source_destructors_dispose_only_the_active_allocation_and_its_payload() {
             .proof_search_count(),
         0
     );
-    let incomplete = source.replace(
+    let incomplete = source.replace_evg(
         "if present {discard_owner(data)} else {discard_empty(data)}",
         "()",
     );
     assert!(verify(&incomplete)
         .unwrap_err()
         .contains("cannot be dropped implicitly"));
-    let allocating = source.replace(
+    let allocating = source.replace_evg(
         "fn discard_owner(value: unique(Resource)) {}",
         "fn discard_owner(value: unique(Resource)) {let extra: unique(usize) = alloc(0);}",
     );
     assert!(verify(&allocating)
         .unwrap_err()
         .contains("destructor calls require"));
-    let false_flag = source.replace("present: true", "present: false");
+    let false_flag = source.replace_evg("present: true", "present: false");
     assert!(verify(&false_flag)
         .unwrap_err()
         .contains("invariant of MaybeOwner"));
@@ -157,7 +158,8 @@ fn conditional_owners_survive_calls_and_only_the_active_owner_is_released() {
         0
     );
     assert!(
-        verify(&source.replace("if full {consume(value)}", "if !full {consume(value)}")).is_err()
+        verify(&source.replace_evg("if full {consume(value)}", "if !full {consume(value)}"))
+            .is_err()
     );
 }
 
@@ -187,15 +189,15 @@ fn borrowed_union_dereferences_observe_the_existing_allocation_without_moving_it
         0
     );
     assert!(
-        verify(&source.replace("where typeof(*value) == unique(usize)", ""))
+        verify(&source.replace_evg("where typeof(*value) == unique(usize)", ""))
             .unwrap_err()
             .contains("active raw union member")
     );
     let bad_write = "fn bad(value: &(unique(usize) | bool)) where typeof(*value) == unique(usize) {**value = 42;}";
     assert!(verify(bad_write).unwrap_err().contains("effect contract"));
     let stale = source
-        .replace("let n = read(&data);", "let view = &**(&data);")
-        .replace("consume(data); n", "consume(data); *view");
+        .replace_evg("let n = read(&data);", "let view = &**(&data);")
+        .replace_evg("consume(data); n", "consume(data); *view");
     assert!(verify(&stale).unwrap_err().contains("never"));
 }
 
@@ -233,9 +235,9 @@ fn active_union_borrow_ports_check_reference_results_and_write_permissions() {
         0
     );
     for invalid in [
-        source.replace("modifies(&**value)", ""),
-        source.replace("borrows(&**value)", "borrows(value)"),
-        source.replace("let n = *before;", "dispose(data); let n = *before;"),
+        source.replace_evg("modifies(&**value)", ""),
+        source.replace_evg("borrows(&**value)", "borrows(value)"),
+        source.replace_evg("let n = *before;", "dispose(data); let n = *before;"),
         "fn escaping(value: unique(usize) | bool) -> &usize where typeof(value) == unique(usize) borrows(&*value) {&*value}".into(),
     ] {
         assert!(verify(&invalid).is_err(), "accepted {invalid}");
@@ -254,7 +256,7 @@ fn checked_union_injection_and_extraction_use_active_member_evidence() {
             .proof_search_count(),
         0
     );
-    let bad = source.replace("extract(42)", "extract(true)");
+    let bad = source.replace_evg("extract(42)", "extract(true)");
     assert!(verify(&bad)
         .unwrap_err()
         .contains("precondition of extract"));
@@ -285,7 +287,7 @@ fn a_source_flag_proves_an_optional_payloads_active_type() {
             .proof_search_count(),
         0
     );
-    let bad = source.replace("present: true", "present: false");
+    let bad = source.replace_evg("present: true", "present: false");
     assert!(verify(&bad).unwrap_err().contains("invariant of MaybeWord"));
 }
 
@@ -311,7 +313,9 @@ fn an_explicit_source_flag_selects_members_across_a_conditional_join() {
             .proof_search_count(),
         0
     );
-    assert!(verify(&source.replace("if small {flag(value)}", "if !small {flag(value)}")).is_err());
+    assert!(
+        verify(&source.replace_evg("if small {flag(value)}", "if !small {flag(value)}")).is_err()
+    );
 }
 
 #[test]
@@ -329,7 +333,7 @@ fn nominal_member_refinements_and_drop_follow_only_the_active_payload() {
             .proof_search_count(),
         0
     );
-    let inactive = resource.replace("choose(true) == 7", "choose(false) == 42");
+    let inactive = resource.replace_evg("choose(true) == 7", "choose(false) == 42");
     assert!(verify(&inactive)
         .unwrap()
         .run_with_events()
@@ -432,7 +436,7 @@ fn enclosing_drop_eliminates_its_raw_union_with_source_code() {
             .proof_search_count(),
         0
     );
-    let incomplete = source.replace(
+    let incomplete = source.replace_evg(
         "if present {discard_word(data)} else {discard_storage(data)}",
         "()",
     );
@@ -453,7 +457,7 @@ fn exclusive_members_can_carry_the_same_owner_without_duplicating_it() {
             .proof_search_count(),
         0
     );
-    let stale = source.replace(
+    let stale = source.replace_evg(
         "*view = 42;",
         "let n = if flag {consume_left(data)} else {consume_right(data)}; *view = 42;",
     );

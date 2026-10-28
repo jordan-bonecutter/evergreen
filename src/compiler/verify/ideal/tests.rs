@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn unchanged_symbolic_predicate_arguments_name_the_same_proposition() {
@@ -12,9 +13,9 @@ fn unchanged_symbolic_predicate_arguments_name_the_same_proposition() {
             .proof_search_count(),
         0
     );
-    let bad = source.replace("where positive(n)", "");
+    let bad = source.replace_evg("where positive(n)", "");
     assert!(verify(&bad).is_err());
-    let changed = source.replace(
+    let changed = source.replace_evg(
         "proof same: positive(n);",
         "n = 0; proof same: positive(n);",
     );
@@ -33,17 +34,17 @@ fn observation_predicates_track_exact_reference_projection_revisions() {
         0
     );
     let invalidated = source
-        .replace("modifies(&pair.right)", "modifies(&pair.left)")
-        .replace("pair.right = 0", "pair.left = 0");
+        .replace_evg("modifies(&pair.right)", "modifies(&pair.left)")
+        .replace_evg("pair.right = 0", "pair.left = 0");
     assert!(verify(&invalidated).is_err());
     let symbolic_write = source
-        .replace(
+        .replace_evg(
             "fn change(pair: &Pair)",
             "fn change(pair: &Pair, next: usize)",
         )
-        .replace("modifies(&pair.right)", "modifies(&pair.left)")
-        .replace("pair.right = 0", "pair.left = next")
-        .replace("change(&pair)", "change(&pair, 0)");
+        .replace_evg("modifies(&pair.right)", "modifies(&pair.left)")
+        .replace_evg("pair.right = 0", "pair.left = next")
+        .replace_evg("change(&pair)", "change(&pair, 0)");
     assert!(verify(&symbolic_write).is_err());
 }
 
@@ -59,7 +60,7 @@ fn utf8_validity_is_computed_from_library_definitions_and_replayed() {
             .proof_search_count(),
         0
     );
-    let wrong = source.replace("!utf8::valid(&invalid)", "utf8::valid(&invalid)");
+    let wrong = source.replace_evg("!utf8::valid(&invalid)", "utf8::valid(&invalid)");
     assert!(verify(&wrong).is_err());
 }
 
@@ -145,7 +146,7 @@ fn concrete_ideal_recursion_uses_an_explicit_stack_and_replays() {
             .proof_search_count(),
         0
     );
-    assert!(verify(&source.replace("== 1024;", "== 1023;")).is_err());
+    assert!(verify(&source.replace_evg("== 1024;", "== 1023;")).is_err());
 }
 
 #[test]
@@ -185,7 +186,7 @@ fn reduced_calls_preserve_safety_admissions_without_global_explosion() {
             .proof_search_count(),
         0
     );
-    let bad = source.replace(
+    let bad = source.replace_evg(
         "proof computed: assumed(43);",
         "proof computed: assumed(43); proof unrelated: false;",
     );

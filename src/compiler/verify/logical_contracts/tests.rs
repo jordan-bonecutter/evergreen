@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn anonymous_universal_proofs_are_live_state_indexed_contract_evidence() {
@@ -12,7 +13,7 @@ fn anonymous_universal_proofs_are_live_state_indexed_contract_evidence() {
             .proof_search_count(),
         0
     );
-    let stale = source.replace("require(&b);", "b.limit = 0; require(&b);");
+    let stale = source.replace_evg("require(&b);", "b.limit = 0; require(&b);");
     assert!(verify(&stale).is_err());
 }
 
@@ -29,8 +30,8 @@ fn function_universal_contracts_import_specialize_and_replay() {
         0
     );
     crate::compiler::native::emit(&program).unwrap();
-    assert!(verify(&source.replace("limit: usize = 8", "limit: usize = 2")).is_err());
-    assert!(verify(&source.replace("where(limit >= 4)", "where(limit >= 2)")).is_err());
+    assert!(verify(&source.replace_evg("limit: usize = 8", "limit: usize = 2")).is_err());
+    assert!(verify(&source.replace_evg("where(limit >= 4)", "where(limit >= 2)")).is_err());
 }
 
 #[test]
@@ -64,14 +65,14 @@ fn universal_postconditions_follow_result_bindings_and_reference_revisions() {
         );
         crate::compiler::native::emit(&program).unwrap();
         if source.contains("establish(&b)") {
-            let stale = source.replace("establish(&b);", "establish(&b); b.limit = 0;");
+            let stale = source.replace_evg("establish(&b);", "establish(&b); b.limit = 0;");
             assert!(verify(&stale).is_err());
             let aliased = source
-                .replace("fn establish(b: &Bounds)", "fn establish(b: &Bounds, a: &Bounds) where(b == a)")
-                .replace("establish(&b)", "establish(&b, &b)");
+                .replace_evg("fn establish(b: &Bounds)", "fn establish(b: &Bounds, a: &Bounds) where(b == a)")
+                .replace_evg("establish(&b)", "establish(&b, &b)");
             assert_eq!(verify(&aliased).unwrap().run().unwrap().to_string(), "42");
         } else {
-            let stale = source.replace("let n = ceiling();", "let n = ceiling(); n = 0;");
+            let stale = source.replace_evg("let n = ceiling();", "let n = ceiling(); n = 0;");
             assert!(verify(&stale).is_err());
         }
     }
@@ -93,14 +94,14 @@ fn admitted_universal_contracts_keep_their_subjects_and_runtime_dependencies() {
         0
     );
     assert!(program.run().is_err());
-    let stale = source.replace("external_bound(&b);", "external_bound(&b); b.limit = 0;");
+    let stale = source.replace_evg("external_bound(&b);", "external_bound(&b); b.limit = 0;");
     assert!(verify(&stale).is_err());
-    let unrelated = source.replace(
+    let unrelated = source.replace_evg(
         "external_bound(&b); require(&b)",
         "external_bound(&b); let other = Bounds {limit: 0}; require(&other)",
     );
     assert!(verify(&unrelated).is_err());
-    let isolated = source.replace("require(&b)", "7 - b.limit");
+    let isolated = source.replace_evg("require(&b)", "7 - b.limit");
     let program = verify(&isolated).unwrap();
     assert_eq!(
         program.function_safety_assumptions("main").unwrap().count(),

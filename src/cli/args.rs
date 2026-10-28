@@ -22,6 +22,21 @@ pub(super) struct Cli {
 
 #[derive(Subcommand)]
 pub(super) enum Action {
+    /// Format Evergreen source without running the proof checker.
+    Fmt {
+        /// Files to format (defaults to all tracked .evg files).
+        #[arg(conflicts_with_all = ["all", "staged"])]
+        files: Vec<PathBuf>,
+        /// Check formatting without rewriting files.
+        #[arg(long)]
+        check: bool,
+        /// Format all tracked .evg files.
+        #[arg(long, conflicts_with = "staged")]
+        all: bool,
+        /// Check staged blobs, including partially staged files.
+        #[arg(long, requires = "check")]
+        staged: bool,
+    },
     /// Emit a verified scalar Linux x86-64 executable.
     Build {
         #[arg(required = true)]
@@ -58,7 +73,8 @@ pub(super) enum Action {
 impl Action {
     pub(super) fn files(&self) -> &[PathBuf] {
         match self {
-            Self::Check { files, .. }
+            Self::Fmt { files, .. }
+            | Self::Check { files, .. }
             | Self::Prove { files, .. }
             | Self::Run { files }
             | Self::Build { files, .. } => files,

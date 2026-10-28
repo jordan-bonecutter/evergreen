@@ -200,3 +200,15 @@ fn raw_union_types_flatten_members_and_bind_reference_prefixes() {
         assert!(parse(bad).is_err());
     }
 }
+
+#[test]
+fn receiver_patterns_are_destructor_syntax() {
+    for source in [
+        "fn drop({data}) {}",
+        "type R struct {data: usize} impl R {fn create({data}) {}}",
+        "type R struct {data: usize} impl R {method drop({data}) {}}",
+        "type R struct {data: usize} impl R {fn drop({data}) {}}",
+    ] {
+        assert!(parse(source).is_err(), "accepted {source}");
+    }
+}

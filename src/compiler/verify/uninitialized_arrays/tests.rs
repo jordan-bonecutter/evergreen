@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn sparse_shape_buffers_initialize_extract_and_free() {
@@ -25,9 +26,9 @@ fn sparse_shape_buffers_initialize_extract_and_free() {
 #[test]
 fn sparse_shape_buffers_do_not_expand_a_billion_cells() {
     let source = include_str!("../../../../examples/sparse_slots.evg")
-        .replace("(8)", "(1000000000)")
-        .replace("[7]", "[999999999]")
-        .replace(", 8)", ", 1000000000)");
+        .replace_evg("(8)", "(1000000000)")
+        .replace_evg("[7]", "[999999999]")
+        .replace_evg(", 8)", ", 1000000000)");
     let (program, bundle) = prove(&source).unwrap_or_else(|error| panic!("{error}"));
     let binary = crate::compiler::native::emit(&program).unwrap();
     assert!(binary.len() < 16384);
@@ -58,6 +59,7 @@ fn sparse_shape_buffers_reject_lost_owners_and_uninitialized_reads() {
         error.contains("current uninitialized shape member"),
         "{error}"
     );
-    let disjoint = overlapping.replace("where i < 8 && j < 8", "where i < 8 && j < 8 && i != j");
+    let disjoint =
+        overlapping.replace_evg("where i < 8 && j < 8", "where i < 8 && j < 8 && i != j");
     verify(&disjoint).unwrap_or_else(|error| panic!("{error}"));
 }

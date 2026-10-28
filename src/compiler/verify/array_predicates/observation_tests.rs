@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn range_premises_authorize_member_loans_and_real_owner_extraction() {
@@ -19,16 +20,16 @@ fn range_premises_authorize_member_loans_and_real_owner_extraction() {
 fn slot_range_observations_cannot_cover_other_indices_or_survive_extraction() {
     let source = include_str!("../../../../examples/range_slots.evg");
     for bad in [
-        source.replacen("&(*data)[0]", "&(*data)[1]", 2),
-        source.replace(
+        source.replacen_evg("&(*data)[0]", "&(*data)[1]", 2),
+        source.replace_evg(
             "    move((*data)[0])",
             "    let value = move((*data)[0]); let twice: T = move((*data)[0]); value",
         ),
-        source.replace(
+        source.replace_evg(
             "    let empty:",
             "    proof stale: **view == 42; let empty:",
         ),
-        source.replace(
+        source.replace_evg(
             "    let empty:",
             "    let twice = first::<unique(usize), 8>(&*data); let empty:",
         ),
@@ -45,7 +46,7 @@ fn affine_and_negative_type_ranges_authorize_only_their_real_member() {
     let source = "fn read(data: &[usize | shape(usize); 8]) -> usize where(forall(i: integer) where(i == 1) {typeof((*data)[2 * i]) != shape(usize)}) {(*data)[2]} fn main() -> usize {let data: unique(usize | shape(usize), 8) = alloc(8, shape(usize)); (*data)[2] = 42; let value = read(&*data); let retired: usize = move((*data)[2]); let empty: unique(shape(usize), 8) = data; drop(empty); value}";
     for source in [
         source.to_owned(),
-        source.replace("!= shape(usize)", "== usize"),
+        source.replace_evg("!= shape(usize)", "== usize"),
     ] {
         let (program, bundle) = prove(&source).unwrap();
         assert_eq!(program.run().unwrap().to_string(), "42");
@@ -58,9 +59,9 @@ fn affine_and_negative_type_ranges_authorize_only_their_real_member() {
         );
         crate::compiler::native::emit(&program).unwrap();
     }
-    let odd = source.replace("{(*data)[2]}", "{(*data)[3]}");
+    let odd = source.replace_evg("{(*data)[2]}", "{(*data)[3]}");
     assert!(verify(&odd).is_err());
-    let ambiguous = source.replace("usize | shape(usize)", "usize | bool | shape(usize)");
+    let ambiguous = source.replace_evg("usize | shape(usize)", "usize | bool | shape(usize)");
     assert!(verify(&ambiguous).is_err());
 }
 
@@ -80,9 +81,9 @@ fn range_borrowing_keeps_destructors_linear_and_requires_write_authority() {
         0
     );
     crate::compiler::native::emit(&program).unwrap();
-    let stolen = resource.replace("proof read:", "let stolen: Resource = *view; proof read:");
+    let stolen = resource.replace_evg("proof read:", "let stolen: Resource = *view; proof read:");
     assert!(verify(&stolen).is_err());
-    let no_write = source.replace("modifies(&(*data)[0])", "");
+    let no_write = source.replace_evg("modifies(&(*data)[0])", "");
     let error = verify(&no_write).unwrap_err();
     assert!(
         error.contains("effect contract") || error.contains("modifies"),
@@ -101,14 +102,14 @@ fn conditional_range_domains_are_checked_at_the_point_of_use() {
         0
     );
     crate::compiler::native::emit(&program).unwrap();
-    let bad = good.replace(
+    let bad = good.replace_evg(
         "if ready {let view: &unique(usize) = &(*data)[0]; **view} else {42}",
         "if ready {let view: &unique(usize) = &(*data)[0]; let seen = **view;} let uncovered: &unique(usize) = &(*data)[0]; **uncovered",
     );
     assert!(verify(&bad).is_err());
-    let changed_guard = good.replace("if ready {", "if ready {ready = false;");
+    let changed_guard = good.replace_evg("if ready {", "if ready {ready = false;");
     assert!(verify(&changed_guard).is_err());
-    let promoted = good.replace("if ready {", "if ready {proof promote: (forall(i: integer) where(0 <= i && i < 1 && ready) {typeof((*data)[i]) == unique(usize)}) => ready => (forall(j: integer) where(0 <= j && j < 1) {typeof((*data)[j]) == unique(usize)}) by {intro all; intro enabled; intro j; specialize all(j); omega}; proof live: forall(i: integer) where(0 <= i && i < 1) {typeof((*data)[i]) == unique(usize)} by {apply promote; assumption; omega}; ready = false;");
+    let promoted = good.replace_evg("if ready {", "if ready {proof promote: (forall(i: integer) where(0 <= i && i < 1 && ready) {typeof((*data)[i]) == unique(usize)}) => ready => (forall(j: integer) where(0 <= j && j < 1) {typeof((*data)[j]) == unique(usize)}) by {intro all; intro enabled; intro j; specialize all(j); omega}; proof live: forall(i: integer) where(0 <= i && i < 1) {typeof((*data)[i]) == unique(usize)} by {apply promote; assumption; omega}; ready = false;");
     let (program, bundle) = prove(&promoted).unwrap();
     assert!(program.trusted_assumptions().is_empty());
     assert_eq!(
@@ -175,7 +176,7 @@ fn aliased_range_inputs_cannot_extract_the_same_owner_twice() {
     let body = "let a: unique(unique(usize) | shape(unique(usize)), 8) = alloc(8, shape(unique(usize))); let b: unique(unique(usize) | shape(unique(usize)), 8) = alloc(8, shape(unique(usize))); (*a)[0] = alloc(7); (*b)[0] = alloc(42); let value = twice(&*a, &*b); let empty_a: unique(shape(unique(usize)), 8) = a; let empty_b: unique(shape(unique(usize)), 8) = b; drop(empty_a); drop(empty_b); *value";
     let source = format!("{declarations} {twice} fn main() -> usize {{{body}}}");
     assert_eq!(verify(&source).unwrap().run().unwrap().to_string(), "42");
-    let aliased = source.replace("twice(&*a, &*b)", "twice(&*a, &*a)");
+    let aliased = source.replace_evg("twice(&*a, &*b)", "twice(&*a, &*a)");
     let error = verify(&aliased).unwrap_err();
     assert!(
         error.contains("body recheck") && error.contains("precondition"),
@@ -186,7 +187,7 @@ fn aliased_range_inputs_cannot_extract_the_same_owner_twice() {
 #[test]
 fn demanded_slot_range_proofs_remain_sparse_for_billion_slot_buffers() {
     let small = include_str!("../../../../examples/range_slots.evg");
-    let huge = small.replace('8', "1000000000");
+    let huge = small.replace_evg('8', "1000000000");
     let (program, bundle) = prove(small).unwrap();
     let (large, large_bundle) = prove(&huge).unwrap();
     assert_eq!(program.obligations, large.obligations);

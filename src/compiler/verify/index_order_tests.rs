@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 fn check(source: &str, expected: &str) {
     let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
@@ -17,21 +18,21 @@ fn check(source: &str, expected: &str) {
 fn stored_index_reads_observe_index_effects_once_through_locals_and_pointers() {
     let source = include_str!("../../../examples/index_effects.evg");
     check(source, "42");
-    let pointer = source.replace(
+    let pointer = source.replace_evg(
         "let value = data[replace(&data, &calls)];",
         "let view = &data; let value = (*view)[replace(view, &calls)];",
     );
     check(&pointer, "42");
     let nested = source
-        .replace(
+        .replace_evg(
             "fn main()",
             "type Matrix struct {rows: [[usize; 1]; 1]} fn main()",
         )
-        .replace(
+        .replace_evg(
             "let data: [usize; 1] = [usize::MAX];",
             "let data = Matrix {rows: [[usize::MAX]]};",
         )
-        .replace(
+        .replace_evg(
             "data[replace(&data, &calls)]",
             "data.rows[0][replace(&data.rows[0], &calls)]",
         );
@@ -41,13 +42,13 @@ fn stored_index_reads_observe_index_effects_once_through_locals_and_pointers() {
 #[test]
 fn an_index_write_cannot_hide_overflow_behind_the_previous_array_contents() {
     let source = include_str!("../../../examples/index_effects.evg")
-        .replace("[usize::MAX]", "[0]")
-        .replace("== 41", "== usize::MAX")
-        .replace("[41]", "[usize::MAX]")
-        .replace("proof current: value == usize::MAX;", "");
+        .replace_evg("[usize::MAX]", "[0]")
+        .replace_evg("== 41", "== usize::MAX")
+        .replace_evg("[41]", "[usize::MAX]")
+        .replace_evg("proof current: value == usize::MAX;", "");
     for source in [
         source.clone(),
-        source.replace(
+        source.replace_evg(
             "let value = data[replace(&data, &calls)];",
             "let view = &data; let value = (*view)[replace(view, &calls)];",
         ),
@@ -60,15 +61,15 @@ fn an_index_write_cannot_hide_overflow_behind_the_previous_array_contents() {
 #[test]
 fn explicit_array_copies_and_array_rvalues_keep_their_saved_contents() {
     let source = include_str!("../../../examples/index_effects.evg")
-        .replace("[usize::MAX]", "[0]")
-        .replace("proof current: value == 41;", "proof snapshot: value == 0;")
-        .replace("value + 1", "value + 42");
-    let copied = source.replace(
+        .replace_evg("[usize::MAX]", "[0]")
+        .replace_evg("proof current: value == 41;", "proof snapshot: value == 0;")
+        .replace_evg("value + 1", "value + 42");
+    let copied = source.replace_evg(
         "let value = data[replace(&data, &calls)];",
         "let saved = data; let value = saved[replace(&data, &calls)];",
     );
     check(&copied, "42");
-    let rvalue = source.replace(
+    let rvalue = source.replace_evg(
         "let value = data[replace(&data, &calls)];",
         "let value = (if true {data} else {data})[replace(&data, &calls)];",
     );
@@ -90,10 +91,10 @@ fn index_condition_cleanup_runs_before_the_element_read() {
     );
     crate::compiler::native::emit(&program).unwrap();
     let bad = source
-        .replace("[usize::MAX]", "[0]")
-        .replace("== 41", "== usize::MAX")
-        .replace("= 41;", "= usize::MAX;")
-        .replace("proof current: value == usize::MAX;", "");
+        .replace_evg("[usize::MAX]", "[0]")
+        .replace_evg("== 41", "== usize::MAX")
+        .replace_evg("= 41;", "= usize::MAX;")
+        .replace_evg("proof current: value == usize::MAX;", "");
     let error = verify(&bad).unwrap_err();
     assert!(error.contains("no overflow"), "{error}");
 }

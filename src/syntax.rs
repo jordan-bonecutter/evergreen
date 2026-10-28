@@ -8,6 +8,7 @@ mod representation;
 mod strings;
 pub use representation::{Endianness, IntegralEncoding, Representation, ScalarDefinition};
 
+pub mod format;
 mod functions;
 mod generics;
 pub(crate) mod visit;
@@ -492,6 +493,7 @@ pub struct Function {
 }
 
 struct Parser {
+    format_hints: Option<format::Hints>,
     tokens: Vec<Token>,
     pos: usize,
     depth: usize,
@@ -514,6 +516,11 @@ impl Parser {
 
     fn eat(&mut self, s: &str) -> bool {
         if self.peek() == s {
+            if matches!(s, "<" | ">") {
+                if let Some(hints) = &mut self.format_hints {
+                    hints.angles.insert(self.pos);
+                }
+            }
             self.pos += 1;
             true
         } else {
@@ -866,6 +873,9 @@ impl Parser {
             }
         } else if matches!(self.peek(), "-" | "!" | "&" | "*") {
             let op = self.peek().to_owned();
+            if let Some(hints) = &mut self.format_hints {
+                hints.prefix.insert(self.pos);
+            }
             self.pos += 1;
             Expr {
                 kind: Kind::Unary(op, Box::new(self.expr(7)?)),
@@ -1198,10 +1208,18 @@ pub(crate) fn constant_extent(expression: &Expr) -> bool {
 }
 
 fn parse_unit(source: &str) -> Result<Program, String> {
+    parse_unit_with_hints(source, None).map(|(program, _)| program)
+}
+
+fn parse_unit_with_hints(
+    source: &str,
+    hints: Option<format::Hints>,
+) -> Result<(Program, Option<format::Hints>), String> {
     if source.len() > 1_000_000 {
         return Err("source exceeds 1 MB bootstrap limit".into());
     }
     let mut p = Parser {
+        format_hints: hints,
         tokens: lex(source)?,
         pos: 0,
         depth: 0,
@@ -1402,16 +1420,19 @@ fn parse_unit(source: &str) -> Result<Program, String> {
     {
         return Err("expected at least one declaration".into());
     }
-    Ok(Program {
-        generics,
-        copy_impls,
-        imports,
-        scalar_types,
-        modules,
-        structs,
-        functions,
-        destructors,
-    })
+    Ok((
+        Program {
+            generics,
+            copy_impls,
+            imports,
+            scalar_types,
+            modules,
+            structs,
+            functions,
+            destructors,
+        },
+        p.format_hints,
+    ))
 }
 
 // An internal framing character, forbidden inside individual source files.

@@ -1,11 +1,12 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 pub(crate) const OLD_SLOT_DURING_DROP: &str = "type Resource struct {data: unique(usize), slot: &unique(usize), seen: &usize} impl Drop for Resource {fn drop(self) modifies(self.seen) ensures *self.seen == old(**self.slot) {*self.seen = **self.slot;}} fn main() -> usize {let seen: usize = 0; let original: unique(usize) = alloc(7); let replacement: unique(usize) = alloc(42); let resource = Resource {data: alloc(7), slot: &original, seen: &seen}; resource.slot = &resource.data; let header = &resource.data; resource = Resource {data: alloc(42), slot: &replacement, seen: &seen}; if seen == 7 && **header == 42 {42} else {1}}";
 
 #[test]
 fn replacement_cleans_the_value_left_by_the_right_hand_side() {
     let example = include_str!("../../../examples/replacement_rhs.evg");
-    let revived = example.replace("    value = {", "    drop(value);\n    value = {");
+    let revived = example.replace_evg("    value = {", "    drop(value);\n    value = {");
     for source in [
         example,
         revived.as_str(),
@@ -19,7 +20,7 @@ fn replacement_cleans_the_value_left_by_the_right_hand_side() {
         assert!(program.trusted_assumptions().is_empty());
         assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
     }
-    let wrong = example.replace(
+    let wrong = example.replace_evg(
         "proof released_once: counter == 94;",
         "proof released_once: counter == 95;",
     );

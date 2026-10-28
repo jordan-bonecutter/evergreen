@@ -1,5 +1,7 @@
 //! Small independent concrete oracle for interactions in the symbolic heap.
 
+use crate::syntax::format::test_edit::SourceEdit;
+
 use super::*;
 
 fn expected(first: usize, second: usize, queried: usize, flag: bool) -> usize {
@@ -106,8 +108,8 @@ fn check_case(source: &str, expected: usize) {
     );
     let replayed = verify_with_certificate(source, &bundle).unwrap();
     assert_eq!(replayed.proof_search_count(), 0);
-    let wrong = source.replace(
-        &format!("ensures(result == {expected})"),
+    let wrong = source.replace_evg(
+        format!("ensures(result == {expected})"),
         &format!("ensures(result == {})", expected + 1),
     );
     let error = verify(&wrong).unwrap_err();

@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 pub(super) fn check(source: &str) {
     let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
@@ -40,7 +41,7 @@ fn deferred_reference_ports_preserve_actual_alias_checks() {
     let source = format!("{prefix} fn main() -> usize {{let a: usize = 7; let b: usize = 0; let refs = [&a, &b]; set(&refs); b}}");
     check(&source);
     assert_eq!(verify(&source).unwrap().run().unwrap().to_string(), "42");
-    let bad = source.replace("[&a, &b]", "[&a, &a]");
+    let bad = source.replace_evg("[&a, &b]", "[&a, &a]");
     assert!(verify(&bad).unwrap_err().contains("body recheck failed"));
     for invalid in [
         "fn bad(refs: &[&usize; 1000000000]) {*(*refs)[999999999] = 42;}",

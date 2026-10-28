@@ -1,6 +1,7 @@
 //! CLI orchestration: load sources once and dispatch one command handler.
 
 mod args;
+mod format;
 mod output;
 mod sources;
 
@@ -14,10 +15,20 @@ use std::{
 
 pub fn run() -> Result<(), String> {
     let cli = Cli::parse();
+    if let Action::Fmt {
+        files,
+        check,
+        staged,
+        ..
+    } = &cli.command
+    {
+        return format::run(files, *check, *staged);
+    }
     let loaded = sources::load(cli.command.files(), cli.package_root.as_deref())?;
     let files = loaded.files;
     let source = loaded.source;
     match &cli.command {
+        Action::Fmt { .. } => unreachable!("format dispatched before source loading"),
         Action::Build { output, proof, .. } => {
             let destination = match output {
                 Some(path) => path.clone(),

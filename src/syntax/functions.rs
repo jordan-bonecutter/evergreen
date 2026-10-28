@@ -5,6 +5,7 @@ use super::*;
 struct Parameters {
     values: Vec<(String, Type)>,
     ideal: Vec<String>,
+    receiver_pattern: Option<Vec<(String, String)>>,
 }
 
 fn return_path(expression: &Expr, out: &mut Vec<ReturnProjection>) -> Result<(), String> {
@@ -66,6 +67,11 @@ impl Parser {
         let name = self.name()?;
         let generics = self.generic_parameters()?;
         let mut parameters = self.function_parameters(receiver)?;
+        if parameters.receiver_pattern.is_some() && (method || name != "drop") {
+            return Err(
+                self.err("a bare receiver pattern currently requires fn drop inside impl Drop")
+            );
+        }
         if method {
             if parameters.values.iter().any(|(name, _)| name == "self") {
                 return Err(self.err("method self is implicit; omit it from the parameter list"));
@@ -82,15 +88,22 @@ impl Parser {
             Type::Unit
         };
         let pre = self.optional_clause("where")?;
+        let start = self.pos;
         let modifies = if self.eat("modifies") {
             self.nonempty_expressions()?
         } else {
             Vec::new()
         };
+        self.note_format_clause(start);
+        let start = self.pos;
         let borrows = self.return_borrows()?;
+        self.note_format_clause(start);
         let post = self.optional_clause("ensures")?;
         let decreases = self.optional_clause("decreases")?;
-        let (body, result) = if external.is_some() {
+        if let Some(hints) = &mut self.format_hints {
+            hints.bodies.insert(self.pos);
+        }
+        let (mut body, result) = if external.is_some() {
             self.expect(";")?;
             (
                 Vec::new(),
@@ -102,6 +115,22 @@ impl Parser {
         } else {
             self.function_body()?
         };
+        if let Some(fields) = parameters.receiver_pattern.take() {
+            body.insert(
+                0,
+                Statement::Destructure {
+                    record: receiver
+                        .ok_or_else(|| self.err("receiver patterns require an impl scope"))?
+                        .to_owned(),
+                    arguments: Vec::new(),
+                    fields,
+                    value: Expr {
+                        kind: Kind::Name("self".into()),
+                        line,
+                    },
+                },
+            );
+        }
         let proof = if self.eat("proof") {
             Some(self.proof()?)
         } else {
@@ -149,6 +178,35 @@ impl Parser {
         self.expect("(")?;
         let mut values = Vec::new();
         let mut ideal = Vec::new();
+        if self.eat("{") {
+            let target =
+                receiver.ok_or_else(|| self.err("receiver patterns require an impl scope"))?;
+            let mut fields = Vec::new();
+            if !self.eat("}") {
+                loop {
+                    let field = self.name()?;
+                    let binding = if self.eat(":") {
+                        self.name()?
+                    } else {
+                        field.clone()
+                    };
+                    fields.push((field, binding));
+                    if self.eat("}") {
+                        break;
+                    }
+                    self.expect(",")?;
+                    if self.eat("}") {
+                        break;
+                    }
+                }
+            }
+            self.expect(")")?;
+            return Ok(Parameters {
+                values: vec![("self".into(), Type::Named(target.to_owned()))],
+                ideal,
+                receiver_pattern: Some(fields),
+            });
+        }
         if !self.eat(")") {
             loop {
                 let erased = self.eat("ideal");
@@ -172,14 +230,20 @@ impl Parser {
                 self.expect(",")?;
             }
         }
-        Ok(Parameters { values, ideal })
+        Ok(Parameters {
+            values,
+            ideal,
+            receiver_pattern: None,
+        })
     }
 
     fn optional_clause(&mut self, keyword: &str) -> Result<Option<Expr>, String> {
+        let start = self.pos;
         if !self.eat(keyword) {
             return Ok(None);
         }
         let expression = self.expr(0)?;
+        self.note_format_clause(start);
         Ok(Some(expression))
     }
 

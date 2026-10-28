@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
 fn universal_premises_use_scoped_specialization_and_logical_cases() {
@@ -68,7 +69,7 @@ fn source_universals_track_free_parameters_and_nested_bindings() {
 #[test]
 fn source_universals_remain_sparse_and_follow_generic_and_module_scopes() {
     let small = "fn main() -> usize {proof p: forall(i: integer) where(0 <= i && i < 10) {i < 10} by {intro i; omega}; 7}";
-    let huge = small.replace("10", "1000000000");
+    let huge = small.replace_evg("10", "1000000000");
     let (small_program, small_bundle) = prove(small).unwrap();
     let (large_program, large_bundle) = prove(&huge).unwrap();
     assert_eq!(small_program.obligations, large_program.obligations);
@@ -124,18 +125,18 @@ fn admitted_universals_are_scoped_to_their_actual_subjects_and_revisions() {
             .proof_search_count(),
         0
     );
-    let stale = before.replace("proof selected:", "n = 8; proof selected:");
+    let stale = before.replace_evg("proof selected:", "n = 8; proof selected:");
     assert!(verify(&stale)
         .unwrap_err()
         .contains("earlier or unresolved state"));
-    let wrong_subject = before.replace(
+    let wrong_subject = before.replace_evg(
         "proof selected: integer(n)",
         "let m: usize = 7; proof selected: integer(m)",
     );
     assert!(verify(&wrong_subject)
         .unwrap_err()
         .contains("different subject or state"));
-    let renamed = before.replace(
+    let renamed = before.replace_evg(
         "proof selected: integer(n) == 42 by {specialize external(0); omega};",
         "proof renamed: forall(j: integer) {integer(n) == 42} by {exact external};",
     );

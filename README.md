@@ -25,6 +25,21 @@ payload. `examples/raw_union_owner.evg` adds conditional owning pointers, and
 contract using `old()`. [Raw-union notes](docs/raw-unions.md) describe active-type
 proofs and the remaining limitations.
 
+### Formatting
+
+`cargo run -- fmt path/to/file.evg` formats Evergreen source. `cargo run -- fmt
+--all` formats every tracked `.evg` file; `--check` reports changes without
+writing them. Run `cargo fmt --all` for the Rust bootstrap.
+
+The formatter is written in Rust and shares the compiler's lexer and parser.
+It preserves tokens, comments, and string literal bytes. Contracts use indented
+`where` / `ensures` clauses with trailing `&&` on continued lines.
+
+Enable the repository's local commit hook with `git config core.hooksPath
+.githooks`. The hook runs `evg fmt --check --staged` against staged blobs; it
+never rewrites files or stages changes. Format and stage the intended changes
+before committing. New clones need to enable the hook themselves.
+
 ### Neovim support
 
 Run `./scripts/install-nvim.sh` to install `.evg` highlighting, indentation, and
