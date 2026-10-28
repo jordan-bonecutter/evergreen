@@ -2495,6 +2495,18 @@ must be valid for every value of that binder, using only enclosing domains and
 the caller's existing facts. A domain cannot justify its own calls. Boolean
 connectives do not introduce additional domains for these checks.
 
+Precondition reduction uses the actual scalar arguments without importing helper
+postconditions or changing the caller's bindings. Opaque preconditions remain
+unsupported. Proving a precondition does not widen the evaluator's exact fragment:
+symbolic narrowing conversions, for example, still need additional support.
+
+Proof subjects record the definition identity and every argument's plane revision.
+Specialization substitutes bound arguments through those keys. Changing a
+captured argument invalidates a proof about its old state; writing an independent
+sibling field preserves it. Describing an untrue proposition with `fact` remains
+legal, while proving it requires evidence.
+
+
 ### Numeric array values in universal proofs
 
 [`quantified_array_values.evg`](../examples/quantified_array_values.evg) proves
@@ -2513,8 +2525,8 @@ every element is zero.
 
 This path supports direct numeric `==` and `!=` propositions inside `forall`.
 Known uniform values use arithmetic proofs; unknown reads use checked reflexivity
-or congruence, or an explicit logical premise. Arbitrary indexed arithmetic,
-ordering, and reuse as ordinary single-cell observations still need more support.
+or congruence, or an explicit logical premise. Arbitrary indexed arithmetic and
+ordering still need more support.
 Resource and raw-union arrays continue to use their typed observation rules.
 
 [`array_value_store.evg`](../examples/array_value_store.evg) gives a generic byte
@@ -2527,17 +2539,15 @@ reassigned, and cannot infer values in an unrelated array. This also supports
 `!=` proofs against overwritten values. No range is enumerated and no
 `trustme` is needed.
 
-Precondition reduction uses the actual scalar arguments without importing helper
-postconditions or changing the caller's bindings. Opaque preconditions remain
-unsupported. Proving a precondition does not widen the evaluator's exact fragment:
-symbolic narrowing conversions, for example, still need additional support.
-
-Proof subjects record the definition identity and every argument's plane revision.
-Specialization substitutes bound arguments through those keys. Changing a
-captured argument invalidates a proof about its old state; writing an independent
-sibling field preserves it. Describing an untrue proposition with `fact` remains
-legal, while proving it requires evidence.
-
+Callers can also use a current quantified guarantee when reading an element.
+The example returns `data[1]` and proves its result is `42` from the replacement
+contract. The checker specializes the guarantee at that index and checks its
+domain before importing the numeric equality. Direct `==` and `!=` clauses,
+conjunctions, and affine index expressions are supported. A relation between two
+arrays connects their values once both cells have been observed; no range is
+materialized. Branch-dependent domains must hold again on each read, and old
+proofs cannot describe changed contents or another plane. This automatic path
+does not import `trustme` or unfinished summary dependencies.
 
 ### Demand-driven ideal aggregate reads
 

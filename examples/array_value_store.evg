@@ -23,9 +23,12 @@ fn replace_byte<const N: usize>(
     };
 }
 
-fn main() -> usize {
+fn main() -> u8
+    ensures
+        result == 42
+{
     let data: [u8; 3] = [7, 9, 11];
     replace_byte(&data, 1, 42);
     proof updated: forall(i: integer) where (i == 1) {data[i] == 42} by {assumption};
-    42
+    data[1]
 }

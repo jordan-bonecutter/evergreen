@@ -6,9 +6,12 @@ use crate::compiler::kernel::terms::{Terms, Work};
 use std::sync::Arc;
 
 mod histories;
+mod observations;
 
 #[cfg(test)]
 mod history_tests;
+#[cfg(test)]
+mod observation_tests;
 #[cfg(test)]
 mod tests;
 

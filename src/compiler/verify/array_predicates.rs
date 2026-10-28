@@ -5,6 +5,7 @@ use super::*;
 
 mod definitions;
 mod observations;
+pub(super) use observations::specialization_index;
 mod reduction;
 
 #[cfg(test)]

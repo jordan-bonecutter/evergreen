@@ -2402,6 +2402,7 @@ impl<'a> Context<'a> {
         let result = (|| {
             let value = self.array_read_value(element, identity, index)?;
             self.replay_array_history(element, identity, index, &value)?;
+            self.observe_array_values(identity, index, &value)?;
             Ok(value)
         })();
         self.arrays.read_depth -= 1;

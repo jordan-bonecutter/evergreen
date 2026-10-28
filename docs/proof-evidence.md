@@ -442,9 +442,10 @@ Complete independent certification of these state substitutions remains pending.
 General nominal-invariant subject transport, quantified domains, conditional
 input-cell aliases, and resource range loop frames remain unfinished.
 Generalization through declaration summaries or imported trust with untraced
-context dependencies is rejected. Indexed payload reads inside quantifiers
-remain rejected: opaque frontend identities must not hide a bound argument.
-Indexed type observations have the implementation described below.
+context dependencies is rejected. Indexed payload equalities and type
+observations have the implementations described below. General indexed
+computations remain unsupported: opaque frontend identities must not hide a
+bound argument.
 
 Pure ideal scalar calls can reduce inside a quantifier to exact arithmetic or
 Boolean expressions containing the bound variable. Their preconditions are
@@ -556,10 +557,31 @@ plane, stale last-write values, reassigned index/value captures, and assertions
 about a branch's write without its guard. A billion-slot fill with a write needs
 the same number of obligations and certificates as its small counterpart.
 
+Ordinary numeric reads can consume a current checked universal equality. The
+frontend matches the exact contents identity, solves the affine index equation,
+proves the specialized domain, and invokes `ForallElim`. Conjunctions use checked
+projections. Captured values, store indices, and guards must match the original
+recipe; a mathematically substituted recipe cannot describe its original storage.
+An interpretation implication then relates that predicate instance
+to the observed numeric value. This implication is a trusted frontend storage
+interpretation, like the existing typed-slot observation boundary; it supplies no
+truth without the checked premise. Independent certification of this mapping
+remains future work.
+
+Automatic observation requires a closed theorem with no admission or pending
+summary dependencies, and its source state must still be available. Domain
+evidence passes the same dependency check. Both numeric and typed-slot reads
+share this specialization gate. The resulting arithmetic evidence retains its
+theorem and domain parents. Equality with another contents version uses only
+already observed numeric cells; it never invents a default for the unobserved
+remainder. Every read rechecks availability and the domain, including cache hits,
+so a branch-specific observation cannot escape through a cached value. Tests
+cover wrong arrays, expired revisions, absent proofs, guarded domains, and
+shifted or scaled indices, with search-free replay and billion-element inputs.
+
 This source slice covers direct `==` and `!=` comparisons. General payload
-arithmetic, ordering, and transporting these recipes to ordinary single-cell
-observations remain unfinished. An unknown equality does not become true merely
-because its predicate was declared.
+arithmetic and ordering remain unfinished. An unknown equality does not become
+true merely because its predicate was declared.
 
 Atoms establish no truth by their construction and have no built-in memory or
 ownership meaning. They cannot enter arithmetic paths as fresh Boolean variables.

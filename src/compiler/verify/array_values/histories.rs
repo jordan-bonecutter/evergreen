@@ -83,6 +83,9 @@ impl Context<'_> {
                     None => self.declare_value_equality(key)?,
                 }
             };
+            self.arrays
+                .value_equality_origins
+                .insert(recipe.symbol.clone(), key.clone());
             self.arrays.value_equalities.insert(key.clone(), recipe);
         }
         let recipe = &self.arrays.value_equalities[key];

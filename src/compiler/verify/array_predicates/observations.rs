@@ -34,27 +34,42 @@ pub(super) fn specialization_term(
             }
             continue;
         }
-        let mut remainder = pattern.clone();
-        remainder.terms.remove(variable);
-        let mut candidate = wanted.sub(&remainder)?;
-        for value in std::iter::once(&mut candidate.constant).chain(candidate.terms.values_mut()) {
-            if value
-                .checked_rem(coefficient)
-                .ok_or("proof arithmetic overflow")?
-                != 0
-            {
-                return Ok(None);
-            }
-            *value = value
-                .checked_div(coefficient)
-                .ok_or("proof arithmetic overflow")?;
-        }
+        let Some(candidate) = specialization_index(pattern, wanted, variable)? else {
+            return Ok(None);
+        };
         if term.as_ref().is_some_and(|term| term != &candidate) {
             return Ok(None);
         }
         term = Some(candidate);
     }
     Ok(Some(term.unwrap_or_else(|| Linear::number(0))))
+}
+
+pub(in crate::compiler::verify) fn specialization_index(
+    pattern: &Linear,
+    wanted: &Linear,
+    variable: &str,
+) -> Result<Option<Linear>> {
+    let coefficient = pattern.terms.get(variable).copied().unwrap_or(0);
+    if coefficient == 0 {
+        return Ok((pattern == wanted).then(|| Linear::number(0)));
+    }
+    let mut remainder = pattern.clone();
+    remainder.terms.remove(variable);
+    let mut candidate = wanted.sub(&remainder)?;
+    for value in std::iter::once(&mut candidate.constant).chain(candidate.terms.values_mut()) {
+        if value
+            .checked_rem(coefficient)
+            .ok_or("proof arithmetic overflow")?
+            != 0
+        {
+            return Ok(None);
+        }
+        *value = value
+            .checked_div(coefficient)
+            .ok_or("proof arithmetic overflow")?;
+    }
+    Ok(Some(candidate))
 }
 
 impl Context<'_> {
@@ -79,55 +94,68 @@ impl Context<'_> {
         self.charge_value_work(candidates.len())?;
         for node in candidates {
             self.charge_value_work(self.proof.evidence.claim(node)?.storage_weight()?)?;
-            let Formula::Forall {
-                variable,
-                domain,
-                body,
-            } = self.proof.evidence.claim(node)?.clone()
+            let Formula::Forall { variable, body, .. } = self.proof.evidence.claim(node)?.clone()
             else {
                 continue;
             };
             let Some(term) = specialization_term(&body, goal, &variable)? else {
                 continue;
             };
-            if !self.unadmitted_evidence(node)? || self.proof.evidence.check_closed(node).is_err() {
-                continue;
+            if let Some(instance) = self.checked_array_specialization(node, &term, goal)? {
+                return Ok(Some(instance));
             }
-            if let Some(snapshot) = self.proof.evidence.subjects(node).cloned() {
-                let scope =
-                    self.proof
-                        .subjects
-                        .availability(&snapshot, &self.storage.memory, None)?;
-                if !self.checked_entails(&scope)? {
-                    continue;
-                }
-            }
-            let domain = domain.substitute(&variable, &term)?;
-            let paths = self.proof.paths.clone();
-            let Some(support) = self.probe_guard(&paths, &domain)? else {
-                continue;
-            };
-            let mut permitted = true;
-            for &parent in &support.parents {
-                permitted &= self.unadmitted_evidence(parent)?;
-            }
-            if !permitted {
-                continue;
-            }
-            self.work.obligations += 1;
-            let domain = self.proof.evidence.arithmetic(domain, support)?;
-            let instance = self.proof.evidence.derive(
-                goal.clone(),
-                evidence::Rule::ForallElim {
-                    theorem: node,
-                    domain,
-                    term,
-                },
-            )?;
-            self.proof.evidence.check_closed(instance)?;
-            return Ok(Some(instance));
         }
         Ok(None)
+    }
+
+    pub(in crate::compiler::verify) fn checked_array_specialization(
+        &mut self,
+        node: evidence::NodeId,
+        term: &Linear,
+        goal: &Formula,
+    ) -> Result<Option<evidence::NodeId>> {
+        let Formula::Forall {
+            variable, domain, ..
+        } = self.proof.evidence.claim(node)?.clone()
+        else {
+            return Ok(None);
+        };
+        if !self.unadmitted_evidence(node)? || self.proof.evidence.check_closed(node).is_err() {
+            return Ok(None);
+        }
+        if let Some(snapshot) = self.proof.evidence.subjects(node).cloned() {
+            let scope = self
+                .proof
+                .subjects
+                .availability(&snapshot, &self.storage.memory, None)?;
+            if !self.checked_entails(&scope)? {
+                return Ok(None);
+            }
+        }
+        let domain = domain.substitute(&variable, term)?;
+        let paths = self.proof.paths.clone();
+        let Some(support) = self.probe_guard(&paths, &domain)? else {
+            return Ok(None);
+        };
+        let mut permitted = true;
+        for &parent in &support.parents {
+            permitted &= self.unadmitted_evidence(parent)?;
+        }
+        if !permitted {
+            return Ok(None);
+        }
+        self.work.obligations += 1;
+        let domain = self.proof.evidence.arithmetic(domain, support)?;
+        let instance = self.proof.evidence.derive(
+            goal.clone(),
+            evidence::Rule::ForallElim {
+                theorem: node,
+                domain,
+                term: term.clone(),
+            },
+        )?;
+        self.proof.evidence.check_closed(instance)?;
+        Ok(Some(instance))
     }
 
     pub(in crate::compiler::verify) fn observe_input_slot_types(
