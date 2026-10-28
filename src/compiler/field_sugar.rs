@@ -263,6 +263,17 @@ impl Shapes {
 
     fn expr(&self, expr: &mut Expr, scope: &Scope, expected: Option<&Type>) -> Option<Type> {
         match &mut expr.kind {
+            Kind::Forall {
+                variable,
+                domain,
+                body,
+            } => {
+                let mut local = scope.clone();
+                local.insert(variable.clone(), Type::Int);
+                self.expr(domain, &local, Some(&Type::Bool));
+                self.expr(body, &local, Some(&Type::Bool));
+                Some(Type::Bool)
+            }
             Kind::Type(_) | Kind::Generic { .. } => None,
             Kind::Bytes(bytes) => Some(Type::bytes(bytes.len(), expr.line)),
             Kind::Name(name) => scope.get(name).cloned(),

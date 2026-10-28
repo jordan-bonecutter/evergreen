@@ -38,14 +38,11 @@ pub(in crate::compiler::verify) enum Rule {
         right: NodeId,
     },
     FalseElim(NodeId),
-    // The kernel rules precede their source quantifier elaborator.
-    #[allow(dead_code)]
     ForallIntro {
         hypothesis: HypothesisId,
         body: NodeId,
         eigenvariable: String,
     },
-    #[allow(dead_code)]
     ForallElim {
         theorem: NodeId,
         domain: NodeId,
@@ -115,7 +112,7 @@ impl Rule {
             open.extend(&graph.nodes[parent.0].hypotheses);
         }
         let claim = |id| graph.claim(id);
-        let same = |a: &Formula, b: &Formula| a.normalized() == b.normalized();
+        let same = |a: &Formula, b: &Formula| a.normalized().alpha_equal(&b.normalized());
         let hypothesis = |id: HypothesisId| -> Result<&Formula> {
             if !matches!(graph.nodes[id.node.0].rule, NodeRule::Hypothesis) {
                 return Err("logical rule binder is not a hypothesis".into());

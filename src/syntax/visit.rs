@@ -86,6 +86,10 @@ pub(crate) fn walk_type(v: &mut impl Visitor, ty: &mut Type) -> Result {
 
 pub(crate) fn walk_expr(v: &mut impl Visitor, expression: &mut Expr) -> Result {
     match &mut expression.kind {
+        Kind::Forall { domain, body, .. } => {
+            v.expr(domain)?;
+            v.expr(body)?;
+        }
         Kind::Type(ty) => v.ty(ty)?,
         Kind::Generic {
             arguments, value, ..

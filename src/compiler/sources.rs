@@ -132,6 +132,10 @@ impl Names {
 
     fn expr(&mut self, e: &Expr) {
         match &e.kind {
+            Kind::Forall { domain, body, .. } => {
+                self.expr(domain);
+                self.expr(body);
+            }
             Kind::Type(ty) => self.ty(ty),
             Kind::Generic {
                 arguments, value, ..

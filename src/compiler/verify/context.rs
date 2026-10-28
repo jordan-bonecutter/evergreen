@@ -16,11 +16,18 @@ pub(super) struct Declarations<'a> {
 
 #[derive(Default)]
 pub(super) struct Locals {
+    pub(super) logical_bindings: Vec<LogicalBinding>,
     pub(super) values: BTreeMap<String, Symbol>,
     pub(super) places: BTreeMap<String, PlaneId>,
     pub(super) ideal_bindings: BTreeSet<String>,
     pub(super) module: Option<String>,
     pub(super) declaring: Option<String>,
+}
+
+pub(super) struct LogicalBinding {
+    pub(super) name: String,
+    pub(super) variable: String,
+    pub(super) quantified: bool,
 }
 
 #[derive(Default)]

@@ -698,7 +698,7 @@ impl Evaluator<'_> {
         expected: Option<&Type>,
     ) -> Result<Value> {
         match &e.kind {
-            Kind::Type(_) | Kind::Generic { .. } => {
+            Kind::Type(_) | Kind::Generic { .. } | Kind::Forall { .. } => {
                 Err("ideal type or generic template reached runtime execution".into())
             }
             Kind::Bytes(bytes) => {

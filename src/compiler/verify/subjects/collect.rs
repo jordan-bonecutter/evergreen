@@ -26,6 +26,21 @@ impl Context<'_> {
             return Ok(None);
         }
         let key = match &expression.kind {
+            Kind::Forall {
+                variable,
+                domain,
+                body,
+            } => {
+                let name = self.quantified_name();
+                self.with_logical_binding(variable, &name, true, |ctx| {
+                    let domain = ctx.collect_subjects(domain, snapshot, depth + 1)?;
+                    let body = ctx.collect_subjects(body, snapshot, depth + 1)?;
+                    Ok(domain
+                        .zip(body)
+                        .map(|(a, b)| ClaimKey::Forall(Box::new(a), Box::new(b))))
+                })?
+            }
+            Kind::Name(name) if self.logical_key(name).is_some() => self.logical_key(name),
             Kind::Type(_) => self.type_literal(expression).map(ClaimKey::Type),
             Kind::Generic { .. } => {
                 return Err("unlowered generic expression reached proof-state collection".into())

@@ -4,6 +4,27 @@ fn ge(name: &str) -> Formula {
     Formula::Ge(Linear::variable(name))
 }
 
+#[test]
+fn alpha_matching_respects_free_names_and_nested_binder_shadowing() {
+    assert!(forall("i", ge("i"), ge("i")).alpha_equal(&forall("j", ge("j"), ge("j"))));
+    assert!(!forall("i", ge("i"), ge("j")).alpha_equal(&forall("j", ge("j"), ge("j"))));
+    assert!(
+        forall("i", Formula::True, forall("i", ge("i"), ge("i"))).alpha_equal(&forall(
+            "x",
+            Formula::True,
+            forall("y", ge("y"), ge("y"))
+        ))
+    );
+    assert!(
+        !forall("i", Formula::True, forall("j", ge("j"), ge("i"))).alpha_equal(&forall(
+            "x",
+            Formula::True,
+            forall("y", ge("y"), ge("y"))
+        ))
+    );
+    assert!(!forall("i", ge("n"), ge("i")).alpha_equal(&forall("j", ge("m"), ge("j"))));
+}
+
 fn forall(name: &str, domain: Formula, body: Formula) -> Formula {
     Formula::Forall {
         variable: name.into(),

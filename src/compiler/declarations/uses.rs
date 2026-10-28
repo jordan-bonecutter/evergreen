@@ -72,6 +72,16 @@ impl Uses {
     ) -> Result<()> {
         self.tick(depth)?;
         match &expression.kind {
+            Kind::Forall {
+                variable,
+                domain,
+                body,
+            } => {
+                let mut local = bound.clone();
+                local.insert(variable.clone());
+                self.expression(domain, &local, false, depth + 1)?;
+                self.expression(body, &local, false, depth + 1)?;
+            }
             Kind::Type(ty) => self.ty(ty, bound, depth + 1)?,
             Kind::Name(name) if !bound.contains(name) => {
                 self.types.insert(name.clone());

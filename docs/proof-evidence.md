@@ -326,13 +326,42 @@ check. Specialization substitutes a checked integer term and requires evidence
 of the corresponding domain. Substitution respects nested binders, rejects
 variable capture, checks arithmetic overflow, and bounds expansion work.
 
-These universal rules are kernel groundwork: source quantifier syntax, indexed
-memory propositions, range invariants, and automatic specialization are not yet
-implemented. Generalization through declaration summaries or imported trust with
-untraced context dependencies is rejected. Opaque frontend predicate identities
-must not stand in for expressions depending on a bound index. Those expressions
-need structured substitution and immutable memory dependencies before the rules
-can describe initialized resource ranges in Vec.
+Source proofs can now use these rules explicitly:
+
+```evg
+fact bounded = forall(i: integer) where (0 <= i && i < 10) { i <= 9 };
+proof range: bounded by { intro i; omega };
+let index: usize = 7;
+proof selected: integer(index) <= 9 by { specialize range(index); omega };
+```
+
+`intro i` checks the conclusion at a fresh arbitrary integer under its domain.
+`specialize range(index)` applies that theorem to the goal and opens a proof
+obligation for its instantiated domain. The following `omega` proves that domain.
+The argument currently accepts an integer literal or a local numeric name;
+compute more involved arguments in an ideal local first. Omitting `where`
+uses a true domain. Nested universals and renamed bound variables are supported.
+A billion-element integer range uses the same number of proof obligations as a
+ten-element one. These propositions have no executable Boolean representation.
+See [universal.evg](../examples/universal.evg) for a runnable example.
+
+Bound indices use lexical scope and mathematical integer arithmetic. Machine and
+natural values need `integer(value)` before arithmetic inside a quantifier.
+Free scalar fields retain their ordinary plane/revision dependencies. Proof keys
+store bound indices by their lexical distance, so renaming a binder does not
+change its identity or confuse it with a plane read. Specialization preserves
+these subjects; admitted theorems cannot be applied after their dependent plane
+changes, or transferred to another plane merely because its value is equal.
+
+Universal theorems currently require explicit named-proof use. They are not
+inserted into arithmetic paths or the historical arithmetic candidate index.
+Using universal assumptions in function/type contracts, quantified domains,
+indexed memory propositions, and range loop invariants remains unfinished.
+Generalization through declaration summaries or imported trust with untraced
+context dependencies is rejected. User predicate calls and indexed reads inside
+quantifiers are also rejected: opaque frontend identities must not hide a bound
+argument. Those expressions need structured substitution and immutable memory
+dependencies before these rules can describe initialized resource ranges in Vec.
 
 Explicit proof declarations now store state-subject snapshots separately from
 arithmetic formulas. Canonical claim keys retain operator structure and replace

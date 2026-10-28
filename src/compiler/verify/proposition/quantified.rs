@@ -9,6 +9,98 @@ use std::collections::{BTreeMap, BTreeSet};
 mod tests;
 
 impl Formula {
+    // Bound spellings carry no mathematical identity. Free names still do.
+    pub(in crate::compiler::verify) fn alpha_equal(&self, other: &Self) -> bool {
+        if self == other {
+            return true;
+        }
+        #[derive(PartialEq, Eq, PartialOrd, Ord)]
+        enum Variable<'a> {
+            Bound(usize),
+            Free(&'a str),
+        }
+        fn terms<'a>(
+            row: &'a Linear,
+            scope: &[(&str, &str)],
+            left: bool,
+        ) -> BTreeMap<Variable<'a>, i128> {
+            row.terms
+                .iter()
+                .map(|(name, coefficient)| {
+                    let bound = scope
+                        .iter()
+                        .rev()
+                        .position(|(a, b)| name == if left { a } else { b });
+                    (
+                        bound.map(Variable::Bound).unwrap_or(Variable::Free(name)),
+                        *coefficient,
+                    )
+                })
+                .collect()
+        }
+        enum Step<'a> {
+            Pair(&'a Formula, &'a Formula),
+            Leave,
+        }
+        let mut pending = vec![Step::Pair(self, other)];
+        let mut scope = Vec::new();
+        while let Some(step) = pending.pop() {
+            let (a, b) = match step {
+                Step::Pair(a, b) => (a, b),
+                Step::Leave => {
+                    scope.pop();
+                    continue;
+                }
+            };
+            match (a, b) {
+                (Self::True, Self::True) | (Self::False, Self::False) => {}
+                (Self::Ge(a), Self::Ge(b))
+                    if a.constant == b.constant
+                        && terms(a, &scope, true) == terms(b, &scope, false) => {}
+                (Self::Not(a), Self::Not(b)) => pending.push(Step::Pair(a, b)),
+                (Self::And(a, b), Self::And(c, d))
+                | (Self::Or(a, b), Self::Or(c, d))
+                | (Self::Implies(a, b), Self::Implies(c, d)) => {
+                    pending.push(Step::Pair(b, d));
+                    pending.push(Step::Pair(a, c));
+                }
+                (
+                    Self::Forall {
+                        variable: a,
+                        domain: ad,
+                        body: ab,
+                    },
+                    Self::Forall {
+                        variable: b,
+                        domain: bd,
+                        body: bb,
+                    },
+                ) => {
+                    scope.push((a.as_str(), b.as_str()));
+                    pending.push(Step::Leave);
+                    pending.push(Step::Pair(ab, bb));
+                    pending.push(Step::Pair(ad, bd));
+                }
+                _ => return false,
+            }
+        }
+        true
+    }
+    pub(in crate::compiler::verify) fn contains_quantifier(&self) -> bool {
+        let mut pending = vec![self];
+        while let Some(part) = pending.pop() {
+            match part {
+                Self::Forall { .. } => return true,
+                Self::Not(p) => pending.push(p),
+                Self::And(a, b) | Self::Or(a, b) | Self::Implies(a, b) => {
+                    pending.push(a);
+                    pending.push(b);
+                }
+                _ => {}
+            }
+        }
+        false
+    }
     pub(in crate::compiler::verify) fn free_variables(&self) -> Result<BTreeSet<String>> {
         self.storage_weight()?;
         enum Step<'a> {

@@ -50,6 +50,7 @@ use paths::{extend, extend_from};
 mod program;
 mod proofs;
 mod proposition;
+mod quantified;
 use proposition::Formula;
 mod references;
 #[cfg(test)]
@@ -1679,12 +1680,18 @@ impl<'a> Context<'a> {
                 };
                 let evidence =
                     self.proof_script_for(&p, &label, proposition.line, steps, Some(&subjects))?;
-                self.publish_evidence(evidence, subjects)?;
-                let dependencies = self.evidence_dependencies(evidence)?;
-                if dependencies.admissions.is_empty() {
-                    self.assume_from(&p, paths::Origin::Evidence(evidence))?;
+                if p.contains_quantifier() {
+                    // Keep universal theorems for explicit logical use. Arithmetic
+                    // paths cannot yet specialize them or frame indexed reads.
+                    self.proof.evidence.record_subjects(evidence, subjects)?;
                 } else {
-                    self.proof.claims.insert(evidence);
+                    self.publish_evidence(evidence, subjects)?;
+                    let dependencies = self.evidence_dependencies(evidence)?;
+                    if dependencies.admissions.is_empty() {
+                        self.assume_from(&p, paths::Origin::Evidence(evidence))?;
+                    } else {
+                        self.proof.claims.insert(evidence);
+                    }
                 }
                 if name != "_" {
                     self.proof.witnesses.insert(name.clone(), evidence);
@@ -1882,6 +1889,7 @@ impl<'a> Context<'a> {
             return Some(value.ty());
         }
         match &e.kind {
+            Kind::Forall { .. } => Some(Ty::Bool),
             Kind::Bytes(bytes) => Self::declared_hint(&Type::bytes(bytes.len(), e.line)),
             Kind::Type(_) => Some(Ty::Type),
             Kind::Call(name, _) if matches!(name.as_str(), "size_of" | "align_of") => {
@@ -2440,6 +2448,11 @@ impl<'a> Context<'a> {
             }
         }
         match &e.kind {
+            Kind::Forall {
+                variable,
+                domain,
+                body,
+            } => self.eval_quantified(variable, domain, body, e.line),
             Kind::Type(ty) if self.execution.phase != Phase::Runtime => Ok(Symbol::Type {
                 members: vec![self.resolve(ty)?],
                 active: Linear::number(0),

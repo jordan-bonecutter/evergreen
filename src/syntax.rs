@@ -223,6 +223,7 @@ impl Expr {
             }
             Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => child(e),
             Kind::Binary(_, a, b) | Kind::Index(a, b) => child(a) && child(b),
+            Kind::Forall { domain, body, .. } => child(domain) && child(body),
             Kind::If(c, a, b) => child(c) && child(a) && child(b),
             Kind::Block(body, tail) => {
                 body.iter().all(|s| s.bounded_depth(remaining - 1)) && child(tail)
@@ -236,6 +237,11 @@ impl Expr {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Kind {
+    Forall {
+        variable: String,
+        domain: Box<Expr>,
+        body: Box<Expr>,
+    },
     Type(Type),
     Generic {
         arguments: Vec<GenericArgument>,
@@ -510,6 +516,7 @@ impl Parser {
                 "fn" | "let"
                     | "const"
                     | "fact"
+                    | "forall"
                     | "return"
                     | "result"
                     | "proof"
@@ -839,6 +846,34 @@ impl Parser {
                 kind: Kind::Unary(op, Box::new(self.expr(7)?)),
                 line,
             }
+        } else if self.eat("forall") {
+            self.expect("(")?;
+            let variable = self.name()?;
+            self.expect(":")?;
+            self.expect("integer")?;
+            self.expect(")")?;
+            let domain = if self.eat("where") {
+                self.expect("(")?;
+                let domain = self.expr(0)?;
+                self.expect(")")?;
+                domain
+            } else {
+                Expr {
+                    kind: Kind::Bool(true),
+                    line,
+                }
+            };
+            self.expect("{")?;
+            let body = self.expr(0)?;
+            self.expect("}")?;
+            Expr {
+                kind: Kind::Forall {
+                    variable,
+                    domain: Box::new(domain),
+                    body: Box::new(body),
+                },
+                line,
+            }
         } else if self.eat("match") {
             self.boolean_match(line)?
         } else if self.peek() == "{" {
@@ -975,6 +1010,24 @@ impl Parser {
                 "omega" | "rfl" | "simp_all" | "decide" | "assumption" | "trustme"
                 | "constructor" | "left" | "right" => s,
                 "exact" | "intro" | "apply" => format!("{s} {}", self.name()?),
+                "specialize" => {
+                    let name = self.name()?;
+                    self.expect("(")?;
+                    let negative = self.eat("-");
+                    let argument = if self.peek().bytes().all(|c| c.is_ascii_digit()) {
+                        let argument = self.peek().to_owned();
+                        self.pos += 1;
+                        format!("{}{argument}", if negative { "-" } else { "" })
+                    } else if negative {
+                        return Err(
+                            self.err("specialize expects an integer literal or a local name")
+                        );
+                    } else {
+                        self.name()?
+                    };
+                    self.expect(")")?;
+                    format!("specialize {name} {argument}")
+                }
                 "cases" => {
                     let proof = self.name()?;
                     if self.eat("with") {

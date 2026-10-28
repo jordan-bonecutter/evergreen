@@ -26,6 +26,11 @@ impl Visitor for Substitution<'_> {
 
     fn expr(&mut self, expression: &mut Expr) -> Result<()> {
         charge(self.work)?;
+        if let Kind::Forall { variable, .. } = &expression.kind {
+            if self.bindings.contains_key(variable) {
+                return Err("quantified variables cannot shadow generic parameters".into());
+            }
+        }
         if let Some(GenericArgument::Type(Type::Named(target))) = self.bindings.get("Self") {
             match &mut expression.kind {
                 Kind::Record(name, _) if name == "Self" => *name = target.clone(),

@@ -69,6 +69,17 @@ impl Scope<'_> {
 
     fn expr(&self, expression: &mut Expr) {
         match &mut expression.kind {
+            Kind::Forall {
+                variable,
+                domain,
+                body,
+            } => {
+                let mut bound = self.bound.clone();
+                bound.insert(variable.clone());
+                let scope = Scope { bound, ..*self };
+                scope.expr(domain);
+                scope.expr(body);
+            }
             Kind::Type(ty) => self.ty(ty),
             Kind::Generic {
                 arguments,

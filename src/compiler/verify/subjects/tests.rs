@@ -41,6 +41,49 @@ fn saved_quantified_scalars_track_free_parameters_but_not_bound_indices() {
     assert!(saved.key.is_none());
 }
 
+#[test]
+fn quantified_subject_instantiation_preserves_inner_binders_and_bounds_copy_work() {
+    let key = ClaimKey::Forall(
+        Box::new(ClaimKey::Bool(true)),
+        Box::new(ClaimKey::Forall(
+            Box::new(ClaimKey::Bound(0)),
+            Box::new(ClaimKey::Binary(
+                "==".into(),
+                Box::new(ClaimKey::Bound(1)),
+                Box::new(ClaimKey::Bound(0)),
+            )),
+        )),
+    );
+    let source = Snapshot::from_key(key);
+    let argument = Snapshot::from_key(ClaimKey::Number(7));
+    let (_, body) = source.universal_parts(&argument, &mut 0).unwrap().unwrap();
+    assert_eq!(
+        body.key,
+        Some(ClaimKey::Forall(
+            Box::new(ClaimKey::Bound(0)),
+            Box::new(ClaimKey::Binary(
+                "==".into(),
+                Box::new(ClaimKey::Number(7)),
+                Box::new(ClaimKey::Bound(0))
+            ))
+        ))
+    );
+    let mut work = MAX_VALUE_WORK;
+    assert!(source
+        .universal_parts(&argument, &mut work)
+        .unwrap_err()
+        .contains("work limit"));
+    let captured = Snapshot::from_key(ClaimKey::Bound(0));
+    assert!(source
+        .universal_parts(&captured, &mut 0)
+        .unwrap_err()
+        .contains("unscoped bound"));
+    assert!(source
+        .universal_parts(&Snapshot::default(), &mut 0)
+        .unwrap()
+        .is_none());
+}
+
 fn with_source(source: &str, check: impl FnOnce(&mut Context<'_>, &[Statement])) {
     let parsed = syntax::parse(source).unwrap();
     let structs = parsed

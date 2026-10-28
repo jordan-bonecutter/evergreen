@@ -10,28 +10,11 @@ pub(super) use history::RecursiveContext;
 
 impl Formula {
     pub(super) fn variables(&self, work: &mut usize) -> Result<BTreeSet<String>> {
-        let mut variables = BTreeSet::new();
-        let mut pending = vec![self];
-        while let Some(formula) = pending.pop() {
-            let cost = match formula {
-                Self::Ge(row) => row.terms.len().saturating_add(1),
-                _ => 1,
-            };
-            *work = work.saturating_add(cost);
-            if *work > MAX_VALUE_WORK {
-                return Err("proof relevance work limit reached".into());
-            }
-            match formula {
-                Self::Ge(row) => variables.extend(row.terms.keys().cloned()),
-                Self::Not(p) => pending.push(p),
-                Self::And(a, b) | Self::Or(a, b) | Self::Implies(a, b) => {
-                    pending.push(a);
-                    pending.push(b);
-                }
-                _ => {}
-            }
+        *work = work.saturating_add(self.storage_weight()?);
+        if *work > MAX_VALUE_WORK {
+            return Err("proof relevance work limit reached".into());
         }
-        Ok(variables)
+        self.free_variables()
     }
 }
 

@@ -8,6 +8,9 @@ pub(in crate::compiler::verify) enum ClaimKey {
     Unit,
     Number(i128),
     Bool(bool),
+    Bound(usize),
+    LogicalVariable(String),
+    Forall(Box<Self>, Box<Self>),
     Read(Stamp),
     Entry(state::WorldId, String),
     OldRead(state::WorldId, Stamp),
@@ -83,7 +86,7 @@ impl Snapshot {
                     );
                 }
                 ClaimKey::Unary(_, key) => pending.push((key, guard)),
-                ClaimKey::Binary(_, a, b) => {
+                ClaimKey::Binary(_, a, b) | ClaimKey::Forall(a, b) => {
                     pending.push((a, guard.clone()));
                     pending.push((b, guard));
                 }
@@ -121,7 +124,7 @@ impl Snapshot {
                     values.entry(*world).or_default().extend(names);
                 }
                 ClaimKey::Unary(_, value) => pending.push(value),
-                ClaimKey::Binary(_, a, b) => {
+                ClaimKey::Binary(_, a, b) | ClaimKey::Forall(a, b) => {
                     pending.push(a);
                     pending.push(b);
                 }
@@ -160,8 +163,9 @@ impl Snapshot {
                     weight =
                         weight.saturating_add(symbol_weight(&Symbol::Shape(Box::new(ty.clone())))?)
                 }
+                ClaimKey::LogicalVariable(name) => weight = weight.saturating_add(name.len()),
                 ClaimKey::Unary(_, key) => pending.push(key),
-                ClaimKey::Binary(_, a, b) => {
+                ClaimKey::Binary(_, a, b) | ClaimKey::Forall(a, b) => {
                     pending.push(a);
                     pending.push(b);
                 }
@@ -211,7 +215,7 @@ impl Snapshot {
             match key {
                 ClaimKey::Read(stamp) => *key = ClaimKey::OldRead(world, *stamp),
                 ClaimKey::Unary(_, key) => freeze(key, world),
-                ClaimKey::Binary(_, a, b) => {
+                ClaimKey::Binary(_, a, b) | ClaimKey::Forall(a, b) => {
                     freeze(a, world);
                     freeze(b, world);
                 }
@@ -254,7 +258,7 @@ impl Snapshot {
             match key {
                 ClaimKey::Read(stamp) if *stamp == original => *key = replacement.clone(),
                 ClaimKey::Unary(_, key) => replace(key, original, replacement),
-                ClaimKey::Binary(_, a, b) => {
+                ClaimKey::Binary(_, a, b) | ClaimKey::Forall(a, b) => {
                     replace(a, original, replacement);
                     replace(b, original, replacement);
                 }
@@ -293,5 +297,80 @@ impl Snapshot {
         } else {
             None
         }
+    }
+
+    pub(in crate::compiler::verify) fn universal_parts(
+        &self,
+        argument: &Self,
+        work: &mut usize,
+    ) -> Result<Option<(Self, Self)>> {
+        if !self.complete || !argument.complete {
+            return Ok(None);
+        }
+        let cost = self
+            .storage_weight()?
+            .saturating_mul(argument.storage_weight()?.saturating_add(1));
+        *work = work.saturating_add(cost);
+        if *work > MAX_VALUE_WORK {
+            return Err("quantified subject substitution work limit reached".into());
+        }
+        let (Some(ClaimKey::Forall(domain, body)), Some(argument)) = (&self.key, &argument.key)
+        else {
+            return Ok(None);
+        };
+        // Proof-script variables use LogicalVariable, never a raw bound index.
+        // Reject the latter before insertion could capture it under an inner binder.
+        let mut pending = vec![argument];
+        while let Some(key) = pending.pop() {
+            match key {
+                ClaimKey::Bound(_) => {
+                    return Err(
+                        "universal subject arguments must not contain unscoped bound indices"
+                            .into(),
+                    )
+                }
+                ClaimKey::Unary(_, p) => pending.push(p),
+                ClaimKey::Binary(_, a, b) | ClaimKey::Forall(a, b) => {
+                    pending.push(a);
+                    pending.push(b);
+                }
+                ClaimKey::Array(items) => pending.extend(items),
+                ClaimKey::Record(_, fields) => pending.extend(fields.iter().map(|(_, key)| key)),
+                ClaimKey::Guarded(cases) => pending.extend(cases.iter().map(|(_, key)| key)),
+                _ => {}
+            }
+        }
+        fn substitute(key: &ClaimKey, argument: &ClaimKey, depth: usize) -> Option<ClaimKey> {
+            Some(match key {
+                ClaimKey::Bound(index) if *index == depth => argument.clone(),
+                ClaimKey::Bound(index) if *index > depth => ClaimKey::Bound(index - 1),
+                ClaimKey::Unary(op, p) => {
+                    ClaimKey::Unary(op.clone(), Box::new(substitute(p, argument, depth)?))
+                }
+                ClaimKey::Binary(op, a, b) => ClaimKey::Binary(
+                    op.clone(),
+                    Box::new(substitute(a, argument, depth)?),
+                    Box::new(substitute(b, argument, depth)?),
+                ),
+                ClaimKey::Forall(a, b) => ClaimKey::Forall(
+                    Box::new(substitute(a, argument, depth + 1)?),
+                    Box::new(substitute(b, argument, depth + 1)?),
+                ),
+                ClaimKey::Guarded(cases) => ClaimKey::Guarded(
+                    cases
+                        .iter()
+                        .map(|(guard, key)| {
+                            Some((guard.clone(), substitute(key, argument, depth)?))
+                        })
+                        .collect::<Option<_>>()?,
+                ),
+                // Quantified source expressions currently contain scalar syntax only.
+                ClaimKey::Array(_) | ClaimKey::Record(_, _) => return None,
+                _ => key.clone(),
+            })
+        }
+        Ok(substitute(domain, argument, 0)
+            .zip(substitute(body, argument, 0))
+            .map(|(domain, body)| (Self::from_key(domain), Self::from_key(body))))
     }
 }
