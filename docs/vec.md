@@ -141,6 +141,12 @@ cargo run --locked --offline -- run examples/vec_generic.evg
 cargo run --locked --offline -- build examples/vec_generic.evg
 ```
 
+[`stdlib/vec/buffer.evg`](../stdlib/vec/buffer.evg) now holds the reusable
+`vec::Buffer<T>` storage component, including its source proofs and destructor.
+It is opaque: clients use checked methods rather than changing its header.
+`Vec<T>` still uses its older Copy storage; adopting this component is the next
+API migration step.
+
 [`buffer_growth.evg`](../examples/buffer_growth.evg) now verifies the combined
 owning-buffer sequence: allocate vacant capacity, push two owners, reallocate,
 pop one owner, and clean up the remainder. Native x86-64 execution returns 42.

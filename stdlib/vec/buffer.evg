@@ -1,0 +1,264 @@
+module vec;
+
+// Move owners through a sparse buffer, preserving the initialized prefix and vacant suffix.
+opaque type Buffer<T = usize> struct {cap: usize, len: usize, data: Null | unique(T | shape(T), cap)} where (
+    fact length_fits = len <= cap;
+    fact storage_matches_capacity = (cap == 0) == (typeof(data) == Null);
+    fact initialized_prefix = if (typeof(data) != Null) {
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer::from(len) &&
+            i < integer::from(cap)
+        ) {typeof((*data)[i]) == T}
+    } else {true};
+    fact vacant_suffix = if (typeof(data) != Null) {
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer::from(len) <= i &&
+            i < integer::from(cap)
+        ) {typeof((*data)[i]) == shape(T)}
+    } else {true};
+    length_fits &&
+    storage_matches_capacity &&
+    initialized_prefix &&
+    vacant_suffix
+);
+
+fn discard_buffer_zero(value: Null) {}
+impl<T> Drop for Buffer<T> {
+    fn drop({cap, len, data}) {
+        if cap == 0 {discard_buffer_zero(data)} else {arrays::drain_prefix::<T>(cap, data, len)}
+    }
+}
+impl<T> Buffer<T> {
+    fn new(capacity: usize) -> Self
+        where
+            integer::from(capacity) * integer::from(size_of(T)) <= integer::from(isize::MAX)
+        ensures
+            result.len == 0 &&
+            result.cap == capacity
+    {
+        let data: Null | unique(T | shape(T), capacity) = if capacity == 0 {0} else {alloc(capacity, shape(T))};
+        Self {cap: capacity, len: 0, data: data}
+    }
+    method& push(item: T)
+        where
+            self.len < self.cap
+        modifies(&self.len, &(*self.data)[self.len])
+        ensures
+            self.len == old(self.len) + 1
+    {
+        proof before_live:
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(self.len) &&
+                i < integer::from(self.cap)
+            ) {typeof((*self.data)[i]) == T} by {omega};
+        proof before_empty:
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer::from(self.len) <= i &&
+                i < integer::from(self.cap)
+            ) {typeof((*self.data)[i]) == shape(T)} by {omega};
+        update(*self) lifts initialized_prefix,
+        vacant_suffix {
+            (*self.data)[self.len] = item;
+            self.len = self.len + 1;
+            proof frame_live:
+                (
+                    forall(i: integer)
+                    where (
+                        0 <= i &&
+                        i < integer::from(old(self.len)) &&
+                        i < integer::from(self.cap)
+                    ) {typeof(old(*self.data)[i]) == T}
+                ) =>
+                (
+                    forall(i: integer)
+                    where (
+                        0 <= i &&
+                        i < integer::from(self.len) &&
+                        i < integer::from(self.cap)
+                    ) {typeof((*self.data)[i]) == T}
+                ) by {
+                    intro prior;
+                    intro i;
+                    omega
+                };
+            proof after_live:
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < integer::from(self.len) &&
+                    i < integer::from(self.cap)
+                ) {typeof((*self.data)[i]) == T} by {
+                    apply frame_live;
+                    exact before_live
+                };
+            proof frame_empty:
+                (
+                    forall(i: integer)
+                    where (
+                        0 <= i &&
+                        integer::from(old(self.len)) <= i &&
+                        i < integer::from(self.cap)
+                    ) {typeof(old(*self.data)[i]) == shape(T)}
+                ) =>
+                (
+                    forall(i: integer)
+                    where (
+                        0 <= i &&
+                        integer::from(self.len) <= i &&
+                        i < integer::from(self.cap)
+                    ) {typeof((*self.data)[i]) == shape(T)}
+                ) by {
+                    intro prior;
+                    intro i;
+                    omega
+                };
+            proof after_empty:
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer::from(self.len) <= i &&
+                    i < integer::from(self.cap)
+                ) {typeof((*self.data)[i]) == shape(T)} by {
+                    apply frame_empty;
+                    exact before_empty
+                };
+        }
+    }
+    method& pop() -> T
+        where
+            self.len > 0
+        modifies(&self.len, &(*self.data)[self.len - 1])
+        ensures
+            self.len + 1 == old(self.len)
+    {
+        proof before_live:
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(self.len) &&
+                i < integer::from(self.cap)
+            ) {typeof((*self.data)[i]) == T} by {omega};
+        proof before_empty:
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer::from(self.len) <= i &&
+                i < integer::from(self.cap)
+            ) {typeof((*self.data)[i]) == shape(T)} by {omega};
+        let output: T | shape(T) = shape(T);
+        update(*self) lifts initialized_prefix,
+        vacant_suffix {
+            let value: T = move((*self.data)[self.len - 1]);
+            output = value;
+            self.len = self.len - 1;
+            proof frame_live:
+                (
+                    forall(i: integer)
+                    where (
+                        0 <= i &&
+                        i < integer::from(old(self.len)) &&
+                        i < integer::from(self.cap)
+                    ) {typeof(old(*self.data)[i]) == T}
+                ) =>
+                (
+                    forall(i: integer)
+                    where (
+                        0 <= i &&
+                        i < integer::from(self.len) &&
+                        i < integer::from(self.cap)
+                    ) {typeof((*self.data)[i]) == T}
+                ) by {
+                    intro prior;
+                    intro i;
+                    omega
+                };
+            proof after_live:
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < integer::from(self.len) &&
+                    i < integer::from(self.cap)
+                ) {typeof((*self.data)[i]) == T} by {
+                    apply frame_live;
+                    exact before_live
+                };
+            proof frame_empty:
+                (
+                    forall(i: integer)
+                    where (
+                        0 <= i &&
+                        integer::from(old(self.len)) <= i &&
+                        i < integer::from(self.cap)
+                    ) {typeof(old(*self.data)[i]) == shape(T)}
+                ) =>
+                (
+                    forall(i: integer)
+                    where (
+                        0 <= i &&
+                        integer::from(self.len) <= i &&
+                        i < integer::from(self.cap)
+                    ) {typeof((*self.data)[i]) == shape(T)}
+                ) by {
+                    intro prior;
+                    intro i;
+                    omega
+                };
+            proof after_empty:
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer::from(self.len) <= i &&
+                    i < integer::from(self.cap)
+                ) {typeof((*self.data)[i]) == shape(T)} by {
+                    apply frame_empty;
+                    exact before_empty
+                };
+        }
+        output
+    }
+    method reallocate(new_capacity: usize) -> Self
+        where
+            new_capacity > 0 &&
+            self.len <= new_capacity &&
+            integer::from(new_capacity) * integer::from(size_of(T)) <= integer::from(isize::MAX)
+        ensures
+            result.len == old(self.len) &&
+            result.cap == new_capacity
+    {
+        let Buffer::<T> {cap, len, data} = self;
+        if cap == 0 {
+            discard_buffer_zero(data);
+            Self::new(new_capacity)
+        } else {
+            let grown = arrays::relocate_prefix::<T>(cap, data, len, new_capacity);
+            Self {cap: new_capacity, len: len, data: grown}
+        }
+    }
+    method& length() -> usize
+        ensures
+            result == self.len
+    {
+        self.len
+    }
+    method& capacity() -> usize
+        ensures
+            result == self.cap
+    {
+        self.cap
+    }
+    method& get(index: usize) -> &T
+        where
+            index < self.len
+        borrows(&(*self.data)[index])
+    {
+        &(*self.data)[index]
+    }
+}
