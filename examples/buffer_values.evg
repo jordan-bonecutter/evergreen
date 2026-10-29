@@ -13,7 +13,7 @@ fn identity(value: Item) -> Item
 }
 
 fn main() -> usize {
-    let values = vec::Buffer::<Item>::new(2);
+    let values = vec::Vec::<Item>::new(2);
     let item = identity(Item {owner: alloc(42), tag: 7});
     let address = &*item.owner;
     values.push(item);

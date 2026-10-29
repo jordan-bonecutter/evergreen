@@ -1,6 +1,6 @@
-// Exercise the source-defined owning storage used for Vec migration.
+// Exercise the source-defined owning Vec storage.
 fn main() -> usize {
-    let values = vec::Buffer::<unique(usize)>::new(8);
+    let values = vec::Vec::<unique(usize)>::new(8);
     values.push(alloc(7));
     values.push(alloc(42));
     values = values.reallocate(8);

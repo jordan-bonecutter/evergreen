@@ -2,7 +2,9 @@ fn main() -> usize {
     let values = vec::Vec::new(2);
     values.push(42);
     let borrowed = values.get(0);
-    let data = values.into_data();
+    let data = values.into_storage();
     proof same_allocation: borrowed == &(*data)[0];
-    *borrowed
+    let answer = *borrowed;
+    arrays::drain_prefix::<usize>(2, data, 1);
+    answer
 }

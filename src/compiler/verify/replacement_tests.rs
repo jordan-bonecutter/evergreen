@@ -51,11 +51,11 @@ fn replacement_still_rejects_dangling_new_fields_and_broken_external_invariants(
 }
 
 #[test]
-fn zero_capacity_vectors_use_one_zero_word_and_preserve_header_borrows_on_growth() {
+fn zero_capacity_vectors_use_one_zero_word_and_consume_headers_on_growth() {
     for source in [
         "fn main() -> usize {let values = vec::Vec::new(0); proof empty: values.length() == 0 && values.capacity() == 0; 42}",
-        "fn main() -> usize {let values = vec::Vec::new(0); let header = &values; values = values.reallocate(4); proof grown: header.capacity() == 4; values.push(42); values = values.reallocate(8); proof grown_again: header.capacity() == 8; values.pop()}",
-        "fn main() -> usize {let values = vec::Vec::new(1); values.push(42); let removed = values.pop(); values = values.reallocate(0); values = values.reallocate(0); proof empty: values.capacity() == 0; removed}",
+        "fn main() -> usize {let values = vec::Vec::new(0); values = values.reallocate(4); proof grown: values.capacity() == 4; values.push(42); values = values.reallocate(8); proof grown_again: values.capacity() == 8; values.pop()}",
+        "fn main() -> usize {let values = vec::Vec::new(1); values.push(42); let removed = values.pop(); values = values.release_empty(); values = values.release_empty(); proof empty: values.capacity() == 0; removed}",
     ] {
         let (program, bundle) = prove(source).unwrap();
         assert_eq!(program.run().unwrap().to_string(), "42");
@@ -65,8 +65,13 @@ fn zero_capacity_vectors_use_one_zero_word_and_preserve_header_borrows_on_growth
         assert!(program.trusted_assumptions().is_empty());
         assert_eq!(verify_with_certificate(source, &bundle).unwrap().proof_search_count(), 0);
     }
+    let stale_header = verify("fn main() -> usize {let values = vec::Vec::new(0); let header = &values; values = values.reallocate(4); header.capacity()}").unwrap_err();
     assert!(
-        verify("fn main() {let values = vec::Vec::new(0); let data = values.into_data();}")
+        stale_header.contains("reference has type never"),
+        "{stale_header}"
+    );
+    assert!(
+        verify("fn main() {let values = vec::Vec::new(0); let data = values.into_storage();}")
             .is_err()
     );
 }

@@ -1,5 +1,5 @@
 // Storage groundwork for Vec: conditional range invariants and move-only cleanup.
-// The public vec::Vec API has not yet adopted this representation.
+// The public vec::Vec API uses this representation too.
 type Buffer<T = usize> struct {cap: usize, len: usize, data: Null | unique(T | shape(T), cap)} where (
     fact length_fits = len <= cap;
     fact storage_matches_capacity = (cap == 0) == (typeof(data) == Null);

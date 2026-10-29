@@ -65,7 +65,8 @@ checker; this is not an independently checked theorem of the whole compiler.
 [`buffer_growth.evg`](../examples/buffer_growth.evg) verifies the combined
 push/grow/pop sequence within the unchanged 262144-unit work budget. Native
 x86-64 execution returns 42. This does not establish a bound for arbitrary
-compositions or complete the public Vec migration.
+compositions. The public Vec now uses owning storage, but some conditional
+joins and larger programs remain unsupported.
 
 Before payload sharing, a temporary caller-location trace identified about
 39,000 charged units in `snapshot_memory` and `clone_store` together for this

@@ -1,0 +1,30 @@
+module vec;
+
+// Copying initialized storage is independent of vector ownership.
+fn copy_prefix<T = usize>(
+    source_capacity: usize,
+    source: linear_plane(T, source_capacity),
+    target_capacity: usize,
+    target: linear_plane(T, target_capacity),
+    count: usize,
+    index: usize
+)
+    where
+        (index <= count &&
+        count <= source_capacity &&
+        count <= target_capacity)
+    modifies(target)
+{
+    let cursor = index;
+    while cursor < count
+        invariant
+            (cursor <= count &&
+            count <= source_capacity &&
+            count <= target_capacity)
+        modifies(target, &cursor)
+        decreases(count - cursor)
+    {
+        (*target)[cursor] = (*source)[cursor];
+        cursor = cursor + 1;
+    }
+}

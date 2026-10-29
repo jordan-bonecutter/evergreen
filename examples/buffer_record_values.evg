@@ -3,7 +3,7 @@ impl Drop for Item {
     fn drop({tag}) {}
 }
 fn main() -> usize {
-    let values = vec::Buffer::<Item>::new(2);
+    let values = vec::Vec::<Item>::new(2);
     values.push(Item {tag: 7});
     values.push(Item {tag: 42});
     values = values.reallocate(4);

@@ -68,7 +68,7 @@ required transfer or reading a retired slot, and compares verification obligatio
 counts at three-slot and billion-slot destination capacities.
 
 `arrays::relocate_prefix` now uses this operation in its source loop, and
-`Buffer::reallocate` uses that prefix relocation. The combined owning-buffer
+`Vec::reallocate` uses that prefix relocation. The combined owning-buffer
 growth example verifies within the unchanged work limit and runs with the
 representation-transfer path. The checker avoids unused entry-pointee snapshots
 and skips trust-free evidence subgraphs when computing trust summaries.

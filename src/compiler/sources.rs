@@ -68,8 +68,8 @@ const LIBRARIES: &[Library] = &[
     Library {
         module: Some("vec"),
         exports: &[],
-        path: "stdlib/vec/buffer.evg",
-        source: include_str!("../../stdlib/vec/buffer.evg"),
+        path: "stdlib/vec/copy.evg",
+        source: include_str!("../../stdlib/vec/copy.evg"),
     },
     Library {
         module: Some("vec"),

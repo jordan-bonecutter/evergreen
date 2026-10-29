@@ -3552,14 +3552,25 @@ fn consuming_an_owning_method_preserves_payload_borrows_until_the_new_owner_drop
             .proof_search_count(),
         0
     );
-    assert!(verify(&source.replace_evg("    *borrowed", "    drop(data); *borrowed")).is_err());
-    assert!(verify(&source.replace_evg("    *borrowed", "    values.length()")).is_err());
+    assert!(verify(&source.replace_evg(
+        "    let answer = *borrowed;",
+        "    arrays::drain_prefix::<usize>(2, data, 1); let answer = *borrowed;"
+    ))
+    .is_err());
+    assert!(verify(&source.replace_evg(
+        "    let answer = *borrowed;",
+        "    let answer = values.length();"
+    ))
+    .is_err());
     let header = source
         .replace_evg(
-            "    let data = values.into_data();",
-            "    let header = &values; let data = values.into_data();",
+            "    let data = values.into_storage();",
+            "    let header = &values; let data = values.into_storage();",
         )
-        .replace_evg("    *borrowed", "    header.length()");
+        .replace_evg(
+            "    let answer = *borrowed;",
+            "    let answer = header.length();",
+        );
     assert!(verify(&header).is_err());
 }
 

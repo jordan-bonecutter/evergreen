@@ -1,198 +1,220 @@
-// An owned vector of initialized elements. Capacity changes are explicit.
 module vec;
 
-opaque type Vec<T = usize> struct {cap: usize, len: usize, data: Null | unique(T, cap)} where (
+// Move owners through a sparse buffer, preserving the initialized prefix and vacant suffix.
+opaque type Vec<T = usize> struct {cap: usize, len: usize, data: Null | unique(T | shape(T), cap)} where (
     fact length_fits = len <= cap;
     fact storage_matches_capacity = (cap == 0) == (typeof(data) == Null);
+    fact initialized_prefix = if (typeof(data) != Null) {
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer::from(len) &&
+            i < integer::from(cap)
+        ) {typeof((*data)[i]) == T}
+    } else {true};
+    fact vacant_suffix = if (typeof(data) != Null) {
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer::from(len) <= i &&
+            i < integer::from(cap)
+        ) {typeof((*data)[i]) == shape(T)}
+    } else {true};
     length_fits &&
-    storage_matches_capacity
+    storage_matches_capacity &&
+    initialized_prefix &&
+    vacant_suffix
 );
 
-fn allocate_buffer<T = usize>(capacity: usize, initial: T) -> unique(T, capacity)
-    where
-        (
-            capacity > 0 &&
-            integer(capacity) * integer(size_of(T)) <= integer(isize::MAX)
-        )
-{
-    alloc(capacity, initial)
-}
-
 fn discard_zero(value: Null) {}
-fn discard_buffer<T>(ideal n: nat, value: unique(T, n)) {}
 impl<T> Drop for Vec<T> {
     fn drop({cap, len, data}) {
-        if cap == 0 {discard_zero(data)} else {discard_buffer::<T>(data)}
+        if cap == 0 {discard_zero(data)} else {arrays::drain_prefix::<T>(cap, data, len)}
     }
 }
-
-fn copy_prefix<T = usize>(
-    source_capacity: usize,
-    source: linear_plane(T, source_capacity),
-    target_capacity: usize,
-    target: linear_plane(T, target_capacity),
-    count: usize,
-    index: usize
-)
-    where
-        (index <= count &&
-        count <= source_capacity &&
-        count <= target_capacity)
-    modifies(target)
-{
-    let cursor = index;
-    while cursor < count
-        invariant
-            (cursor <= count &&
-            count <= source_capacity &&
-            count <= target_capacity)
-        modifies(target, &cursor)
-        decreases(count - cursor)
-    {
-        (*target)[cursor] = (*source)[cursor];
-        cursor = cursor + 1;
-    }
-}
-
-// The checked vector API lives on Vec; storage copying remains reusable.
 impl<T> Vec<T> {
-    // Initialize backing capacity while the logical vector remains empty.
-    // Concrete instantiation must prove that duplicating initial is permitted.
-    fn filled(capacity: usize, initial: T) -> Self
-        where
-            (integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
-        ensures
-            (result.len == 0 &&
-            result.cap == capacity)
-    {
-        let data: Null | unique(T, capacity) = if capacity == 0 {0} else {allocate_buffer::<T>(capacity, initial)};
-        Self {cap: capacity, len: 0, data: data}
-    }
-
     fn new(capacity: usize) -> Self
         where
-            (integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
+            integer::from(capacity) * integer::from(size_of(T)) <= integer::from(isize::MAX)
         ensures
-            (result.len == 0 &&
-            result.cap == capacity)
+            result.len == 0 &&
+            result.cap == capacity
     {
-        Self::filled(capacity, 0)
+        let data: Null | unique(T | shape(T), capacity) = if capacity == 0 {0} else {alloc(capacity, shape(T))};
+        Self {cap: capacity, len: 0, data: data}
+    }
+    method& push(item: T)
+        where
+            self.len < self.cap
+        modifies(&self.len, &(*self.data)[self.len])
+        ensures
+            self.len == old(self.len) + 1 &&
+            same_value((*self.data)[old(self.len)], item)
+    {
+        proof before_live:
+            arrays::initialized_prefix::<T>(&*self.data, integer::from(self.len)) by {omega};
+        proof before_empty:
+            arrays::vacant_suffix::<T>(&*self.data, integer::from(self.len)) by {omega};
+        update(*self) lifts initialized_prefix,
+        vacant_suffix {
+            (*self.data)[self.len] = item;
+            self.len = self.len + 1;
+            proof after_live:
+                arrays::initialized_prefix::<T>(&*self.data, integer::from(self.len)) by {
+                    using before_live;
+                    intro prior;
+                    intro i;
+                    omega
+                };
+            proof after_empty:
+                arrays::vacant_suffix::<T>(&*self.data, integer::from(self.len)) by {
+                    using before_empty;
+                    intro prior;
+                    intro i;
+                    omega
+                };
+        }
+    }
+    method& pop() -> T
+        where
+            self.len > 0
+        modifies(&self.len, &(*self.data)[self.len - 1])
+        ensures
+            self.len + 1 == old(self.len) &&
+            same_value(result, old((*self.data)[self.len - 1]))
+    {
+        proof before_live:
+            arrays::initialized_prefix::<T>(&*self.data, integer::from(self.len)) by {omega};
+        proof before_empty:
+            arrays::vacant_suffix::<T>(&*self.data, integer::from(self.len)) by {omega};
+        let output: T | shape(T) = shape(T);
+        update(*self) lifts initialized_prefix,
+        vacant_suffix {
+            let value: T = move((*self.data)[self.len - 1]);
+            output = value;
+            self.len = self.len - 1;
+            proof after_live:
+                arrays::initialized_prefix::<T>(&*self.data, integer::from(self.len)) by {
+                    using before_live;
+                    intro prior;
+                    intro i;
+                    omega
+                };
+            proof after_empty:
+                arrays::vacant_suffix::<T>(&*self.data, integer::from(self.len)) by {
+                    using before_empty;
+                    intro prior;
+                    intro i;
+                    omega
+                };
+        }
+        output
+    }
+    // Keep the first length elements and drop the removed suffix in reverse order.
+    method truncate(length: usize) -> Self
+        where
+            self.cap > 0 &&
+            length <= self.len
+        ensures
+            result.len == length &&
+            result.cap == old(self.cap)
+    {
+        let Self {cap, len, data} = self;
+        let kept = arrays::truncate_prefix::<T>(cap, data, len, length);
+        Self {cap: cap, len: length, data: kept}
     }
 
+    method release_empty() -> Self
+        where
+            self.len == 0
+        ensures
+            result.len == 0 &&
+            result.cap == 0
+    {
+        let Self {cap, len, data} = self;
+        if cap == 0 {discard_zero(data)} else {
+            proof before_empty:
+                len == 0 &&
+                arrays::vacant_suffix::<T>(&*data, integer::from(len)) by {
+                    constructor;
+                    omega;
+                    omega
+                };
+            proof vacant:
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < integer::from(cap)
+                ) {typeof((*data)[i]) == shape(T)} by {
+                    using before_empty;
+                    intro prior;
+                    cases prior with empty,
+                    range;
+                    intro i;
+                    omega
+                };
+            arrays::release_empty::<T>(cap, data)
+        };
+        Self::new(0)
+    }
+
+    method reallocate(new_capacity: usize) -> Self
+        where
+            new_capacity > 0 &&
+            self.len <= new_capacity &&
+            integer::from(new_capacity) * integer::from(size_of(T)) <= integer::from(isize::MAX)
+        ensures
+            result.len == old(self.len) &&
+            result.cap == new_capacity &&
+            (
+                if old(self.cap) == 0 {true} else {
+                    forall(i: integer)
+                    where (
+                        0 <= i &&
+                        i < integer::from(old(self.len)) &&
+                        i < integer::from(old(self.cap)) &&
+                        i < integer::from(new_capacity)
+                    ) {same_value((*result.data)[i], old(*self.data)[i])}
+                }
+            )
+    {
+        let Vec::<T> {cap, len, data} = self;
+        if cap == 0 {
+            discard_zero(data);
+            Self::new(new_capacity)
+        } else {
+            let grown = arrays::relocate_prefix::<T>(cap, data, len, new_capacity);
+            Self {cap: new_capacity, len: len, data: grown}
+        }
+    }
     method& length() -> usize
         ensures
-            (result == self.len)
+            result == self.len
     {
         self.len
     }
-
     method& capacity() -> usize
         ensures
-            (result == self.cap)
+            result == self.cap
     {
         self.cap
     }
-
     method& get(index: usize) -> &T
         where
-            (index < self.len)
+            index < self.len
         borrows(&(*self.data)[index])
     {
         &(*self.data)[index]
     }
-
-    method& push(item: T)
-        where
-            (self.len < self.cap)
-        modifies(&self.len, &(*self.data)[self.len])
-        ensures
-            (
-                self.len == old(self.len) + 1 &&
-                same_value((*self.data)[old(self.len)], item)
-            )
-    {
-        (*self.data)[self.len] = item;
-        self.len = self.len + 1;
-    }
-
-    method& pop() -> T
-        where
-            (self.len > 0)
-        modifies(&self.len)
-        ensures
-            (
-                self.len + 1 == old(self.len) &&
-                same_value(result, old((*self.data)[self.len - 1]))
-            )
-    {
-        let item = (*self.data)[self.len - 1];
-        self.len = self.len - 1;
-        item
-    }
-
-    // Return fresh storage; assignment releases the previous allocation and
-    // invalidates references into that buffer.
-    method& reallocate(new_capacity: usize) -> Self
-        where
-            (
-                self.len <= new_capacity &&
-                integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX)
-            )
-        ensures
-            (
-                result.len == old(self.len) &&
-                result.cap == new_capacity &&
-                (
-                    if old(self.len) > 0 {
-                        forall(i: integer)
-                        where (
-                            0 <= i &&
-                            i < integer::from(old(self.len))
-                        ) {same_value((*result.data)[i], old(*self.data)[i])}
-                    } else {true}
-                )
-            )
-    {
-        self.reallocate_filled(new_capacity, 0)
-    }
-
-    method& reallocate_filled(new_capacity: usize, initial: T) -> Self
-        where
-            (
-                self.len <= new_capacity &&
-                integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX)
-            )
-        ensures
-            (
-                result.len == old(self.len) &&
-                result.cap == new_capacity &&
-                (
-                    if old(self.len) > 0 {
-                        forall(i: integer)
-                        where (
-                            0 <= i &&
-                            i < integer::from(old(self.len))
-                        ) {same_value((*result.data)[i], old(*self.data)[i])}
-                    } else {true}
-                )
-            )
-    {
-        let grown = Self::filled(new_capacity, initial);
-        if self.len == 0 {()} else {
-            arrays::copy_range::<T>(self.cap, &*self.data, new_capacity, &*grown.data, 0, self.len);
-        };
-        grown.len = self.len;
-        grown
-    }
-
-    // Complete consumption transfers the live allocation; an empty vector has
-    // no allocated plane to return.
-    method into_data() -> unique(T, self.cap)
+    // Transfer the actual backing storage, including any vacant slots.
+    method into_storage() -> unique(T | shape(T), self.cap)
         where
             self.cap > 0
+        ensures
+            arrays::initialized_prefix::<T>(&*result, integer::from(old(self.len))) &&
+            arrays::vacant_suffix::<T>(&*result, integer::from(old(self.len)))
     {
-        let Vec::<T> {cap, len, data} = self;
+        let Self {cap, len, data} = self;
         data
     }
-
 }

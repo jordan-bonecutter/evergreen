@@ -2092,62 +2092,30 @@ being worked through with the vector implementation. Range initialization and
 cleanup of a dynamic prefix, typed member borrowing, and arbitrary resizing in
 place remain unfinished.
 
-### Owned vector with initialized backing storage
+### Owned vector with vacant capacity
 
-`stdlib/vec/vec.evg` supplies `vec::Vec<T = usize>` with an opaque three-word
-representation: capacity, length, and `Null | unique(T, cap)`. `Null` is a
-pointer-sized scalar constrained to zero, with target-defined layout and an
-explicit target Copy implementation. The invariant selects `Null` exactly when
-capacity is zero; otherwise the pointer's extent
-depends on capacity. The raw union has no runtime discriminator.
-`examples/vec.evg` checks and runs without explicitly supplying library
-files:
+`stdlib/vec/vec.evg` supplies the source-defined `vec::Vec<T = usize>` with an
+opaque capacity, length, and `Null | unique(T | shape(T), cap)` header.
+`new(0)` performs no allocation. Positive capacities reserve vacant slots;
+push initializes one slot and pop moves one value out. Its destructor drops only
+the live prefix, then releases the allocation. Copy elements and supported owning
+elements use the same API and target layouts.
 
 ```sh
 cargo run -- run examples/vec.evg
 cargo run -- build examples/vec.evg -o /tmp/vec
 ```
 
-`new(0)` stores a zero word without allocating; positive capacities allocate
-initialized integer storage. Its source-defined Drop releases only the allocated
-case. `value.push(item)` requires
-spare capacity, `value.pop()` requires a nonempty vector, and `value.get(index)`
-returns a checked reference to an element below length. `length` and `capacity`
-expose those quantities without exposing the representation. Capacity is bounded
-by addressability:
-`integer(capacity) * integer(size_of(T)) <= integer(isize::MAX)`.
-Native allocation can still fail at runtime; the interpreter has a separate work
-budget. Neither imposes a 8192-element language limit.
+Capacity changes are explicit. `values = values.reallocate(capacity)` consumes
+the old vector and preserves its live values in fresh storage. Use
+`values.release_empty()` for zero capacity. `into_storage()` transfers the actual
+union-element allocation, including its vacant suffix; it does not expose spare
+capacity as initialized values. The older filled-capacity APIs are removed.
 
-`value = value.reallocate(new_capacity)` copies the live prefix to fresh
-storage and releases the previous buffer on assignment. Reallocating an empty
-vector to zero performs no allocation. Borrows of the Vec header remain valid
-across replacement because its storage layout is unchanged. Existing references
-into the released buffer become invalid. Pushes within capacity retain the same
-allocation, preserving references to existing cells. Reallocation must accommodate
-all live elements; shrinking below length is rejected.
-
-Explicit specializations support integer and Boolean copy operations, for example
-`vec::Vec::<u8>::new(2)`. `filled(capacity, initial)` creates an empty vector with
-every backing slot initialized to a copy of `initial`; Boolean storage uses this
-constructor. `reallocate_filled(new_capacity, initial)` supplies the initializer
-for replacement storage. Flat scalar records with explicit Copy implementations
-can initialize storage and transfer it with `into_data()`. Generic record
-push/pop contracts still need an equality interface. See [vec.md](vec.md).
-
-This is not yet the README's vector of move-only resources. All capacity slots are initialized copyable values;
-uninitialized slots and arbitrary element destructors need further work. The
-checker proves access bounds, ownership, and the length/capacity invariant. Prefix
-copying is implemented as an Evergreen `while` loop whose invariant proves the
-cursor stays within both buffer extents. Native copies no longer consume a
-recursive activation per element. Its `decreases(count - cursor)` clause proves
-termination after iteration cleanup; interpreter execution remains fuel-bounded.
-`examples/buffer_copy.evg` exercises a nonzero starting index and
-an untouched suffix. Interpreter/native comparisons exercise its behavior;
-its contract does not yet prove preservation
-of every copied element. No vector-specific compiler primitive or trusted proof
-was added.
-
+See [vec.md](vec.md) for contracts, examples, and current verifier limitations.
+In particular, repeated populated growth can exceed the work budget, and some
+conditional storage joins remain unsupported. The reusable Copy-array loop
+`vec::copy_prefix` remains independent of Vec in `stdlib/vec/copy.evg`.
 
 ### Field autodereferencing
 
@@ -2308,9 +2276,9 @@ method runs ordinary cleanup for any receiver value it does not return or move.
 
 `examples/methods.evg` demonstrates a constructor, borrowed mutation, proof-time
 accessor use, and a consuming method. `examples/vec.evg` uses the Vec method
-interface, implemented directly in the methods. Vec's `method&`
-reallocation returns a fresh Vec to assign over the old value. Its consuming
-`into_data` method transfers the existing allocation using complete receiver
+interface, implemented directly in the methods. Vec's consuming `method`
+reallocation transfers values into a fresh Vec. Its consuming
+`into_storage` method transfers the existing allocation using complete receiver
 destructuring. `examples/owned_method_transfer.evg` proves that an element
 borrow survives this header move and becomes invalid when the new owner frees
 that allocation. References to the moved header itself do not survive.
