@@ -1,0 +1,33 @@
+type Envelope<T> struct {payload: T}
+
+impl<T> Envelope<T> {
+    method open() -> T {
+        match self {
+            Self {payload: value} => value,
+        }
+    }
+}
+
+fn consume<T>(value: T) {}
+
+impl<T> Drop for Envelope<T> {
+    fn drop({payload}) {
+        consume::<T>(payload);
+    }
+}
+
+type Resource struct {value: usize}
+
+impl Drop for Resource {
+    fn drop({value}) {}
+}
+
+fn main() -> usize {
+    let envelope = Envelope::<Resource> {
+        payload: Resource {value: 42}
+    };
+    let resource = envelope.open();
+    match resource {
+        Resource {value} => value,
+    }
+}

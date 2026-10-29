@@ -186,25 +186,7 @@ impl Parser {
         if self.eat("{") {
             let target =
                 receiver.ok_or_else(|| self.err("receiver patterns require an impl scope"))?;
-            let mut fields = Vec::new();
-            if !self.eat("}") {
-                loop {
-                    let field = self.name()?;
-                    let binding = if self.eat(":") {
-                        self.name()?
-                    } else {
-                        field.clone()
-                    };
-                    fields.push((field, binding));
-                    if self.eat("}") {
-                        break;
-                    }
-                    self.expect(",")?;
-                    if self.eat("}") {
-                        break;
-                    }
-                }
-            }
+            let fields = self.pattern_fields()?;
             self.expect(")")?;
             return Ok(Parameters {
                 values: vec![("self".into(), Type::Named(target.to_owned()))],

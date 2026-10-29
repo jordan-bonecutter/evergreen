@@ -163,3 +163,36 @@ fn integer_matches_evaluate_once_preserve_guards_and_clean_up_the_selected_arm()
         assert!(verify(invalid).is_err(), "accepted {invalid}");
     }
 }
+
+#[test]
+fn record_matches_move_complete_fields_and_keep_bindings_scoped() {
+    let source = include_str!("../../../examples/match_record.evg");
+    let (program, bundle) = prove(source).unwrap();
+    let (value, events) = program.run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    // Both records are consumed by complete patterns, so neither parent drops.
+    assert!(events.is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let cleanup = source.replace(
+        "let resource = envelope.open();\n    match resource {\n        Resource {value} => value,\n    }",
+        "match envelope {Envelope::<Resource> {payload} => payload.value}",
+    );
+    assert_ne!(cleanup, source);
+    let (value, events) = verify(&cleanup).unwrap().run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert_eq!(events, ["drop Resource"]);
+    let scoped = "type Pair struct {a: usize, b: usize} fn main() -> usize {let outside: usize = 7; match Pair {a: 1, b: 2} {Pair {a, b} => a + b}; outside}";
+    assert_eq!(verify(scoped).unwrap().run().unwrap().to_string(), "7");
+    for invalid in [
+        "type Pair struct {a: usize, b: usize} fn main() -> usize {match Pair {a: 1, b: 2} {Pair {a} => a}}",
+        "type Pair struct {a: usize, b: usize} fn main() -> usize {match Pair {a: 1, b: 2} {Pair {a, b} => a, _ => 0}}",
+        "type Pair struct {a: usize, b: usize} fn main() -> usize {match Pair {a: 1, b: 2} {Pair {a, b} => a}; a}",
+        "type Box struct {data: unique(usize)} fn main() -> usize {let b = Box {data: alloc(42)}; match b {Box {data} => drop(data)}; *b.data}",
+        "type Pair struct {a: usize, b: usize} fn bad() -> &usize {match Pair {a: 1, b: 2} {Pair {a, b} => &a}} fn main() -> usize {0}",
+    ] { assert!(verify(invalid).is_err(), "accepted {invalid}"); }
+}

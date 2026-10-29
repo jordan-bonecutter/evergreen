@@ -256,25 +256,7 @@ impl Parser {
             return Err(self.err("qualified let names require a record pattern"));
         }
         if !fact && self.eat("{") {
-            let mut fields = Vec::new();
-            if !self.eat("}") {
-                loop {
-                    let field = self.name()?;
-                    let binding = if self.eat(":") {
-                        self.name()?
-                    } else {
-                        field.clone()
-                    };
-                    fields.push((field, binding));
-                    if self.eat("}") {
-                        break;
-                    }
-                    self.expect(",")?;
-                    if self.eat("}") {
-                        break;
-                    }
-                }
-            }
+            let fields = self.pattern_fields()?;
             self.expect("=")?;
             let value = self.expr(0)?;
             self.expect(";")?;

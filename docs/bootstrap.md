@@ -679,7 +679,7 @@ sharing its proof, cleanup, effect, and native rules.
 
 Source flags can select raw-union payloads when a refinement establishes their
 active types. The ideal type selector remains erased; matching adds no runtime
-tag. Named data patterns, payload bindings, and guards remain future work.
+tag. Named variant patterns, variant payload bindings, and guards remain future work.
 `examples/match.evg` checks a side-effecting
 scrutinee once, selects a raw-union member, and runs in both backends.
 `examples/match_blocks.evg` checks arm-local destructors and writes to caller
@@ -700,6 +700,22 @@ conditionals. Literals must fit the input type; duplicate numeric values and
 arms after `_` are rejected. Integer exhaustiveness is not inferred from the
 type's range yet. `examples/match_literals.evg` checks a side-effecting input,
 an arm-local destructor, and the selected result.
+
+A single complete record pattern can bind fields in a match arm:
+
+```evg
+match envelope {
+    Envelope::<Resource> {payload: value} => value,
+}
+```
+
+This uses the same checked destructuring as `let Envelope {payload} = envelope`.
+All fields must be named exactly once, and additional arms are unreachable.
+Moving a non-Copy record consumes its parent without running the parent's
+destructor; the arm owns the extracted fields and cleans up any it does not
+return. Bindings are local to the arm. `Self` works inside implementations,
+as shown in `examples/match_record.evg`. Nested patterns and field wildcards
+remain unsupported.
 
 The same expression scopes work in `if` arms and standalone `{ ... }` values.
 An `if` without `else` has an implicit unit alternative; both branches must

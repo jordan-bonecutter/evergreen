@@ -1,4 +1,4 @@
-//! Literal matching lowers to ordinary checked conditionals.
+//! Matching lowers to ordinary checked conditionals and complete destructuring.
 //! The scrutinee is evaluated once; type/ownership/effect rules stay shared.
 
 use super::*;
@@ -12,9 +12,69 @@ impl Parser {
         self.expect("{")?;
         if matches!(self.peek(), "true" | "false" | "_") {
             self.boolean_match(condition, line)
+        } else if self.peek().starts_with(|ch: char| ch.is_ascii_alphabetic()) {
+            self.record_match(condition, line)
         } else {
             self.integer_match(condition, temporary, line)
         }
+    }
+
+    // Shared with let patterns and Drop receivers. Call after the opening brace.
+    pub(super) fn pattern_fields(&mut self) -> Result<Vec<(String, String)>, String> {
+        let mut fields = Vec::new();
+        while !self.eat("}") {
+            let field = self.name()?;
+            let binding = if self.eat(":") {
+                self.name()?
+            } else {
+                field.clone()
+            };
+            fields.push((field, binding));
+            if self.eat("}") {
+                break;
+            }
+            self.expect(",")?;
+        }
+        Ok(fields)
+    }
+
+    fn record_match(&mut self, value: Expr, line: usize) -> Result<Expr, String> {
+        let mut record = self.name()?;
+        let mut arguments = Vec::new();
+        while self.eat("::") {
+            if self.peek() == "<" {
+                arguments = self.generic_arguments()?;
+                break;
+            }
+            record.push_str("::");
+            record.push_str(&self.name()?);
+        }
+        self.expect("{")?;
+        let fields = self.pattern_fields()?;
+        self.expect("=>")?;
+        let arm = if self.peek() == "{" {
+            self.block_expression()?
+        } else {
+            self.expr(0)?
+        };
+        self.eat(",");
+        if !self.eat("}") {
+            return Err(self.err(
+                "a complete record pattern covers the input; additional arms are unreachable",
+            ));
+        }
+        Ok(Expr {
+            kind: Kind::Block(
+                vec![Statement::Destructure {
+                    record,
+                    arguments,
+                    fields,
+                    value,
+                }],
+                Box::new(arm),
+            ),
+            line,
+        })
     }
 
     fn boolean_match(&mut self, condition: Expr, line: usize) -> Result<Expr, String> {
