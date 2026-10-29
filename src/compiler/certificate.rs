@@ -15,7 +15,7 @@ const MAX_RECORDS: usize = 20_000;
 const MAX_WEIGHTS: usize = 2048;
 const MAX_CHECK_WORK: usize = 2_000_000;
 const HEADER: &str = "evergreen-proof 1";
-const MODEL: &str = "model bootstrap64-linear-v2";
+const MODEL: &str = "model bootstrap64-linear-v3";
 
 fn source_hash(source: &str) -> String {
     let mut h = Sha256::new();
@@ -261,6 +261,7 @@ pub(crate) struct Session {
     trusted: Vec<TrustRecord>,
     trust_summary: Vec<TrustedAssumption>,
     searches: usize,
+    checked: BTreeMap<String, Certificate>,
 }
 
 impl Session {
@@ -275,6 +276,7 @@ impl Session {
             trusted: Vec::new(),
             trust_summary: Vec::new(),
             searches: 0,
+            checked: BTreeMap::new(),
         }
     }
 
@@ -323,15 +325,18 @@ impl Session {
         rows: &[Affine<V>],
         optional: bool,
     ) -> Result<Option<Vec<usize>>> {
-        if self.cursor >= MAX_RECORDS {
+        // Reuse a certificate, never a context's truth or premise origins.
+        // Every hit is checked against the current rows below, and callers
+        // reconstruct dependency edges from the returned current row indices.
+        let statement = statement_hash(rows);
+        let cached = self.checked.get(&statement).cloned();
+        let reused = cached.is_some();
+        if !reused && self.cursor >= MAX_RECORDS {
             return Err("verification query limit reached".into());
         }
-        let statement = if self.recording || self.replay.is_some() {
-            statement_hash(rows)
-        } else {
-            String::new()
-        };
-        let certificate = if let Some(bundle) = &self.replay {
+        let certificate = if let Some(certificate) = cached {
+            Some(certificate)
+        } else if let Some(bundle) = &self.replay {
             let record = bundle
                 .records
                 .get(self.cursor)
@@ -372,14 +377,19 @@ impl Session {
         let support = certificate
             .as_ref()
             .map(|certificate| certificate.weights().map(|(index, _)| index).collect());
-        if self.recording {
-            self.records.push(Record {
-                statement,
-                certificate,
-                optional,
-            });
+        if !reused {
+            if let Some(certificate) = &certificate {
+                self.checked.insert(statement.clone(), certificate.clone());
+            }
+            if self.recording {
+                self.records.push(Record {
+                    statement,
+                    certificate,
+                    optional,
+                });
+            }
+            self.cursor += 1;
         }
-        self.cursor += 1;
         Ok(support)
     }
 
@@ -676,6 +686,31 @@ mod support_tests {
         assert_eq!(replay.prove_with_support(&rows).unwrap(), expected);
         replay.finish().unwrap();
         assert_eq!(replay.search_count(), 0);
+    }
+
+    #[test]
+    fn reused_certificates_are_rechecked_metered_and_replayed() {
+        let rows = vec![Linear::number(-1), Linear::variable("unused")];
+        let mut recording = Session::recording();
+        let support = recording.probe_with_support(&rows).unwrap().unwrap();
+        let first_work = recording.work;
+        assert_eq!(recording.prove_with_support(&rows).unwrap(), support);
+        assert_eq!(recording.work, 2 * first_work);
+        assert_eq!(recording.search_count(), 1);
+        let bundle = recording.bundle("reuse test").unwrap();
+        assert_eq!(bundle.certificate_count(), 1);
+        let mut replay = Session::replay(&bundle);
+        assert_eq!(replay.probe_with_support(&rows).unwrap().unwrap(), support);
+        assert_eq!(replay.prove_with_support(&rows).unwrap(), support);
+        replay.finish().unwrap();
+        assert_eq!(replay.search_count(), 0);
+
+        // The digest is only an index. Even a corrupted cache entry must pass
+        // the kernel against the actual query before it yields any evidence.
+        let invalid = vec![Linear::number(1)];
+        let certificate = replay.checked.values().next().unwrap().clone();
+        replay.checked.insert(statement_hash(&invalid), certificate);
+        assert!(replay.prove_with_support(&invalid).is_err());
     }
 
     #[test]

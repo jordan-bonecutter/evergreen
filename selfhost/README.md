@@ -26,7 +26,7 @@ with status 42.
 
 `lexer::tokenize` builds a `vec::Vec<Token>` in a verified loop, with at most one
 token per source byte. Its declaration verifies, but composing its call with
-subsequent token inspection currently exceeds the verifier's unchanged query
+subsequent token inspection currently exceeds the verifier's unchanged path-processing work
 budget. The runnable smoke program scans incrementally while that modular
 verification cost is addressed. The `examples/vec_loop.evg` example separately
 exercises native Vec pushes in a loop.

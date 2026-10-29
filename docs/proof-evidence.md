@@ -553,6 +553,16 @@ the terms; artifacts supply certificate weights, not trusted term definitions.
 The same arithmetic checker validates those weights against exact regenerated
 atom identities. Digests select cached queries but never establish term equality.
 
+Within a verification session, successful identical arithmetic queries reuse
+their certificate. Every reuse still checks the certificate against the current
+rows and charges the existing kernel-checking work budget. The returned row
+indices are mapped to the current premise origins, so a certificate cache does
+not cache admission dependencies, plane freshness, or a proposition's truth.
+Failed optional probes are not cached. The record limit bounds newly recorded
+queries; repeated checked certificates need no additional artifact records.
+Artifact model `bootstrap64-linear-v3` uses this deterministic reuse during both
+recording and replay. Older artifacts must be regenerated.
+
 Commitments are computed on demand with a work budget and cached on immutable
 nodes. All rows in one query share a traversal, and later observations of a cached
 root need no descendant traversal. Tests replay structured queries after creating
