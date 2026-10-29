@@ -60,30 +60,26 @@ Case coverage, source typing, and frontend resource transitions remain trusted
 compiler boundaries. Arithmetic leaves replay through the internal certificate
 checker; this is not an independently checked theorem of the whole compiler.
 
-## Owning-buffer profiling follow-up
+## Snapshot cost and owning-buffer composition
 
-The combined sparse-buffer push/grow/pop probe still exhausts the unchanged
-262144-unit work budget during the vacant-suffix frame proof in `pop`. Filtering
-logical candidates by every required predicate moved this failure past the
-live-prefix frame proof but did not complete verification.
+[`buffer_growth.evg`](../examples/buffer_growth.evg) verifies the combined
+push/grow/pop sequence within the unchanged 262144-unit work budget. Native
+x86-64 execution returns 42. This does not establish a bound for arbitrary
+compositions or complete the public Vec migration.
 
-A temporary caller-location trace of `charge_value_work` identified about 39,000
-charged units in `snapshot_memory` and `clone_store` together for this probe.
-This is charged symbolic work, not a wall-clock timing measurement. Inspection
-confirmed that `Memory::snapshot` clones `Vec<Plane<T>>`, including payloads;
-these snapshots are not yet persistent plane maps. The tracing was removed.
-
-The next storage optimization should share immutable plane state and copy only
-changed planes. It must retain arena identity, generations, ownership census
-revisions, and branch isolation. Snapshot charging must reflect shared metadata,
-while writes must charge any actual payload copies. Merely discounting today's
-deep copies or raising the budget would hide the cost rather than remove it.
+Before payload sharing, a temporary caller-location trace identified about
+39,000 charged units in `snapshot_memory` and `clone_store` together for this
+probe. This measured symbolic work, not elapsed time. The tracing was removed.
 
 Plane payloads now use immutable shared storage. A snapshot copies plane metadata
 and owner-token sets but shares payloads; writes install new payloads, and taking
 a value clones its payload only if another snapshot retains it. The verifier
 charges snapshot metadata and conservatively charges payload work at `take`.
-This is payload sharing, not yet a persistent map for the plane metadata itself.
-The combined buffer probe now passes the previous budget failure and reaches an
-unproved initialized-prefix invariant after `pop`; the full migration is still
-unfinished.
+Arena identities, generations, ownership census revisions, and branch isolation
+remain intact. This is payload sharing, not yet a persistent map for the plane
+metadata itself.
+
+Actual-body calls also re-prove and export logical invariants of unconditionally
+available modified record inputs before restoring caller proof scope. This
+preserves the checked initialized-prefix and vacant-suffix guarantees after
+`pop`. Conditional input views still need a corresponding guarded export path.
