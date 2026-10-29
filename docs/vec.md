@@ -175,3 +175,20 @@ This supplies individual-slot value guarantees for vacant storage. Quantified
 `same_value` over union-element arrays and equality of owning payloads remain
 unsupported; preserving the public Vec's full value contracts still requires
 that work.
+
+`Buffer::truncate(length)` consumes the header and returns a buffer with the
+requested shorter length and unchanged capacity. Use
+`values = values.truncate(length)`. The source helper `arrays::truncate_prefix`
+drops the removed suffix in reverse order and proves the remaining live prefix
+and vacant suffix; `drain_prefix` now reuses it with a retained length of zero.
+[buffer_truncate.evg](../examples/buffer_truncate.evg) truncates two unique owners
+to one, reads the survivor, and releases the remaining storage at scope exit.
+Truncating to zero also permits `release_empty()` afterward.
+
+This bootstrap method currently requires positive capacity and a requested
+length no greater than the current length. Joining a zero-capacity branch with
+the mutated owning array is not yet supported. A subsequent `pop()` can also
+fail the checker's universal-proof dependency check; reading the survivor and
+ordinary cleanup are supported. These are implementation gaps, not desired
+restrictions on the final Vec API. Truncation currently proves initialization
+and cleanup, not a quantified element-value preservation contract.

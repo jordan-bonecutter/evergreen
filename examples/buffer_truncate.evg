@@ -1,0 +1,9 @@
+// Truncate an owning prefix without reallocating its backing storage.
+fn main() -> usize {
+    let values = vec::Buffer::<unique(usize)>::new(4);
+    values.push(alloc(42));
+    values.push(alloc(7));
+    values = values.truncate(1);
+    proof size: values.length() == 1 && values.capacity() == 4;
+    **values.get(0)
+}

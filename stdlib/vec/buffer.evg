@@ -224,6 +224,20 @@ impl<T> Buffer<T> {
         }
         output
     }
+    // Keep the first length elements and drop the removed suffix in reverse order.
+    method truncate(length: usize) -> Self
+        where
+            self.cap > 0 &&
+            length <= self.len
+        ensures
+            result.len == length &&
+            result.cap == old(self.cap)
+    {
+        let Self {cap, len, data} = self;
+        let kept = arrays::truncate_prefix::<T>(cap, data, len, length);
+        Self {cap: cap, len: length, data: kept}
+    }
+
     method release_empty() -> Self
         where
             self.len == 0
