@@ -1964,8 +1964,15 @@ fn erased_move_only_resources_move_without_runtime_values_or_effects() {
         "ideal type WithRef struct {r: &usize} fn ignore(ideal resource: WithRef) -> usize {0}";
     assert!(verify(borrow).is_ok());
     let resource = "type Resource struct {} impl Drop for Resource {fn drop(self){}}";
+    assert!(verify(&format!(
+        "{resource} ideal fn observe_resource(resource: Resource) -> nat {{1}}"
+    ))
+    .is_ok());
+    assert!(verify(
+        "type Owner struct {data: unique(usize)} ideal fn consume_owner(owner: Owner) -> nat {1}"
+    )
+    .is_err());
     for bad in [
-        "ideal fn consume_resource(resource: Resource) -> nat {1}",
         "ideal fn make_resource() -> Resource {Resource {}}",
         "ideal fn make_hidden() -> nat {let r = Resource {}; 1}",
         "fn metadata(ideal u: ()) -> usize {0} fn main() -> usize {let r = Resource {}; metadata(drop(r))}",
