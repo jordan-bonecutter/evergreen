@@ -234,19 +234,26 @@ impl Context<'_> {
                     continue;
                 }
                 let p = self.proposition(requirement)?;
-                self.prove(&p, &format!("invariant of {name}"), line)
-                    .map_err(|error| {
-                        let expression = if let Kind::Name(fact) = &requirement.kind {
-                            def.facts
-                                .iter()
-                                .find(|(name, _)| name == fact)
-                                .map(|(_, value)| value)
-                                .unwrap_or(requirement)
-                        } else {
-                            requirement
-                        };
-                        self.requirement_error(error, expression, def.source, "invariant")
-                    })?;
+                self.prove(
+                    &p,
+                    &format!(
+                        "invariant of {}",
+                        self.diagnostic_type(&Ty::Record(name.clone()))
+                    ),
+                    line,
+                )
+                .map_err(|error| {
+                    let expression = if let Kind::Name(fact) = &requirement.kind {
+                        def.facts
+                            .iter()
+                            .find(|(name, _)| name == fact)
+                            .map(|(_, value)| value)
+                            .unwrap_or(requirement)
+                    } else {
+                        requirement
+                    };
+                    self.requirement_error(error, expression, def.source, "invariant")
+                })?;
             }
         }
         self.locals.values = saved;
