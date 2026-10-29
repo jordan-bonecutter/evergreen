@@ -288,13 +288,10 @@ impl Context<'_> {
                 let Some(key) = self.fact_call_key(name, arguments)? else {
                     return Ok(None);
                 };
-                for index in (0..self.proof.fact_calls.len()).rev() {
+                let count = self.proof.fact_calls.get(&key).map_or(0, Vec::len);
+                for index in (0..count).rev() {
                     self.charge_value_work(1)?;
-                    let (known, captured) = &self.proof.fact_calls[index];
-                    if known != &key {
-                        continue;
-                    }
-                    let captured = captured.clone();
+                    let captured = self.proof.fact_calls[&key][index].clone();
                     self.charge_value_work(captured.storage_weight()?)?;
                     if self
                         .proof

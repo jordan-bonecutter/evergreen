@@ -2,7 +2,7 @@
 
 use super::*;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(in crate::compiler::verify) enum ClaimKey {
     Type(Ty),
     Unit,
@@ -23,7 +23,7 @@ pub(in crate::compiler::verify) enum ClaimKey {
     Guarded(Vec<(Formula, Self)>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(in crate::compiler::verify) enum Scalar {
     Number(Linear),
     Bool(Formula),

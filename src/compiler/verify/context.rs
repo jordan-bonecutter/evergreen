@@ -37,7 +37,8 @@ pub(super) struct LogicalBinding {
 pub(super) struct ProofState {
     pub(super) representations: BTreeMap<subjects::Stamp, Linear>,
     pub(super) facts: BTreeMap<String, Expr>,
-    pub(super) fact_calls: Vec<(subjects::ClaimKey, subjects::Snapshot)>,
+    // Dependency footprints, indexed by call identity; never cached truth.
+    pub(super) fact_calls: BTreeMap<subjects::ClaimKey, Vec<subjects::Snapshot>>,
     pub(super) witnesses: BTreeMap<String, evidence::NodeId>,
     // Subjects of named intermediate proofs live only for their proof scope.
     pub(super) scoped_subjects: BTreeMap<evidence::NodeId, subjects::Snapshot>,

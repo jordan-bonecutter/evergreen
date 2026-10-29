@@ -103,13 +103,12 @@ impl<'a> Context<'a> {
             .apply_call(name, function, actuals, line)
             .map(|(value, snapshot)| {
                 if let (Some(key), Some(snapshot)) = (fact_key, snapshot) {
-                    if !self
-                        .proof
-                        .fact_calls
+                    let snapshots = self.proof.fact_calls.entry(key).or_default();
+                    if !snapshots
                         .iter()
-                        .any(|(prior, captured)| prior == &key && captured.key == snapshot.key)
+                        .any(|captured| captured.key == snapshot.key)
                     {
-                        self.proof.fact_calls.push((key, snapshot));
+                        snapshots.push(snapshot);
                     }
                 }
                 value

@@ -10,61 +10,19 @@ fn truncate_prefix<T>(
     where
         kept <= length &&
         length <= capacity &&
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                i < integer::from(length) &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == T}
-        ) &&
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(length) <= i &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == shape(T)}
-        )
+        arrays::initialized_prefix::<T>(&*data, integer::from(length)) &&
+        arrays::vacant_suffix::<T>(&*data, integer::from(length))
     ensures
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                i < integer::from(kept) &&
-                i < integer::from(capacity)
-            ) {typeof((*result)[i]) == T}
-        ) &&
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(kept) <= i &&
-                i < integer::from(capacity)
-            ) {typeof((*result)[i]) == shape(T)}
-        )
+        arrays::initialized_prefix::<T>(&*result, integer::from(kept)) &&
+        arrays::vacant_suffix::<T>(&*result, integer::from(kept))
 {
     let remaining = length;
     while remaining > kept
         invariant
             kept <= remaining &&
             remaining <= capacity &&
-            (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    i < integer::from(remaining) &&
-                    i < integer::from(capacity)
-                ) {typeof((*data)[i]) == T}
-            ) &&
-            (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    integer::from(remaining) <= i &&
-                    i < integer::from(capacity)
-                ) {typeof((*data)[i]) == shape(T)}
-            )
+            arrays::initialized_prefix::<T>(&*data, integer::from(remaining)) &&
+            arrays::vacant_suffix::<T>(&*data, integer::from(remaining))
         modifies(&*data, &remaining)
         decreases remaining
     {
@@ -171,22 +129,8 @@ fn truncate_prefix<T>(
 fn drain_prefix<T>(capacity: usize, data: unique(T | shape(T), capacity), length: usize)
     where
         length <= capacity &&
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                i < integer::from(length) &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == T}
-        ) &&
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(length) <= i &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == shape(T)}
-        )
+        arrays::initialized_prefix::<T>(&*data, integer::from(length)) &&
+        arrays::vacant_suffix::<T>(&*data, integer::from(length))
 {
     let vacant = truncate_prefix::<T>(capacity, data, length, 0);
     arrays::release_empty::<T>(capacity, vacant);

@@ -224,3 +224,11 @@ path. This removes unnecessary work without changing proof requirements.
 Converting all drain/Buffer range formulas and transport scripts to predicate
 helpers still exceeds the current work budget in the combined growth example;
 those broader refactors are not enabled yet.
+
+
+`truncate_prefix` and `drain_prefix` now expose the same named range predicates
+as relocation, including truncation's loop invariant. Their internal transport
+proofs remain explicit quantified scripts. Fact-call dependency lookup is indexed
+by call identity, so unrelated predicates no longer participate in that scan;
+matching snapshots still require current plane revisions. The combined growth
+example and truncation/replay regression pass with these contracts.
