@@ -155,4 +155,26 @@ mod tests {
         let bounded = source.replace("ensures", "where n < usize::MAX ensures");
         verify(&bounded).unwrap();
     }
+    #[test]
+    fn ideal_numeric_views_observe_noncopy_values_without_consuming_runtime_storage() {
+        let source = "type NonZero usize where self != 0; fn main() -> usize {let n = NonZero(42); proof first: integer::from(n) == 42; proof second: integer::from(n) == 42; n}";
+        let (program, bundle) = prove(source).unwrap();
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate(source, &bundle)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let item = "type Item struct {value: usize} impl Drop for Item {fn drop({value}) {}} ideal fn observe(value: Item) -> integer {integer::from(value.value)} fn main() -> usize {let item = Item {value: 42}; proof seen: observe(item) == 42; item.value}";
+        let (value, events) = verify(item).unwrap().run_with_events().unwrap();
+        assert_eq!(value.to_string(), "42");
+        assert_eq!(events, ["drop Item"]);
+        let changed = source.replace("proof second:", "n = NonZero(7); proof second:");
+        assert!(verify(&changed).is_err());
+        let invalid = "type NonZero usize where self != 0; impl NonZero {method add(other: Self) -> Self where integer::from(self) != 0 {NonZero(self + other)}}";
+        let error = verify(invalid).unwrap_err();
+        assert!(error.contains("invariant of NonZero"), "{error}");
+        assert!(!error.contains("ideal functions may borrow"), "{error}");
+    }
 }

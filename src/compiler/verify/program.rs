@@ -234,9 +234,13 @@ impl Verification {
             if f.ideal_params.contains(name) && !erased_type(ty, &self.structs) {
                 return Err(format!("line {}: ideal parameters may own only proof data; runtime owners must be borrowed", f.line));
             }
+            // Reference-free runtime values are read-only ideal snapshots;
+            // observing them neither moves the caller's value nor runs Drop.
+            // Actual pointer authority still requires a borrowed interface.
             if f.ideal
                 && is_move_only(ty, &self.structs, &self.drops, self.target)
                 && !erased_type(ty, &self.structs)
+                && type_has_reference(ty, &self.structs)
             {
                 return Err(format!(
                     "line {}: ideal functions may borrow runtime ownership but cannot consume it",
