@@ -63,3 +63,18 @@ fn ideal_update_locals_keep_their_erased_scope() {
     assert_eq!(program.run().unwrap().to_string(), "42");
     assert!(program.trusted_assumptions().is_empty());
 }
+
+#[test]
+fn reference_free_copy_records_can_be_update_locals() {
+    let source = "type Item struct {value: usize} impl Copy for Item {} type Pair struct {left: usize, right: usize} where (fact balanced = self.left == self.right; balanced); fn main() -> usize {let item = Item {value: 42}; let pair = Pair {left: 0, right: 0}; update(pair) lifts balanced {let copied = item; pair.left = copied.value; pair.right = copied.value;} pair.left}";
+    let (program, certificate) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &certificate)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let broken = source.replace("pair.right = copied.value;", "");
+    assert!(verify(&broken).unwrap_err().contains("invariant"));
+}

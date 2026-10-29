@@ -138,9 +138,10 @@ impl Context<'_> {
                 let ty = self.locals.values.get(name).ok_or("unknown update local")?.ty();
                 let allowed = scalar_value(&ty) || matches!(ty, Ty::Unit)
                     || matches!(&ty, Ty::Ref(inner) if scalar_value(inner))
-                    || self.ty_is_move_only(&ty);
+                    || self.ty_is_move_only(&ty)
+                    || matches!(ty, Ty::Record(_)) && !self.ty_has_reference(&ty);
                 if !allowed {
-                    return Err(format!("line {}: update locals require scalars, scalar borrows, or owners transferred before the block ends", value.line));
+                    return Err(format!("line {}: update locals require reference-free values, scalar borrows, or owners transferred before the block ends", value.line));
                 }
                 let local = self.locals.values.get(name).ok_or("unknown update local")?.clone();
                 self.validate_argument(&local, value.line)?;
