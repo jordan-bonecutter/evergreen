@@ -125,6 +125,7 @@ fn type_name(ty: &Type, budget: &mut usize) -> String {
         Type::Int => "integer".into(),
         Type::Nat => "nat".into(),
         Type::Bool => "bool".into(),
+        Type::Fact => "Fact".into(),
         Type::Unit => "()".into(),
         Type::Ref(inner) => {
             let text = type_name(inner, budget);

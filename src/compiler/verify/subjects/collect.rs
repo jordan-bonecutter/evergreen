@@ -15,6 +15,22 @@ impl Context<'_> {
         Ok(snapshot)
     }
 
+    pub(in crate::compiler::verify) fn fact_call_key(
+        &mut self,
+        name: &str,
+        arguments: &[Expr],
+    ) -> Result<Option<ClaimKey>> {
+        let mut keys = Vec::new();
+        for argument in arguments {
+            let subject = self.claim_subjects(argument)?;
+            let Some(key) = subject.key.filter(|_| subject.complete) else {
+                return Ok(None);
+            };
+            keys.push(key);
+        }
+        Ok(Some(ClaimKey::Call(name.into(), keys)))
+    }
+
     fn collect_subjects(
         &mut self,
         expression: &Expr,
@@ -245,6 +261,34 @@ impl Context<'_> {
                     }
                 }
                 complete.then_some(ClaimKey::Call(name.clone(), keys))
+            }
+            Kind::Call(name, arguments)
+                if self
+                    .declarations
+                    .functions
+                    .get(name)
+                    .is_some_and(|function| function.ret == Type::Fact) =>
+            {
+                let Some(key) = self.fact_call_key(name, arguments)? else {
+                    return Ok(None);
+                };
+                for index in (0..self.proof.fact_calls.len()).rev() {
+                    self.charge_value_work(1)?;
+                    let (known, captured) = &self.proof.fact_calls[index];
+                    if known != &key {
+                        continue;
+                    }
+                    let captured = captured.clone();
+                    self.charge_value_work(captured.storage_weight()?)?;
+                    if self
+                        .proof
+                        .subjects
+                        .current(&captured, &self.storage.memory)?
+                    {
+                        return Ok(captured.key);
+                    }
+                }
+                None
             }
             Kind::Call(_, arguments) => {
                 // Call-result subjects need value-flow provenance through

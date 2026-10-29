@@ -136,6 +136,7 @@ pub enum Type {
     Int,
     Nat,
     Bool,
+    Fact,
     Unit,
     Ref(Box<Type>),
     Unique(Box<Type>),
@@ -231,6 +232,7 @@ impl Expr {
                     .map(Type::Machine)
                     .unwrap_or_else(|| match name.as_str() {
                         "bool" => Type::Bool,
+                        "Fact" => Type::Fact,
                         "unit" => Type::Unit,
                         "integer" => Type::Int,
                         "nat" => Type::Nat,
@@ -841,6 +843,10 @@ impl Parser {
                 "nat" => {
                     self.pos += 1;
                     Ok(Type::Nat)
+                }
+                "Fact" => {
+                    self.pos += 1;
+                    Ok(Type::Fact)
                 }
                 "bool" => {
                     self.pos += 1;

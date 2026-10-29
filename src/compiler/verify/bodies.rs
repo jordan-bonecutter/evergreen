@@ -60,7 +60,9 @@ impl Context<'_> {
         let declaring = self.locals.declaring.take();
         let ideal_execution =
             std::mem::replace(&mut self.execution.ideal_execution, function.ideal);
-        let execution = if function.ideal {
+        let execution = if function.ret == Type::Fact {
+            Phase::Specification
+        } else if function.ideal {
             Phase::Ideal
         } else {
             Phase::Runtime
@@ -269,6 +271,10 @@ impl Context<'_> {
                 function.line
             ));
         } else {
+            if function.ret == Type::Fact {
+                self.locals.values = entry;
+                self.locals.places.clear();
+            }
             None
         };
         let post_uses = self.proof.uses.split_off(safety_end);

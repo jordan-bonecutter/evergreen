@@ -14,6 +14,20 @@ proof of type elaboration or machine-code preservation. Owning pointer members
 now use guarded footprints and allocation-presence checks. Borrowed-reference
 members still need conditional provenance contracts.
 
+Read-only `ideal fn` definitions can return `Fact`, an erased proposition rather
+than evidence that the proposition holds. This includes quantified array facts.
+Callers can use these definitions in contracts and proof goals; constructing a
+`Fact` does not assume it. Explicit proofs still establish truth. The captured
+read dependencies follow argument values and the observed storage revisions,
+including `old(...)` observations. Expression-only verified definitions reduce
+without repeating function cleanup. This is frontend definition expansion, not
+a new kernel axiom. General proof-returning functions are not implemented yet.
+
+The reusable predicates in `stdlib/arrays/ranges.evg` describe initialized and
+vacant portions of an array. Capacity is inferred from the reference type.
+Their intervals describe only in-bounds cells; callers separately establish
+endpoint bounds. The definitions do not allocate per-cell proof state.
+
 Borrowing an active member through union storage retains a zero-offset
 interpretation in the original reference path. The interpretation records both
 the member index and its exact type. Operational reads, projected addresses,

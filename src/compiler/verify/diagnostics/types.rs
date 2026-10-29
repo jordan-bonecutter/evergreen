@@ -21,6 +21,7 @@ impl Context<'_> {
             Ty::Int => Type::Int,
             Ty::Nat => Type::Nat,
             Ty::Bool => Type::Bool,
+            Ty::Fact => Type::Fact,
             Ty::Unit => Type::Unit,
             Ty::Type => Type::Named("type".into()),
             Ty::Machine(integer) => self.diagnostic_source_type(&Type::Machine(*integer), budget),

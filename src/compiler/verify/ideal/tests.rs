@@ -2,6 +2,50 @@ use super::*;
 use crate::syntax::format::test_edit::SourceEdit;
 
 #[test]
+fn fact_definitions_describe_claims_without_proving_them() {
+    let source = "ideal fn nonzero(value: &usize) -> Fact {*value != 0} fn check(value: &usize) where nonzero(value) {proof _: nonzero(value) by {omega};} fn main() -> usize {let value: usize = 42; check(&value); value}";
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    assert!(verify(&source.replace_evg("let value: usize = 42", "let value: usize = 0")).is_err());
+    let stale = source.replace_evg(
+        "check(&value); value",
+        "proof saved: nonzero(&value) by {omega}; value = 0; check(&value); value",
+    );
+    assert!(verify(&stale).is_err());
+    assert!(verify("ideal fn claim() -> Fact {false} fn main() {claim();}").is_err());
+}
+
+#[test]
+fn quantified_fact_definitions_preserve_array_read_dependencies() {
+    let source = r#"
+ideal fn initialized<T>(ideal capacity: nat, data: &[T | shape(T); capacity]) -> Fact {
+    forall(i: integer) where (0 <= i && i < integer::from(capacity)) {
+        typeof((*data)[i]) == T
+    }
+}
+fn check(data: &[usize | shape(usize); 4]) where initialized::<usize>(data) {
+    proof _: initialized::<usize>(data) by {assumption};
+    let item: usize = (*data)[2];
+}
+fn main() -> usize {42}
+"#;
+    let (_, bundle) = prove(source).unwrap();
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    assert!(verify(&source.replace_evg("where initialized::<usize>(data)", "")).is_err());
+}
+
+#[test]
 fn unchanged_symbolic_predicate_arguments_name_the_same_proposition() {
     let source = "ideal fn positive(n: usize) -> bool {n > 0} fn forward(n: usize) -> usize where positive(n) {proof same: positive(n); n} fn main() -> usize {forward(42)}";
     let (program, bundle) = prove(source).unwrap();

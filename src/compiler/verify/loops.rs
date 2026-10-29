@@ -126,8 +126,11 @@ impl Context<'_> {
             }
         }
         let targets = self.loop_targets(modifies, line)?;
-        let subjects = self.claim_subjects(invariant)?;
+        let mut subjects = self.claim_subjects(invariant)?;
         let initial = self.proposition(invariant)?;
+        if !subjects.complete {
+            subjects = self.claim_subjects(invariant)?;
+        }
         let entry =
             self.prove_subjects(&initial, Some(&subjects), "loop invariant on entry", line)?;
 
@@ -180,8 +183,11 @@ impl Context<'_> {
         }
         self.refresh_loop_bindings()?;
         let saved = Head::capture(self)?;
-        let head_subjects = self.claim_subjects(invariant)?;
+        let mut head_subjects = self.claim_subjects(invariant)?;
         let head = self.proposition(invariant)?;
+        if !head_subjects.complete {
+            head_subjects = self.claim_subjects(invariant)?;
+        }
         self.loop_assumption(&head, head_subjects.clone(), vec![entry])?;
         let mut parents = vec![entry];
         parents.extend(self.loop_step(source, &targets, &saved)?);
@@ -295,8 +301,11 @@ impl Context<'_> {
             }
             self.charge_value_work(store_weight(&self.storage.memory)?)?;
             saved.check_generations(&self.storage.memory, &consumable, line)?;
-            let subjects = self.claim_subjects(invariant)?;
+            let mut subjects = self.claim_subjects(invariant)?;
             let step = self.proposition(invariant)?;
+            if !subjects.complete {
+                subjects = self.claim_subjects(invariant)?;
+            }
             self.prove_subjects(
                 &step,
                 Some(&subjects),

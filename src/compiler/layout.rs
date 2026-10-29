@@ -194,7 +194,7 @@ fn compute_layout(
                 align = scalar.align;
                 scalar.size
             }
-            Type::Int | Type::Nat => {
+            Type::Int | Type::Nat | Type::Fact => {
                 return Err("ideal mathematical types have no native runtime layout".into())
             }
             Type::Array(element, count) => {

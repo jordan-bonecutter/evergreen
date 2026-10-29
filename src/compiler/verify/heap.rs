@@ -118,6 +118,7 @@ pub(super) fn syntax_type(ty: &Ty, line: usize) -> Result<Type> {
         Ty::Int => Type::Int,
         Ty::Nat => Type::Nat,
         Ty::Bool => Type::Bool,
+        Ty::Fact => Type::Fact,
         Ty::Unit => Type::Unit,
         Ty::Machine(t) => Type::Machine(*t),
         Ty::Record(name) => Type::Named(name.clone()),

@@ -83,29 +83,48 @@ impl<'a> Context<'a> {
             return self.eval_quantified_call(name, args, line);
         }
         let function = self.function_for_call(name, line)?;
+        let fact_key = if function.ret == Type::Fact {
+            self.fact_call_key(name, args)?
+        } else {
+            None
+        };
         let results = self.proof.results.len();
         let actuals = self.evaluate_arguments(function, args, line)?;
         // Argument guarantees remain available for checking this call. Their
         // result receipts belong to the arguments, not to the callee's result.
         self.proof.results.truncate(results);
-        self.apply_call(name, function, actuals, line)
-            .inspect_err(|error| {
-                if error.starts_with(&format!(
-                    "line {line}: cannot prove precondition of {name}:"
-                )) {
-                    if let (Some(pre), Ok(parameters)) =
-                        (&function.pre, function.supplied_parameters(args.len()))
+        let result = self
+            .apply_call(name, function, actuals, line)
+            .map(|(value, snapshot)| {
+                if let (Some(key), Some(snapshot)) = (fact_key, snapshot) {
+                    if !self
+                        .proof
+                        .fact_calls
+                        .iter()
+                        .any(|(prior, captured)| prior == &key && captured.key == snapshot.key)
                     {
-                        let replacements = parameters
-                            .into_iter()
-                            .zip(args)
-                            .map(|((name, _), arg)| (name.as_str(), arg))
-                            .collect();
-                        let source = syntax::display::substituted(pre, &replacements);
-                        self.session.note_source_obligation(error, source);
+                        self.proof.fact_calls.push((key, snapshot));
                     }
                 }
-            })
+                value
+            });
+        result.inspect_err(|error| {
+            if error.starts_with(&format!(
+                "line {line}: cannot prove precondition of {name}:"
+            )) {
+                if let (Some(pre), Ok(parameters)) =
+                    (&function.pre, function.supplied_parameters(args.len()))
+                {
+                    let replacements = parameters
+                        .into_iter()
+                        .zip(args)
+                        .map(|((name, _), arg)| (name.as_str(), arg))
+                        .collect();
+                    let source = syntax::display::substituted(pre, &replacements);
+                    self.session.note_source_obligation(error, source);
+                }
+            }
+        })
     }
 
     fn eval_ownership_call(
@@ -145,7 +164,7 @@ impl<'a> Context<'a> {
                 return self.move_union_member(&args[0], target);
             }
         }
-        if self.execution.phase == Phase::Ideal
+        if (self.execution.phase == Phase::Ideal || self.execution.ideal_execution)
             && !self.execution.ideal_execution
             && !matches!(&args[0].kind, Kind::Name(n) if self.locals.ideal_bindings.contains(n))
         {
@@ -295,7 +314,8 @@ impl<'a> Context<'a> {
                     _ => None,
                 }
             });
-            if f.pre.is_some()
+            if f.ret == Type::Fact
+                || f.pre.is_some()
                 || !self.proof.claims.is_empty()
                 || self
                     .declarations
@@ -375,6 +395,7 @@ impl<'a> Context<'a> {
                 Some(
                     Symbol::Number(..)
                         | Symbol::Bool(_)
+                        | Symbol::Fact(_)
                         | Symbol::Unit
                         | Symbol::Union { .. }
                         | Symbol::Shape(_)
@@ -411,7 +432,7 @@ impl<'a> Context<'a> {
         f: &Function,
         actuals: Arguments,
         line: usize,
-    ) -> Result<Symbol> {
+    ) -> Result<(Symbol, Option<subjects::Snapshot>)> {
         let ownership_epoch = self.work.ownership_transitions;
         let mut saved = std::mem::take(&mut self.locals.values);
         let saved_roots = std::mem::take(&mut self.locals.places);
@@ -454,10 +475,11 @@ impl<'a> Context<'a> {
                 self.proof.contract_parents.push(node);
             }
         }
-        let inputs = if f
-            .params
-            .iter()
-            .any(|(_, ty)| type_has_reference(ty, self.declarations.structs))
+        let reduced_fact = self.can_reduce_fact(f);
+        let inputs = if !reduced_fact
+            && f.params
+                .iter()
+                .any(|(_, ty)| type_has_reference(ty, self.declarations.structs))
         {
             self.incoming_references(f)?
         } else {
@@ -515,7 +537,10 @@ impl<'a> Context<'a> {
                     .into(),
             );
         }
-        let value = if overlaps
+        let value = if reduced_fact {
+            self.reduce_fact(f)?
+        } else if f.ret == Type::Fact
+            || overlaps
             || heap_call
             || union_write
             || deferred_ports
@@ -618,6 +643,34 @@ impl<'a> Context<'a> {
                 }
             }
         }
+        let fact_subjects = if f.ret == Type::Fact {
+            let mut subjects = self.call_subjects(&f.result, &actuals.subjects, line, true)?;
+            // Inferred ideal parameters have no source argument expression.
+            // Their immutable values must not depend on callee-local slots.
+            for (parameter, _) in &f.params {
+                if actuals.subjects.contains_key(parameter) {
+                    continue;
+                }
+                let value = self.locals.values.get(parameter).cloned();
+                if let Some(saved) = value.as_ref().and_then(|value| {
+                    subjects::Snapshot::saved_scalar(self.entry.world, None, value)
+                }) {
+                    let local = self.claim_subjects(&Expr {
+                        kind: Kind::Name(parameter.clone()),
+                        line,
+                    })?;
+                    if let Some(snapshot) = &mut subjects {
+                        snapshot.replace_read(&local, &saved);
+                    }
+                }
+            }
+            if let Some(snapshot) = &subjects {
+                self.charge_value_work(snapshot.storage_weight()?)?;
+            }
+            subjects
+        } else {
+            None
+        };
         self.locals.values = saved;
         self.locals.places = saved_roots;
         self.entry.values = saved_old;
@@ -640,6 +693,6 @@ impl<'a> Context<'a> {
             self.validate_live(line)?;
         }
         self.proof.contract_parents = inherited_contracts;
-        Ok(value)
+        Ok((value, fact_subjects))
     }
 }

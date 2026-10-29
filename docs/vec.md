@@ -197,3 +197,17 @@ Loop checking restores deferred input-cell observations along with memory and
 proof state. An index observed only in the arbitrary iteration no longer
 becomes the canonical index for a later caller read. The snapshot retains only
 the existing recipe keys; it does not copy payloads or enumerate capacity.
+
+Range contracts in `arrays/prefix.evg` now use ideal functions returning `Fact`
+from `arrays/ranges.evg`, replacing repeated quantified formulas. The current
+relocation implementation still moves one element per iteration and explicitly
+transports its range proofs.
+
+The next intended relocation abstraction separates copying representation from
+transferring the live type. Starting with a live source `T` and vacant destination
+`shape(T)`, a representation copy leaves the destination inaccessible as `T`.
+Once representation equality is proved, a checked transfer would change the
+source to `shape(T)` and destination to `T`, moving ownership authority exactly
+once. Existing borrow and plane validity obligations still apply. A verified
+loop should implement the copy; a bulk-copy backend implementation is optional.
+This operation and its representation-equality proof are not implemented yet.

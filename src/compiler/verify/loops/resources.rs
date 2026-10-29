@@ -45,7 +45,7 @@ impl Context<'_> {
                 }
             };
             match ty {
-                Type::Ref(_) | Type::Shared(_) | Type::Apply(..) => return Ok(false),
+                Type::Fact | Type::Ref(_) | Type::Shared(_) | Type::Apply(..) => return Ok(false),
                 Type::Unique(inner) | Type::Array(inner, _) => pending.push(Visit::Type(*inner)),
                 Type::Union(members) => pending.extend(members.into_iter().map(Visit::Type)),
                 Type::Named(name) => {

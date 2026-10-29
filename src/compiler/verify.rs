@@ -83,6 +83,7 @@ enum Ty {
     Int,
     Nat,
     Bool,
+    Fact,
     Unit,
     Ref(Box<Ty>),
     Unique(Box<Ty>),
@@ -109,6 +110,7 @@ enum Symbol {
     },
     Number(Ty, Linear),
     Bool(Formula),
+    Fact(Formula),
     Array {
         element: Box<Ty>,
         len: Linear,
@@ -132,6 +134,7 @@ impl Symbol {
             Self::Type { .. } => Ty::Type,
             Self::Number(t, _) => t.clone(),
             Self::Bool(_) => Ty::Bool,
+            Self::Fact(_) => Ty::Fact,
             Self::Array { element, len, .. } => Ty::Array(element.clone(), len.clone()),
             Self::Record(name, _) => Ty::Record(name.clone()),
             Self::Unit => Ty::Unit,
@@ -151,7 +154,7 @@ impl Symbol {
     }
 
     fn proposition(&self) -> Result<Formula> {
-        if let Self::Bool(p) = self {
+        if let Self::Bool(p) | Self::Fact(p) = self {
             Ok(p.clone())
         } else {
             Err("expected a proposition or boolean".into())
@@ -216,7 +219,9 @@ fn symbol_weight(value: &Symbol) -> Result<usize> {
                 pending.push(Node::Type(inner, depth + 1));
             }
             Node::Value(Symbol::Number(_, n), _) => weight = weight.saturating_add(n.terms.len()),
-            Node::Value(Symbol::Bool(p), depth) => pending.push(Node::Formula(p, depth + 1)),
+            Node::Value(Symbol::Bool(p) | Symbol::Fact(p), depth) => {
+                pending.push(Node::Formula(p, depth + 1))
+            }
             Node::Value(
                 Symbol::Array {
                     items, cells, len, ..
@@ -456,7 +461,7 @@ fn clauses<'a>(expression: &'a Expr, out: &mut Vec<&'a Expr>) {
 
 fn runtime_type(t: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match t {
-        Type::Int | Type::Nat => false,
+        Type::Int | Type::Nat | Type::Fact => false,
         Type::Named(n) => structs
             .get(n)
             .is_some_and(|s| !s.ideal && s.runtime_fields().all(|(_, t)| runtime_type(t, structs))),
@@ -1204,6 +1209,7 @@ impl<'a> Context<'a> {
                                     function.ret,
                                     Type::Int
                                         | Type::Nat
+                                        | Type::Fact
                                         | Type::Bool
                                         | Type::Machine(_)
                                         | Type::Unit
@@ -1401,6 +1407,8 @@ impl<'a> Context<'a> {
             }
             Type::Int | Type::Nat if self.execution.phase == Phase::Runtime => Err("integer and nat are proof-only; use a machine integer for runtime storage or declare ideal code".into()),
             Type::Int => Ok(Ty::Int), Type::Nat => Ok(Ty::Nat),
+            Type::Fact if self.execution.phase == Phase::Runtime => Err("Fact is ideal-only and has no runtime value".into()),
+            Type::Fact => Ok(Ty::Fact),
             Type::Bool => Ok(Ty::Bool),
             Type::Machine(t) => Ok(Ty::Machine(*t)),
             Type::Unit => Ok(Ty::Unit),
@@ -1458,6 +1466,8 @@ impl<'a> Context<'a> {
 
     fn compatible(&mut self, got: &Ty, expected: &Ty, line: usize) -> Result<()> {
         match (got, expected) {
+            (Ty::Fact, Ty::Fact) => Ok(()),
+            (Ty::Fact, Ty::Bool) if self.execution.phase == Phase::Specification => Ok(()),
             (Ty::Union(a), Ty::Union(b)) if a == b => Ok(()),
             (Ty::Shape(a), Ty::Shape(b)) => self.compatible(a, b, line),
             (Ty::Type, Ty::Type) => Ok(()),
@@ -1511,6 +1521,9 @@ impl<'a> Context<'a> {
             Ty::Union(members) => self.arbitrary_union(members),
             Ty::Shape(inner) => Ok(Symbol::Shape(inner.clone())),
             Ty::Type => Err("type observations have no arbitrary runtime values".into()),
+            Ty::Fact => self
+                .arbitrary(&Ty::Bool)
+                .and_then(|v| Ok(Symbol::Fact(v.proposition()?))),
             Ty::Machine(t) => {
                 let n = Linear::variable(name);
                 let (lo, hi) = t.bounds();
@@ -1983,6 +1996,7 @@ impl<'a> Context<'a> {
             Type::Int => Some(Ty::Int),
             Type::Nat => Some(Ty::Nat),
             Type::Bool => Some(Ty::Bool),
+            Type::Fact => Some(Ty::Fact),
             Type::Unit => Some(Ty::Unit),
             Type::Machine(t) => Some(Ty::Machine(*t)),
             Type::Named(n) => Some(Ty::Record(n.clone())),
@@ -2220,6 +2234,12 @@ impl<'a> Context<'a> {
                 syntax::display::expression(e),
             ));
         }
+        let value = match (value, expected) {
+            (Symbol::Bool(p), Some(Ty::Fact)) if self.execution.phase != Phase::Runtime => {
+                Symbol::Fact(p)
+            }
+            (value, _) => value,
+        };
         let value = self.coerce_pointer(value, expected, e.line)?;
         let value = self.union_coercion(value, expected, e.line, Some(e))?;
         self.charge_value_work(symbol_weight(&value)?)
@@ -2847,6 +2867,7 @@ impl<'a> Context<'a> {
                         Type::Nat => Some(Ty::Nat),
                         Type::Int => Some(Ty::Int),
                         Type::Bool => Some(Ty::Bool),
+                        Type::Fact => Some(Ty::Fact),
                         Type::Machine(t) => Some(Ty::Machine(*t)),
                         _ => Self::declared_hint(ty),
                     };

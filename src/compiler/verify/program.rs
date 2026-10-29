@@ -339,11 +339,16 @@ impl Verification {
 
 impl Context<'_> {
     pub(super) fn enter_function(&mut self, f: &Function) -> Result<()> {
+        if f.ret == Type::Fact && (!f.ideal || !f.modifies.is_empty()) {
+            return Err("Fact-producing functions must be ideal and read-only".into());
+        }
         self.locals.module = f.module.clone();
         self.execution.ideal_execution = f.ideal;
         self.execution.partial_execution = f.partial;
         self.execution.dropping = f.drop_target.is_some();
-        let execution = if f.ideal {
+        let execution = if f.ret == Type::Fact {
+            Phase::Specification
+        } else if f.ideal {
             Phase::Ideal
         } else {
             Phase::Runtime

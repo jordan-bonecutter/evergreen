@@ -22,6 +22,35 @@ pub(super) use applications::Applications;
 use values::{Budget, Importer, Value};
 
 impl Context<'_> {
+    // Expression predicates describe propositions; evaluating one does not
+    // establish its truth. Their declarations have already checked safety.
+    pub(super) fn can_reduce_fact(&self, function: &Function) -> bool {
+        function.ret == Type::Fact
+            && function.ideal
+            && function.body.is_empty()
+            && function.pre.is_none()
+            && function.post.is_none()
+            && function.decreases.is_none()
+            && eligible(self, function)
+    }
+
+    pub(super) fn reduce_fact(&mut self, function: &Function) -> Result<Symbol> {
+        let safety = self.import_summary(&function.name, summaries::Aspect::Safety)?;
+        self.proof.uses.extend(safety);
+        let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
+        let ideal = std::mem::replace(&mut self.execution.ideal_execution, true);
+        let current = self.execution.current.replace(function.name.clone());
+        let facts = std::mem::take(&mut self.proof.facts);
+        let witnesses = std::mem::take(&mut self.proof.witnesses);
+        let value = self.proposition(&function.result).map(Symbol::Fact);
+        self.proof.facts = facts;
+        self.proof.witnesses = witnesses;
+        self.execution.current = current;
+        self.execution.ideal_execution = ideal;
+        self.execution.phase = phase;
+        value
+    }
+
     pub(super) fn reduce_ideal(&mut self, function: &Function) -> Result<Option<Symbol>> {
         if !function.ideal
             || !eligible(self, function)

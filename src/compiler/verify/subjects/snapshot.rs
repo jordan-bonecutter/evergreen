@@ -206,7 +206,7 @@ impl Snapshot {
     ) -> Option<Self> {
         let scalar = match value {
             Symbol::Number(_, n) => Scalar::Number(n.clone()),
-            Symbol::Bool(p) => Scalar::Bool(p.clone()),
+            Symbol::Bool(p) | Symbol::Fact(p) => Scalar::Bool(p.clone()),
             Symbol::Unit => Scalar::Unit,
             _ => return None,
         };
@@ -314,17 +314,41 @@ impl Snapshot {
         if !self.complete || !argument.complete {
             return Ok(None);
         }
-        let cost = self
-            .storage_weight()?
-            .saturating_mul(argument.storage_weight()?.saturating_add(1));
+        let (Some(ClaimKey::Forall(domain, body)), Some(argument_key)) = (&self.key, &argument.key)
+        else {
+            return Ok(None);
+        };
+        // Only occurrences of this binder copy the argument. Multiplying the
+        // entire tree by its size charges unrelated syntax as substitutions.
+        let mut occurrences = 0usize;
+        let mut pending = vec![(domain.as_ref(), 0), (body.as_ref(), 0)];
+        while let Some((key, depth)) = pending.pop() {
+            match key {
+                ClaimKey::Bound(index) if *index == depth => occurrences += 1,
+                ClaimKey::Unary(_, key) => pending.push((key, depth)),
+                ClaimKey::Binary(_, a, b) => {
+                    pending.extend([(a.as_ref(), depth), (b.as_ref(), depth)])
+                }
+                ClaimKey::Forall(a, b) => {
+                    pending.extend([(a.as_ref(), depth + 1), (b.as_ref(), depth + 1)])
+                }
+                ClaimKey::Call(_, keys) => pending.extend(keys.iter().map(|key| (key, depth))),
+                ClaimKey::Guarded(cases) => {
+                    pending.extend(cases.iter().map(|(_, key)| (key, depth)))
+                }
+                _ => {}
+            }
+        }
+        let cost = self.storage_weight()?.saturating_mul(2).saturating_add(
+            argument
+                .storage_weight()?
+                .saturating_mul(occurrences.saturating_add(1)),
+        );
         *work = work.saturating_add(cost);
         if *work > MAX_VALUE_WORK {
             return Err("quantified subject substitution work limit reached".into());
         }
-        let (Some(ClaimKey::Forall(domain, body)), Some(argument)) = (&self.key, &argument.key)
-        else {
-            return Ok(None);
-        };
+        let argument = argument_key;
         // Proof-script variables use LogicalVariable, never a raw bound index.
         // Reject the latter before insertion could capture it under an inner binder.
         let mut pending = vec![argument];

@@ -1,125 +1,47 @@
 module arrays;
 
-// Extract the last initialized element, preserving both remaining ranges.
+// Extract one value; the remaining prefix stays live and the suffix is vacant.
 fn take_last<T>(
     capacity: usize,
     data: &[T | shape(T); capacity],
     length: usize
 ) -> T
     where
-        (
-            0 < length &&
-            length <= capacity &&
-            (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    i < integer::from(length) &&
-                    i < integer::from(capacity)
-                ) {typeof((*data)[i]) == T}
-            ) &&
-            (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    integer::from(length) <= i &&
-                    i < integer::from(capacity)
-                ) {typeof((*data)[i]) == shape(T)}
-            )
-        )
+        0 < length &&
+        length <= capacity &&
+        arrays::initialized_prefix::<T>(data, integer::from(length)) &&
+        arrays::vacant_suffix::<T>(data, integer::from(length))
     modifies(&(*data)[length - 1])
     ensures
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                i < integer::from(length) - 1 &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == T} &&
-            (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    integer::from(length) - 1 <= i &&
-                    i < integer::from(capacity)
-                ) {typeof((*data)[i]) == shape(T)}
-            )
-        )
+        arrays::initialized_prefix::<T>(data, integer::from(length) - 1) &&
+        arrays::vacant_suffix::<T>(data, integer::from(length) - 1)
 {
     proof initialized:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            i < integer::from(length) &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == T} by {assumption};
+        arrays::initialized_prefix::<T>(data, integer::from(length)) by {assumption};
     proof vacant:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            integer::from(length) <= i &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == shape(T)} by {assumption};
+        arrays::vacant_suffix::<T>(data, integer::from(length)) by {assumption};
     let value: T = move((*data)[length - 1]);
     proof frame:
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                i < integer::from(length) &&
-                i < integer::from(capacity)
-            ) {typeof(old(*data)[i]) == T}
-        ) =>
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                i < integer::from(length) - 1 &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == T}
-        ) by {
+        old(arrays::initialized_prefix::<T>(data, integer::from(length))) =>
+        arrays::initialized_prefix::<T>(data, integer::from(length) - 1) by {
             intro prior;
             intro i;
             omega
         };
     proof prefix:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            i < integer::from(length) - 1 &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == T} by {
+        arrays::initialized_prefix::<T>(data, integer::from(length) - 1) by {
             apply frame;
             exact initialized
         };
     proof empty_frame:
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(length) <= i &&
-                i < integer::from(capacity)
-            ) {typeof(old(*data)[i]) == shape(T)}
-        ) =>
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(length) - 1 <= i &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == shape(T)}
-        ) by {
+        old(arrays::vacant_suffix::<T>(data, integer::from(length))) =>
+        arrays::vacant_suffix::<T>(data, integer::from(length) - 1) by {
             intro prior;
             intro i;
             omega
         };
     proof suffix:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            integer::from(length) - 1 <= i &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == shape(T)} by {
+        arrays::vacant_suffix::<T>(data, integer::from(length) - 1) by {
             apply empty_frame;
             exact vacant
         };
@@ -139,92 +61,40 @@ fn prepend<T>(
         start <= end &&
         end <= capacity &&
         (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(start) <= i &&
-                i < integer::from(end) &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == T}
+            arrays::initialized_range::<T>(data, integer::from(start), integer::from(end))
         ) &&
         (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                (i < integer::from(start) ||
-                integer::from(end) <= i) &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == shape(T)}
+            arrays::vacant_outside::<T>(data, integer::from(start), integer::from(end))
         )
     modifies(&(*data)[start - 1])
     ensures
         (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(start) - 1 <= i &&
-                i < integer::from(end) &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == T}
+            arrays::initialized_range::<T>(data, integer::from(start) - 1, integer::from(end))
         ) &&
         (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                (i < integer::from(start) - 1 ||
-                integer::from(end) <= i) &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == shape(T)}
+            arrays::vacant_outside::<T>(data, integer::from(start) - 1, integer::from(end))
         )
 {
     proof prior:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            integer::from(start) <= i &&
-            i < integer::from(end) &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == T} by {assumption};
+        arrays::initialized_range::<T>(data, integer::from(start), integer::from(end)) by {assumption};
     proof vacant:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            (i < integer::from(start) ||
-            integer::from(end) <= i) &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == shape(T)} by {assumption};
+        arrays::vacant_outside::<T>(data, integer::from(start), integer::from(end)) by {assumption};
     (*data)[start - 1] = value;
     proof extend:
         (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(start) <= i &&
-                i < integer::from(end) &&
-                i < integer::from(capacity)
-            ) {typeof((old(*data))[i]) == T}
+            old(
+                arrays::initialized_range::<T>(data, integer::from(start), integer::from(end))
+            )
         ) =>
         (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(start) - 1 <= i &&
-                i < integer::from(end) &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == T}
+            arrays::initialized_range::<T>(data, integer::from(start) - 1, integer::from(end))
         ) by {
             intro previous;
             intro i;
             omega
         };
     proof live:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            integer::from(start) - 1 <= i &&
-            i < integer::from(end) &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == T} by {
+        arrays::initialized_range::<T>(data, integer::from(start) - 1, integer::from(end)) by {
             apply extend;
             exact prior
         };
@@ -232,23 +102,13 @@ fn prepend<T>(
         (
             start <= end &&
             (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    (i < integer::from(start) ||
-                    integer::from(end) <= i) &&
-                    i < integer::from(capacity)
-                ) {typeof((old(*data))[i]) == shape(T)}
+                old(
+                    arrays::vacant_outside::<T>(data, integer::from(start), integer::from(end))
+                )
             )
         ) =>
         (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                (i < integer::from(start) - 1 ||
-                integer::from(end) <= i) &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == shape(T)}
+            arrays::vacant_outside::<T>(data, integer::from(start) - 1, integer::from(end))
         ) by {
             intro premise;
             cases premise with ordered,
@@ -257,13 +117,7 @@ fn prepend<T>(
             omega
         };
     proof rest:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            (i < integer::from(start) - 1 ||
-            integer::from(end) <= i) &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == shape(T)} by {
+        arrays::vacant_outside::<T>(data, integer::from(start) - 1, integer::from(end)) by {
             apply frame;
             constructor;
             omega;
@@ -283,61 +137,21 @@ fn relocate_prefix<T>(
         length <= capacity &&
         length <= new_capacity &&
         integer::from(new_capacity) * integer::from(size_of(T)) <= integer::from(isize::MAX) &&
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                i < integer::from(length) &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == T}
-        ) &&
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(length) <= i &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == shape(T)}
-        )
+        (arrays::initialized_prefix::<T>(&*data, integer::from(length))) &&
+        (arrays::vacant_suffix::<T>(&*data, integer::from(length)))
     ensures
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                i < integer::from(length) &&
-                i < integer::from(new_capacity)
-            ) {typeof((*result)[i]) == T}
-        ) &&
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(length) <= i &&
-                i < integer::from(new_capacity)
-            ) {typeof((*result)[i]) == shape(T)}
-        )
+        (arrays::initialized_prefix::<T>(&*result, integer::from(length))) &&
+        (arrays::vacant_suffix::<T>(&*result, integer::from(length)))
 {
     let target: unique(T | shape(T), new_capacity) = alloc(new_capacity, shape(T));
     let remaining = length;
     proof initial_live:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            integer::from(remaining) <= i &&
-            i < integer::from(length) &&
-            i < integer::from(new_capacity)
-        ) {typeof((*target)[i]) == T} by {
+        arrays::initialized_range::<T>(&*target, integer::from(remaining), integer::from(length)) by {
             intro i;
             omega
         };
     proof initial_empty:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            (i < integer::from(remaining) ||
-            integer::from(length) <= i) &&
-            i < integer::from(new_capacity)
-        ) {typeof((*target)[i]) == shape(T)} by {
+        arrays::vacant_outside::<T>(&*target, integer::from(remaining), integer::from(length)) by {
             intro i;
             omega
         };
@@ -346,39 +160,13 @@ fn relocate_prefix<T>(
             remaining <= length &&
             length <= capacity &&
             length <= new_capacity &&
+            (arrays::initialized_prefix::<T>(&*data, integer::from(remaining))) &&
+            (arrays::vacant_suffix::<T>(&*data, integer::from(remaining))) &&
             (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    i < integer::from(remaining) &&
-                    i < integer::from(capacity)
-                ) {typeof((*data)[i]) == T}
+                arrays::initialized_range::<T>(&*target, integer::from(remaining), integer::from(length))
             ) &&
             (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    integer::from(remaining) <= i &&
-                    i < integer::from(capacity)
-                ) {typeof((*data)[i]) == shape(T)}
-            ) &&
-            (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    integer::from(remaining) <= i &&
-                    i < integer::from(length) &&
-                    i < integer::from(new_capacity)
-                ) {typeof((*target)[i]) == T}
-            ) &&
-            (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    (i < integer::from(remaining) ||
-                    integer::from(length) <= i) &&
-                    i < integer::from(new_capacity)
-                ) {typeof((*target)[i]) == shape(T)}
+                arrays::vacant_outside::<T>(&*target, integer::from(remaining), integer::from(length))
             )
         modifies(&*data, &*target, &remaining)
         decreases remaining
@@ -388,31 +176,13 @@ fn relocate_prefix<T>(
         remaining = remaining - 1;
     }
     proof before_empty:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            integer::from(remaining) <= i &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == shape(T)} by {assumption};
+        arrays::vacant_suffix::<T>(&*data, integer::from(remaining)) by {assumption};
     proof finish_empty:
         (
             remaining == 0 &&
-            (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    integer::from(remaining) <= i &&
-                    i < integer::from(capacity)
-                ) {typeof((*data)[i]) == shape(T)}
-            )
+            (arrays::vacant_suffix::<T>(&*data, integer::from(remaining)))
         ) =>
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == shape(T)}
-        ) by {
+        (arrays::vacant_suffix::<T>(&*data, 0)) by {
             intro premise;
             cases premise with done,
             all;
@@ -421,45 +191,22 @@ fn relocate_prefix<T>(
             omega
         };
     proof empty:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == shape(T)} by {
+        arrays::vacant_suffix::<T>(&*data, 0) by {
             apply finish_empty;
             constructor;
             omega;
             exact before_empty
         };
     proof before_live:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            integer::from(remaining) <= i &&
-            i < integer::from(length) &&
-            i < integer::from(new_capacity)
-        ) {typeof((*target)[i]) == T} by {assumption};
+        arrays::initialized_range::<T>(&*target, integer::from(remaining), integer::from(length)) by {assumption};
     proof finish_live:
         (
             remaining == 0 &&
             (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    integer::from(remaining) <= i &&
-                    i < integer::from(length) &&
-                    i < integer::from(new_capacity)
-                ) {typeof((*target)[i]) == T}
+                arrays::initialized_range::<T>(&*target, integer::from(remaining), integer::from(length))
             )
         ) =>
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                i < integer::from(length) &&
-                i < integer::from(new_capacity)
-            ) {typeof((*target)[i]) == T}
-        ) by {
+        (arrays::initialized_prefix::<T>(&*target, integer::from(length))) by {
             intro premise;
             cases premise with done,
             all;
@@ -468,46 +215,22 @@ fn relocate_prefix<T>(
             omega
         };
     proof live:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            i < integer::from(length) &&
-            i < integer::from(new_capacity)
-        ) {typeof((*target)[i]) == T} by {
+        arrays::initialized_prefix::<T>(&*target, integer::from(length)) by {
             apply finish_live;
             constructor;
             omega;
             exact before_live
         };
     proof before_rest:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            (i < integer::from(remaining) ||
-            integer::from(length) <= i) &&
-            i < integer::from(new_capacity)
-        ) {typeof((*target)[i]) == shape(T)} by {assumption};
+        arrays::vacant_outside::<T>(&*target, integer::from(remaining), integer::from(length)) by {assumption};
     proof finish_rest:
         (
             remaining == 0 &&
             (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    (i < integer::from(remaining) ||
-                    integer::from(length) <= i) &&
-                    i < integer::from(new_capacity)
-                ) {typeof((*target)[i]) == shape(T)}
+                arrays::vacant_outside::<T>(&*target, integer::from(remaining), integer::from(length))
             )
         ) =>
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(length) <= i &&
-                i < integer::from(new_capacity)
-            ) {typeof((*target)[i]) == shape(T)}
-        ) by {
+        (arrays::vacant_suffix::<T>(&*target, integer::from(length))) by {
             intro premise;
             cases premise with done,
             all;
@@ -516,12 +239,7 @@ fn relocate_prefix<T>(
             omega
         };
     proof rest:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            integer::from(length) <= i &&
-            i < integer::from(new_capacity)
-        ) {typeof((*target)[i]) == shape(T)} by {
+        arrays::vacant_suffix::<T>(&*target, integer::from(length)) by {
             apply finish_rest;
             constructor;
             omega;
