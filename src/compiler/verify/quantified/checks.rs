@@ -48,34 +48,76 @@ impl Context<'_> {
                 });
                 continue;
             }
+            if let Some(&node) = self.proof.definedness.get(&goal) {
+                self.proof.uses.push(node);
+                continue;
+            }
+            if let Some(node) = self.independent_definedness(&goal)? {
+                self.proof.evidence.check_closed(node)?;
+                self.proof.definedness.insert(goal, node);
+                self.proof.uses.push(node);
+                continue;
+            }
             let mut steps = Vec::new();
             let mut tail = &goal;
-            let mut domains = paths::Paths::unit();
-            while let Formula::Forall { domain, body, .. } = tail {
-                domains = extend(
-                    &domains,
-                    domain,
-                    false,
-                    self.session,
-                    &mut self.work.value_work,
-                )?;
+            while let Formula::Forall { body, .. } = tail {
                 steps.push(format!("intro evg_definedness_check_{}", steps.len()));
                 tail = body;
             }
             steps.push("omega".into());
-            // Preconditions often follow from the quantified domains alone. Prove
-            // those in an independent context so unrelated storage case splits
-            // cannot introduce imported dependencies into ForallIntro.
-            let independent = self.probe_guard(&domains, tail)?.is_some();
-            let saved =
-                independent.then(|| std::mem::replace(&mut self.proof.paths, paths::Paths::unit()));
-            let result = self.proof_script_for(&goal, &check.label, check.line, &steps, None);
-            if let Some(saved) = saved {
-                self.proof.paths = saved;
-            }
-            let node = result?;
+            let node = self.proof_script_for(&goal, &check.label, check.line, &steps, None)?;
             self.proof.uses.push(node);
         }
         Ok(())
+    }
+
+    // No caller facts, claims, guards, or admissions enter this proof. Its only
+    // premises are the domains introduced here and discharged by ForallIntro.
+    fn independent_definedness(&mut self, goal: &Formula) -> Result<Option<evidence::NodeId>> {
+        let mut domains = paths::Paths::unit();
+        let mut tail = goal.clone();
+        let mut frames = Vec::new();
+        while let Formula::Forall {
+            variable,
+            domain,
+            body,
+        } = &tail
+        {
+            self.charge_value_work(tail.storage_weight()?)?;
+            let eigenvariable = self.fresh_name();
+            let term = Linear::variable(&eigenvariable);
+            let domain = domain.substitute(variable, &term)?;
+            let body = body.substitute(variable, &term)?;
+            let (hypothesis, premise) = self.proof.evidence.hypothesis(domain.clone())?;
+            domains = extend_from(
+                &domains,
+                &domain,
+                false,
+                paths::Origin::Evidence(premise),
+                self.session,
+                &mut self.work.value_work,
+            )?;
+            frames.push((tail, hypothesis, eigenvariable));
+            tail = body;
+        }
+        if !tail.is_arithmetic() {
+            return Ok(None);
+        }
+        let Some(support) = self.probe_guard(&domains, &tail)? else {
+            return Ok(None);
+        };
+        self.work.obligations += 1;
+        let mut node = self.proof.evidence.arithmetic(tail, support)?;
+        for (claim, hypothesis, eigenvariable) in frames.into_iter().rev() {
+            node = self.proof.evidence.derive(
+                claim,
+                evidence::Rule::ForallIntro {
+                    hypothesis,
+                    body: node,
+                    eigenvariable,
+                },
+            )?;
+        }
+        Ok(Some(node))
     }
 }

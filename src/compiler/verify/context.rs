@@ -35,6 +35,8 @@ pub(super) struct LogicalBinding {
 
 #[derive(Default)]
 pub(super) struct ProofState {
+    // Closed arithmetic theorems proved solely from their own quantified domains.
+    pub(super) definedness: BTreeMap<Formula, evidence::NodeId>,
     pub(super) representations: BTreeMap<subjects::Stamp, Linear>,
     pub(super) facts: BTreeMap<String, Expr>,
     // Dependency footprints, indexed by call identity; never cached truth.

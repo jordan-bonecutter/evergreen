@@ -70,3 +70,13 @@ fn quantified_preconditions_ignore_trusted_posts_and_reject_opaque_computation()
         assert!(error.contains(fragment), "{error}\n{source}");
     }
 }
+
+#[test]
+fn definedness_reuse_cannot_import_a_sibling_branch_condition() {
+    let source = "ideal fn needs(n: integer) -> integer where n >= 0 {n} fn check(n: isize) {if n >= 0 {fact valid = forall(i: integer) {needs(integer(n)) == integer(n)};} else {fact invalid = forall(i: integer) {needs(integer(n)) == integer(n)};}} fn main() {check(0);}";
+    let error = verify(source).unwrap_err();
+    assert!(
+        error.contains("precondition of quantified call") && error.contains("cannot prove"),
+        "{error}"
+    );
+}
