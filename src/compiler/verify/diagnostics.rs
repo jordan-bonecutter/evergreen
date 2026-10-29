@@ -1,12 +1,69 @@
 //! Bounded normalized obligations for failed proof diagnostics.
 
-use super::{Formula, Linear};
+use super::{Formula, Linear, Ty};
+use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) fn obligation(goal: &Formula) -> String {
-    show(goal, &mut 64)
+pub(super) fn obligation(goal: &Formula, types: &BTreeMap<String, Ty>) -> String {
+    let labels = scalar_labels(goal, types);
+    show(goal, &mut 64, &labels)
 }
 
-fn show(goal: &Formula, budget: &mut usize) -> String {
+fn scalar_labels(goal: &Formula, types: &BTreeMap<String, Ty>) -> BTreeMap<String, String> {
+    let mut used = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut pending = vec![goal];
+    for _ in 0..64 {
+        let Some(goal) = pending.pop() else { break };
+        let mut row = |row: &Linear| {
+            for name in row.terms.keys().take(12) {
+                if let Some(ty) = types.get(name) {
+                    let syntax = match ty {
+                        Ty::Machine(integer) => crate::syntax::Type::Machine(*integer),
+                        Ty::Int => crate::syntax::Type::Int,
+                        Ty::Nat => crate::syntax::Type::Nat,
+                        Ty::Bool => crate::syntax::Type::Bool,
+                        _ => continue,
+                    };
+                    let expression = crate::syntax::Expr {
+                        kind: crate::syntax::Kind::Type(syntax),
+                        line: 0,
+                    };
+                    used.entry(crate::syntax::display::expression(&expression))
+                        .or_default()
+                        .insert(name.clone());
+                }
+            }
+        };
+        match goal {
+            Formula::Ge(value) => row(value),
+            Formula::Predicate { arguments, .. } => arguments.iter().take(12).for_each(row),
+            Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b) => {
+                pending.push(b);
+                pending.push(a);
+            }
+            Formula::Not(value) => pending.push(value),
+            Formula::Forall { domain, body, .. } => {
+                pending.push(body);
+                pending.push(domain);
+            }
+            Formula::True | Formula::False => {}
+        }
+    }
+    let mut labels = BTreeMap::new();
+    for (ty, names) in used {
+        let multiple = names.len() > 1;
+        for (index, name) in names.into_iter().enumerate() {
+            let label = if multiple {
+                format!("unknown {ty} #{}", index + 1)
+            } else {
+                format!("unknown {ty}")
+            };
+            labels.insert(name, label);
+        }
+    }
+    labels
+}
+
+fn show(goal: &Formula, budget: &mut usize, labels: &BTreeMap<String, String>) -> String {
     if *budget == 0 {
         return "…".into();
     }
@@ -14,33 +71,69 @@ fn show(goal: &Formula, budget: &mut usize) -> String {
     match goal {
         Formula::True => "true".into(),
         Formula::False => "false".into(),
-        Formula::Ge(row) => format!("{} >= 0", linear(row)),
+        Formula::Ge(row) => format!("{} >= 0", linear(row, labels)),
         Formula::Predicate { symbol, arguments } => format!(
             "{symbol}({})",
             arguments
                 .iter()
                 .take(12)
-                .map(linear)
+                .map(|row| linear(row, labels))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        Formula::And(a, b) => format!("({} && {})", show(a, budget), show(b, budget)),
-        Formula::Or(a, b) => format!("({} || {})", show(a, budget), show(b, budget)),
-        Formula::Not(value) => format!("!({})", show(value, budget)),
-        Formula::Implies(a, b) => format!("({} => {})", show(a, budget), show(b, budget)),
+        Formula::And(_, _) if equality_row(goal).is_some() => {
+            format!("{} == 0", linear(equality_row(goal).unwrap(), labels))
+        }
+        Formula::And(a, b) => format!(
+            "({} && {})",
+            show(a, budget, labels),
+            show(b, budget, labels)
+        ),
+        Formula::Or(a, b) => format!(
+            "({} || {})",
+            show(a, budget, labels),
+            show(b, budget, labels)
+        ),
+        Formula::Not(value) if equality_row(value).is_some() => {
+            format!("{} != 0", linear(equality_row(value).unwrap(), labels))
+        }
+        Formula::Not(value) => format!("!({})", show(value, budget, labels)),
+        Formula::Implies(a, b) => format!(
+            "({} => {})",
+            show(a, budget, labels),
+            show(b, budget, labels)
+        ),
         Formula::Forall {
             variable,
             domain,
             body,
         } => format!(
             "forall({variable}) where {} {{{}}}",
-            show(domain, budget),
-            show(body, budget)
+            show(domain, budget, labels),
+            show(body, budget, labels)
         ),
     }
 }
 
-fn linear(row: &Linear) -> String {
+// Equality is encoded by opposite inequalities in the arithmetic kernel.
+// Reconstruct its spelling only for diagnostics; proof terms stay unchanged.
+fn equality_row(goal: &Formula) -> Option<&Linear> {
+    let Formula::And(a, b) = goal else {
+        return None;
+    };
+    let (Formula::Ge(a), Formula::Ge(b)) = (&**a, &**b) else {
+        return None;
+    };
+    (a.constant.checked_neg() == Some(b.constant)
+        && a.terms.len() == b.terms.len()
+        && a.terms
+            .iter()
+            .zip(&b.terms)
+            .all(|((av, ac), (bv, bc))| av == bv && ac.checked_neg() == Some(*bc)))
+    .then_some(a)
+}
+
+fn linear(row: &Linear, labels: &BTreeMap<String, String>) -> String {
     let mut out = String::new();
     for (variable, coefficient) in row.terms.iter().take(12) {
         if *coefficient == 0 {
@@ -57,7 +150,7 @@ fn linear(row: &Linear) -> String {
         if magnitude != 1 {
             out.push_str(&format!("{magnitude} * "));
         }
-        out.push_str(variable);
+        out.push_str(labels.get(variable).unwrap_or(variable));
     }
     if row.terms.len() > 12 {
         out.push_str(" + …");

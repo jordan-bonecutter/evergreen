@@ -2,6 +2,48 @@ use super::super::*;
 use crate::shared::diagnostics::SourceOrigin;
 
 #[test]
+fn equality_diagnostics_hide_the_pair_of_internal_inequalities() {
+    let value = Linear::variable("value");
+    let equal = Formula::Ge(value.clone()).and(Formula::Ge(value.scale(-1).unwrap()));
+    assert_eq!(super::obligation(&equal, &BTreeMap::new()), "value == 0");
+    assert_eq!(
+        super::obligation(&Formula::Not(Box::new(equal)), &BTreeMap::new()),
+        "value != 0"
+    );
+    let bounded =
+        Formula::Ge(value.clone()).and(Formula::Ge(Linear::number(10).sub(&value).unwrap()));
+    assert_eq!(
+        super::obligation(&bounded, &BTreeMap::new()),
+        "(value >= 0 && -value + 10 >= 0)"
+    );
+
+    let source = "type NonZero struct {data: usize} where data != 0; impl NonZero {fn new(x: usize) -> Self where x != 0 {return NonZero {data: x};}} fn main() -> usize {let my_nonzero = NonZero::new(usize::MAX + 1); 0}";
+    let error = verify_diagnostic(source).unwrap_err();
+    assert_eq!(error.requirement.unwrap().text, "(x != 0)");
+    let obligation = error.obligation.unwrap();
+    assert_eq!(obligation, "unknown usize != 0");
+    assert!(!obligation.contains("&&"), "{obligation}");
+    verify(&source.replace("usize::MAX + 1", "usize::MAX")).unwrap();
+}
+
+#[test]
+fn typed_unknowns_keep_distinct_values_distinguishable() {
+    let first = Linear::variable("evg_1");
+    let second = Linear::variable("evg_2");
+    let goal = equal(&first, &second).unwrap();
+    let ty = Ty::Machine(syntax::MachineInt::parse("u8").unwrap());
+    let types = BTreeMap::from([("evg_1".into(), ty.clone()), ("evg_2".into(), ty)]);
+    assert_eq!(
+        super::obligation(&goal, &types),
+        "unknown u8 #1 - unknown u8 #2 == 0"
+    );
+    assert_eq!(
+        super::obligation(&Formula::Ge(first), &types),
+        "unknown u8 >= 0"
+    );
+}
+
+#[test]
 fn generic_invariant_failures_retain_callsite_definition_and_obligation() {
     let source = syntax::join_source_units(&[
         "type MyPair<T> struct {data: [T; 2]} where self.data[0] < self.data[1];".into(),

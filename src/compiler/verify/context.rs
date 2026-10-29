@@ -133,6 +133,8 @@ pub(super) struct Arrays {
 #[derive(Default)]
 pub(super) struct Work {
     pub(super) fresh: usize,
+    // Diagnostic metadata only; fresh identities are never reused across states.
+    pub(super) scalar_types: BTreeMap<String, Ty>,
     pub(super) eval_depth: usize,
     pub(super) eval_steps: usize,
     pub(super) value_work: usize,

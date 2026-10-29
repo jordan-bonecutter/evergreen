@@ -195,8 +195,8 @@ impl Context<'_> {
             self.session.clear_diagnostic();
         }
         checked.inspect_err(|error| {
-            self.session
-                .note_obligation(error, diagnostics::obligation(goal));
+            let rendered = diagnostics::obligation(goal, &self.work.scalar_types);
+            self.session.note_obligation(error, rendered);
         })
     }
 

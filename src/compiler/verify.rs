@@ -1466,6 +1466,9 @@ impl<'a> Context<'a> {
             return Err("symbolic value expansion limit reached (8192)".into());
         }
         let name = self.fresh_name();
+        if matches!(t, Ty::Machine(_) | Ty::Int | Ty::Nat | Ty::Bool) {
+            self.work.scalar_types.insert(name.clone(), t.clone());
+        }
         match t {
             Ty::Union(members) => self.arbitrary_union(members),
             Ty::Shape(inner) => Ok(Symbol::Shape(inner.clone())),
@@ -2108,8 +2111,8 @@ impl<'a> Context<'a> {
             let node = self
                 .proof_script_for(goal, label, line, steps, subjects)
                 .inspect_err(|error| {
-                    self.session
-                        .note_obligation(error, diagnostics::obligation(goal));
+                    let rendered = diagnostics::obligation(goal, &self.work.scalar_types);
+                    self.session.note_obligation(error, rendered);
                 })?;
             self.session.clear_diagnostic();
             self.proof.uses.push(node);
