@@ -1,9 +1,9 @@
 module lexer;
 
 // Initial token categories: EOF=0, identifier=1, integer=2, punctuation=3,
-// whitespace=4, unsupported byte=5. Named variants will replace these codes.
+// whitespace=4, unsupported byte=5, line comment=6. Named variants will replace these codes.
 // Tokens refer to byte ranges; they do not copy or own the source text.
-type Token struct {kind: u8, start: usize, end: usize} where self.kind <= 5 && self.start <= self.end;
+type Token struct {kind: u8, start: usize, end: usize} where self.kind <= 6 && self.start <= self.end;
 
 impl Copy for Token {}
 
@@ -31,6 +31,7 @@ fn continues(kind: u8, byte: u8) -> bool {
         1 => identifier_start(byte) || digit(byte),
         2 => digit(byte),
         4 => whitespace(byte),
+        6 => byte != 10, // Preserve the newline as a separate whitespace token.
         _ => false,
     }
 }
@@ -82,6 +83,17 @@ fn punctuation_end(
     } else {punctuation_pair_end(length, source, position)}
 }
 
+fn starts_comment(
+    length: usize,
+    source: &[u8; length],
+    position: usize
+) -> bool
+    where
+        position < length
+{
+    if length - position >= 2 {(*source)[position] == 47 && (*source)[position + 1] == 47} else {false}
+}
+
 // Every non-EOF result makes progress. Array accesses are statically bounded;
 // unsupported bytes produce a one-byte error token rather than being skipped.
 fn next(
@@ -108,7 +120,9 @@ fn next(
         let kind: u8 = if identifier_start(byte) {1} else {
             if digit(byte) {2} else {
                 if whitespace(byte) {4} else {
-                    if punctuation(byte) {3} else {5}
+                    if starts_comment(length, source, position) {6} else {
+                        if punctuation(byte) {3} else {5}
+                    }
                 }
             }
         };

@@ -3,20 +3,23 @@
 This is the start of an Evergreen implementation of compiler components. The
 Rust compiler remains the compiler and proof checker used to build this code.
 
-The lexer currently scans ASCII identifiers, decimal integers, whitespace, and
+The lexer currently scans ASCII identifiers, decimal integers, whitespace, line
+comments, and
 punctuation, including `::`, `->`, `<=`, `>=`, `==`, `=>`, `!=`, `&&`, `||`, and
 `<=>`. Longer operators take precedence over their prefixes. Tokens are source
 byte spans with a numeric category;
-unsupported bytes produce an error token, and EOF has an empty span. Strings,
-comments, Unicode whitespace, and diagnostics are still
+unsupported bytes produce an error token, and EOF has an empty span. Line
+comments are retained as category 6 spans, stopping before newline or at EOF.
+Strings, block comments, Unicode whitespace, and diagnostics are still
 missing. This lexer is not yet interchangeable with the Rust lexer.
 
 `lexer::next` proves that each span stays inside the source and that every
 non-EOF result advances. Its scan has a checked termination measure. These
 contracts prove memory bounds and progress, not full lexical correctness.
 The smoke program checks all compound operators, their token endpoints, and a
-lone `<` at the end of input. The expectation helper is checked separately from
-the scanning loop, keeping its test table out of the loop's proof state.
+lone `<`, standalone slash, and comments ending at newline and EOF. Expectation
+helpers are checked separately from the scanning loop, keeping their test tables
+out of the loop's proof state.
 
 From the repository root:
 

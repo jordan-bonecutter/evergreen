@@ -1,6 +1,6 @@
 import lexer;
 
-fn expected(index: usize, kind: u8, end: usize) -> bool {
+fn expected_operator(index: usize, kind: u8, end: usize) -> bool {
     match index {
         0 => kind == 1 && end == 1,
         1 => kind == 3 && end == 3,
@@ -33,9 +33,24 @@ fn expected(index: usize, kind: u8, end: usize) -> bool {
     }
 }
 
-// "a::b => c <=> d <= >= == != && || -> <". This entry point is a bootstrap smoke test, not a compiler yet.
+fn expected(index: usize, kind: u8, end: usize) -> bool {
+    if index < 27 {expected_operator(index, kind, end)} else {
+        match index {
+            27 => kind == 4 && end == 39,
+            28 => kind == 6 && end == 48,
+            29 => kind == 4 && end == 49,
+            30 => kind == 3 && end == 50,
+            31 => kind == 4 && end == 51,
+            32 => kind == 6 && end == 57,
+            _ => false,
+        }
+    }
+}
+
+// Operators, comments ending at newline/EOF, and a standalone slash.
+// This entry point is a bootstrap smoke test, not a compiler yet.
 fn main() -> usize {
-    let source: [u8; 38] = [
+    let source: [u8; 57] = [
         97,
         58,
         58,
@@ -73,22 +88,41 @@ fn main() -> usize {
         45,
         62,
         32,
-        60
+        60,
+        32,
+        47,
+        47,
+        105,
+        103,
+        110,
+        111,
+        114,
+        101,
+        100,
+        10,
+        47,
+        32,
+        47,
+        47,
+        116,
+        97,
+        105,
+        108
     ];
     let valid = true;
     let position: usize = 0;
     let count: usize = 0;
-    while position < 38
+    while position < 57
         invariant
             count <= position &&
-            position <= 38
+            position <= 57
         modifies(&position, &count, &valid)
-        decreases(38 - position)
+        decreases(57 - position)
     {
-        let token = lexer::next(38, &source, position);
+        let token = lexer::next(57, &source, position);
         valid = valid && expected(count, token.kind, token.end);
         count = count + 1;
         position = token.end;
     }
-    if valid && count == 27 {42} else {1}
+    if valid && count == 33 {42} else {1}
 }
