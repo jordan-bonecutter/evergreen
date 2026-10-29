@@ -682,7 +682,9 @@ fn update_borrow_writes_keep_retained_and_unopened_invariants() {
         .unwrap_err()
         .contains("invariant of Positive"));
     let owning = "type Owner struct {value: usize} impl Drop for Owner {fn drop(self){}} type Pair struct {left: usize, right: usize} where(fact balanced = left == right; balanced); fn main() {let pair = Pair {left: 7, right: 7}; let owner = Owner {value: 1}; update(pair) lifts balanced {owner = owner;}}";
-    assert!(verify(owning).unwrap_err().contains("only scalar writes"));
+    assert!(verify(owning)
+        .unwrap_err()
+        .contains("initialization of vacant union slots"));
 }
 
 #[test]
@@ -787,9 +789,7 @@ fn update_calls_still_require_permissions_and_ownership_free_bodies() {
         .unwrap_err()
         .contains("invariant-independent effects"));
     let source = "type Pair struct {left: usize, right: usize} where(fact balanced = left == right; balanced); fn main() {let pair = Pair {left: 42, right: 42}; let owner: unique(usize) = alloc(42); update(pair) lifts balanced {let observed = *(if true {owner} else {owner});}}";
-    assert!(verify(source)
-        .unwrap_err()
-        .contains("runtime ownership moves are forbidden"));
+    assert!(verify(source).unwrap_err().contains("temporary ownership"));
 }
 
 #[test]

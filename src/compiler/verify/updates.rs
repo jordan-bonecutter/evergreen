@@ -124,22 +124,26 @@ impl Context<'_> {
     ) -> Result<()> {
         match statement {
             Statement::Assign {target, value, starts}
-                if self.update_expression(target) && self.update_expression(value) => {
+                if self.update_expression(target) && self.update_value(value) => {
                 // Inspect the type without evaluating the target twice:
                 // computing an address may itself call a checked helper.
-                if !self.hint(target).as_ref().is_some_and(scalar_value) {
-                    return Err(format!("line {}: updates currently allow only scalar writes; replacing owned fields requires destructor/effect proofs", target.line));
+                if !self.hint(target).as_ref().is_some_and(|ty| scalar_value(ty)
+                    || matches!(ty, Ty::Union(members) if members.iter().any(|member| matches!(member, Ty::Shape(_))))) {
+                    return Err(format!("line {}: updates allow scalar writes or initialization of vacant union slots; replacing live owners requires cleanup/effect proofs", target.line));
                 }
                 self.assign_starting_owners(target, value, starts)?;
             }
-            Statement::Let {name, value, ..} if self.update_expression(value) => {
+            Statement::Let {name, value, ..} if self.update_value(value) => {
                 self.statement(statement)?;
                 let ty = self.locals.values.get(name).ok_or("unknown update local")?.ty();
                 let allowed = scalar_value(&ty) || matches!(ty, Ty::Unit)
-                    || matches!(&ty, Ty::Ref(inner) if scalar_value(inner));
+                    || matches!(&ty, Ty::Ref(inner) if scalar_value(inner))
+                    || self.ty_is_move_only(&ty);
                 if !allowed {
-                    return Err(format!("line {}: update locals require scalar values or scalar borrows, without an open object invariant", value.line));
+                    return Err(format!("line {}: update locals require scalars, scalar borrows, or owners transferred before the block ends", value.line));
                 }
+                let local = self.locals.values.get(name).ok_or("unknown update local")?.clone();
+                self.validate_argument(&local, value.line)?;
                 scope.bindings.push(name.clone());
             }
             Statement::Fact {name, value} if self.update_expression(value) => {
@@ -152,12 +156,24 @@ impl Context<'_> {
                     scope.proofs.push(name.clone());
                 }
             }
-            Statement::Effect(value) if self.update_expression(value) => self.statement(statement)?,
+            Statement::Effect(value) if self.update_expression(value) => {
+                if self.hint(value).as_ref().is_some_and(|ty| self.ty_is_move_only(ty)) {
+                    return Err("update expressions must not discard owning values".into());
+                }
+                self.statement(statement)?;
+            }
             Statement::Ideal(binding) => {
                 self.statement(statement)?;
                 scope.bindings.extend(binding.bindings().into_iter().map(str::to_owned));
             }
-            _ => return Err(format!("line {line}: this operation needs invariant-independent effects; moves, drops, exits, and unknown effects are forbidden while invariants are open")),
+            _ => return Err(format!("line {line}: this operation needs invariant-independent effects; temporary ownership, drops, exits, and unknown effects are forbidden while invariants are open")),
+        }
+        Ok(())
+    }
+
+    pub(super) fn update_replacement(&mut self, old: &Symbol, line: usize) -> Result<()> {
+        if !self.storage.opened_planes.is_empty() && matches!(old, Symbol::Union { .. }) {
+            self.uninitialized_union(old, line)?;
         }
         Ok(())
     }
@@ -185,7 +201,11 @@ impl Context<'_> {
             };
             if let Some(value) = value {
                 if self.symbol_is_move_only(&value) {
-                    self.validate_argument(&value, line)?;
+                    if self.locals.ideal_bindings.contains(&name) {
+                        self.validate_argument(&value, line)?;
+                    } else {
+                        return Err(format!("line {line}: an owning update local must be transferred before the update ends"));
+                    }
                 }
             }
             self.locals.values.remove(&name);
@@ -198,6 +218,15 @@ impl Context<'_> {
             self.proof.witnesses.remove(&name);
         }
         self.validate_live(line)
+    }
+
+    fn update_value(&self, expression: &Expr) -> bool {
+        if let Kind::Call(name, arguments) = &expression.kind {
+            if name == "move" {
+                return matches!(arguments.as_slice(), [place] if self.update_expression(place));
+            }
+        }
+        self.update_expression(expression)
     }
 
     fn update_expression(&self, e: &Expr) -> bool {
@@ -216,19 +245,26 @@ impl Context<'_> {
             }
             Kind::Record(..) | Kind::Array(..) | Kind::Block(..) => false,
             Kind::Unary(op, x) if op == "*" => {
-                matches!(
-                    self.hint(x),
-                    Some(Ty::Ref(_) | Ty::Unique(_) | Ty::Shared(_))
-                ) && self.update_expression(x)
+                self.hint(x).is_some_and(|ty| ty.pointer_member().is_some())
+                    && self.update_expression(x)
             }
             Kind::Unary(_, x) | Kind::Field(x, _) | Kind::FactAt(x, _) => self.update_expression(x),
             Kind::Binary(_, a, b) | Kind::Index(a, b) => {
                 self.update_expression(a) && self.update_expression(b)
             }
             Kind::If(c, a, b) => {
-                self.update_expression(c) && self.update_expression(a) && self.update_expression(b)
+                !self
+                    .hint(e)
+                    .as_ref()
+                    .is_some_and(|ty| self.ty_is_move_only(ty))
+                    && self.update_expression(c)
+                    && self.update_expression(a)
+                    && self.update_expression(b)
             }
             _ => true,
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -207,6 +207,7 @@ impl Context<'_> {
     ) -> Result<()> {
         self.validate_member_path(reference, path, line)?;
         let old = project(self.storage.memory.read(reference)?, path)?.clone();
+        self.update_replacement(&old, line)?;
         if self.has_runtime_cleanup(&old.ty())
             && !(self.execution.phase == Phase::Ideal && self.erased_value(&old))
             && !self.uninitialized_union(&old, line)?

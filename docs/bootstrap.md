@@ -38,15 +38,21 @@ does not require it to hold: only the final `where` proposition imposes a
 constraint. Lifted names must be declared facts used as independent conjuncts
 of that constraint. `Type::name` can qualify a lifted selector. Its body allows
 checked scalar writes, local scalar values/borrows, and pure facts; each
-invariant must hold again on exit. Runtime calls require an inferred scalar
+invariant must hold again on exit. A valid owner may also move into a proved
+vacant `T | shape(T)` slot, and a live member may be extracted into its matching
+shape. Owning locals introduced inside an update must be transferred before
+exit; they cannot run implicit cleanup there. The opened root itself cannot move.
+`examples/update_owner_slots.evg` exercises insertion and extraction with a lifted
+occupancy fact, ordinary Drop afterward, and certificate replay. Runtime calls require an inferred scalar
 ownership-free effect summary: total execution, scalar values or scalar-reference
 interfaces, no allocation or cleanup effects, and no access to a whole refined
 object. Summaries compose through previously checked helpers.
 `examples/update_helpers.evg` demonstrates
 this distinction: `&pair.left` and a read-only scalar helper work while `&pair`
 and a whole-object observer cannot rely on the open invariant. Unknown runtime
-effects, runtime allocation and ownership transfers, early exits, and suspension
-remain rejected. Borrow locals are scoped to the update. Runtime owning fields
+effects, runtime allocation, ownership temporaries, Drop, leaks, early exits,
+and suspension remain rejected. Explicit `move(...)` transfers must be complete
+assignment or binding expressions. Borrow locals are scoped to the update. Runtime owning fields
 cannot be replaced. Opening
 an invariant does not destroy the object or relinquish its initialized fields.
 The update erases to ordinary stores, not a hardware transaction; concurrency

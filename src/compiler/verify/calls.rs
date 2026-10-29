@@ -115,8 +115,11 @@ impl<'a> Context<'a> {
         expected: Option<&Ty>,
         line: usize,
     ) -> Result<Symbol> {
-        if self.execution.phase == Phase::Runtime && !self.storage.opened_planes.is_empty() {
-            return Err("moves and drops are forbidden while invariants are open".into());
+        if self.execution.phase == Phase::Runtime
+            && !self.storage.opened_planes.is_empty()
+            && name != "move"
+        {
+            return Err("drops and leaks are forbidden while invariants are open".into());
         }
         let consumed_member = name == "move"
             && self.drop_receiver_consumed()
@@ -157,6 +160,9 @@ impl<'a> Context<'a> {
         let id = self.storage.memory.plane(r)?;
         if !self.locals.places.values().any(|p| *p == id) {
             return Err("cannot move or drop a borrowed parameter plane".into());
+        }
+        if self.storage.opened_planes.contains_key(&id) {
+            return Err("cannot consume an opened update plane".into());
         }
         let stored = self.storage.memory.read(r)?.clone();
         self.record_valid(&stored, line)?;

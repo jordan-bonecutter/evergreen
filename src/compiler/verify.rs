@@ -2744,14 +2744,6 @@ impl<'a> Context<'a> {
                     {
                         return Err("ideal execution cannot consume runtime ownership; use a read-only proof view".into());
                     }
-                    if self.execution.phase == Phase::Runtime
-                        && !self.storage.opened_planes.is_empty()
-                    {
-                        return Err(
-                            "runtime ownership moves are forbidden while invariants are open"
-                                .into(),
-                        );
-                    }
                     if self.execution.dropping && n == "self" {
                         return Err(
                             "a destructor must use a complete pattern to consume self".into()
@@ -2759,6 +2751,12 @@ impl<'a> Context<'a> {
                     }
                     let (r, _) = self.location(e)?;
                     let id = self.storage.memory.plane(r)?;
+                    if !self.storage.opened_planes.is_empty() {
+                        if self.storage.opened_planes.contains_key(&id) {
+                            return Err("cannot consume an opened update plane".into());
+                        }
+                        self.validate_argument(&value, e.line)?;
+                    }
                     self.take_symbol(id)?;
                 }
                 Ok(selected)

@@ -20,9 +20,6 @@ impl Context<'_> {
         if self.execution.phase != Phase::Runtime {
             return Err("extracting a runtime union member cannot be erased".into());
         }
-        if !self.storage.opened_planes.is_empty() {
-            return Err("runtime ownership moves are forbidden while invariants are open".into());
-        }
         if self.execution.dropping && !self.drop_receiver_consumed() {
             return Err(
                 "destructor moves require a complete local binding; decompose self first".into(),

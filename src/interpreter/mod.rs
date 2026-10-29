@@ -360,7 +360,9 @@ impl Evaluator<'_> {
                 }
                 for name in locals.into_iter().rev() {
                     if let Some(id) = self.roots.remove(&name) {
-                        self.memory.take(id)?;
+                        if self.memory.get(id).is_ok() {
+                            self.memory.take(id)?;
+                        }
                     }
                     env.remove(&name);
                 }

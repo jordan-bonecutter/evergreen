@@ -48,12 +48,18 @@ impl Emitter<'_> {
             }
             Statement::Update { body, .. } => {
                 let saved = self.slots.clone();
-                let saved_alive = self.alive.clone();
                 for statement in body {
                     self.statement(statement)?;
                 }
+                let names = body
+                    .iter()
+                    .flat_map(|statement| statement.runtime_bindings(self.structs))
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                for name in names.into_iter().rev() {
+                    self.cleanup_binding(&name, false)?;
+                }
                 self.slots = saved;
-                self.alive = saved_alive;
                 Ok(())
             }
             Statement::Effect(e) => {

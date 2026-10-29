@@ -72,6 +72,7 @@ impl Context<'_> {
         // may already have been consumed; cleanup belongs to what is there now.
         let old = if old_live { self.storage(place)? } else { old };
         self.compatible(&new.ty(), &old.ty(), place.line)?;
+        self.update_replacement(&old, place.line)?;
         if self.execution.dropping && self.symbol_is_move_only(&old) {
             return Err(
                 "destructors cannot replace owning fields without cleanup/effect proofs".into(),

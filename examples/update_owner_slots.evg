@@ -1,0 +1,52 @@
+// Moves transfer live payloads into vacant slots while the occupancy fact is lifted.
+type Slot struct {full: bool, data: unique(usize) | shape(unique(usize))} where (
+    fact occupancy = self.full == (typeof(self.data) == unique(usize));
+    occupancy
+);
+fn discard_live(data: unique(usize)) {}
+fn discard_empty(data: shape(unique(usize))) {}
+impl Drop for Slot {
+    fn drop({full, data}) {
+        if full {discard_live(data)} else {discard_empty(data)}
+    }
+}
+impl Slot {
+    fn new() -> Self {
+        Self {full: false, data: shape(unique(usize))}
+    }
+    method& push(item: unique(usize))
+        where
+            !self.full
+        modifies(&self.full, &self.data)
+        ensures
+            self.full
+    {
+        update(*self) lifts occupancy {
+            self.data = item;
+            self.full = true;
+        }
+    }
+    method& pop() -> unique(usize)
+        where
+            self.full
+        modifies(&self.full, &self.data)
+        ensures
+            !self.full
+    {
+        let output: unique(usize) | shape(unique(usize)) = shape(unique(usize));
+        update(*self) lifts occupancy {
+            let value: unique(usize) = move(self.data);
+            output = value;
+            self.full = false;
+        }
+        output
+    }
+}
+fn main() -> usize {
+    let slot = Slot::new();
+    slot.push(alloc(42));
+    let item = slot.pop();
+    let answer = *item;
+    drop(slot);
+    answer
+}

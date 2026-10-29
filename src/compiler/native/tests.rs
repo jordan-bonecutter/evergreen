@@ -159,6 +159,7 @@ fn native_resource_ranges_and_cleanup_match_interpreter() {
         include_str!("../../../examples/range_drain.evg"),
         include_str!("../../../examples/range_reallocate.evg"),
         include_str!("../../../examples/conditional_buffer.evg"),
+        include_str!("../../../examples/update_owner_slots.evg"),
         include_str!("../../../examples/range_drop.evg"),
         include_str!("../../../examples/drop_loop.evg"),
     ]
