@@ -10,6 +10,10 @@ pub(super) fn write_text(path: &Path, content: &str, inputs: &[PathBuf]) -> Resu
     write_bytes(path, content.as_bytes(), inputs, Mode::Text)
 }
 
+pub(super) fn write_binary(path: &Path, content: &[u8], inputs: &[PathBuf]) -> Result<(), String> {
+    write_bytes(path, content, inputs, Mode::Text)
+}
+
 pub(super) fn write_executable(
     path: &Path,
     content: &[u8],

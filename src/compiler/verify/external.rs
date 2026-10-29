@@ -30,6 +30,23 @@ impl Context<'_> {
             Some(syntax::External::CompareExchange64) => {
                 Self::check_compare_exchange_interface(function, &runtime)?
             }
+            Some(syntax::External::ConsoleWrite) => {
+                let [(length, Type::Machine(integer)), (_, Type::Ref(array))] = runtime.as_slice()
+                else {
+                    return Err(
+                        "console_write requires a usize length and a borrowed u8 array".into(),
+                    );
+                };
+                if *integer != MachineInt::parse("usize").unwrap()
+                    || !matches!(array.as_ref(), Type::Array(element, extent)
+                        if **element == Type::Machine(MachineInt::parse("u8").unwrap())
+                        && matches!(&extent.kind, Kind::Name(name) if name == length))
+                    || function.ret != Type::Unit
+                    || !function.modifies.is_empty()
+                {
+                    return Err("console_write requires (length: usize, bytes: linear_plane(u8, length)) -> unit with no writes".into());
+                }
+            }
             None => return Err("missing external operation".into()),
         }
         // Check the contract's expressions normally, but make no claim to have
@@ -55,7 +72,7 @@ impl Context<'_> {
         }
         let trust = self.session.trust(
             &[],
-            format!("x86_64 external declaration {function:?}").as_bytes(),
+            format!("external declaration {function:?}").as_bytes(),
             function.line,
             &format!("external contract for {}", function.name),
         )?;

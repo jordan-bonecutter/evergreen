@@ -506,6 +506,7 @@ pub struct ReturnBorrow {
 pub enum External {
     Syscall(u32),
     CompareExchange64,
+    ConsoleWrite,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

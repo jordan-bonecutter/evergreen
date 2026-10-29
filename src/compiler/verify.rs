@@ -2975,6 +2975,14 @@ pub struct VerifiedProgram {
 }
 
 impl VerifiedProgram {
+    /// The checked entry's declared result type, for host ABI presentation.
+    pub fn entry_result_type(&self) -> Option<&Type> {
+        self.functions
+            .iter()
+            .find(|function| function.name == "main")
+            .map(|function| &function.ret)
+    }
+
     pub(crate) fn uses_owned_planes(&self) -> bool {
         self.functions
             .iter()

@@ -113,6 +113,7 @@ impl<'a> ProgramEmitter<'a> {
             match external {
                 External::Syscall(number) => emitter.syscall(function, number)?,
                 External::CompareExchange64 => emitter.compare_exchange64(function)?,
+                External::ConsoleWrite => emitter.console_write(function)?,
             }
         } else {
             for statement in &function.body {

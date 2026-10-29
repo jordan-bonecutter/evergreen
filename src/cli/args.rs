@@ -47,7 +47,7 @@ pub(super) enum Action {
         #[arg(long, requires = "check")]
         staged: bool,
     },
-    /// Emit a verified scalar Linux x86-64 executable.
+    /// Emit a verified Linux x86-64 executable or WebAssembly module.
     Build {
         #[arg(required = true)]
         files: Vec<PathBuf>,
@@ -57,6 +57,9 @@ pub(super) enum Action {
         /// Replay checked source certificates before native emission.
         #[arg(long)]
         proof: Option<PathBuf>,
+        /// Output target. WebAssembly exports main and imports the console host.
+        #[arg(long, value_enum, default_value_t = Target::X86_64)]
+        target: Target,
     },
     /// Verify a program with the internal proof kernel.
     Check {
@@ -78,6 +81,14 @@ pub(super) enum Action {
         #[arg(required = true)]
         files: Vec<PathBuf>,
     },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub(super) enum Target {
+    #[value(name = "x86_64", alias = "x86_64-unknown-linux-gnu")]
+    X86_64,
+    #[value(name = "wasm32", alias = "wasm32-unknown-unknown", alias = "wasm")]
+    Wasm32,
 }
 
 impl Action {

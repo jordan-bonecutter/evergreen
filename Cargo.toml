@@ -8,7 +8,12 @@ license = "MIT"
 [[bin]]
 name = "evg"
 path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = ["dep:clap"]
 
 [dependencies]
-clap = { version = "4.6.7", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive"], optional = true }
 sha2 = "0.10.9"

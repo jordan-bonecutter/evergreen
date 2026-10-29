@@ -1,0 +1,4 @@
+fn main() -> usize {
+    console::println(&"Hello, Evergreen!");
+    42
+}

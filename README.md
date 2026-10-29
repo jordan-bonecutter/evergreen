@@ -2,6 +2,11 @@
 
 ## Bootstrap implementation
 
+The [website and browser playground](web/README.md) compile Evergreen entirely
+on-device using WebAssembly. Build a standalone module with
+`cargo run -- build examples/console.evg --target wasm32`.
+See [WebAssembly target notes](docs/wasm.md) for supported features and the console ABI.
+
 The bootstrap compiler is written in Rust, with an internal verifier. See
 [the bootstrap guide](docs/bootstrap.md) for commands, supported syntax, and
 the current trust boundary. The remainder of this README is the original

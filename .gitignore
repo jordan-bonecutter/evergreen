@@ -1,1 +1,6 @@
 /target/
+/web/compiler/target/
+/web/dist/
+/web/.sites-*/
+/web/infra/node_modules/
+/web/infra/cdk.out/
