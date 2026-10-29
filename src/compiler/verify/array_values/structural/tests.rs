@@ -16,6 +16,10 @@ fn replay(body: &str) {
 
 #[test]
 fn structural_values_replay_without_runtime_equality_or_copy_permission() {
+    replay(include_str!(
+        "../../../../../examples/slot_value_contracts.evg"
+    ));
+    assert!(verify("fn wrong(slot: &(usize | shape(usize)), value: usize) where typeof(*slot) == shape(usize) {proof _: same_value(*slot, value);}").is_err());
     replay("fn duplicate(x: Item) -> Item ensures same_value(result, x) {x} fn main() {let item = Item {pair: Pair {x: 7, valid: true}, tag: 3}; let other = duplicate(item); proof _: same_value(item, other); proof _: other.pair.x == 7;}");
     replay("fn check(x: Item, y: Item) where same_value(x, y) ensures x.tag == y.tag && x.pair.x == y.pair.x && x.pair.valid == y.pair.valid {}");
     replay("fn check(x: Item) {proof _: same_value(x, x);}");

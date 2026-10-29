@@ -1,0 +1,25 @@
+fn fill(slot: &(usize | shape(usize)), value: usize)
+    where
+        typeof(*slot) == shape(usize)
+    modifies(slot)
+    ensures
+        typeof(*slot) == usize &&
+        same_value(*slot, value)
+{
+    *slot = value;
+}
+fn read(slot: &(usize | shape(usize))) -> usize
+    where
+        typeof(*slot) == usize
+    ensures
+        same_value(result, old(*slot))
+{
+    *slot
+}
+fn main() -> usize {
+    let slot: usize | shape(usize) = shape(usize);
+    fill(&slot, 42);
+    let answer = read(&slot);
+    let value: usize = slot;
+    answer
+}

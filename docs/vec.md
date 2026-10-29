@@ -165,3 +165,13 @@ result is 42; releasing a populated buffer fails the precondition. General
 its relocation and zero-destination branches currently exposes an unresolved
 universal-proof dependency in the relocation recheck. This is a checker gap,
 not an intended permanent API restriction.
+
+`same_value(slot, value)` can compare an initialized `T | shape(T)` slot with
+an ordinary scalar or reference-free record `T`, in either argument order.
+The concrete counterpart supplies the payload type; normal union selection
+still requires proof that `T` is active. [slot_value_contracts.evg](../examples/slot_value_contracts.evg)
+shows checked initialization and reading contracts, including an `old` snapshot.
+This supplies individual-slot value guarantees for vacant storage. Quantified
+`same_value` over union-element arrays and equality of owning payloads remain
+unsupported; preserving the public Vec's full value contracts still requires
+that work.

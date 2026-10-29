@@ -59,7 +59,17 @@ impl Context<'_> {
         let [a, b] = args else {
             return Err(format!("line {line}: same_value expects two values"));
         };
-        let hint = self.hint(a).or_else(|| self.hint(b));
+        // A concrete counterpart supplies the payload type for a union slot.
+        // Ordinary evaluation must still prove that this member is active.
+        let left = self.hint(a);
+        let right = self.hint(b);
+        let hint = left
+            .as_ref()
+            .filter(|ty| !matches!(ty, Ty::Union(_)))
+            .or_else(|| right.as_ref().filter(|ty| !matches!(ty, Ty::Union(_))))
+            .cloned()
+            .or(left)
+            .or(right);
         let a = self.structural_operand(a, hint.as_ref())?;
         let b = self.structural_operand(b, Some(&a.ty()))?;
         self.compatible(&a.ty(), &b.ty(), line)?;
