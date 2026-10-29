@@ -309,6 +309,7 @@ impl Context<'_> {
         let owner_scope = self.storage.memory.owner_scope();
         let saved = Scope::enter(self, &method, receiver);
         let checked = (|| -> Result<BTreeSet<PlaneId>> {
+            self.inherit_checked_storage_claims(&saved.claims)?;
             self.capture_old(&method)?;
             let inputs = self.incoming_references(&method)?;
             let writes = self.write_places(&method, &inputs)?;

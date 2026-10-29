@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 fn replay(source: &str, expected: &str) {
     let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
@@ -10,6 +11,45 @@ fn replay(source: &str, expected: &str) {
             .proof_search_count(),
         0
     );
+}
+
+#[test]
+fn returned_nominal_ranges_survive_binding_and_cleanup_but_not_storage_changes() {
+    let source = include_str!("../../../../examples/buffer_reallocation.evg");
+    replay(source, "42");
+    for bad in [
+        source.replace_evg("grown.get(1)", "grown.get(2)"),
+        source.replace_evg(
+            "let view = grown.get(1);",
+            "grown.len = 3; let view = grown.get(1);",
+        ),
+        source.replace_evg(
+            "let view = grown.get(1);",
+            "let stolen: unique(usize) = move((*grown.data)[0]); let view = grown.get(1);",
+        ),
+        source.replace_evg("drop(grown);", "drop(grown); let stale = **view;"),
+        source.replace_evg("len: len, data: grown", "len: len + 1, data: grown"),
+    ] {
+        assert!(verify(&bad).is_err(), "accepted {bad}");
+    }
+}
+
+#[test]
+fn fact_and_proof_names_have_lexical_variable_scope() {
+    let source = "fn main() -> usize {let x: usize = 42; fact expected = x == 42; proof outer: expected; {proof inner: expected by {exact outer}; proof _: expected by {exact inner};}; proof _: expected by {exact outer}; x}";
+    replay(source, "42");
+    let escaped = source.replace(
+        "}; proof _: expected by {exact outer};",
+        "}; proof _: expected by {exact inner};",
+    );
+    assert!(verify(&escaped).is_err());
+    for source in [
+        "fn callee() {proof _: true by {exact caller_proof};} fn main() {proof caller_proof: true; callee();}",
+        "type Resource struct {} impl Drop for Resource {fn drop(self) {proof _: true by {exact caller_proof};}} fn main() {proof caller_proof: true; let value = Resource {};}",
+        "fn main() {{fact local = true; proof witness: local;}; proof _: local;}",
+    ] {
+        assert!(verify(source).is_err(), "accepted {source}");
+    }
 }
 
 #[test]

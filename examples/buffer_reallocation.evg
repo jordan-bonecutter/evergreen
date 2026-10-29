@@ -1,0 +1,89 @@
+// Move a live prefix into new storage, return its nominal guarantees, and drop it.
+// This exercises the storage machinery needed by the public Vec migration.
+type Buffer<T = usize> struct {cap: usize, len: usize, data: Null | unique(T | shape(T), cap)} where (
+    fact length_fits = len <= cap;
+    fact storage_matches_capacity = (cap == 0) == (typeof(data) == Null);
+    fact initialized_prefix = if (typeof(data) != Null) {
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer::from(len) &&
+            i < integer::from(cap)
+        ) {typeof((*data)[i]) == T}
+    } else {true};
+    fact vacant_suffix = if (typeof(data) != Null) {
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer::from(len) <= i &&
+            i < integer::from(cap)
+        ) {typeof((*data)[i]) == shape(T)}
+    } else {true};
+    length_fits &&
+    storage_matches_capacity &&
+    initialized_prefix &&
+    vacant_suffix
+);
+
+fn discard_zero(value: Null) {}
+impl<T> Drop for Buffer<T> {
+    fn drop({cap, len, data}) {
+        if cap == 0 {discard_zero(data)} else {arrays::drain_prefix::<T>(cap, data, len)}
+    }
+}
+impl<T> Buffer<T> {
+    fn new(capacity: usize) -> Self
+        where
+            integer::from(capacity) * integer::from(size_of(T)) <= integer::from(isize::MAX)
+        ensures
+            result.len == 0 &&
+            result.cap == capacity
+    {
+        let data: Null | unique(T | shape(T), capacity) = if capacity == 0 {0} else {alloc(capacity, shape(T))};
+        Self {cap: capacity, len: 0, data: data}
+    }
+    method& length() -> usize
+        ensures
+            result == self.len
+    {
+        self.len
+    }
+    method& capacity() -> usize
+        ensures
+            result == self.cap
+    {
+        self.cap
+    }
+    method& get(index: usize) -> &T
+        where
+            index < self.len
+        borrows(&(*self.data)[index])
+    {
+        &(*self.data)[index]
+    }
+}
+fn renew<T>(value: Buffer<T>, capacity: usize) -> Buffer<T>
+    where
+        value.cap > 0 &&
+        capacity > 0 &&
+        value.len <= capacity &&
+        integer::from(capacity) * integer::from(size_of(T)) <= integer::from(isize::MAX)
+    ensures
+        result.len == old(value.len) &&
+        result.cap == capacity
+{
+    let Buffer::<T> {cap, len, data} = value;
+    let grown = arrays::relocate_prefix::<T>(cap, data, len, capacity);
+    Buffer::<T> {cap: capacity, len: len, data: grown}
+}
+fn main() -> usize {
+    let data: unique(unique(usize) | shape(unique(usize)), 8) = alloc(8, shape(unique(usize)));
+    (*data)[0] = alloc(7);
+    (*data)[1] = alloc(42);
+    let values = Buffer::<unique(usize)> {cap: 8, len: 2, data: data};
+    let grown = renew(values, 16);
+    let view = grown.get(1);
+    let answer = **view;
+    drop(grown);
+    answer
+}

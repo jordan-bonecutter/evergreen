@@ -234,6 +234,15 @@ without evidence, separately admitted proofs of the same conclusion, sharing
 through deep derivations, and storage limits for both fresh formulas and scoped
 hypotheses.
 
+Fact and proof names have ordinary lexical scope: nested blocks can use an
+outer name, but an inner name cannot escape its block. Separately defined
+functions and destructors do not resolve names from their callers. Checked
+evidence about storage is independent of those names. Actual body rechecks and
+destructors retain unadmitted, closed storage candidates and check their original
+plane revisions and branch guards when using them. A returned record's checked
+logical invariant can be exported without exporting its callee's other local
+facts; its pointer reads still depend on the real pointee states.
+
 Each interned proposition also records its predicate symbols. Logical lookup
 uses a symbol from the normalized goal to reject unrelated candidates before
 cloning and comparing their formulas. This index establishes no truth: matching

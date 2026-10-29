@@ -123,6 +123,16 @@ before closing the block. No admission or element-by-element proof expansion is
 needed: capacity eight and a billion have identical obligation and certificate
 counts. The example is storage groundwork, not a second public Vec API.
 
+[`buffer_reallocation.evg`](../examples/buffer_reallocation.evg) combines source
+prefix relocation with the nominal buffer type and destructor. Actual body
+rechecks export the checked logical invariant of the returned record, and
+destructors retain current, unadmitted storage evidence as lookup candidates.
+Caller-local fact and proof names remain lexical. Reads through a returned
+buffer still depend on its allocation's current revision; extracting a live
+slot or reading after destruction cannot reuse an earlier range guarantee.
+The public Vec migration and larger compositions of these operations remain
+unfinished; nested resource-case rechecks can still hit the work budget.
+
 Run [vec_generic.evg](../examples/vec_generic.evg) with:
 
 ```sh

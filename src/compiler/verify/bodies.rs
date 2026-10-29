@@ -3,27 +3,18 @@
 
 use super::*;
 
+mod return_invariants;
+
 #[cfg(test)]
 mod tests;
 
 impl Context<'_> {
-    pub(super) fn check_actual_body(
+    pub(super) fn inherit_checked_storage_claims(
         &mut self,
-        function: &Function,
-        result_type: &Ty,
-        writes: Vec<WritePlace>,
-        inputs: Vec<InputReference>,
-        logical_precondition: Option<(Formula, subjects::Snapshot)>,
-    ) -> Result<Symbol> {
-        self.charge_value_work(self.proof.claims.len())?;
-        self.execution.rechecking += 1;
-        // The caller has already bound arguments, checked preconditions and
-        // authorized every declared write. Isolate lexical proof names, while
-        // checked storage facts follow the actual planes into the recheck.
-        let facts = std::mem::take(&mut self.proof.facts);
-        let proofs = std::mem::take(&mut self.proof.witnesses);
-        let claims = std::mem::take(&mut self.proof.claims);
-        for &node in &claims {
+        candidates: &BTreeSet<evidence::NodeId>,
+    ) -> Result<()> {
+        self.charge_value_work(candidates.len())?;
+        for &node in candidates {
             if !self.proof.evidence.has_admissions(node)
                 && !self.proof.evidence.has_pending_summaries(node)
                 && self.proof.evidence.check_closed(node).is_ok()
@@ -33,11 +24,29 @@ impl Context<'_> {
                     .subjects(node)
                     .is_some_and(|snapshot| snapshot.complete)
             {
-                // Availability is checked on demand against the body state.
-                // A store or cleanup can invalidate these candidates normally.
+                // Lookup still checks the original planes, revisions, and
+                // branch guards. Entering a body cannot revive a stale fact.
                 self.proof.claims.insert(node);
             }
         }
+        Ok(())
+    }
+
+    pub(super) fn check_actual_body(
+        &mut self,
+        function: &Function,
+        result_type: &Ty,
+        writes: Vec<WritePlace>,
+        inputs: Vec<InputReference>,
+        logical_precondition: Option<(Formula, subjects::Snapshot)>,
+    ) -> Result<Symbol> {
+        self.execution.rechecking += 1;
+        // The caller has already bound arguments, checked preconditions and
+        // authorized every declared write. Isolate lexical proof names, while
+        // checked storage facts follow the actual planes into the recheck.
+        let facts = std::mem::take(&mut self.proof.facts);
+        let proofs = std::mem::take(&mut self.proof.witnesses);
+        let claims = std::mem::take(&mut self.proof.claims);
         let value_claims = std::mem::take(&mut self.proof.value_claims);
         let contract_uses = std::mem::take(&mut self.proof.contract_uses);
         // Keep opened_planes: their unlifted requirements apply after every
@@ -60,6 +69,7 @@ impl Context<'_> {
         let results = self.proof.results.len();
         let mut returned_claims = Vec::new();
         let checked = (|| {
+            self.inherit_checked_storage_claims(&claims)?;
             if let Some((proposition, subjects)) = logical_precondition {
                 self.import_logical_contract(
                     proposition,
@@ -75,9 +85,11 @@ impl Context<'_> {
             }
             let inputs = self.storage.inputs.clone();
             let (value, post) = self.check_function_body(function, result_type, &inputs, false)?;
-            // Only this function's advertised postcondition crosses its call
-            // boundary. Inner calls cannot masquerade as its returned value.
+            // Export this function's postcondition and returned nominal type.
+            // Inner call receipts cannot masquerade as its returned value.
             self.proof.results.truncate(results);
+            returned_claims
+                .extend(self.publish_checked_result_invariants(&value, function.result.line)?);
             if let Some((proposition, checked)) = post {
                 // This body was checked against the actual arguments. Export
                 // its proof, rather than replacing it with an opaque contract.
