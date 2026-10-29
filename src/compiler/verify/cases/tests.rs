@@ -112,3 +112,36 @@ fn resource_case_admissions_follow_only_the_selected_actual_continuation() {
         0
     );
 }
+
+#[test]
+fn sparse_resource_array_cases_keep_each_continuations_initialized_range() {
+    let source = r#"
+fn take(capacity: usize, flag: bool) -> usize
+    where 0 < capacity && capacity < 100
+{
+    let data: unique(usize | shape(usize), capacity) = alloc(capacity, shape(usize));
+    (*data)[0] = 42;
+    let answer: usize = if flag {move((*data)[0])} else {0};
+    if flag {
+        arrays::release_empty::<usize>(capacity, data);
+    } else {
+        arrays::drain_prefix::<usize>(capacity, data, 1);
+    }
+    answer
+}
+fn main() -> usize {take(8, true) + take(8, false)}
+"#;
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    // The false branch still owns its element; it cannot release a supposedly
+    // empty array using the other continuation's vacancy facts.
+    let invalid = source.replace("    if flag {", "    if true {");
+    assert!(verify(&invalid).is_err());
+}

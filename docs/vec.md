@@ -87,7 +87,9 @@ The independent Copy-array utility remains in
 This is still a bootstrap implementation. Long sequences, including the combined
 [`record_collections`](../examples/record_collections.evg) example and repeated
 populated growth in one function, can exceed the unchanged verifier work budget.
-Conditional pops can fail storage joins. `reallocate(0)` is not yet supported;
+Sparse resource branches use separate checked continuations when their storage
+cannot be joined. Replaying a populated growth before a conditional pop can
+still exhaust that work budget. `reallocate(0)` is not yet supported;
 use `release_empty()` when length is zero. Pointer-bearing payload value recovery,
 more general borrowed/shared payloads, and narrowing an entire initialized union
 array to `unique(T, cap)` still need work. Unsupported cases are rejected rather

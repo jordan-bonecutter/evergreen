@@ -617,6 +617,23 @@ impl Context<'_> {
                     right,
                 ))
             }
+            // Sparse resource arrays cannot use scalar history joins: the
+            // active union members carry initialization and ownership state.
+            // Check each continuation in its own storage world instead.
+            (
+                Symbol::Array {
+                    element: a,
+                    len: al,
+                    ..
+                },
+                Symbol::Array {
+                    element: b,
+                    len: bl,
+                    ..
+                },
+            ) if a == b && al == bl && !self.history_element(a) => self.resource_join_error(
+                "sparse resource array branches require separate initialization states".into(),
+            ),
             _ => Err(
                 "conditional storage joins require matching layouts and stable references".into(),
             ),
