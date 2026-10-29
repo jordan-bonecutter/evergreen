@@ -25,6 +25,15 @@ fn fact_definitions_describe_claims_without_proving_them() {
     assert!(verify(&conditional).is_ok());
     let false_claim = conditional.replace_evg("let value: usize = 42", "let value: usize = 0");
     assert!(verify(&false_claim).is_err());
+    // Entry observations still capture this predicate call's own input state.
+    for expression in ["old(*value) == *value", "old(*value == 0) == (*value == 0)"] {
+        let with_entry =
+            source.replace_evg("*value != 0}", &format!("*value != 0 && ({expression})}}"));
+        assert_eq!(
+            verify(&with_entry).unwrap().run().unwrap().to_string(),
+            "42"
+        );
+    }
 }
 
 #[test]

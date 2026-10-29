@@ -34,6 +34,52 @@ impl Context<'_> {
             && eligible(self, function)
     }
 
+    // A read-only expression with no entry-state observations does not need
+    // copies of its arguments' pointees. Nested calls capture their own entry.
+    pub(super) fn fact_needs_entry(function: &Function) -> bool {
+        fn current_type(ty: &Type) -> bool {
+            match ty {
+                Type::Ref(t) | Type::Unique(t) | Type::Shared(t) | Type::Shape(t) => {
+                    current_type(t)
+                }
+                Type::Array(t, length) => current_type(t) && current(length),
+                Type::Union(members) => members.iter().all(current_type),
+                Type::Apply(..) => false,
+                Type::Int
+                | Type::Nat
+                | Type::Bool
+                | Type::Fact
+                | Type::Unit
+                | Type::Machine(_)
+                | Type::Named(_) => true,
+            }
+        }
+        fn current(expression: &Expr) -> bool {
+            match &expression.kind {
+                Kind::Call(name, arguments) => name != "old" && arguments.iter().all(current),
+                Kind::Unary(_, value) | Kind::Field(value, _) | Kind::FactAt(value, _) => {
+                    current(value)
+                }
+                Kind::Binary(_, a, b) | Kind::Index(a, b) => current(a) && current(b),
+                Kind::If(c, a, b) => current(c) && current(a) && current(b),
+                Kind::Forall { domain, body, .. } => current(domain) && current(body),
+                Kind::Array(items) => items.iter().all(current),
+                Kind::Record(_, fields) => fields.iter().all(|(_, value)| current(value)),
+                Kind::Type(ty) => current_type(ty),
+                // Keep the ordinary path for local declarations and unresolved
+                // generic arguments, which may contain entry observations.
+                Kind::Block(..) | Kind::Generic { .. } => false,
+                Kind::Bytes(_)
+                | Kind::Number(_)
+                | Kind::Constant(..)
+                | Kind::Bool(_)
+                | Kind::Unit
+                | Kind::Name(_) => true,
+            }
+        }
+        function.entry_memory || !current(&function.result)
+    }
+
     pub(super) fn reduce_fact(&mut self, function: &Function) -> Result<Symbol> {
         let safety = self.import_summary(&function.name, summaries::Aspect::Safety)?;
         self.proof.uses.extend(safety);

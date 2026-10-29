@@ -215,3 +215,12 @@ The first fixed-storage version is now implemented as `copy_representation`,
 [representation-transfer.md](representation-transfer.md). It can move a whole
 owning array without per-element ownership proofs. Dynamic prefix views and
 Vec integration still need work, so `relocate_prefix` continues to use its loop.
+
+Read-only expression predicates now capture argument contents only when their
+expression needs entry-state observations. Predicates without `old(...)` still
+record a proof-state revision, but do not copy argument pointees merely to set
+up the call. Both simple and compound `old(...)` retain the ordinary snapshot
+path. This removes unnecessary work without changing proof requirements.
+Converting all drain/Buffer range formulas and transport scripts to predicate
+helpers still exceeds the current work budget in the combined growth example;
+those broader refactors are not enabled yet.

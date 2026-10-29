@@ -451,7 +451,12 @@ impl<'a> Context<'a> {
         self.locals.values.clear();
         self.locals.places.clear();
         self.bind_arguments(f, actuals.values, line)?;
-        self.capture_old(f)?;
+        let reduced_fact = self.can_reduce_fact(f);
+        if reduced_fact && !Self::fact_needs_entry(f) {
+            self.entry.world = self.proof.subjects.save_world()?;
+        } else {
+            self.capture_old(f)?;
+        }
         let mut call_dependencies = Vec::new();
         let mut logical_precondition = None;
         if let Some(pre) = &f.pre {
@@ -481,7 +486,6 @@ impl<'a> Context<'a> {
                 self.proof.contract_parents.push(node);
             }
         }
-        let reduced_fact = self.can_reduce_fact(f);
         let inputs = if !reduced_fact
             && f.params
                 .iter()
