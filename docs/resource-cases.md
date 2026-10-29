@@ -59,3 +59,22 @@ drop followed by a borrow read only on the path that retained its owner.
 Case coverage, source typing, and frontend resource transitions remain trusted
 compiler boundaries. Arithmetic leaves replay through the internal certificate
 checker; this is not an independently checked theorem of the whole compiler.
+
+## Owning-buffer profiling follow-up
+
+The combined sparse-buffer push/grow/pop probe still exhausts the unchanged
+262144-unit work budget during the vacant-suffix frame proof in `pop`. Filtering
+logical candidates by every required predicate moved this failure past the
+live-prefix frame proof but did not complete verification.
+
+A temporary caller-location trace of `charge_value_work` identified about 39,000
+charged units in `snapshot_memory` and `clone_store` together for this probe.
+This is charged symbolic work, not a wall-clock timing measurement. Inspection
+confirmed that `Memory::snapshot` clones `Vec<Plane<T>>`, including payloads;
+these snapshots are not yet persistent plane maps. The tracing was removed.
+
+The next storage optimization should share immutable plane state and copy only
+changed planes. It must retain arena identity, generations, ownership census
+revisions, and branch isolation. Snapshot charging must reflect shared metadata,
+while writes must charge any actual payload copies. Merely discounting today's
+deep copies or raising the budget would hide the cost rather than remove it.
