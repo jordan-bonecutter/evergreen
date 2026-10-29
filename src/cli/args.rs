@@ -26,6 +26,9 @@ pub(super) struct Cli {
     /// Root directory for local package imports (defaults to the working directory).
     #[arg(long, global = true)]
     pub(super) package_root: Option<PathBuf>,
+    /// Target profile used for checking, execution, and code generation.
+    #[arg(long, global = true, value_enum, default_value_t = Target::X86_64)]
+    pub(super) target: Target,
     #[command(subcommand)]
     pub(super) command: Action,
 }
@@ -57,9 +60,6 @@ pub(super) enum Action {
         /// Replay checked source certificates before native emission.
         #[arg(long)]
         proof: Option<PathBuf>,
-        /// Output target. WebAssembly exports main and imports the console host.
-        #[arg(long, value_enum, default_value_t = Target::X86_64)]
-        target: Target,
     },
     /// Verify a program with the internal proof kernel.
     Check {
@@ -99,6 +99,15 @@ impl Action {
             | Self::Prove { files, .. }
             | Self::Run { files }
             | Self::Build { files, .. } => files,
+        }
+    }
+}
+
+impl From<Target> for evergreen::compiler::TargetKind {
+    fn from(target: Target) -> Self {
+        match target {
+            Target::X86_64 => Self::X86_64,
+            Target::Wasm32 => Self::Wasm32,
         }
     }
 }

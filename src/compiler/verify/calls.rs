@@ -35,7 +35,7 @@ impl<'a> Context<'a> {
         if name == "typeof" || name == "shape" {
             return self.eval_type_operation(name, args, expected, line);
         }
-        if let Some(target) = MachineInt::parse(name) {
+        if let Some(target) = self.declarations.target.integer(name) {
             return self.convert_integer(target, args, line);
         }
         if name == "alloc" {

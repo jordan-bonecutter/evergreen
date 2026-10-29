@@ -2,7 +2,6 @@
 //! argument shapes; observing a return header does not certify its body.
 
 use super::*;
-use crate::syntax::MachineInt;
 
 impl Engine {
     pub(super) fn explicit_arguments(&mut self, expression: &mut Expr) -> Result<()> {
@@ -69,7 +68,7 @@ impl Engine {
                 *name = format!("{}::{member}", self.specialize(base, Vec::new(), true)?);
             }
         }
-        if let Some(machine) = MachineInt::parse(name) {
+        if let Some(machine) = self.target.integer(name) {
             return Ok(Some(Type::Machine(machine)));
         }
         let first = actual.first_mut().and_then(|(_, ty)| ty.take());
@@ -77,7 +76,7 @@ impl Engine {
             "same_value" => Some(Type::Bool),
             "integer" => Some(Type::Int),
             "nat" | "owner_count" => Some(Type::Nat),
-            "size_of" | "align_of" => Some(Type::Machine(MachineInt::parse("usize").unwrap())),
+            "size_of" | "align_of" => Some(Type::Machine(self.target.integer("usize").unwrap())),
             "old" | "move" => return Ok(first),
             "alloc" if args.len() == 1 => return Ok(first.map(|t| Type::Unique(Box::new(t)))),
             _ => None,

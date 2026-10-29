@@ -8,11 +8,20 @@ pub(crate) fn is_move_only(
     structs: &BTreeMap<String, Struct>,
     drops: &BTreeSet<String>,
 ) -> bool {
+    is_move_only_for(t, structs, drops, super::target::TargetKind::X86_64)
+}
+
+pub(crate) fn is_move_only_for(
+    t: &Type,
+    structs: &BTreeMap<String, Struct>,
+    drops: &BTreeSet<String>,
+    target: super::target::TargetKind,
+) -> bool {
     match t {
         Type::Union(_) | Type::Shape(_) => true,
         Type::Unique(_) => true,
         Type::Machine(_) | Type::Bool | Type::Unit | Type::Ref(_) | Type::Shared(_) => {
-            !super::target::native().is_ok_and(|target| target.is_copy(t))
+            !target.profile().is_ok_and(|profile| profile.is_copy(t))
         }
         Type::Named(n) => {
             drops.contains(n)
@@ -20,10 +29,10 @@ pub(crate) fn is_move_only(
                     !s.copy
                         || s.fields
                             .iter()
-                            .any(|(_, t)| is_move_only(t, structs, drops))
+                            .any(|(_, t)| is_move_only_for(t, structs, drops, target))
                 })
         }
-        Type::Array(t, _) => is_move_only(t, structs, drops),
+        Type::Array(t, _) => is_move_only_for(t, structs, drops, target),
         _ => false,
     }
 }

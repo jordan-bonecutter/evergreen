@@ -35,18 +35,13 @@ pub fn run() -> std::result::Result<(), String> {
     let source = loaded.source;
     let result = match &cli.command {
         Action::Fmt { .. } => unreachable!("format dispatched before source loading"),
-        Action::Build {
-            output,
-            proof,
-            target,
-            ..
-        } => {
+        Action::Build { output, proof, .. } => {
             let destination = match output {
                 Some(path) => path.clone(),
                 None => files
                     .last()
                     .ok_or("no source file for default output")?
-                    .with_extension(match target {
+                    .with_extension(match cli.target {
                         Target::X86_64 => "",
                         Target::Wasm32 => "wasm",
                     }),
@@ -57,12 +52,18 @@ pub fn run() -> std::result::Result<(), String> {
                 &destination,
                 proof.as_deref(),
                 cli.deny_trust,
-                *target,
+                cli.target,
             )
         }
-        Action::Check { proof, .. } => check(&source, &files, proof.as_deref(), cli.deny_trust),
-        Action::Prove { output, .. } => prove(&source, &files, output, cli.deny_trust),
-        Action::Run { .. } => run_program(&source, cli.deny_trust),
+        Action::Check { proof, .. } => check(
+            &source,
+            &files,
+            proof.as_deref(),
+            cli.deny_trust,
+            cli.target,
+        ),
+        Action::Prove { output, .. } => prove(&source, &files, output, cli.deny_trust, cli.target),
+        Action::Run { .. } => run_program(&source, cli.deny_trust, cli.target),
     };
     result.map_err(|error| diagnostics::render(&error, &files, &source, cli.color))
 }
@@ -71,12 +72,17 @@ fn checked_program(
     source: &str,
     proof: Option<&Path>,
     deny_trust: bool,
+    target: Target,
 ) -> Result<VerifiedProgram> {
     let program = if let Some(path) = proof {
         let bundle = ProofBundle::read(path)?;
-        evergreen::compiler::verify::verify_with_certificate_diagnostic(source, &bundle)?
+        evergreen::compiler::verify::verify_with_certificate_diagnostic_for_target(
+            source,
+            &bundle,
+            target.into(),
+        )?
     } else {
-        evergreen::compiler::verify::verify_diagnostic(source)?
+        evergreen::compiler::verify::verify_diagnostic_for_target(source, target.into())?
     };
     enforce_trust(&program, deny_trust)?;
     Ok(program)
@@ -90,7 +96,7 @@ fn build(
     deny_trust: bool,
     target: Target,
 ) -> Result<()> {
-    let program = checked_program(source, proof, deny_trust)?;
+    let program = checked_program(source, proof, deny_trust, target)?;
     let (binary, label) = match target {
         Target::X86_64 => (evergreen::compiler::native::emit(&program)?, "Linux x86-64"),
         Target::Wasm32 => (evergreen::compiler::wasm::emit(&program)?, "WebAssembly"),
@@ -108,8 +114,14 @@ fn build(
     Ok(())
 }
 
-fn check(source: &str, files: &[PathBuf], proof: Option<&Path>, deny_trust: bool) -> Result<()> {
-    let program = checked_program(source, proof, deny_trust)?;
+fn check(
+    source: &str,
+    files: &[PathBuf],
+    proof: Option<&Path>,
+    deny_trust: bool,
+    target: Target,
+) -> Result<()> {
+    let program = checked_program(source, proof, deny_trust, target)?;
     let names = files
         .iter()
         .map(|file| file.display().to_string())
@@ -131,8 +143,15 @@ fn check(source: &str, files: &[PathBuf], proof: Option<&Path>, deny_trust: bool
     Ok(())
 }
 
-fn prove(source: &str, files: &[PathBuf], destination: &Path, deny_trust: bool) -> Result<()> {
-    let (program, bundle) = evergreen::compiler::verify::prove_diagnostic(source)?;
+fn prove(
+    source: &str,
+    files: &[PathBuf],
+    destination: &Path,
+    deny_trust: bool,
+    target: Target,
+) -> Result<()> {
+    let (program, bundle) =
+        evergreen::compiler::verify::prove_diagnostic_for_target(source, target.into())?;
     enforce_trust(&program, deny_trust)?;
     output::write_text(destination, &bundle.to_text(), files)?;
     println!(
@@ -145,8 +164,8 @@ fn prove(source: &str, files: &[PathBuf], destination: &Path, deny_trust: bool) 
     Ok(())
 }
 
-fn run_program(source: &str, deny_trust: bool) -> Result<()> {
-    let program = checked_program(source, None, deny_trust)?;
+fn run_program(source: &str, deny_trust: bool, target: Target) -> Result<()> {
+    let program = checked_program(source, None, deny_trust, target)?;
     let (value, bytes) = evergreen::interpreter::run_with_output(&program)?;
     use std::io::Write;
     std::io::stdout()

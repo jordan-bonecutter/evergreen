@@ -372,6 +372,7 @@ impl Names {
 }
 
 struct Loader {
+    target: super::TargetKind,
     supplied_modules: BTreeSet<String>,
     supplied_functions: BTreeSet<String>,
     type_dependencies: BTreeMap<String, Names>,
@@ -435,7 +436,7 @@ impl Loader {
                     "source and standard-library dependencies exceed 1 MB bootstrap limit".into(),
                 );
             }
-            let mut program = syntax::parse(library.source)
+            let mut program = syntax::parse_with_word_bits(library.source, self.target.word_bits())
                 .map_err(|error| format!("{}: {error}", library.path))?;
             program.set_source_origin(crate::shared::diagnostics::SourceOrigin::Bundled(
                 library.path,
@@ -509,9 +510,15 @@ impl Loader {
     }
 }
 
+#[cfg(test)]
 pub(super) fn load(source: &str) -> Result<Loaded> {
+    load_for(source, super::TargetKind::X86_64)
+}
+
+pub(super) fn load_for(source: &str, target: super::TargetKind) -> Result<Loaded> {
+    target.profile()?;
     crate::shared::worker::run("evergreen-source-loader", || {
-        let user = syntax::parse(source)?;
+        let user = syntax::parse_with_word_bits(source, target.word_bits())?;
         for import in &user.imports {
             if !user.modules.contains(import) && !is_bundled_module(import) {
                 return Err(format!("unresolved import {import}; load its package directory or provide its source units"));
@@ -533,6 +540,7 @@ pub(super) fn load(source: &str) -> Result<Loaded> {
                 .function(method);
         }
         let mut loader = Loader {
+            target,
             supplied_modules,
             supplied_functions,
             type_dependencies,
@@ -550,7 +558,11 @@ pub(super) fn load(source: &str) -> Result<Loaded> {
                     destructors: Vec::new(),
                     modules: user.modules,
                 },
-                fingerprint: source.into(),
+                fingerprint: format!(
+                    "{source}\n\u{1f}target {}\n{}",
+                    target.module(),
+                    target.source()
+                ),
             },
         };
         for declaration in user.generics {
@@ -631,7 +643,10 @@ mod tests {
         assert!(plain.trusted_assumptions().is_empty());
         assert_eq!(
             load("fn main() -> usize {42}").unwrap().fingerprint,
-            "fn main() -> usize {42}"
+            format!(
+                "fn main() -> usize {{42}}\n\u{1f}target x86_64\n{}",
+                crate::shared::target::TargetKind::X86_64.source()
+            )
         );
         let flat =
             verify("fn main() -> usize {let count: usize = 41; counter_increment(&count); count}")
@@ -643,7 +658,7 @@ mod tests {
     fn primitive_type_observations_do_not_load_word_policy_libraries() {
         let source =
             "fn main() -> usize {let value = usize::MAX; proof _: typeof(value) == usize; 42}";
-        assert_eq!(load(source).unwrap().fingerprint, source);
+        assert!(!load(source).unwrap().fingerprint.contains("// bundled"));
         let source = "fn main() {proof _: integer::from(42) == 42;}";
         let loaded = load(source).unwrap();
         assert!(loaded.program.modules.contains("integer"));
@@ -660,7 +675,7 @@ mod tests {
         .join("\n");
         let program = verify(&explicit).unwrap();
         assert_eq!(program.trusted_assumptions().len(), 1);
-        assert_eq!(load(&explicit).unwrap().fingerprint, explicit);
+        assert!(!load(&explicit).unwrap().fingerprint.contains("// bundled"));
         let error =
             verify("fn main() -> usize {\n let n: usize = 0;\n linux_io::does_not_exist()\n}")
                 .unwrap_err();

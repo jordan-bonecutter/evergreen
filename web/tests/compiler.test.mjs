@@ -60,14 +60,17 @@ test('browser diagnostics include source excerpts, requirement locations, and pr
   assert.doesNotMatch(metadata.error, /\u001b\[/);
   const unknown = await compile('fn nonzero(x: usize) where x != 0 {} fn main() {nonzero(usize::MAX + 1);}');
   assert.equal(unknown.metadata.ok, false);
-  assert.match(unknown.metadata.error, /unproved obligation: \(\(usize::MAX \+ 1\) != 0\)/);
+  // Target aliases render as their checked primitive in reconstructed obligations.
+  assert.match(unknown.metadata.error, /unproved obligation: \(\(u32::MAX \+ 1\) != 0\)/);
   assert.doesNotMatch(unknown.metadata.error, /evg_\d+/);
 });
 
 test('the Wasm ABI preserves unsigned 64-bit, signed, Boolean, unit, and UTF-8 output', async () => {
   for (const [source, expected] of [
-    ['fn main() -> usize {usize::MAX}', '18446744073709551615'],
-    ['fn main() -> isize {isize::MIN}', '-9223372036854775808'],
+    ['fn main() -> usize {usize::MAX}', '4294967295'],
+    ['fn main() -> u64 {u64::MAX}', '18446744073709551615'],
+    ['fn main() -> isize {isize::MIN}', '-2147483648'],
+    ['fn main() -> i64 {i64::MIN}', '-9223372036854775808'],
     ['fn main() -> bool {let n: usize = usize::MAX; n > 42}', 'true'],
     ['fn main() -> bool {let n: isize = -42; n < 0}', 'true'],
     ['fn main() {}', '()'],
@@ -113,7 +116,7 @@ test('unsupported features produce target diagnostics after verification', async
   ]) {
     const { metadata, module } = await compile(source);
     assert.equal(metadata.ok, false);
-    assert.equal(metadata.stage, 'compile');
+    assert.equal(metadata.stage, source.includes('linux_io') ? 'verify' : 'compile');
     assert.match(metadata.error, /WebAssembly target/);
     assert.equal(module.length, 0);
   }
@@ -137,4 +140,20 @@ test('loop, call depth, and console budgets stop execution, retaining prior outp
     assert.match(error.message, /100 KB/);
     return true;
   });
+});
+
+
+test('wasm32 layout and narrow arithmetic agree before and after storage', async () => {
+  for (const [source, expected] of [
+    ['fn main() -> usize {size_of(usize) + size_of(&usize) + size_of(u64)}', '16'],
+    ['fn main() -> usize {usize::MAX + 1}', '0'],
+    ['fn main() -> isize {isize::MAX + 1}', '-2147483648'],
+    ['fn main() -> u8 {u8::MAX + 1}', '0'],
+    ['fn main() -> i8 {i8::MAX + 1}', '-128'],
+    ['fn main() -> u16 {u16::MAX + 1}', '0'],
+    ['fn main() -> i16 {i16::MAX + 1}', '-32768'],
+    ['fn main() -> bool {(usize::MAX + 1) == 0}', 'true'],
+    ['fn main() -> bool {(i8::MAX + 1) < 0}', 'true'],
+    ['fn main() -> usize {let a: [usize; 2] = [7, 42]; let p = &a; (*p)[1]}', '42'],
+  ]) assert.equal((await execute(source)).result, expected, source);
 });

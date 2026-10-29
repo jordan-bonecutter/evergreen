@@ -5,6 +5,7 @@ fn with_context<T>(session: &mut Session, check: impl FnOnce(&mut Context<'_>) -
     let structs = BTreeMap::new();
     let names = BTreeSet::new();
     let declarations = Declarations {
+        target: crate::compiler::TargetKind::X86_64,
         functions: &functions,
         summaries: &BTreeMap::new(),
         structs: &structs,

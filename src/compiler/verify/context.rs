@@ -5,6 +5,7 @@ use super::*;
 
 #[derive(Clone, Copy)]
 pub(super) struct Declarations<'a> {
+    pub(super) target: crate::compiler::TargetKind,
     pub(super) summaries: &'a BTreeMap<String, summaries::Summary>,
     pub(super) functions: &'a BTreeMap<String, Function>,
     pub(super) structs: &'a BTreeMap<String, Struct>,

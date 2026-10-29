@@ -8,13 +8,22 @@ pub(crate) fn value(
     arguments: &[Expr],
     structs: &BTreeMap<String, Struct>,
 ) -> Result<usize> {
+    value_for(TargetKind::X86_64, name, arguments, structs)
+}
+
+pub(crate) fn value_for(
+    target: TargetKind,
+    name: &str,
+    arguments: &[Expr],
+    structs: &BTreeMap<String, Struct>,
+) -> Result<usize> {
     let [argument] = arguments else {
         return Err(format!("{name} requires one type argument"));
     };
     let ty = argument
-        .literal_type()
+        .literal_type_for(target.word_bits())
         .ok_or("layout queries require a type")?;
-    let layout = storage(&ty, structs)?;
+    let layout = storage_for(target, &ty, structs)?;
     match name {
         "size_of" => Ok(layout.size),
         "align_of" => Ok(layout.align),

@@ -1,6 +1,6 @@
 //! Internal elaboration and verification-condition generation.
 
-use crate::shared::ownership::is_move_only;
+use crate::shared::ownership::is_move_only_for as is_move_only;
 use crate::{
     compiler::certificate::{ProofBundle, Session},
     compiler::kernel::Linear,
@@ -1173,7 +1173,7 @@ impl<'a> Context<'a> {
         match &expression.kind {
             Kind::Type(_) => true,
             Kind::Call(name, args) => {
-                let observed_call = MachineInt::parse(name).is_some()
+                let observed_call = self.declarations.target.integer(name).is_some()
                     || matches!(
                         name.as_str(),
                         "integer" | "nat" | "owner_count" | "size_of" | "align_of"
@@ -1306,7 +1306,12 @@ impl<'a> Context<'a> {
         if self.execution.phase != Phase::Runtime {
             Ty::Int
         } else {
-            Ty::Machine(MachineInt::parse("isize").expect("isize type"))
+            Ty::Machine(
+                self.declarations
+                    .target
+                    .integer("isize")
+                    .expect("isize type"),
+            )
         }
     }
 
@@ -1389,14 +1394,14 @@ impl<'a> Context<'a> {
                 if !runtime_type(t, self.declarations.structs) || !heap::payload_type(t, self.declarations.structs) {
                     return Err("owned planes require runtime payloads without borrowed references".into());
                 }
-                heap::payload_layout(t, self.declarations.structs)?;
+                heap::payload_layout(t, self.declarations.structs, self.declarations.target)?;
                 Ok(Ty::Unique(Box::new(self.resolve(t)?)))
             }
             Type::Shared(t) => {
                 if !runtime_type(t, self.declarations.structs) || !heap::payload_type(t, self.declarations.structs) {
                     return Err("owning references require runtime payloads without borrowed references".into());
                 }
-                heap::payload_layout(t, self.declarations.structs)?;
+                heap::payload_layout(t, self.declarations.structs, self.declarations.target)?;
                 Ok(Ty::Shared(Box::new(self.resolve(t)?)))
             }
             Type::Named(n) => {
@@ -1491,11 +1496,16 @@ impl<'a> Context<'a> {
             Ty::Unique(t) => {
                 if let Ty::Array(element, length) = t.as_ref() {
                     let syntax = heap::syntax_type(element, 0)?;
-                    let stride =
-                        crate::compiler::layout::of(&syntax, self.declarations.structs)?.size;
+                    let stride = crate::compiler::layout::of_for(
+                        self.declarations.target,
+                        &syntax,
+                        self.declarations.structs,
+                    )?
+                    .size;
                     self.assume(&Formula::Ge(
                         Linear::number(
-                            (crate::compiler::layout::MAX_ALLOCATION_BYTES / stride as u64) as i128,
+                            (self.declarations.target.max_allocation_bytes() / stride as u64)
+                                as i128,
                         )
                         .sub(length)?,
                     ))?;
@@ -2022,9 +2032,9 @@ impl<'a> Context<'a> {
             Kind::Forall { .. } => Some(Ty::Bool),
             Kind::Bytes(bytes) => Self::declared_hint(&Type::bytes(bytes.len(), e.line)),
             Kind::Type(_) => Some(Ty::Type),
-            Kind::Call(name, _) if matches!(name.as_str(), "size_of" | "align_of") => {
-                Some(Ty::Machine(MachineInt::parse("usize").unwrap()))
-            }
+            Kind::Call(name, _) if matches!(name.as_str(), "size_of" | "align_of") => Some(
+                Ty::Machine(self.declarations.target.integer("usize").unwrap()),
+            ),
             Kind::Call(name, _) if name == "typeof" => Some(Ty::Type),
             Kind::Call(name, _) if name == "same_value" => Some(Ty::Bool),
             Kind::Call(name, args) if name == "shape" && args.len() == 1 => self
@@ -2034,8 +2044,8 @@ impl<'a> Context<'a> {
             Kind::Call(name, args) if name == "old" && args.len() == 1 => Self::old_key(&args[0])
                 .and_then(|key| self.entry.values.get(&key).map(Symbol::ty))
                 .or_else(|| self.hint(&args[0])),
-            Kind::Call(name, _) if MachineInt::parse(name).is_some() => {
-                MachineInt::parse(name).map(Ty::Machine)
+            Kind::Call(name, _) if self.declarations.target.integer(name).is_some() => {
+                self.declarations.target.integer(name).map(Ty::Machine)
             }
             Kind::Call(name, _) if name == "nat" => Some(Ty::Nat),
             Kind::Call(name, _) if name == "owner_count" => Some(Ty::Nat),
@@ -2211,6 +2221,7 @@ impl<'a> Context<'a> {
                 &Type::Named(n.clone()),
                 self.declarations.structs,
                 self.declarations.drops,
+                self.declarations.target,
             ),
             Symbol::Array { element, .. } => self.ty_is_move_only(element),
             Symbol::Number(Ty::Machine(integer), _) => self.ty_is_move_only(&Ty::Machine(*integer)),
@@ -2227,23 +2238,37 @@ impl<'a> Context<'a> {
         match t {
             Ty::Union(_) | Ty::Shape(_) => true,
             Ty::Unique(_) => true,
-            Ty::Shared(_) => !crate::shared::target::native()
+            Ty::Shared(_) => !self
+                .declarations
+                .target
+                .profile()
                 .is_ok_and(|target| target.is_copy(&Type::Shared(Box::new(Type::Unit)))),
             Ty::Record(n) => is_move_only(
                 &Type::Named(n.clone()),
                 self.declarations.structs,
                 self.declarations.drops,
+                self.declarations.target,
             ),
             Ty::Array(t, _) => self.ty_is_move_only(t),
-            Ty::Machine(integer) => !crate::shared::target::native()
+            Ty::Machine(integer) => !self
+                .declarations
+                .target
+                .profile()
                 .is_ok_and(|target| target.is_copy(&Type::Machine(*integer))),
-            Ty::Bool => {
-                !crate::shared::target::native().is_ok_and(|target| target.is_copy(&Type::Bool))
-            }
-            Ty::Unit => {
-                !crate::shared::target::native().is_ok_and(|target| target.is_copy(&Type::Unit))
-            }
-            Ty::Ref(_) => !crate::shared::target::native()
+            Ty::Bool => !self
+                .declarations
+                .target
+                .profile()
+                .is_ok_and(|target| target.is_copy(&Type::Bool)),
+            Ty::Unit => !self
+                .declarations
+                .target
+                .profile()
+                .is_ok_and(|target| target.is_copy(&Type::Unit)),
+            Ty::Ref(_) => !self
+                .declarations
+                .target
+                .profile()
                 .is_ok_and(|target| target.is_copy(&Type::Ref(Box::new(Type::Unit)))),
             _ => false,
         }
@@ -2751,6 +2776,7 @@ impl<'a> Context<'a> {
                         &Type::Named(name.clone()),
                         self.declarations.structs,
                         self.declarations.drops,
+                        self.declarations.target,
                     )
                     && !erased_type(&Type::Named(name.clone()), self.declarations.structs)
                 {
@@ -2972,6 +2998,7 @@ impl<'a> Context<'a> {
 
 #[derive(Debug)]
 pub struct VerifiedProgram {
+    pub(crate) target: crate::compiler::TargetKind,
     pub(crate) functions: Vec<Function>,
     pub(crate) structs: BTreeMap<String, Struct>,
     pub obligations: usize,
@@ -2982,6 +3009,9 @@ pub struct VerifiedProgram {
 }
 
 impl VerifiedProgram {
+    pub fn target(&self) -> crate::compiler::TargetKind {
+        self.target
+    }
     /// The checked entry's declared result type, for host ABI presentation.
     pub fn entry_result_type(&self) -> Option<&Type> {
         self.functions
@@ -3061,6 +3091,7 @@ impl VerifiedProgram {
             let mut session = Session::search();
             let mut ctx = Context::new(
                 Declarations {
+                    target: self.target,
                     functions: &functions,
                     summaries: &self.summaries,
                     structs: &self.structs,
@@ -3087,10 +3118,24 @@ pub fn verify(source: &str) -> Result<VerifiedProgram> {
 pub fn verify_diagnostic(
     source: &str,
 ) -> std::result::Result<VerifiedProgram, crate::shared::diagnostics::Diagnostic> {
+    verify_diagnostic_for_target(source, crate::compiler::TargetKind::X86_64)
+}
+
+pub fn verify_for_target(
+    source: &str,
+    target: crate::compiler::TargetKind,
+) -> Result<VerifiedProgram> {
+    verify_diagnostic_for_target(source, target).map_err(|diagnostic| diagnostic.to_string())
+}
+
+pub fn verify_diagnostic_for_target(
+    source: &str,
+    target: crate::compiler::TargetKind,
+) -> std::result::Result<VerifiedProgram, crate::shared::diagnostics::Diagnostic> {
     let mut session = Session::search();
     let checked = (|| {
-        let source = super::sources::load(source)?;
-        let program = verify_using(source.program, &mut session)?;
+        let source = super::sources::load_for(source, target)?;
+        let program = verify_using(source.program, &mut session, target)?;
         session.finish()?;
         Ok(program)
     })();
@@ -3104,10 +3149,24 @@ pub fn prove(source: &str) -> Result<(VerifiedProgram, ProofBundle)> {
 pub fn prove_diagnostic(
     source: &str,
 ) -> std::result::Result<(VerifiedProgram, ProofBundle), crate::shared::diagnostics::Diagnostic> {
+    prove_diagnostic_for_target(source, crate::compiler::TargetKind::X86_64)
+}
+
+pub fn prove_for_target(
+    source: &str,
+    target: crate::compiler::TargetKind,
+) -> Result<(VerifiedProgram, ProofBundle)> {
+    prove_diagnostic_for_target(source, target).map_err(|diagnostic| diagnostic.to_string())
+}
+
+pub fn prove_diagnostic_for_target(
+    source: &str,
+    target: crate::compiler::TargetKind,
+) -> std::result::Result<(VerifiedProgram, ProofBundle), crate::shared::diagnostics::Diagnostic> {
     let mut session = Session::recording();
     let checked = (|| {
-        let source = super::sources::load(source)?;
-        let program = verify_using(source.program, &mut session)?;
+        let source = super::sources::load_for(source, target)?;
+        let program = verify_using(source.program, &mut session, target)?;
         session.finish()?;
         Ok((program, source.fingerprint))
     })();
@@ -3126,11 +3185,32 @@ pub fn verify_with_certificate_diagnostic(
     source: &str,
     bundle: &ProofBundle,
 ) -> std::result::Result<VerifiedProgram, crate::shared::diagnostics::Diagnostic> {
+    verify_with_certificate_diagnostic_for_target(
+        source,
+        bundle,
+        crate::compiler::TargetKind::X86_64,
+    )
+}
+
+pub fn verify_with_certificate_for_target(
+    source: &str,
+    bundle: &ProofBundle,
+    target: crate::compiler::TargetKind,
+) -> Result<VerifiedProgram> {
+    verify_with_certificate_diagnostic_for_target(source, bundle, target)
+        .map_err(|diagnostic| diagnostic.to_string())
+}
+
+pub fn verify_with_certificate_diagnostic_for_target(
+    source: &str,
+    bundle: &ProofBundle,
+    target: crate::compiler::TargetKind,
+) -> std::result::Result<VerifiedProgram, crate::shared::diagnostics::Diagnostic> {
     let mut session = Session::replay(bundle);
     let checked = (|| {
-        let source = super::sources::load(source)?;
+        let source = super::sources::load_for(source, target)?;
         bundle.check_source(&source.fingerprint)?;
-        let program = verify_using(source.program, &mut session)?;
+        let program = verify_using(source.program, &mut session, target)?;
         session.finish()?;
         Ok(program)
     })();
@@ -3177,8 +3257,14 @@ fn check_type_expansion(structs: &[Struct]) -> Result<()> {
     Ok(())
 }
 
-fn verify_using(parsed: syntax::Program, session: &mut Session) -> Result<VerifiedProgram> {
-    crate::shared::worker::run("evergreen-verifier", || program::verify(parsed, session))
+fn verify_using(
+    parsed: syntax::Program,
+    session: &mut Session,
+    target: crate::compiler::TargetKind,
+) -> Result<VerifiedProgram> {
+    crate::shared::worker::run("evergreen-verifier", || {
+        program::verify(parsed, session, target)
+    })
 }
 
 #[cfg(test)]

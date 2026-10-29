@@ -1,7 +1,7 @@
 //! Elaborate field autodereferencing into ordinary checked dereferences.
 //! Shape inference here grants no authority: the verifier checks the result.
 
-use crate::syntax::{Expr, Function, Kind, MachineInt, MethodReceiver, Program, Statement, Type};
+use crate::syntax::{Expr, Function, Kind, MethodReceiver, Program, Statement, Type};
 use std::collections::{BTreeMap, BTreeSet};
 
 type Scope = BTreeMap<String, Type>;
@@ -10,8 +10,9 @@ mod refinements;
 #[cfg(test)]
 mod tests;
 
-pub(super) fn expand(program: &mut Program) {
+pub(super) fn expand_for(program: &mut Program, target: crate::compiler::TargetKind) {
     let shapes = Shapes {
+        target,
         refinements: program
             .structs
             .iter()
@@ -82,6 +83,7 @@ pub(super) fn expand(program: &mut Program) {
 }
 
 struct Shapes {
+    target: crate::compiler::TargetKind,
     refinements: BTreeMap<String, Type>,
     all_parameters: BTreeMap<String, Vec<(String, Type)>>,
     records: BTreeMap<String, Vec<(String, Type)>>,
@@ -103,6 +105,7 @@ fn extent(ty: &Type) -> Option<&Expr> {
 pub(super) fn omitted_lengths(
     parameters: &[(String, Type)],
     supplied: usize,
+    target: crate::compiler::TargetKind,
 ) -> Option<Vec<usize>> {
     if supplied >= parameters.len() {
         return None;
@@ -114,7 +117,7 @@ pub(super) fn omitted_lengths(
             _ => None,
         })
         .collect::<BTreeSet<_>>();
-    let usize_type = Type::Machine(MachineInt::parse("usize").expect("usize"));
+    let usize_type = Type::Machine(target.integer("usize").expect("usize"));
     let inferred = parameters
         .iter()
         .enumerate()
@@ -153,7 +156,7 @@ impl Shapes {
         if args.len() >= parameters.len() {
             return;
         }
-        let Some(omitted) = omitted_lengths(parameters, args.len()) else {
+        let Some(omitted) = omitted_lengths(parameters, args.len(), self.target) else {
             return;
         };
         let inferred = omitted
@@ -443,13 +446,13 @@ impl Shapes {
                         }
                     }
                 }
-                if let Some(machine) = MachineInt::parse(name) {
+                if let Some(machine) = self.target.integer(name) {
                     return Some(Type::Machine(machine));
                 }
                 match name.as_str() {
                     "same_value" => Some(Type::Bool),
                     "size_of" | "align_of" => {
-                        Some(Type::Machine(MachineInt::parse("usize").unwrap()))
+                        Some(Type::Machine(self.target.integer("usize").unwrap()))
                     }
                     "owner_count" => Some(Type::Nat),
                     "old" | "move" => first,

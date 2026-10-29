@@ -20,10 +20,22 @@ Owning pointers, raw unions, by-value array parameters and array results,
 reference results, Linux syscalls, and atomics are currently rejected with target
 diagnostics. Compilation checks all runtime declarations, including unused ones.
 
-The bootstrap retains its existing 64-bit scalar/layout model: `usize` is u64,
-`isize` is i64, and stored references occupy eight bytes. The module uses wasm32
-linear-memory addresses extended to i64. This is an Evergreen ABI, not the C ABI
-or WASI. A distinct 32-bit language layout profile remains future work.
+[targets/wasm.evg](../targets/wasm.evg) defines four-byte `usize`, `isize`,
+`Null`, and references. Explicit `u64` and `i64` retain eight-byte storage.
+The target is selected before parsing constants, specializing generics, and
+checking contracts. Layout queries use that same profile. The internal calling
+convention carries scalars in i64 registers; arithmetic results are narrowed to
+their declared width. This is an Evergreen ABI, not the C ABI or WASI.
+
+`check`, `prove`, and `run` also accept `--target wasm32`. Proof artifacts bind
+the target name and profile source, so certificates from a different target or
+profile cannot be reused. Native and Wasm emitters reject programs verified for
+the other target. For example:
+
+```sh
+cargo run -- prove examples/console.evg --target wasm32 -o /tmp/console.evgproof
+cargo run -- build examples/console.evg --target wasm32 --proof /tmp/console.evgproof
+```
 
 Modules export `main() -> i64` and `memory`. Boolean results are 0/1 and unit is
 0. Interpret unsigned results with `BigInt.asUintN(64, value)` in JavaScript.

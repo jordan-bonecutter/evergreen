@@ -132,31 +132,32 @@ impl Context<'_> {
             Kind::Call(name, args) if name == "shared" && args.len() == 1 => self
                 .type_literal(&args[0])
                 .map(|ty| Ty::Shared(Box::new(ty))),
-            Kind::Name(name) => {
-                MachineInt::parse(name)
-                    .map(Ty::Machine)
-                    .or_else(|| match name.as_str() {
-                        "bool" => Some(Ty::Bool),
-                        "unit" => Some(Ty::Unit),
-                        "integer" => Some(Ty::Int),
-                        "nat" => Some(Ty::Nat),
-                        _ if self.declarations.structs.contains_key(name) => {
-                            Some(Ty::Record(name.clone()))
-                        }
-                        _ if self.locals.module.as_ref().is_some_and(|module| {
-                            self.declarations
-                                .structs
-                                .contains_key(&format!("{module}::{name}"))
-                        }) =>
-                        {
-                            Some(Ty::Record(format!(
-                                "{}::{name}",
-                                self.locals.module.as_ref().unwrap()
-                            )))
-                        }
-                        _ => None,
-                    })
-            }
+            Kind::Name(name) => self
+                .declarations
+                .target
+                .integer(name)
+                .map(Ty::Machine)
+                .or_else(|| match name.as_str() {
+                    "bool" => Some(Ty::Bool),
+                    "unit" => Some(Ty::Unit),
+                    "integer" => Some(Ty::Int),
+                    "nat" => Some(Ty::Nat),
+                    _ if self.declarations.structs.contains_key(name) => {
+                        Some(Ty::Record(name.clone()))
+                    }
+                    _ if self.locals.module.as_ref().is_some_and(|module| {
+                        self.declarations
+                            .structs
+                            .contains_key(&format!("{module}::{name}"))
+                    }) =>
+                    {
+                        Some(Ty::Record(format!(
+                            "{}::{name}",
+                            self.locals.module.as_ref().unwrap()
+                        )))
+                    }
+                    _ => None,
+                }),
             Kind::Call(name, args) if name == "shape" && args.len() == 1 => self
                 .type_literal(&args[0])
                 .filter(|ty| !matches!(ty, Ty::Shape(_)))

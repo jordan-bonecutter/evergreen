@@ -135,14 +135,18 @@ pub(super) fn syntax_type(ty: &Ty, line: usize) -> Result<Type> {
     })
 }
 
-pub(super) fn payload_layout(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<()> {
+pub(super) fn payload_layout(
+    ty: &Type,
+    structs: &BTreeMap<String, Struct>,
+    target: crate::compiler::TargetKind,
+) -> Result<()> {
     if let Type::Array(element, _) = ty {
         // Only the repeated element needs an inline layout. The total heap
         // extent is checked symbolically by the owning allocation constructor.
-        crate::compiler::layout::of(element, structs)?;
+        crate::compiler::layout::of_for(target, element, structs)?;
         return Ok(());
     }
-    crate::compiler::layout::of(ty, structs).map(|_| ())
+    crate::compiler::layout::of_for(target, ty, structs).map(|_| ())
 }
 
 impl Context<'_> {
@@ -176,7 +180,11 @@ impl Context<'_> {
         {
             return Err("owned planes require runtime payloads without borrowed references".into());
         }
-        crate::compiler::layout::of(&syntax, self.declarations.structs)?;
+        crate::compiler::layout::of_for(
+            self.declarations.target,
+            &syntax,
+            self.declarations.structs,
+        )?;
         self.validate_argument(&value, line)?;
         let plane = self.allocate_symbol(value)?;
         Ok(Symbol::Unique(
@@ -191,7 +199,7 @@ impl Context<'_> {
         expected: Option<&Ty>,
         line: usize,
     ) -> Result<Symbol> {
-        let count_type = Ty::Machine(MachineInt::parse("usize").unwrap());
+        let count_type = Ty::Machine(self.declarations.target.integer("usize").unwrap());
         let count = self.eval(&args[0], Some(&count_type))?.number()?;
         let hint = match expected.and_then(Ty::pointer_member) {
             Some(Ty::Unique(inner) | Ty::Shared(inner)) => match inner.as_ref() {
@@ -223,8 +231,13 @@ impl Context<'_> {
         if !uninitialized && !self.history_element(&element) {
             return Err("filled allocation currently supports scalar-only records; nested arrays, owning pointers, and runtime cleanup need individual slot initialization".into());
         }
-        let stride = crate::compiler::layout::of(&syntax, self.declarations.structs)?.size;
-        let maximum = (crate::compiler::layout::MAX_ALLOCATION_BYTES / stride as u64) as i128;
+        let stride = crate::compiler::layout::of_for(
+            self.declarations.target,
+            &syntax,
+            self.declarations.structs,
+        )?
+        .size;
+        let maximum = (self.declarations.target.max_allocation_bytes() / stride as u64) as i128;
         self.prove(
             &Formula::Ge(count.clone()),
             "nonnegative allocation count",

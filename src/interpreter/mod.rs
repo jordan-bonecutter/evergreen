@@ -160,6 +160,7 @@ impl Value {
 }
 
 struct Evaluator<'a> {
+    target: crate::compiler::TargetKind,
     functions: &'a [Function],
     structs: &'a BTreeMap<String, Struct>,
     fuel: usize,
@@ -208,15 +209,15 @@ impl Evaluator<'_> {
                 _ => None,
             },
             Kind::Unary(_, x) => self.hint(x, env),
-            Kind::Call(name, _) if MachineInt::parse(name).is_some() => {
-                MachineInt::parse(name).map(Type::Machine)
+            Kind::Call(name, _) if self.target.integer(name).is_some() => {
+                self.target.integer(name).map(Type::Machine)
             }
             Kind::Call(name, _) if matches!(name.as_str(), "size_of" | "align_of") => {
-                Some(Type::Machine(MachineInt::parse("usize").unwrap()))
+                Some(Type::Machine(self.target.integer("usize").unwrap()))
             }
-            Kind::Call(name, args) if name == "shape" && args.len() == 1 => {
-                args[0].literal_type().map(|ty| Type::Shape(Box::new(ty)))
-            }
+            Kind::Call(name, args) if name == "shape" && args.len() == 1 => args[0]
+                .literal_type_for(self.target.word_bits())
+                .map(|ty| Type::Shape(Box::new(ty))),
             Kind::Call(name, args) if name == "alloc" && args.len() == 1 => {
                 self.hint(&args[0], env).map(|t| Type::Unique(Box::new(t)))
             }
@@ -461,19 +462,30 @@ impl Evaluator<'_> {
         match value {
             Value::Union(_, _) | Value::Shape(_) => true,
             Value::Unique(..) => true,
-            Value::Shared(..) => !crate::shared::target::native()
+            Value::Shared(..) => !self
+                .target
+                .profile()
                 .is_ok_and(|target| target.is_copy(&Type::Shared(Box::new(Type::Unit)))),
-            Value::Record(n, _) => crate::shared::ownership::is_move_only(
+            Value::Record(n, _) => crate::shared::ownership::is_move_only_for(
                 &Type::Named(n.clone()),
                 self.structs,
                 self.drops,
+                self.target,
             ),
-            Value::Array(element, _) => {
-                crate::shared::ownership::is_move_only(element, self.structs, self.drops)
-            }
+            Value::Array(element, _) => crate::shared::ownership::is_move_only_for(
+                element,
+                self.structs,
+                self.drops,
+                self.target,
+            ),
             Value::Machine(_, _) | Value::Bool(_) | Value::Unit | Value::Ref(..) => {
                 value.hint().is_some_and(|ty| {
-                    crate::shared::ownership::is_move_only(&ty, self.structs, self.drops)
+                    crate::shared::ownership::is_move_only_for(
+                        &ty,
+                        self.structs,
+                        self.drops,
+                        self.target,
+                    )
                 })
             }
             _ => false,
@@ -689,8 +701,12 @@ impl Evaluator<'_> {
         self.expression_depth += 1;
         let evaluated = (|| {
             if let Some(target) = expected {
-                if crate::shared::ownership::is_move_only(target, self.structs, self.drops)
-                    && self.union_move_place(e, env, target)?
+                if crate::shared::ownership::is_move_only_for(
+                    target,
+                    self.structs,
+                    self.drops,
+                    self.target,
+                ) && self.union_move_place(e, env, target)?
                 {
                     return self.move_union_member(e, env, target);
                 }
@@ -756,7 +772,7 @@ impl Evaluator<'_> {
             Kind::Number(n) => Ok(match expected.and_then(Type::literal_numeric_member) {
                 Some(Type::Nat) => Value::Nat(*n),
                 Some(Type::Machine(t)) => Value::Machine(*t, *n),
-                _ => Value::Machine(MachineInt::parse("isize").expect("isize type"), *n),
+                _ => Value::Machine(self.target.integer("isize").expect("isize type"), *n),
             }),
             Kind::Bool(b) => Ok(Value::Bool(*b)),
             Kind::Name(n) => {
@@ -828,7 +844,7 @@ impl Evaluator<'_> {
                         .or_else(|| self.hint(x, env))
                         .filter(|t| matches!(t, Type::Machine(_)))
                         .unwrap_or(Type::Machine(
-                            MachineInt::parse("isize").expect("isize type"),
+                            self.target.integer("isize").expect("isize type"),
                         ));
                     let n = self
                         .expr(x, env, Some(&ty))?
@@ -860,7 +876,7 @@ impl Evaluator<'_> {
                 .or_else(|| self.hint(a, env))
                 .or_else(|| self.hint(b, env))
                 .unwrap_or(Type::Machine(
-                    MachineInt::parse("isize").expect("isize type"),
+                    self.target.integer("isize").expect("isize type"),
                 ));
                 if matches!(ty, Type::Ref(_)) && matches!(op.as_str(), "==" | "!=") {
                     let Value::Ref(_, a, a_path) = self.expr(a, env, Some(&ty))? else {
@@ -922,7 +938,7 @@ impl Evaluator<'_> {
                         .first()
                         .and_then(|x| self.hint(x, env))
                         .or(Some(Type::Machine(
-                            MachineInt::parse("isize").expect("isize type"),
+                            self.target.integer("isize").expect("isize type"),
                         )))
                 };
                 items
@@ -938,17 +954,24 @@ impl Evaluator<'_> {
             }
             Kind::Call(name, args) => {
                 if matches!(name.as_str(), "size_of" | "align_of") {
-                    let value = crate::compiler::layout::query::value(name, args, self.structs)?;
+                    let value = crate::compiler::layout::query::value_for(
+                        self.target,
+                        name,
+                        args,
+                        self.structs,
+                    )?;
                     return Ok(Value::Machine(
-                        MachineInt::parse("usize").unwrap(),
+                        self.target.integer("usize").unwrap(),
                         value as i128,
                     ));
                 }
                 if name == "shape" {
-                    let ty = args[0].literal_type().ok_or("shape requires a type")?;
+                    let ty = args[0]
+                        .literal_type_for(self.target.word_bits())
+                        .ok_or("shape requires a type")?;
                     return Ok(Value::Shape(Box::new(ty)));
                 }
-                if let Some(target) = MachineInt::parse(name) {
+                if let Some(target) = self.target.integer(name) {
                     let [argument] = args.as_slice() else {
                         return Err("integer conversion requires one argument".into());
                     };
@@ -961,7 +984,7 @@ impl Evaluator<'_> {
                     return Ok(Value::Machine(target, value));
                 }
                 if name == "alloc" && args.len() == 2 {
-                    let count_type = Type::Machine(MachineInt::parse("usize").unwrap());
+                    let count_type = Type::Machine(self.target.integer("usize").unwrap());
                     let count =
                         usize::try_from(self.expr(&args[0], env, Some(&count_type))?.number()?)
                             .map_err(|_| "invalid allocation count")?;
@@ -977,10 +1000,9 @@ impl Evaluator<'_> {
                         .cloned()
                         .or_else(|| initial.hint())
                         .ok_or("missing allocation element type")?;
-                    let size = crate::compiler::layout::of(&element, self.structs)?.size;
-                    if count as u128 * size as u128
-                        > crate::compiler::layout::MAX_ALLOCATION_BYTES as u128
-                    {
+                    let size =
+                        crate::compiler::layout::of_for(self.target, &element, self.structs)?.size;
+                    if count as u128 * size as u128 > self.target.max_allocation_bytes() as u128 {
                         return Err("allocation exceeds target addressable object range".into());
                     }
                     // The evaluator materializes cells; reject before reserving
@@ -1311,6 +1333,7 @@ pub fn run_with_output(program: &VerifiedProgram) -> Result<(Value, Vec<u8>)> {
 
 fn evaluate(program: &VerifiedProgram) -> Result<(Value, Vec<String>, Vec<u8>)> {
     let mut evaluator = Evaluator {
+        target: program.target,
         functions: &program.functions,
         structs: &program.structs,
         fuel: 100_000,

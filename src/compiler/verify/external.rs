@@ -25,6 +25,9 @@ impl Context<'_> {
             .collect::<Vec<_>>();
         match function.external {
             Some(syntax::External::Syscall(_)) => {
+                if self.declarations.target != crate::compiler::TargetKind::X86_64 {
+                    return Err("WebAssembly target does not support Linux syscalls".into());
+                }
                 self.check_syscall_interface(function, &runtime)?
             }
             Some(syntax::External::CompareExchange64) => {
@@ -37,7 +40,7 @@ impl Context<'_> {
                         "console_write requires a usize length and a borrowed u8 array".into(),
                     );
                 };
-                if *integer != MachineInt::parse("usize").unwrap()
+                if *integer != self.declarations.target.integer("usize").unwrap()
                     || !matches!(array.as_ref(), Type::Array(element, extent)
                         if **element == Type::Machine(MachineInt::parse("u8").unwrap())
                         && matches!(&extent.kind, Kind::Name(name) if name == length))
@@ -88,7 +91,9 @@ impl Context<'_> {
         function: &Function,
         runtime: &[&(String, Type)],
     ) -> Result<()> {
-        if runtime.len() > 6 || function.ret != Type::Machine(MachineInt::parse("isize").unwrap()) {
+        if runtime.len() > 6
+            || function.ret != Type::Machine(self.declarations.target.integer("isize").unwrap())
+        {
             return Err(
                 "syscall declarations require at most six runtime arguments and an isize result"
                     .into(),
@@ -103,7 +108,7 @@ impl Context<'_> {
                         Type::Array(element, _) => element,
                         other => other,
                     };
-                    crate::compiler::layout::of(storage, self.declarations.structs)?;
+                    crate::compiler::layout::of_for(self.declarations.target, storage, self.declarations.structs)?;
                 }
                 _ => return Err("syscall arguments require 64-bit integers or borrows without embedded pointers or owners".into()),
             }

@@ -327,7 +327,7 @@ impl<'a> Machine<'a, '_, '_> {
         let default_number = if self.frames[frame].function.ideal {
             Ty::Int
         } else {
-            Ty::Machine(MachineInt::parse("isize").unwrap())
+            Ty::Machine(self.context.declarations.target.integer("isize").unwrap())
         };
         match &expression.kind {
             Kind::Name(name) => match locals.get(name) {
@@ -398,14 +398,17 @@ impl<'a> Machine<'a, '_, '_> {
                 if name == "old" && args.len() == 1 {
                     self.pending
                         .push(Task::Expression(&args[0], frame, expected, true));
-                } else if let Some(ty) =
-                    MachineInt::parse(name)
-                        .map(Ty::Machine)
-                        .or(match name.as_str() {
-                            "nat" => Some(Ty::Nat),
-                            "integer" => Some(Ty::Int),
-                            _ => None,
-                        })
+                } else if let Some(ty) = self
+                    .context
+                    .declarations
+                    .target
+                    .integer(name)
+                    .map(Ty::Machine)
+                    .or(match name.as_str() {
+                        "nat" => Some(Ty::Nat),
+                        "integer" => Some(Ty::Int),
+                        _ => None,
+                    })
                 {
                     let [argument] = args.as_slice() else {
                         return Ok(false);
@@ -481,19 +484,20 @@ fn hint(
                 .find(|(name, _)| name == field)
                 .and_then(|(_, ty)| Context::declared_hint(ty))
         }
-        Kind::Call(name, _) => {
-            MachineInt::parse(name)
-                .map(Ty::Machine)
-                .or_else(|| match name.as_str() {
-                    "nat" => Some(Ty::Nat),
-                    "integer" => Some(Ty::Int),
-                    _ => context
-                        .declarations
-                        .functions
-                        .get(name)
-                        .and_then(|f| Context::declared_hint(&f.ret)),
-                })
-        }
+        Kind::Call(name, _) => context
+            .declarations
+            .target
+            .integer(name)
+            .map(Ty::Machine)
+            .or_else(|| match name.as_str() {
+                "nat" => Some(Ty::Nat),
+                "integer" => Some(Ty::Int),
+                _ => context
+                    .declarations
+                    .functions
+                    .get(name)
+                    .and_then(|f| Context::declared_hint(&f.ret)),
+            }),
         Kind::If(_, a, b) | Kind::Binary(_, a, b) => {
             hint(a, locals, context).or_else(|| hint(b, locals, context))
         }

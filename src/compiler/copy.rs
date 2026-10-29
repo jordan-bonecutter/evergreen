@@ -62,6 +62,7 @@ pub(super) fn validate(
     record: &Struct,
     prior: &BTreeMap<String, Struct>,
     drops: &BTreeSet<String>,
+    target: crate::compiler::TargetKind,
 ) -> Result<()> {
     if !record.copy {
         return Ok(());
@@ -73,7 +74,7 @@ pub(super) fn validate(
         ));
     }
     for (field, ty) in &record.fields {
-        if crate::shared::ownership::is_move_only(ty, prior, drops) {
+        if crate::shared::ownership::is_move_only_for(ty, prior, drops, target) {
             return Err(format!(
                 "line {}: Copy requires Copy field {}.{field}",
                 record.line, record.name

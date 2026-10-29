@@ -1,12 +1,12 @@
 //! Resolve checked scalar type aliases to the backend's supported primitives.
 //! Representation construction is literal; it cannot manufacture pointer access.
 
-use crate::syntax::{Expr, Kind, MachineInt, Program, Statement, Type};
+use crate::syntax::{Expr, Kind, Program, Statement, Type};
 use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
 
-pub(super) fn lower(program: &mut Program) -> Result<()> {
+pub(super) fn lower(program: &mut Program, target: crate::compiler::TargetKind) -> Result<()> {
     let mut aliases = BTreeMap::new();
     let mut seen = BTreeSet::new();
     let profile = program.functions.is_empty()
@@ -31,14 +31,14 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
         let ty = super::target::representation_type(&definition.represents)?;
         let Some(mut ty) = ty else {
             if profile
-                && definition.module.as_deref() == Some("x86_64")
+                && definition.module.as_deref() == Some(target.module())
                 && definition.name == "pointer"
             {
                 continue;
             }
             return Err("pointer representations describe target storage; make_type cannot fabricate reference or allocation authority".into());
         };
-        if let Some(integer) = MachineInt::parse(&definition.name) {
+        if let Some(integer) = target.integer(&definition.name) {
             if ty != Type::Machine(integer.representation()) {
                 return Err(format!(
                     "{} has a different declared integer representation",
@@ -61,7 +61,7 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
             return Err("custom scalar alias names must begin with an uppercase letter".into());
         }
         if !profile {
-            let layout = super::target::native()?.scalar(&ty)?;
+            let layout = target.profile()?.scalar(&ty)?;
             if layout.size != definition.size || layout.align != definition.align {
                 return Err(format!(
                     "{qualified}: scalar representation does not match the active target layout"

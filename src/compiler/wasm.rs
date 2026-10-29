@@ -1,11 +1,11 @@
 //! Initial WebAssembly backend. Verification always precedes emission.
 //!
-//! The bootstrap's 64-bit scalar model is retained (including usize/isize).
-//! Linear-memory addresses are wasm32. The portable console import is the only
+//! Layout and word-sized integers use targets/wasm.evg.
+//! The internal scalar calling convention uses i64 registers; addresses are wasm32. The portable console import is the only
 //! host capability; Linux syscalls, owners and raw unions are rejected. Records currently have scalar fields.
 
 use super::{layout, verify::VerifiedProgram};
-use crate::syntax::{Expr, External, Function, Kind, MachineInt, Statement, Type};
+use crate::syntax::{Expr, External, Function, Kind, Statement, Type};
 use std::collections::BTreeMap;
 
 type Result<T> = std::result::Result<T, String>;
@@ -50,7 +50,11 @@ fn section(id: u8, bytes: Vec<u8>, out: &mut Vec<u8>) {
 }
 
 fn machine() -> Type {
-    Type::Machine(MachineInt::parse("isize").unwrap())
+    Type::Machine(
+        crate::compiler::TargetKind::Wasm32
+            .integer("isize")
+            .unwrap(),
+    )
 }
 
 fn scalar(ty: &Type) -> bool {
@@ -103,7 +107,7 @@ impl Emitter<'_> {
 
     fn allocate(&mut self, ty: &Type) -> Result<u32> {
         supported(ty)?;
-        let object = layout::of(ty, &self.program.structs)?;
+        let object = layout::of_for(self.program.target, ty, &self.program.structs)?;
         self.frame = self.frame.next_multiple_of(object.align as u32);
         let offset = self.frame;
         self.frame = self
@@ -123,7 +127,7 @@ impl Emitter<'_> {
     }
 
     fn size(&self, ty: &Type) -> Result<u32> {
-        Ok(layout::of(ty, &self.program.structs)?.size as u32)
+        Ok(layout::of_for(self.program.target, ty, &self.program.structs)?.size as u32)
     }
 
     fn load(&mut self, ty: &Type) -> Result<()> {
@@ -231,8 +235,11 @@ impl Emitter<'_> {
                 }
                 self.hint_in(tail, &scope)
             }
-            Kind::Call(n, _) if MachineInt::parse(n).is_some() => {
-                MachineInt::parse(n).map(Type::Machine)
+            Kind::Call(n, _) if matches!(n.as_str(), "size_of" | "align_of") => {
+                Some(Type::Machine(self.program.target.integer("usize").unwrap()))
+            }
+            Kind::Call(n, _) if self.program.target.integer(n).is_some() => {
+                self.program.target.integer(n).map(Type::Machine)
             }
             Kind::Call(n, _) => self
                 .functions
@@ -297,7 +304,7 @@ impl Emitter<'_> {
                     self.code.push(0xa7);
                     ty
                 };
-                let object = layout::of(&ty, &self.program.structs)?;
+                let object = layout::of_for(self.program.target, &ty, &self.program.structs)?;
                 let member = object
                     .fields
                     .get(field)
@@ -424,7 +431,7 @@ impl Emitter<'_> {
             Kind::Record(name, fields) => {
                 let ty = Type::Named(name.clone());
                 let offset = self.allocate(&ty)?;
-                let object = layout::of(&ty, &self.program.structs)?;
+                let object = layout::of_for(self.program.target, &ty, &self.program.structs)?;
                 for (name, value) in fields {
                     let Some(field) = object.fields.get(name) else {
                         continue;
@@ -576,10 +583,16 @@ impl Emitter<'_> {
                 self.slots = saved;
                 ty
             }
-            Kind::Call(n, args) if MachineInt::parse(n).is_some() => {
-                let ty = Type::Machine(MachineInt::parse(n).unwrap());
+            Kind::Call(n, args) if self.program.target.integer(n).is_some() => {
+                let ty = Type::Machine(self.program.target.integer(n).unwrap());
                 self.expr(&args[0], Some(&ty))?;
                 ty
+            }
+            Kind::Call(n, args) if matches!(n.as_str(), "size_of" | "align_of") => {
+                let value =
+                    layout::query::value_for(self.program.target, n, args, &self.program.structs)?;
+                self.i64(value as i128);
+                Type::Machine(self.program.target.integer("usize").unwrap())
             }
             Kind::Call(n, args) => {
                 let (function, index) = *self
@@ -607,6 +620,22 @@ impl Emitter<'_> {
             }
         };
         supported(&ty)?;
+        // Values stay normalized even when no store/reload narrows them.
+        if let Type::Machine(integer) = &ty {
+            if integer.bits < 64 {
+                if integer.signed {
+                    self.code.push(match integer.bits {
+                        8 => 0xc2,
+                        16 => 0xc3,
+                        32 => 0xc4,
+                        _ => return Err("unsupported signed WebAssembly integer width".into()),
+                    });
+                } else {
+                    self.i64((1i128 << integer.bits) - 1);
+                    self.code.push(0x83); // i64.and
+                }
+            }
+        }
         if self.code.len() > MAX_CODE {
             return Err("WebAssembly code limit exceeded".into());
         }
@@ -618,6 +647,9 @@ impl Emitter<'_> {
 /// Imports `evergreen.console_write(length: i64, pointer: i64) -> i64` when used.
 /// All functions/loop iterations share a 100,000-step budget and 128-call limit.
 pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
+    if program.target != crate::compiler::TargetKind::Wasm32 {
+        return Err("wasm emission requires a program checked for Wasm32".into());
+    }
     program.check_entry()?;
     crate::shared::worker::run("evergreen-wasm-emitter", || emit_inner(program))
 }
@@ -799,7 +831,9 @@ fn emit_inner(program: &VerifiedProgram) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::verify::verify;
+    fn verify(source: &str) -> Result<VerifiedProgram> {
+        crate::compiler::verify::verify_for_target(source, crate::compiler::TargetKind::Wasm32)
+    }
 
     #[test]
     fn emits_wasm_and_rejects_unproved_entry_or_unsupported_runtime() {
@@ -810,7 +844,10 @@ mod tests {
             "fn main() -> usize {let p: unique(usize) = alloc(42); let n = *p; drop(p); n}",
             include_str!("../../examples/hello.evg"),
         ] {
-            assert!(emit(&verify(source).unwrap()).is_err(), "accepted {source}");
+            assert!(
+                verify(source).and_then(|program| emit(&program)).is_err(),
+                "accepted {source}"
+            );
         }
     }
 }

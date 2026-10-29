@@ -14,6 +14,7 @@ pub mod native;
 mod scalar_types;
 mod sources;
 pub(crate) use crate::shared::target;
+pub use crate::shared::target::TargetKind;
 pub mod verify;
 pub mod wasm;
 

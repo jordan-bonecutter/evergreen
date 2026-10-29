@@ -9,16 +9,20 @@ impl Context<'_> {
             return Err(format!("{name} requires one type argument"));
         };
         let ty = argument
-            .literal_type()
+            .literal_type_for(self.declarations.target.word_bits())
             .ok_or("layout queries require a type")?;
         let phase = std::mem::replace(&mut self.execution.phase, Phase::Specification);
         let checked = self.resolve(&ty);
         self.execution.phase = phase;
         checked?;
-        let value =
-            crate::compiler::layout::query::value(name, arguments, self.declarations.structs)?;
+        let value = crate::compiler::layout::query::value_for(
+            self.declarations.target,
+            name,
+            arguments,
+            self.declarations.structs,
+        )?;
         Ok(Symbol::Number(
-            Ty::Machine(MachineInt::parse("usize").unwrap()),
+            Ty::Machine(self.declarations.target.integer("usize").unwrap()),
             Linear::number(value as i128),
         ))
     }

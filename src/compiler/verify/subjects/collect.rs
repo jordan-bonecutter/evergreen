@@ -155,7 +155,8 @@ impl Context<'_> {
                 // Layout is a static target property. Query only the layout
                 // table: resolving the type here could re-execute dependent
                 // bound expressions. Normal evaluation checks those bounds.
-                let value = crate::compiler::layout::query::value(
+                let value = crate::compiler::layout::query::value_for(
+                    self.declarations.target,
                     name,
                     arguments,
                     self.declarations.structs,

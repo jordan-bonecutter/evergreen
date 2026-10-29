@@ -125,6 +125,7 @@ fn observation_work_depends_on_mentioned_fields_not_record_width() {
         let names = BTreeSet::new();
         let summaries = BTreeMap::new();
         let declarations = Declarations {
+            target: crate::compiler::TargetKind::X86_64,
             functions: &functions,
             summaries: &summaries,
             structs: &structs,

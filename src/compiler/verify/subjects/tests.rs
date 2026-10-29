@@ -107,6 +107,7 @@ fn with_source(source: &str, check: impl FnOnce(&mut Context<'_>, &[Statement]))
     let names = BTreeSet::new();
     let main = parsed.functions.iter().find(|f| f.name == "main").unwrap();
     let declarations = Declarations {
+        target: crate::compiler::TargetKind::X86_64,
         functions: &functions,
         summaries: &summaries,
         structs: &structs,

@@ -37,7 +37,7 @@ struct Item<'a> {
 /// A second lexical pass checks that no token or comment was changed or merged.
 pub fn source(source: &str) -> Result<String, String> {
     let tokens = lex(source)?;
-    let hints = parse_unit_with_hints(source, Some(Hints::default()))
+    let hints = parse_unit_with_hints(source, Some(Hints::default()), 64)
         .ok()
         .and_then(|(_, hints)| hints)
         .unwrap_or_default();

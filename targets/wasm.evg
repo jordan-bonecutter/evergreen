@@ -1,0 +1,93 @@
+// Scalar representations for the WebAssembly 32-bit linear-memory target.
+module wasm;
+
+type u8 = make_type(
+    size: 1,
+    align: 1,
+    represents: repr::Integral {signed: false, bits: 8, encoding: repr::Binary, endian: repr::Little}
+);
+
+type i8 = make_type(
+    size: 1,
+    align: 1,
+    represents: repr::Integral {signed: true, bits: 8, encoding: repr::TwosComplement, endian: repr::Little}
+);
+
+type u16 = make_type(
+    size: 2,
+    align: 2,
+    represents: repr::Integral {signed: false, bits: 16, encoding: repr::Binary, endian: repr::Little}
+);
+
+type i16 = make_type(
+    size: 2,
+    align: 2,
+    represents: repr::Integral {signed: true, bits: 16, encoding: repr::TwosComplement, endian: repr::Little}
+);
+
+type u32 = make_type(
+    size: 4,
+    align: 4,
+    represents: repr::Integral {signed: false, bits: 32, encoding: repr::Binary, endian: repr::Little}
+);
+
+type i32 = make_type(
+    size: 4,
+    align: 4,
+    represents: repr::Integral {signed: true, bits: 32, encoding: repr::TwosComplement, endian: repr::Little}
+);
+
+type u64 = make_type(
+    size: 8,
+    align: 8,
+    represents: repr::Integral {signed: false, bits: 64, encoding: repr::Binary, endian: repr::Little}
+);
+
+type i64 = make_type(
+    size: 8,
+    align: 8,
+    represents: repr::Integral {signed: true, bits: 64, encoding: repr::TwosComplement, endian: repr::Little}
+);
+
+type usize = make_type(
+    size: 4,
+    align: 4,
+    represents: repr::Integral {signed: false, bits: 32, encoding: repr::Binary, endian: repr::Little}
+);
+
+type isize = make_type(
+    size: 4,
+    align: 4,
+    represents: repr::Integral {signed: true, bits: 32, encoding: repr::TwosComplement, endian: repr::Little}
+);
+
+type bool = make_type(size: 1, align: 1, represents: repr::Boolean {});
+type unit = make_type(size: 1, align: 1, represents: repr::Unit {});
+type pointer = make_type(
+    size: 4,
+    align: 4,
+    represents: repr::Pointer {bits: 32, endian: repr::Little}
+);
+
+// Copy is a checked trait implementation, not an implicit property of width.
+impl Copy for u8 {}
+impl Copy for i8 {}
+impl Copy for u16 {}
+impl Copy for i16 {}
+impl Copy for u32 {}
+impl Copy for i32 {}
+impl Copy for u64 {}
+impl Copy for i64 {}
+impl Copy for usize {}
+impl Copy for isize {}
+impl Copy for bool {}
+impl Copy for unit {}
+impl Copy for pointer {}
+
+// Null has the usize representation and a compiler-checked singleton domain.
+type Null = make_type(
+    size: 4,
+    align: 4,
+    represents: repr::Integral {signed: false, bits: 32, encoding: repr::Binary, endian: repr::Little}
+);
+impl Copy for Null {}

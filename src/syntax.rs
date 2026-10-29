@@ -57,6 +57,13 @@ pub(crate) fn is_builtin_name(name: &str) -> bool {
 }
 
 impl MachineInt {
+    pub(crate) fn for_word_bits(name: &str, bits: u8) -> Option<Self> {
+        let mut integer = Self::parse(name)?;
+        if matches!(name, "usize" | "isize" | "Null") {
+            integer.bits = bits;
+        }
+        Some(integer)
+    }
     pub fn parse(s: &str) -> Option<Self> {
         if s == "Null" {
             return Some(Self {
@@ -212,30 +219,36 @@ impl Expr {
     /// The syntax of a type used as an ideal value. Resolving names and proving
     /// dependent extents remain the verifier's responsibility.
     pub(crate) fn literal_type(&self) -> Option<Type> {
+        self.literal_type_for(64)
+    }
+
+    pub(crate) fn literal_type_for(&self, word_bits: u8) -> Option<Type> {
         match &self.kind {
             Kind::Type(ty) => Some(ty.clone()),
             Kind::Unit => Some(Type::Unit),
-            Kind::Name(name) => Some(MachineInt::parse(name).map(Type::Machine).unwrap_or_else(
-                || match name.as_str() {
-                    "bool" => Type::Bool,
-                    "unit" => Type::Unit,
-                    "integer" => Type::Int,
-                    "nat" => Type::Nat,
-                    _ => Type::Named(name.clone()),
-                },
-            )),
-            Kind::Unary(op, inner) if op == "&" => {
-                inner.literal_type().map(|ty| Type::Ref(Box::new(ty)))
-            }
-            Kind::Call(name, args) if name == "shape" && args.len() == 1 => {
-                args[0].literal_type().map(|ty| Type::Shape(Box::new(ty)))
-            }
-            Kind::Call(name, args) if name == "unique" && args.len() == 1 => {
-                args[0].literal_type().map(|ty| Type::Unique(Box::new(ty)))
-            }
-            Kind::Call(name, args) if name == "shared" && args.len() == 1 => {
-                args[0].literal_type().map(|ty| Type::Shared(Box::new(ty)))
-            }
+            Kind::Name(name) => Some(
+                MachineInt::for_word_bits(name, word_bits)
+                    .map(Type::Machine)
+                    .unwrap_or_else(|| match name.as_str() {
+                        "bool" => Type::Bool,
+                        "unit" => Type::Unit,
+                        "integer" => Type::Int,
+                        "nat" => Type::Nat,
+                        _ => Type::Named(name.clone()),
+                    }),
+            ),
+            Kind::Unary(op, inner) if op == "&" => inner
+                .literal_type_for(word_bits)
+                .map(|ty| Type::Ref(Box::new(ty))),
+            Kind::Call(name, args) if name == "shape" && args.len() == 1 => args[0]
+                .literal_type_for(word_bits)
+                .map(|ty| Type::Shape(Box::new(ty))),
+            Kind::Call(name, args) if name == "unique" && args.len() == 1 => args[0]
+                .literal_type_for(word_bits)
+                .map(|ty| Type::Unique(Box::new(ty))),
+            Kind::Call(name, args) if name == "shared" && args.len() == 1 => args[0]
+                .literal_type_for(word_bits)
+                .map(|ty| Type::Shared(Box::new(ty))),
             _ => None,
         }
     }
@@ -558,6 +571,7 @@ pub struct Function {
 }
 
 struct Parser {
+    word_bits: u8,
     format_hints: Option<format::Hints>,
     tokens: Vec<Token>,
     pos: usize,
@@ -813,7 +827,8 @@ impl Parser {
         } else {
             match self.peek() {
                 s if MachineInt::parse(s).is_some() => {
-                    let t = MachineInt::parse(s).expect("validated machine type");
+                    let t = MachineInt::for_word_bits(s, self.word_bits)
+                        .expect("validated machine type");
                     self.pos += 1;
                     Ok(Type::Machine(t))
                 }
@@ -891,7 +906,7 @@ impl Parser {
             return Ok(Kind::Call(name, self.arguments()?));
         }
         if parts.len() == 2 {
-            if let Some(integer) = MachineInt::parse(&parts[0]) {
+            if let Some(integer) = MachineInt::for_word_bits(&parts[0], self.word_bits) {
                 let (low, high) = integer.bounds();
                 let value = match parts[1].as_str() {
                     "MAX" | "max" => high,
@@ -1300,18 +1315,20 @@ pub(crate) fn constant_extent(expression: &Expr) -> bool {
     }
 }
 
-fn parse_unit(source: &str) -> Result<Program, String> {
-    parse_unit_with_hints(source, None).map(|(program, _)| program)
+fn parse_unit(source: &str, word_bits: u8) -> Result<Program, String> {
+    parse_unit_with_hints(source, None, word_bits).map(|(program, _)| program)
 }
 
 fn parse_unit_with_hints(
     source: &str,
     hints: Option<format::Hints>,
+    word_bits: u8,
 ) -> Result<(Program, Option<format::Hints>), String> {
     if source.len() > 1_000_000 {
         return Err("source exceeds 1 MB bootstrap limit".into());
     }
     let mut p = Parser {
+        word_bits,
         format_hints: hints,
         tokens: lex(source)?,
         pos: 0,
@@ -1564,15 +1581,19 @@ pub fn join_source_units(sources: &[String]) -> Result<String, String> {
 }
 
 pub fn parse(source: &str) -> Result<Program, String> {
+    parse_with_word_bits(source, 64)
+}
+
+pub(crate) fn parse_with_word_bits(source: &str, word_bits: u8) -> Result<Program, String> {
     if source.len() > 1_000_000 {
         return Err("source exceeds 1 MB bootstrap limit".into());
     }
     let mut units = source
         .split(UNIT_SEPARATOR)
         .filter(|unit| !unit.trim().is_empty());
-    let mut program = parse_unit(units.next().unwrap_or_default())?;
+    let mut program = parse_unit(units.next().unwrap_or_default(), word_bits)?;
     for (index, unit) in units.enumerate() {
-        let mut unit = parse_unit(unit)?;
+        let mut unit = parse_unit(unit, word_bits)?;
         unit.set_source_origin(SourceOrigin::Input(index + 1));
         program.copy_impls.extend(unit.copy_impls);
         program.imports.extend(unit.imports);

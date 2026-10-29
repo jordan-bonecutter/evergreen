@@ -84,11 +84,13 @@ impl Context<'_> {
                 "empty array conversion requires an empty default, complete cell coverage, or a checked full-range shape proof".into(),
             );
         }
-        let before = crate::compiler::layout::of(
+        let before = crate::compiler::layout::of_for(
+            self.declarations.target,
             &heap::syntax_type(stored_element, line)?,
             self.declarations.structs,
         )?;
-        let after = crate::compiler::layout::of(
+        let after = crate::compiler::layout::of_for(
+            self.declarations.target,
             &heap::syntax_type(element, line)?,
             self.declarations.structs,
         )?;

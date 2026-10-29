@@ -24,7 +24,7 @@ impl Engine {
             }
             program.functions.append(&mut self.implementations.headers);
             templates::charge_program(program, &mut self.work)?;
-            crate::compiler::field_sugar::expand(program);
+            crate::compiler::field_sugar::expand_for(program, self.target);
             let mut calls = Calls {
                 pending: &self.implementations.bodies,
                 requested: BTreeSet::new(),

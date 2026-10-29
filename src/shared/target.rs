@@ -10,6 +10,57 @@ use std::{
 type Result<T> = std::result::Result<T, String>;
 
 const X86_64: &str = include_str!("../../targets/x86_64.evg");
+const WASM: &str = include_str!("../../targets/wasm.evg");
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TargetKind {
+    #[default]
+    X86_64,
+    Wasm32,
+}
+
+impl TargetKind {
+    pub(crate) fn module(self) -> &'static str {
+        match self {
+            Self::X86_64 => "x86_64",
+            Self::Wasm32 => "wasm",
+        }
+    }
+
+    pub(crate) fn source(self) -> &'static str {
+        match self {
+            Self::X86_64 => X86_64,
+            Self::Wasm32 => WASM,
+        }
+    }
+
+    pub(crate) fn word_bits(self) -> u8 {
+        match self {
+            Self::X86_64 => 64,
+            Self::Wasm32 => 32,
+        }
+    }
+
+    pub(crate) fn max_allocation_bytes(self) -> u64 {
+        (1u64 << (self.word_bits() - 1)) - 1
+    }
+
+    pub(crate) fn integer(self, name: &str) -> Option<MachineInt> {
+        MachineInt::for_word_bits(name, self.word_bits())
+    }
+
+    pub(crate) fn profile(self) -> Result<&'static Target> {
+        static NATIVE: OnceLock<Result<Target>> = OnceLock::new();
+        static BROWSER: OnceLock<Result<Target>> = OnceLock::new();
+        let slot = match self {
+            Self::X86_64 => &NATIVE,
+            Self::Wasm32 => &BROWSER,
+        };
+        slot.get_or_init(|| Target::decode_for(self, self.source()))
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ScalarLayout {
@@ -22,17 +73,14 @@ pub(crate) struct Target {
     copy_types: BTreeSet<String>,
 }
 
-pub(crate) fn native() -> Result<&'static Target> {
-    static TARGET: OnceLock<Result<Target>> = OnceLock::new();
-    TARGET
-        .get_or_init(|| Target::decode(X86_64))
-        .as_ref()
-        .map_err(Clone::clone)
-}
-
 impl Target {
+    #[cfg(test)]
     fn decode(source: &str) -> Result<Self> {
-        let program = syntax::parse(source)?;
+        Self::decode_for(TargetKind::X86_64, source)
+    }
+
+    fn decode_for(kind: TargetKind, source: &str) -> Result<Self> {
+        let program = syntax::parse_with_word_bits(source, kind.word_bits())?;
         let mut layouts = BTreeMap::new();
         if !program.functions.is_empty()
             || !program.structs.is_empty()
@@ -44,8 +92,11 @@ impl Target {
             );
         }
         for definition in program.scalar_types {
-            if definition.module.as_deref() != Some("x86_64") {
-                return Err("x86-64 target declarations require module x86_64".into());
+            if definition.module.as_deref() != Some(kind.module()) {
+                return Err(format!(
+                    "target declarations require module {}",
+                    kind.module()
+                ));
             }
             let name = definition.name.as_str();
             let ty = representation_type(&definition.represents)?;
@@ -54,20 +105,22 @@ impl Target {
                 "unit" => Some(Type::Unit),
                 "pointer" => None,
                 _ => Some(Type::Machine(
-                    MachineInt::parse(name).ok_or("unknown target scalar")?,
+                    kind.integer(name).ok_or("unknown target scalar")?,
                 )),
             };
             if name == "pointer" {
                 if !matches!(
                     definition.represents,
                     Representation::Pointer {
-                        bits: 64,
+                        bits,
                         endian: Endianness::Little
-                    }
+                    } if bits == kind.word_bits()
                 ) {
-                    return Err(
-                        "x86-64 pointers require a 64-bit little-endian representation".into(),
-                    );
+                    return Err(format!(
+                        "{} pointers require a {}-bit little-endian representation",
+                        kind.module(),
+                        kind.word_bits()
+                    ));
                 }
             } else if ty
                 != expected.as_ref().map(|ty| match ty {
@@ -100,19 +153,27 @@ impl Target {
                 return Err(format!("missing target layout for {name}"));
             }
         }
-        for (alias, base) in [("usize", "u64"), ("isize", "i64"), ("Null", "usize")] {
+        let unsigned = if kind.word_bits() == 32 { "u32" } else { "u64" };
+        let signed = if kind.word_bits() == 32 { "i32" } else { "i64" };
+        for (alias, base) in [("usize", unsigned), ("isize", signed), ("Null", "usize")] {
             if layouts[alias] != layouts[base] {
-                return Err(format!("{alias} must share the {base} layout on x86-64"));
+                return Err(format!(
+                    "{alias} must share the {base} layout on {}",
+                    kind.module()
+                ));
             }
         }
         let mut copy_types = BTreeSet::new();
         for implementation in program.copy_impls {
-            if implementation.module.as_deref() != Some("x86_64") {
-                return Err("target Copy implementations require module x86_64".into());
+            if implementation.module.as_deref() != Some(kind.module()) {
+                return Err(format!(
+                    "target Copy implementations require module {}",
+                    kind.module()
+                ));
             }
             let name = implementation
                 .target
-                .strip_prefix("x86_64::")
+                .strip_prefix(&format!("{}::", kind.module()))
                 .ok_or("Copy requires a declared target primitive")?;
             if !layouts.contains_key(name) {
                 return Err(format!(
@@ -123,11 +184,9 @@ impl Target {
                 return Err(format!("duplicate target Copy implementation for {name}"));
             }
         }
-        for (alias, base) in [("usize", "u64"), ("isize", "i64")] {
+        for (alias, base) in [("usize", unsigned), ("isize", signed)] {
             if copy_types.contains(alias) != copy_types.contains(base) {
-                return Err(format!(
-                    "{alias} must share the {base} Copy implementation on x86-64"
-                ));
+                return Err(format!("{alias} must share the {base} Copy implementation"));
             }
         }
         Ok(Self {
@@ -179,10 +238,10 @@ pub(crate) fn representation_type(representation: &Representation) -> Result<Opt
         Representation::Boolean => Ok(Some(Type::Bool)),
         Representation::Unit => Ok(Some(Type::Unit)),
         Representation::Pointer {
-            bits: 64,
+            bits: 32 | 64,
             endian: Endianness::Little,
         } => Ok(None),
-        _ => Err("representation is unsupported by the Linux x86-64 backend".into()),
+        _ => Err("representation is unsupported by the bootstrap backends".into()),
     }
 }
 
@@ -191,6 +250,83 @@ mod tests {
     use super::*;
     use crate::compiler::verify::{prove, verify_with_certificate};
     use crate::syntax::format::test_edit::SourceEdit;
+
+    #[test]
+    fn wasm_profile_controls_layout_literals_inference_and_runtime() {
+        use crate::compiler::verify::{
+            prove_for_target, verify_for_target, verify_with_certificate_for_target,
+        };
+        let target = TargetKind::Wasm32;
+        let (profile, certificate) = prove_for_target(WASM, target).unwrap();
+        assert!(profile.trusted_assumptions().is_empty());
+        assert_eq!(
+            verify_with_certificate_for_target(WASM, &certificate, target)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        let source = r#"
+            type Pair struct {byte: u8, word: usize, wide: u64}
+            fn first<T>(length: usize, data: &[T; length]) -> T where length > 0 {(*data)[0]}
+            fn main() -> usize {
+                proof _: usize::MAX == 4294967295 && isize::MIN == -2147483648;
+                proof _: size_of(usize) == 4 && size_of(isize) == 4 && size_of(Null) == 4;
+                proof _: size_of(&usize) == 4 && size_of(u64) == 8 && size_of(i64) == 8;
+                proof _: size_of([usize; 3]) == 12 && size_of(Pair) == 16;
+                let words: [usize; 2] = [42, 7];
+                let answer = first(&words);
+                proof _: typeof(answer) == usize;
+                answer
+            }
+        "#;
+        let (program, bundle) = prove_for_target(source, target).unwrap();
+        assert_eq!(program.target(), target);
+        assert_eq!(program.run().unwrap().to_string(), "42");
+        assert_eq!(
+            verify_with_certificate_for_target(source, &bundle, target)
+                .unwrap()
+                .proof_search_count(),
+            0
+        );
+        for source in [
+            "fn main() -> usize {4294967296}",
+            "fn main() -> usize {usize(u64::MAX)}",
+            "fn main() {proof _: usize::MAX == 18446744073709551615;}",
+            "fn main() -> usize {size_of([u8; 2147483648])}",
+        ] {
+            assert!(
+                verify_for_target(source, target).is_err(),
+                "accepted {source}"
+            );
+        }
+        for source in [
+            include_str!("../../examples/generics.evg"),
+            "fn main() -> usize {let data: unique(usize | shape(usize), 1) = alloc(1, shape(usize)); (*data)[0] = 42; let value: usize = move((*data)[0]); arrays::release_empty::<usize>(data); value}",
+        ] {
+            assert_eq!(verify_for_target(source, target).unwrap().run().unwrap().to_string(), "42");
+        }
+    }
+
+    #[test]
+    fn target_certificates_and_emitters_cannot_be_mixed() {
+        use crate::compiler::verify::{prove_for_target, verify_with_certificate_for_target};
+        let source = "fn main() -> usize {42}";
+        for (target, other) in [
+            (TargetKind::X86_64, TargetKind::Wasm32),
+            (TargetKind::Wasm32, TargetKind::X86_64),
+        ] {
+            let (program, bundle) = prove_for_target(source, target).unwrap();
+            assert!(verify_with_certificate_for_target(source, &bundle, other).is_err());
+            assert_eq!(
+                crate::compiler::native::emit(&program).is_ok(),
+                target == TargetKind::X86_64
+            );
+            assert_eq!(
+                crate::compiler::wasm::emit(&program).is_ok(),
+                target == TargetKind::Wasm32
+            );
+        }
+    }
 
     #[test]
     fn target_data_is_checked_evergreen_and_replays_without_trust() {

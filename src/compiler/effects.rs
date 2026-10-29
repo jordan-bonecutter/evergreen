@@ -2,7 +2,7 @@
 //! are read-only; ownership-free helpers may use checked write contracts.
 //! Unknown effects remain unknown; callers must not assume they are harmless.
 
-use crate::syntax::{Expr, Function, Kind, MachineInt, Statement, Struct, Type};
+use crate::syntax::{Expr, Function, Kind, Statement, Struct, Type};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn scalar(t: &Type) -> bool {
@@ -37,20 +37,21 @@ fn hint(
     env: &BTreeMap<String, Type>,
     functions: &BTreeMap<String, Function>,
     structs: &BTreeMap<String, Struct>,
+    target: crate::compiler::TargetKind,
 ) -> Option<Type> {
     match &e.kind {
         Kind::Name(n) => env.get(n).cloned(),
         Kind::Constant(t, _) => Some(Type::Machine(*t)),
         Kind::Unary(op, x) if op == "*" => {
-            if let Some(Type::Ref(t)) = hint(x, env, functions, structs) {
+            if let Some(Type::Ref(t)) = hint(x, env, functions, structs, target) {
                 Some(*t)
             } else {
                 None
             }
         }
-        Kind::Unary(_, x) => hint(x, env, functions, structs),
+        Kind::Unary(_, x) => hint(x, env, functions, structs, target),
         Kind::Field(base, field) => {
-            let Type::Named(name) = hint(base, env, functions, structs)? else {
+            let Type::Named(name) = hint(base, env, functions, structs, target)? else {
                 return None;
             };
             structs
@@ -60,23 +61,21 @@ fn hint(
                 .map(|(_, t)| t.clone())
         }
         Kind::Index(base, _) => {
-            let Type::Array(element, _) = hint(base, env, functions, structs)? else {
+            let Type::Array(element, _) = hint(base, env, functions, structs, target)? else {
                 return None;
             };
             Some(*element)
         }
-        Kind::Binary(_, a, b) => {
-            hint(a, env, functions, structs).or_else(|| hint(b, env, functions, structs))
-        }
-        Kind::Call(n, _) if MachineInt::parse(n).is_some() => {
-            MachineInt::parse(n).map(Type::Machine)
-        }
+        Kind::Binary(_, a, b) => hint(a, env, functions, structs, target)
+            .or_else(|| hint(b, env, functions, structs, target)),
+        Kind::Call(n, _) if target.integer(n).is_some() => target.integer(n).map(Type::Machine),
         Kind::Call(n, _) => functions.get(n).map(|f| f.ret.clone()),
         _ => None,
     }
 }
 
 struct Safe<'a> {
+    target: crate::compiler::TargetKind,
     known: &'a BTreeSet<String>,
     current: &'a str,
     structs: &'a BTreeMap<String, Struct>,
@@ -127,7 +126,7 @@ fn place(
             };
             expression(
                 index,
-                Some(&Type::Machine(MachineInt::parse("usize")?)),
+                Some(&Type::Machine(safe.target.integer("usize")?)),
                 env,
                 functions,
                 safe,
@@ -161,7 +160,7 @@ fn expression(
         Kind::Unary(_, x) => {
             let t = expected
                 .cloned()
-                .or_else(|| hint(x, env, functions, safe.structs))?;
+                .or_else(|| hint(x, env, functions, safe.structs, safe.target))?;
             if !matches!(t, Type::Machine(_)) {
                 return None;
             }
@@ -176,8 +175,8 @@ fn expression(
             } else {
                 let arithmetic = matches!(op.as_str(), "+" | "-" | "*");
                 let t = if arithmetic { expected.cloned() } else { None }
-                    .or_else(|| hint(a, env, functions, safe.structs))
-                    .or_else(|| hint(b, env, functions, safe.structs))?;
+                    .or_else(|| hint(a, env, functions, safe.structs, safe.target))
+                    .or_else(|| hint(b, env, functions, safe.structs, safe.target))?;
                 let equality = matches!(op.as_str(), "==" | "!=");
                 if !matches!(t, Type::Machine(_))
                     && !(equality && matches!(t, Type::Bool | Type::Ref(_)))
@@ -200,15 +199,15 @@ fn expression(
             t
         }
         Kind::Call(n, _) if matches!(n.as_str(), "size_of" | "align_of") => {
-            Type::Machine(MachineInt::parse("usize")?)
+            Type::Machine(safe.target.integer("usize")?)
         }
-        Kind::Call(n, args) if MachineInt::parse(n).is_some() => {
+        Kind::Call(n, args) if safe.target.integer(n).is_some() => {
             let [argument] = args.as_slice() else {
                 return None;
             };
-            let target = Type::Machine(MachineInt::parse(n)?);
-            let source =
-                hint(argument, env, functions, safe.structs).unwrap_or_else(|| target.clone());
+            let target = Type::Machine(safe.target.integer(n)?);
+            let source = hint(argument, env, functions, safe.structs, safe.target)
+                .unwrap_or_else(|| target.clone());
             if !matches!(source, Type::Machine(_)) {
                 return None;
             }
@@ -243,8 +242,9 @@ pub(crate) fn invariant_independent(
     functions: &BTreeMap<String, Function>,
     safe: &BTreeSet<String>,
     structs: &BTreeMap<String, Struct>,
+    target: crate::compiler::TargetKind,
 ) -> bool {
-    !f.unspecified_arithmetic && scalar_effects(f, functions, safe, structs, false)
+    !f.unspecified_arithmetic && scalar_effects(f, functions, safe, structs, false, target)
 }
 
 /// Calls with scalar/reference interfaces and no creation, transfer, or cleanup
@@ -254,8 +254,9 @@ pub(crate) fn ownership_free(
     functions: &BTreeMap<String, Function>,
     safe: &BTreeSet<String>,
     structs: &BTreeMap<String, Struct>,
+    target: crate::compiler::TargetKind,
 ) -> bool {
-    scalar_effects(f, functions, safe, structs, true)
+    scalar_effects(f, functions, safe, structs, true, target)
 }
 
 fn scalar_effects(
@@ -264,6 +265,7 @@ fn scalar_effects(
     safe: &BTreeSet<String>,
     structs: &BTreeMap<String, Struct>,
     writes: bool,
+    target: crate::compiler::TargetKind,
 ) -> bool {
     if f.ideal
         || f.partial
@@ -279,6 +281,7 @@ fn scalar_effects(
     // Effects of a self-recursive body are checked as a fixed point. Totality has
     // already been established, and every non-self effect is still inspected.
     let recursive_safe = Safe {
+        target,
         known: safe,
         current: &f.name,
         structs,

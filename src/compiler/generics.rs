@@ -67,6 +67,7 @@ enum Concrete {
 }
 
 struct Engine {
+    target: crate::compiler::TargetKind,
     implementations: implementations::Registry,
     inference: inference::Inference,
     known_types: BTreeSet<String>,
@@ -77,11 +78,12 @@ struct Engine {
     depth: usize,
 }
 
-pub(super) fn lower(program: &mut Program) -> Result<()> {
+pub(super) fn lower_for(program: &mut Program, target: crate::compiler::TargetKind) -> Result<()> {
     if program.generics.is_empty() {
         return Ok(());
     }
     let mut engine = Engine {
+        target,
         implementations: implementations::Registry::default(),
         inference: inference::Inference::default(),
         known_types: program
@@ -319,7 +321,7 @@ impl Engine {
         match ty {
             Type::Array(element, count) => {
                 self.closed_type(element)?;
-                let usize_type = Type::Machine(syntax::MachineInt::parse("usize").unwrap());
+                let usize_type = Type::Machine(self.target.integer("usize").unwrap());
                 **count = constants::canonical(count, &usize_type)?;
             }
             Type::Ref(inner) | Type::Unique(inner) | Type::Shared(inner) | Type::Shape(inner) => {

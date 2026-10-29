@@ -1,8 +1,8 @@
-//! Native sizes and alignment for the Linux x86-64 bootstrap target.
+//! Sizes and alignment from the selected Evergreen target profile.
 //! Fields retain declaration order. Empty values reserve one byte for identity.
 //! This is not a C/FFI layout contract.
 
-use super::target::{self, Target};
+use super::target::{Target, TargetKind};
 use crate::syntax::{Expr, Kind, Struct, Type};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -109,17 +109,30 @@ pub(crate) fn same_type(a: &Type, b: &Type) -> Result<bool> {
 }
 
 pub fn of(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
-    compute_layout(ty, structs, MAX_LAYOUT_BYTES)
+    of_for(TargetKind::X86_64, ty, structs)
+}
+
+pub fn of_for(target: TargetKind, ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
+    compute_layout(ty, structs, MAX_LAYOUT_BYTES, target.profile()?)
 }
 
 /// Target storage geometry without materializing an inline value or array cells.
-pub(crate) fn storage(ty: &Type, structs: &BTreeMap<String, Struct>) -> Result<Layout> {
-    let limit = usize::try_from(MAX_ALLOCATION_BYTES)
+pub(crate) fn storage_for(
+    target: TargetKind,
+    ty: &Type,
+    structs: &BTreeMap<String, Struct>,
+) -> Result<Layout> {
+    let limit = usize::try_from(target.max_allocation_bytes())
         .map_err(|_| "target storage sizes exceed bootstrap host resolution")?;
-    compute_layout(ty, structs, limit)
+    compute_layout(ty, structs, limit, target.profile()?)
 }
 
-fn compute_layout(ty: &Type, structs: &BTreeMap<String, Struct>, limit: usize) -> Result<Layout> {
+fn compute_layout(
+    ty: &Type,
+    structs: &BTreeMap<String, Struct>,
+    limit: usize,
+    target: &Target,
+) -> Result<Layout> {
     fn compute(
         ty: &Type,
         structs: &BTreeMap<String, Struct>,
@@ -253,7 +266,7 @@ fn compute_layout(ty: &Type, structs: &BTreeMap<String, Struct>, limit: usize) -
         ty,
         structs,
         &mut BTreeSet::new(),
-        target::native()?,
+        target,
         &mut BTreeMap::new(),
         &mut 0,
         limit,

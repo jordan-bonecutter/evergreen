@@ -32,7 +32,8 @@ impl Engine {
         // Length expressions are inserted later, but their positions must be
         // removed now so supplied pointers still infer their element types.
         let omitted = if function {
-            crate::compiler::field_sugar::omitted_lengths(&formal, actual.len()).unwrap_or_default()
+            crate::compiler::field_sugar::omitted_lengths(&formal, actual.len(), self.target)
+                .unwrap_or_default()
         } else {
             Vec::new()
         };

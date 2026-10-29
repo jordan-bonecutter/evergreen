@@ -103,6 +103,9 @@ struct Emitter<'a> {
 /// Emit a standalone Linux x86-64 executable. Its scalar main result is the
 /// process exit status (low eight bits). External declarations provide runtime I/O.
 pub fn emit(program: &VerifiedProgram) -> Result<Vec<u8>> {
+    if program.target != crate::compiler::TargetKind::X86_64 {
+        return Err("native emission requires a program checked for X86_64".into());
+    }
     emit_mode(program, TraceMode::Value)
 }
 

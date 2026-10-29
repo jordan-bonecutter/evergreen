@@ -7,8 +7,9 @@ use super::*;
 pub(super) fn verify(
     mut parsed: syntax::Program,
     session: &mut Session,
+    target: crate::compiler::TargetKind,
 ) -> Result<VerifiedProgram> {
-    prepare(&mut parsed)?;
+    prepare(&mut parsed, target)?;
     // These headers validate Drop ownership/module declarations only. Contexts
     // see a record after its fields and refinement have actually been checked.
     let mut headers = BTreeMap::new();
@@ -21,6 +22,7 @@ pub(super) fn verify(
     let mut functions = parsed.functions;
     functions.extend(parsed.destructors.into_iter().map(|(_, f)| f));
     let mut verification = Verification {
+        target,
         structs: BTreeMap::new(),
         drops,
         destructors,
@@ -40,6 +42,7 @@ pub(super) fn verify(
                     record,
                     &verification.structs,
                     &verification.drops,
+                    target,
                 )?;
                 check_record(record, verification.declarations(), session).inspect_err(
                     |error| {
@@ -76,15 +79,15 @@ pub(super) fn verify(
     Ok(verification.finish(functions, session))
 }
 
-fn prepare(parsed: &mut syntax::Program) -> Result<()> {
-    crate::shared::target::native()?;
+fn prepare(parsed: &mut syntax::Program, target: crate::compiler::TargetKind) -> Result<()> {
+    target.profile()?;
     crate::compiler::copy::configure(parsed)?;
-    crate::compiler::scalar_types::lower(parsed)?;
-    crate::compiler::generics::lower(parsed)?;
+    crate::compiler::scalar_types::lower(parsed, target)?;
+    crate::compiler::generics::lower_for(parsed, target)?;
     crate::compiler::methods::validate(parsed)?;
     crate::compiler::declarations::schedule_types(parsed)?;
     check_type_expansion(&parsed.structs)?;
-    crate::compiler::field_sugar::expand(parsed);
+    crate::compiler::field_sugar::expand_for(parsed, target);
     Ok(())
 }
 
@@ -208,6 +211,7 @@ fn check_destructors(
 }
 
 struct Verification {
+    target: crate::compiler::TargetKind,
     structs: BTreeMap<String, Struct>,
     drops: BTreeSet<String>,
     destructors: BTreeMap<String, Function>,
@@ -221,6 +225,7 @@ struct Verification {
 impl Verification {
     fn declarations(&self) -> Declarations<'_> {
         Declarations {
+            target: self.target,
             functions: &self.functions,
             summaries: &self.summaries,
             structs: &self.structs,
@@ -237,7 +242,7 @@ impl Verification {
                 return Err(format!("line {}: ideal parameters may own only proof data; runtime owners must be borrowed", f.line));
             }
             if f.ideal
-                && is_move_only(ty, &self.structs, &self.drops)
+                && is_move_only(ty, &self.structs, &self.drops, self.target)
                 && !erased_type(ty, &self.structs)
             {
                 return Err(format!(
@@ -247,7 +252,7 @@ impl Verification {
             }
         }
         if f.ideal
-            && is_move_only(&f.ret, &self.structs, &self.drops)
+            && is_move_only(&f.ret, &self.structs, &self.drops, self.target)
             && !erased_type(&f.ret, &self.structs)
         {
             return Err(format!(
@@ -308,6 +313,7 @@ impl Verification {
             &self.functions,
             &self.helpers,
             &self.structs,
+            self.target,
         ) {
             self.helpers.insert(f.name.clone());
         }
@@ -316,6 +322,7 @@ impl Verification {
             &self.functions,
             &self.cleanup_helpers,
             &self.structs,
+            self.target,
         ) {
             self.cleanup_helpers.insert(f.name.clone());
         }
@@ -325,6 +332,7 @@ impl Verification {
 
     fn finish(self, functions: Vec<Function>, session: &Session) -> VerifiedProgram {
         VerifiedProgram {
+            target: self.target,
             functions,
             summaries: self.summaries,
             structs: self.structs,

@@ -2,7 +2,7 @@
 //! this instance; JS reacquires views after calls that can grow Wasm memory.
 
 use evergreen::{
-    compiler::{verify::verify_diagnostic, wasm},
+    compiler::{verify::verify_diagnostic_for_target, wasm, TargetKind},
     syntax::Type,
 };
 use std::cell::RefCell;
@@ -36,7 +36,7 @@ fn quote(text: &str) -> String {
 }
 
 fn compile(source: &str) -> (String, Vec<u8>) {
-    let program = match verify_diagnostic(source) {
+    let program = match verify_diagnostic_for_target(source, TargetKind::Wasm32) {
         Ok(program) => program,
         Err(mut error) => {
             if error.source.is_none()
