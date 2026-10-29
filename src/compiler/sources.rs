@@ -140,6 +140,12 @@ const LIBRARIES: &[Library] = &[
     Library {
         module: Some("arrays"),
         exports: &[],
+        path: "stdlib/arrays/relocate.evg",
+        source: include_str!("../../stdlib/arrays/relocate.evg"),
+    },
+    Library {
+        module: Some("arrays"),
+        exports: &[],
         path: "stdlib/arrays/prefix.evg",
         source: include_str!("../../stdlib/arrays/prefix.evg"),
     },

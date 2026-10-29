@@ -1,0 +1,16 @@
+module arrays;
+
+// Copying leaves the destination vacant. Only the proved type transfer moves
+// the live value and its ownership; neither step invokes the payload destructor.
+fn relocate<T>(source: &(T | shape(T)), target: &(T | shape(T)))
+    where
+        typeof(*source) == T &&
+        typeof(*target) == shape(T)
+    modifies(source, target)
+    ensures
+        typeof(*source) == shape(T) &&
+        typeof(*target) == T
+{
+    *target = copy_representation(source);
+    transfer_type(source, target);
+}

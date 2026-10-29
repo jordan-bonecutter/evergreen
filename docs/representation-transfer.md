@@ -33,6 +33,15 @@ The x86-64 backend uses its existing inline byte-copy instructions for the copy;
 the type transfer emits no memory copy. No libc `memcpy` dependency is required.
 Whole fixed-size owning arrays work without per-element ownership proofs.
 
+The source-defined `arrays::relocate::<T>(source, target)` helper combines the
+copy and transfer for one vacant destination slot. It works on individual
+sparse heap-array elements, including owning pointers; source and destination
+capacities need not match. See
+[representation_array_slot.evg](../examples/representation_array_slot.evg).
+Verification observes only the selected cells, not every cell in the capacity.
+The helper does not yet supply the quantified frame contract needed to replace
+an entire prefix relocation loop.
+
 This is the first storage primitive, not the completed Vec relocation API.
 Dynamic prefix views, independently verified byte loops, and equality assembled
 from subrange copies are still unimplemented. The checker currently derives
