@@ -158,6 +158,9 @@ limit. Conditional input views and the public Vec API migration remain work.
 
 `vec::Buffer::release_empty()` consumes a buffer whose length is proved zero,
 releases any reserved allocation, and returns capacity zero backed by `Null`.
+It combines the checked zero length and vacant-suffix facts into a full vacancy
+proof, then calls `arrays::release_empty` directly. No element-draining loop is
+needed to release this proven-empty storage.
 [The release example](../examples/buffer_release.evg) grows from zero capacity,
 moves an owner through push/pop, and releases the empty reservation. Its native
 result is 42; releasing a populated buffer fails the precondition. General

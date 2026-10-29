@@ -132,7 +132,29 @@ impl<T> Buffer<T> {
             result.cap == 0
     {
         let Self {cap, len, data} = self;
-        if cap == 0 {discard_buffer_zero(data)} else {arrays::drain_prefix::<T>(cap, data, len)};
+        if cap == 0 {discard_buffer_zero(data)} else {
+            proof before_empty:
+                len == 0 &&
+                arrays::vacant_suffix::<T>(&*data, integer::from(len)) by {
+                    constructor;
+                    omega;
+                    omega
+                };
+            proof vacant:
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < integer::from(cap)
+                ) {typeof((*data)[i]) == shape(T)} by {
+                    using before_empty;
+                    intro prior;
+                    cases prior with empty,
+                    range;
+                    intro i;
+                    omega
+                };
+            arrays::release_empty::<T>(cap, data)
+        };
         Self::new(0)
     }
 
