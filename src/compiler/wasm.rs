@@ -400,7 +400,32 @@ impl Emitter<'_> {
                 }
                 self.slots = saved;
             }
-            _ => return Err("WebAssembly target does not yet support record destructuring".into()),
+            Statement::Destructure {
+                record,
+                fields,
+                value,
+                ..
+            } => {
+                let ty = Type::Named(record.clone());
+                let offset = self.allocate(&ty)?;
+                let object = layout::of_for(self.program.target, &ty, &self.program.structs)?;
+                // Evaluate once into independent storage before exposing bindings.
+                self.address_offset(offset);
+                self.expr(value, Some(&ty))?;
+                self.store(&ty)?;
+                for (field, binding) in fields {
+                    let Some(field) = object.fields.get(field) else {
+                        continue;
+                    };
+                    self.slots.insert(
+                        binding.clone(),
+                        Slot {
+                            offset: offset + field.offset as u32,
+                            ty: field.ty.clone(),
+                        },
+                    );
+                }
+            }
         }
         Ok(())
     }

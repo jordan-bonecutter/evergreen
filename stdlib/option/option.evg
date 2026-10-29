@@ -65,17 +65,15 @@ impl<T> Option<T> {
         } else {Self::none()}
     }
 
-    method unwrap() -> T
+    method unwrap({data, ok}) -> T
         where
             self.ok
     {
-        let Self {data, ok} = self;
         let value: T = data;
         value
     }
 
-    method unwrap_or(fallback: T) -> T {
-        let Self {data, ok} = self;
+    method unwrap_or({data, ok}, fallback: T) -> T {
         if ok {
             let value: T = data;
             value

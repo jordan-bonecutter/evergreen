@@ -29,3 +29,23 @@ checks still reject inconsistent updates.
 
 See [the owning example](../examples/option.evg). This initial API does not yet
 provide replacement, map, or pattern-specific conveniences.
+
+Consuming methods can destructure their implicit receiver in the parameter list:
+
+```evg
+method or_else({data, ok}, fallback: T) -> T {
+    if ok {
+        let value: T = data;
+        value
+    } else {
+        let vacant: shape(T) = data;
+        fallback
+    }
+}
+```
+
+Callers still write `value.or_else(fallback)`. The pattern lowers to
+`let Self {data, ok} = self;` at body entry. Renaming fields uses `{data: payload,
+ok}`. Preconditions and postconditions retain the normal `self` binding; pattern
+bindings are body locals. All fields must be handled, and consuming patterns are
+not accepted on `method&` receivers.
