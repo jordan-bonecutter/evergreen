@@ -1,5 +1,5 @@
-//! Trust dependencies exported by checked declarations. Safety and advertised
-//! postconditions are separate: calling a function need not use its postcondition.
+//! Checked call summaries: trust dependencies and isolated allocation effects.
+//! Safety and advertised postconditions remain separate dependencies.
 
 use super::*;
 use crate::compiler::certificate::TrustId;
@@ -14,6 +14,8 @@ pub(super) enum Aspect {
 pub(super) struct Summary {
     pub(super) safety: BTreeSet<TrustId>,
     pub(super) contract: BTreeSet<TrustId>,
+    // Every checked return consumes all unique inputs and owns a fresh result.
+    pub(super) fresh_allocation: bool,
 }
 
 #[derive(Default)]
@@ -50,6 +52,7 @@ impl Context<'_> {
         Ok(Requirements {
             safety: self.roots_dependencies(&self.proof.uses.clone())?,
             contract: self.roots_dependencies(&self.proof.contract_uses.clone())?,
+            fresh_allocation: Some(self.execution.fresh_allocation_result),
         })
     }
 }
@@ -58,10 +61,15 @@ impl Context<'_> {
 pub(super) struct Requirements {
     safety: Dependencies,
     contract: Dependencies,
+    fresh_allocation: Option<bool>,
 }
 
 impl Requirements {
     pub(super) fn extend(&mut self, other: Self) {
+        if let Some(other) = other.fresh_allocation {
+            // One branch returning an input allocation rules out this effect.
+            self.fresh_allocation = Some(self.fresh_allocation.unwrap_or(true) && other);
+        }
         self.safety.trusts.extend(other.safety.trusts);
         self.safety.recursive.extend(other.safety.recursive);
         self.contract.trusts.extend(other.contract.trusts);
@@ -69,10 +77,15 @@ impl Requirements {
     }
 
     pub(super) fn summary(self) -> Summary {
-        let Self { safety, contract } = self;
+        let Self {
+            safety,
+            contract,
+            fresh_allocation,
+        } = self;
         let mut summary = Summary {
             safety: safety.trusts,
             contract: contract.trusts,
+            fresh_allocation: fresh_allocation.unwrap_or(false),
         };
         loop {
             let before = summary.clone();

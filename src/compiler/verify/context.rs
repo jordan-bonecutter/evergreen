@@ -70,6 +70,8 @@ pub(super) struct Execution {
     pub(super) partial_execution: bool,
     pub(super) unspecified_arithmetic: bool,
     pub(super) dropping: bool,
+    // Set only after declaration checking, never by a nested actual-body recheck.
+    pub(super) fresh_allocation_result: bool,
     pub(super) cleanup_depth: usize,
     pub(super) replacing_cleanup: usize,
     pub(super) rechecking: usize,
@@ -87,6 +89,7 @@ impl Default for Execution {
             partial_execution: false,
             unspecified_arithmetic: false,
             dropping: false,
+            fresh_allocation_result: false,
             cleanup_depth: 0,
             replacing_cleanup: 0,
             rechecking: 0,

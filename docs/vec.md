@@ -55,6 +55,14 @@ the old header, so acquire header borrows again after assigning the result.
 Pushes within capacity
 retain the allocation and leave earlier elements in place.
 
+For reference-free elements, relocation uses a checked ownership-effect summary:
+every incoming unique allocation is consumed and the result owns fresh storage.
+The checker derives this from the function body on every return path. Callers
+invalidate the old allocations and apply the verified result contract, without
+replaying the relocation loop. This is a general function rule, not a Vec builtin.
+Functions that can return an input allocation, accept borrowed storage, or carry
+nested pointers retain actual-body checking.
+
 `same_value` in the contracts describes logical values, not ownership or arbitrary
 byte equality. Growth preserves every value in the live prefix. Ordinary reads
 can recover scalar fields from that range guarantee, including reference-free
@@ -87,12 +95,13 @@ longer exists. The temporary `vec::Buffer` implementation is now this public Vec
 The independent Copy-array utility remains in
 [`vec/copy.evg`](../stdlib/vec/copy.evg).
 
-This is still a bootstrap implementation. Long sequences, including the combined
-[`record_collections`](../examples/record_collections.evg) example and repeated
-populated growth in one function, can exceed the unchanged verifier work budget.
+This is still a bootstrap implementation. Repeated populated growth and the
+combined [`record_collections`](../examples/record_collections.evg) example now
+verify within the unchanged work budget. Longer sequences remain subject to that
+budget, particularly when nested owning pointers require actual-body checking.
 Sparse resource branches use separate checked continuations when their storage
-cannot be joined. Replaying a populated growth before a conditional pop can
-still exhaust that work budget. `reallocate(0)` is not yet supported;
+cannot be joined; growth followed by a conditional pop is supported.
+`reallocate(0)` is not yet supported;
 use `release_empty()` when length is zero. Pointer-bearing payload value recovery,
 more general borrowed/shared payloads, and narrowing an entire initialized union
 array to `unique(T, cap)` still need work. Unsupported cases are rejected rather

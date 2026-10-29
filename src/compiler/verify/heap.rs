@@ -3,6 +3,10 @@
 
 use super::*;
 
+mod effects;
+#[cfg(test)]
+mod effects_tests;
+
 pub(super) fn payload_type(ty: &Type, structs: &BTreeMap<String, Struct>) -> bool {
     match ty {
         Type::Ref(_) => false,

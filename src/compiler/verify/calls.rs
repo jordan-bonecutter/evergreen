@@ -537,6 +537,11 @@ impl<'a> Context<'a> {
                 .any(|(_, ty)| type_has_reference(ty, self.declarations.structs));
         let heap_call =
             storage_crosses_boundary && heap::function_uses_planes(f, self.declarations.structs);
+        let fresh_allocation = self
+            .declarations
+            .summaries
+            .get(name)
+            .is_some_and(|summary| summary.fresh_allocation);
         // Raw union transitions transfer real payloads. Recheck their bodies
         // rather than replacing the target with an unrelated arbitrary member.
         let union_write = writes.iter().any(|write| matches!(*write.ty, Ty::Union(_)));
@@ -555,7 +560,7 @@ impl<'a> Context<'a> {
             self.reduce_fact(f)?
         } else if f.ret == Type::Fact
             || overlaps
-            || heap_call
+            || heap_call && !fresh_allocation
             || union_write
             || deferred_ports
             || conditional_ports
@@ -587,6 +592,9 @@ impl<'a> Context<'a> {
             let contract = self.import_summary(name, summaries::Aspect::Contract)?;
             self.proof.contract_parents.extend(contract);
             call_dependencies.extend(self.proof.contract_parents.iter().copied());
+            if fresh_allocation {
+                self.apply_fresh_allocation_inputs(f)?;
+            }
             let value = if let Some(value) = self.reduce_ideal(f)? {
                 value
             } else if let Some(value) = self.model_ideal_scalar(f)? {

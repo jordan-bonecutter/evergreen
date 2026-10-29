@@ -394,7 +394,12 @@ impl Context<'_> {
         if f.external.is_some() {
             self.check_external(f, &ret)?;
         } else {
-            self.check_function_body(f, &ret, &inputs, true)?;
+            let owned_inputs = self.fresh_allocation_inputs(f)?;
+            let (value, _) = self.check_function_body(f, &ret, &inputs, true)?;
+            self.execution.fresh_allocation_result = owned_inputs.is_some_and(|inputs| {
+                matches!(value, Symbol::Unique(_, reference) if self.storage.memory.read(reference).is_ok())
+                    && inputs.iter().all(|&plane| self.storage.memory.get(plane).is_err())
+            });
         }
         Ok(())
     }

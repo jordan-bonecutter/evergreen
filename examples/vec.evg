@@ -3,6 +3,7 @@ fn main() -> usize {
     values.push(7);
     values.push(42);
     values = values.reallocate(8);
+    values = values.reallocate(16);
     proof first_preserved: *values.get(0) == 7;
     values.pop()
 }
