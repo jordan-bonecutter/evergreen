@@ -54,6 +54,8 @@ mod ownership;
 mod parameters;
 mod paths;
 mod places;
+#[cfg(test)]
+mod selfhost_tests;
 use paths::{extend, extend_from};
 mod program;
 mod proofs;

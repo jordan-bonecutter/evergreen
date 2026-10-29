@@ -1,0 +1,24 @@
+import lexer;
+
+// "let x = 42;". This entry point is a bootstrap smoke test, not a compiler yet.
+fn main() -> usize {
+    let source: [u8; 11] = [108, 101, 116, 32, 120, 32, 61, 32, 52, 50, 59];
+    let kinds: [u8; 8] = [1, 4, 1, 4, 3, 4, 2, 3];
+    let ends: [usize; 8] = [3, 4, 5, 6, 7, 8, 10, 11];
+    let valid = true;
+    let position: usize = 0;
+    let count: usize = 0;
+    while position < 11
+        invariant
+            count <= position &&
+            position <= 11
+        modifies(&position, &count, &valid)
+        decreases(11 - position)
+    {
+        let token = lexer::next(11, &source, position);
+        valid = if count < 8 {valid && token.kind == kinds[count] && token.end == ends[count]} else {false};
+        count = count + 1;
+        position = token.end;
+    }
+    if valid && count == 8 {42} else {1}
+}
