@@ -151,6 +151,17 @@ impl Context<'_> {
                 }
                 complete.then_some(ClaimKey::Record(name.clone(), keys))
             }
+            Kind::Call(name, arguments) if matches!(name.as_str(), "size_of" | "align_of") => {
+                // Layout is a static target property. Query only the layout
+                // table: resolving the type here could re-execute dependent
+                // bound expressions. Normal evaluation checks those bounds.
+                let value = crate::compiler::layout::query::value(
+                    name,
+                    arguments,
+                    self.declarations.structs,
+                )?;
+                Some(ClaimKey::Number(value as i128))
+            }
             Kind::Call(name, arguments) if name == "owner_count" && arguments.len() == 1 => {
                 if let Some(reference) = self.owner_subject_reference(&arguments[0]) {
                     let stamp = self.proof.subjects.observe(

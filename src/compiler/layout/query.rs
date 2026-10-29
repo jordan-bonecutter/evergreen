@@ -44,6 +44,41 @@ mod tests {
     }
 
     #[test]
+    fn layout_bounds_preserve_quantified_contract_dependencies() {
+        let source = r#"fn observe<T>(N: usize, data: &[T | shape(T); N], length: usize)
+where length <= N && integer(N) * integer(size_of(T)) <= integer(isize::MAX) &&
+(forall(i: integer) where (0 <= i && i < integer(length) && i < integer(N)) {typeof((*data)[i]) == T})
+{
+proof initialized: forall(i: integer) where (0 <= i && i < integer(length) && i < integer(N)) {typeof((*data)[i]) == T} by {assumption};
+if length > 0 { let first: &T = &(*data)[0]; }
+}
+fn main() -> usize {
+let data: unique(unique(usize) | shape(unique(usize)), 1) = alloc(1, shape(unique(usize)));
+(*data)[0] = alloc(42);
+observe::<unique(usize)>(1, &*data, 1);
+let value: unique(usize) = move((*data)[0]);
+arrays::release_empty::<unique(usize)>(data);
+*value
+}
+"#;
+        for query in ["size_of", "align_of"] {
+            let source = source.replace("size_of", query);
+            let (program, certificate) = prove(&source).unwrap();
+            assert!(program.trusted_assumptions().is_empty());
+            assert_eq!(program.run().unwrap().to_string(), "42");
+            assert_eq!(
+                verify_with_certificate(&source, &certificate)
+                    .unwrap()
+                    .proof_search_count(),
+                0
+            );
+            // Layout facts do not establish any element's active member.
+            let vacant = source.replace("(*data)[0] = alloc(42);", "");
+            assert!(verify(&vacant).is_err());
+        }
+    }
+
+    #[test]
     fn invalid_layout_types_bounds_and_effects_are_rejected() {
         let tick =
             "fn tick(n: &usize) -> usize where *n < usize::MAX modifies(n) { *n = *n + 1; *n }";
