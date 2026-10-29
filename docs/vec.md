@@ -256,6 +256,8 @@ capacity. Distinct sparse array identities still need a quantified relation.
 through push/pop, proves its tag and allocation address are preserved, and drops
 it once. These are individual-value guarantees. `arrays::relocate_prefix` now
 also proves a quantified preservation contract for the entire owning prefix,
-using sparse immutable value histories through its transfer loop. Exposing that
-contract through `Buffer::reallocate`, connecting it to ordinary payload reads,
-and migrating the public Vec API remain work.
+using sparse immutable value histories through its transfer loop.
+`Buffer::reallocate` exposes that guarantee for every old live index. Its
+zero-capacity case is explicitly separate so the contract does not observe an
+array through `Null`. Connecting these quantified guarantees to ordinary payload
+reads and migrating the public Vec API remain work.
