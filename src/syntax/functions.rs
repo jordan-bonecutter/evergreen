@@ -40,7 +40,9 @@ impl Parser {
         let saved_names = self.generic_names.clone();
         let line = self.line();
         let external = if self.eat("extern") {
-            if self.eat("compare_exchange64") {
+            if self.eat("console_write") {
+                Some(External::ConsoleWrite)
+            } else if self.eat("compare_exchange64") {
                 Some(External::CompareExchange64)
             } else {
                 self.expect("syscall")?;

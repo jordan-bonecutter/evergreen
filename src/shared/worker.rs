@@ -6,6 +6,14 @@ pub(crate) fn run<T: Send>(
     name: &str,
     operation: impl FnOnce() -> Result<T, String> + Send,
 ) -> Result<T, String> {
+    // Browser callers already run in a Web Worker. wasm32-unknown-unknown
+    // cannot spawn OS threads; its linker reserves the equivalent stack.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = name;
+        operation()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name(name.into())

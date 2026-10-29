@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#00822a">
+  <meta name="description" content="Evergreen is a systems language that makes invariants part of your code. Try its real compiler in your browser with WebAssembly.">
+  <title>Evergreen — Provably Safe Systems Code</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="./fonts/UbuntuMono-Regular.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#playground">Skip to playground</a>
+  <div class="site-shell">
+    <header class="site-header">
+      <a href="#" class="wordmark" aria-label="Evergreen home"><img src="./logo.svg" width="31" height="43" alt=""><span>evergreen</span></a>
+      <nav aria-label="Main navigation"><a href="#why">The Core Idea</a><a href="#playground">Playground</a><a class="source-link" href="https://github.com/jordan-bonecutter/evergreen">Source <span aria-hidden="true">↗</span></a></nav>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="intro-title">
+        <div class="hero-copy">
+          <h1 id="intro-title"><em>Provably Safe</em><br>Systems Code</h1>
+          <p class="hero-description">Evergreen brings explicit contracts, checked invariants, and control over memory into one language. Write down what must hold. Let the compiler check that it does.</p>
+          <a class="button primary" href="#playground">Try Evergreen <span aria-hidden="true">↘</span></a>
+        </div>
+        <div class="hero-example">
+          <div class="code-caption"><span class="file-dot" aria-hidden="true"></span> nonzero.evg <span class="language-label">EVERGREEN</span></div>
+          <pre class="example-code"><code><span class="keyword">type</span> NonZero <span class="keyword">struct</span> {data: usize} <span class="keyword">where</span> data != 0;
+
+<span class="keyword">impl</span> NonZero {
+    <span class="keyword">fn</span> new(x: usize) -&gt; Self
+        <span class="keyword">where</span> x != 0
+    {
+        <span class="keyword">return</span> NonZero {data: x};
+    }
+}
+
+<span class="keyword">fn</span> main() -&gt; usize {
+    <span class="keyword">let</span> my_nonzero = NonZero::new(10);
+    0
+}</code></pre>
+          <div class="example-result"><span aria-hidden="true">✓</span> <p>The constructor requires a nonzero input.<br>The compiler checks the invariant when the value is built.</p></div>
+        </div>
+      </section>
+
+      <section id="why" class="why-section" aria-labelledby="why-title">
+        <div class="section-intro"><p class="eyebrow">The Core Idea</p><h2 id="why-title">More intent in the source.<br>Fewer assumptions in your head.</h2></div>
+        <div class="principles">
+          <article><span class="principle-number">01 /</span><h3>Say what must be true.</h3><p>Put preconditions, postconditions, and data invariants beside the code they describe. They become obligations the compiler checks.</p><pre class="principle-code"><code data-example="contracts">fn increment(n: usize) -&gt; usize
+    where n &lt; usize::MAX
+    ensures result &gt; n
+{
+    n + 1
+}</code></pre><p class="principle-caption">Every call must establish the precondition.</p></article>
+          <article><span class="principle-number">02 /</span><h3>Keep control of memory.</h3><p>Work with explicit layouts, ownership, and borrowed references. Evergreen tracks when a memory plane is live and which uses remain valid.</p><pre class="principle-code"><code data-example="borrows">let value: usize = 1;
+let first = &amp;value;
+let second = &amp;value;
+*first = 10;
+proof same: *second == 10;</code></pre><p class="principle-caption">A write is visible through both live borrows.</p></article>
+          <article><span class="principle-number">03 /</span><h3>Carry less into runtime.</h3><p>Proofs and ideal computations are erased after checking. Executable code keeps the work it needs to do.</p><pre class="principle-code"><code data-example="erasure">ideal let expected: nat = 42;
+let value: usize = 42;
+proof matches:
+    nat(value) == expected;</code></pre><p class="principle-caption">The ideal binding and proof are erased. The value stays.</p></article>
+        </div>
+      </section>
+
+      <section id="playground" class="playground-section" aria-labelledby="playground-title">
+        <div class="playground-intro"><div><h2 id="playground-title">Playground</h2></div></div>
+        <div class="playground">
+          <div class="toolbar">
+            <label class="example-picker" for="example">Example <select id="example"><option value="hello">Hello, Evergreen</option><option value="nonzero">NonZero</option><option value="error">Catch overflow</option></select></label>
+            <div class="run-controls"><button id="reset" class="button quiet" type="button">Reset</button><button id="stop" class="button quiet" type="button" hidden>Stop</button><button id="run" class="button primary" type="button" disabled><span aria-hidden="true">▶</span> <span id="run-label">Loading compiler…</span></button></div>
+          </div>
+          <div class="panes">
+            <div class="editor-pane">
+              <div class="pane-heading"><label for="source"><span class="file-dot" aria-hidden="true"></span> main.evg</label><span class="language-label">EVERGREEN</span></div>
+              <div class="editor-wrap"><pre id="line-numbers" aria-hidden="true">1</pre><textarea id="source" aria-label="Evergreen source code" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off" maxlength="100000"></textarea></div>
+            </div>
+            <div class="console-pane">
+              <div class="pane-heading"><span><span aria-hidden="true">&gt;_</span> Console</span><button id="clear" class="text-button" type="button">Clear</button></div>
+              <div class="console-body"><pre id="output" tabindex="0" aria-label="Program console output">Ready when you are.
+
+Run the example to see its output here.</pre><div id="execution-result" hidden></div></div>
+            </div>
+          </div>
+          <div class="status-bar"><span id="status" role="status" aria-live="polite">Loading WebAssembly compiler…</span><span class="keyboard-hint"><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Enter</kbd> to run</span><button id="download" class="text-button" type="button" hidden>Download .wasm ↓</button></div>
+          <details id="trust" hidden><summary id="trust-summary"></summary><p>External console behavior is provided by the host. Evergreen records this boundary as an explicit <code>trustme</code> assumption.</p><pre id="trust-details"></pre></details>
+        </div>
+        <noscript><p class="noscript">The playground needs JavaScript and WebAssembly. You can also <a href="https://github.com/jordan-bonecutter/evergreen">build and run Evergreen locally</a>.</p></noscript>
+      </section>
+
+    </main>
+    <footer><a href="#" class="wordmark"><img src="./logo.svg" width="24" height="34" alt=""><span>evergreen</span></a><a href="https://github.com/jordan-bonecutter/evergreen">Read the source <span aria-hidden="true">↗</span></a></footer>
+  </div>
+</body>
+</html>

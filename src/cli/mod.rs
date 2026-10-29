@@ -6,7 +6,7 @@ mod format;
 mod output;
 mod sources;
 
-use args::{Action, Cli};
+use args::{Action, Cli, Target};
 use clap::Parser;
 use evergreen::compiler::{certificate::ProofBundle, verify::VerifiedProgram};
 use evergreen::shared::diagnostics::Diagnostic;
@@ -35,13 +35,21 @@ pub fn run() -> std::result::Result<(), String> {
     let source = loaded.source;
     let result = match &cli.command {
         Action::Fmt { .. } => unreachable!("format dispatched before source loading"),
-        Action::Build { output, proof, .. } => {
+        Action::Build {
+            output,
+            proof,
+            target,
+            ..
+        } => {
             let destination = match output {
                 Some(path) => path.clone(),
                 None => files
                     .last()
                     .ok_or("no source file for default output")?
-                    .with_extension(""),
+                    .with_extension(match target {
+                        Target::X86_64 => "",
+                        Target::Wasm32 => "wasm",
+                    }),
             };
             build(
                 &source,
@@ -49,6 +57,7 @@ pub fn run() -> std::result::Result<(), String> {
                 &destination,
                 proof.as_deref(),
                 cli.deny_trust,
+                *target,
             )
         }
         Action::Check { proof, .. } => check(&source, &files, proof.as_deref(), cli.deny_trust),
@@ -79,12 +88,19 @@ fn build(
     destination: &Path,
     proof: Option<&Path>,
     deny_trust: bool,
+    target: Target,
 ) -> Result<()> {
     let program = checked_program(source, proof, deny_trust)?;
-    let binary = evergreen::compiler::native::emit(&program)?;
-    output::write_executable(destination, &binary, files)?;
+    let (binary, label) = match target {
+        Target::X86_64 => (evergreen::compiler::native::emit(&program)?, "Linux x86-64"),
+        Target::Wasm32 => (evergreen::compiler::wasm::emit(&program)?, "WebAssembly"),
+    };
+    match target {
+        Target::X86_64 => output::write_executable(destination, &binary, files)?,
+        Target::Wasm32 => output::write_binary(destination, &binary, files)?,
+    }
     println!(
-        "{}; built {} (Linux x86-64)",
+        "{}; built {} ({label})",
         status(&program),
         destination.display()
     );
@@ -131,7 +147,12 @@ fn prove(source: &str, files: &[PathBuf], destination: &Path, deny_trust: bool) 
 
 fn run_program(source: &str, deny_trust: bool) -> Result<()> {
     let program = checked_program(source, None, deny_trust)?;
-    println!("{}", evergreen::interpreter::run(&program)?);
+    let (value, bytes) = evergreen::interpreter::run_with_output(&program)?;
+    use std::io::Write;
+    std::io::stdout()
+        .write_all(&bytes)
+        .map_err(|error| error.to_string())?;
+    println!("{value}");
     report_trust(&program);
     Ok(())
 }

@@ -13,6 +13,7 @@ use std::{
 mod atomic;
 mod blocks;
 mod compat;
+mod console;
 mod ownership;
 mod type_match;
 mod uninitialized_arrays;
@@ -169,6 +170,7 @@ struct Evaluator<'a> {
     drops: &'a BTreeSet<String>,
     events: Vec<String>,
     temporaries: Vec<Value>,
+    stdout: Vec<u8>,
 }
 
 impl Evaluator<'_> {
@@ -392,6 +394,7 @@ impl Evaluator<'_> {
                 return Err("external syscalls require a native executable; use build".into())
             }
             Some(External::CompareExchange64) => return self.compare_exchange64(actuals),
+            Some(External::ConsoleWrite) => return self.console_write(actuals),
             None => {}
         }
         if f.params
@@ -1291,10 +1294,22 @@ pub fn run(program: &VerifiedProgram) -> Result<Value> {
 /// Return a detached result snapshot and cleanup trace for debugging.
 pub fn run_with_events(program: &VerifiedProgram) -> Result<(Value, Vec<String>)> {
     program.check_entry()?;
-    crate::shared::worker::run("evergreen-evaluator", || evaluate(program))
+    crate::shared::worker::run("evergreen-evaluator", || {
+        let (value, events, _) = evaluate(program)?;
+        Ok((value, events))
+    })
 }
 
-fn evaluate(program: &VerifiedProgram) -> Result<(Value, Vec<String>)> {
+/// Execute with captured console bytes. No process-global output is modified.
+pub fn run_with_output(program: &VerifiedProgram) -> Result<(Value, Vec<u8>)> {
+    program.check_entry()?;
+    crate::shared::worker::run("evergreen-evaluator", || {
+        let (value, _, stdout) = evaluate(program)?;
+        Ok((value, stdout))
+    })
+}
+
+fn evaluate(program: &VerifiedProgram) -> Result<(Value, Vec<String>, Vec<u8>)> {
     let mut evaluator = Evaluator {
         functions: &program.functions,
         structs: &program.structs,
@@ -1306,11 +1321,12 @@ fn evaluate(program: &VerifiedProgram) -> Result<(Value, Vec<String>)> {
         drops: &program.drops,
         events: Vec::new(),
         temporaries: Vec::new(),
+        stdout: Vec::new(),
     };
     let value = evaluator.call("main", vec![])?;
     let snapshot = copy_value(&value, &mut evaluator.fuel)?;
     evaluator.drop_value(snapshot)?;
-    Ok((value, evaluator.events))
+    Ok((value, evaluator.events, evaluator.stdout))
 }
 
 #[cfg(test)]

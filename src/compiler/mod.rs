@@ -15,6 +15,7 @@ mod scalar_types;
 mod sources;
 pub(crate) use crate::shared::target;
 pub mod verify;
+pub mod wasm;
 
 /// Whether this bootstrap embeds a standard-library package with this name.
 pub fn is_bundled_module(name: &str) -> bool {

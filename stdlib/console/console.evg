@@ -1,0 +1,10 @@
+// Portable byte output. The host owns the console; strings remain UTF-8 arrays.
+module console;
+
+extern console_write fn print(length: usize, bytes: linear_plane(u8, length));
+proof {trustme}
+
+fn println(length: usize, bytes: linear_plane(u8, length)) {
+    print(length, bytes);
+    print(&"\n");
+}

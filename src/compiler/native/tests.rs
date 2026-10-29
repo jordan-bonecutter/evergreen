@@ -857,6 +857,10 @@ fn native_syscalls_write_exact_bytes_and_preserve_results() {
     let empty = format!("{} fn main() -> usize {{let bytes: [u8; 0] = []; if linux_io::print_bytes(0, &bytes) == 0 {{0}} else {{1}}}}", concat!(include_str!("../../../stdlib/linux_io/linux_io.evg"), "\u{1e}"));
     let prefix = format!("{} fn main() -> usize {{let bytes: [u8; 3] = [65, 66, 67]; if linux_io::write(1, &bytes, 2) == 2 {{0}} else {{1}}}}", concat!(include_str!("../../../stdlib/linux_io/linux_io.evg"), "\u{1e}"));
     for (source, expected) in [
+        (
+            "fn main() -> usize {console::println(&\"Hello, Evergreen!\"); 0}",
+            b"Hello, Evergreen!\n".as_slice(),
+        ),
         (hello.as_str(), b"Hello, Evergreen\n".as_slice()),
         (
             r#"fn main() -> usize {if linux_io::print_bytes(&"λ\0🦀\n") == 8 {0} else {1}}"#,

@@ -36,6 +36,12 @@ const LIBRARIES: &[Library] = &[
         source: include_str!("../../stdlib/usize/usize.evg"),
     },
     Library {
+        module: Some("console"),
+        exports: &[],
+        path: "stdlib/console/console.evg",
+        source: include_str!("../../stdlib/console/console.evg"),
+    },
+    Library {
         module: Some("rc"),
         exports: &[],
         path: "stdlib/rc/rc.evg",

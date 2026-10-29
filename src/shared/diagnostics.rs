@@ -80,3 +80,6 @@ impl fmt::Display for Diagnostic {
     }
 }
 impl std::error::Error for Diagnostic {}
+
+mod render;
+pub use render::render;
