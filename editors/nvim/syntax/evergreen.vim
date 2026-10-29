@@ -3,8 +3,8 @@ if exists('b:current_syntax')
 endif
 
 syntax keyword evergreenDeclaration fn method type struct impl module import extern
-syntax keyword evergreenKeyword let pub for with self Self return if else
-syntax keyword evergreenContract where ensures borrows modifies decreases lifts update
+syntax keyword evergreenKeyword let pub for with self Self return if else while
+syntax keyword evergreenContract where ensures borrows modifies decreases lifts update invariant
 syntax keyword evergreenProof fact proof by ideal opaque affine partial axiom
 syntax keyword evergreenTactic apply assumption cases constructor decide exact intro left right rfl simp_all omega
 syntax keyword evergreenUnsafe trustme unsafe sorry
