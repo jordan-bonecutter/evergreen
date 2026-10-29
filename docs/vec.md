@@ -182,13 +182,17 @@ requested shorter length and unchanged capacity. Use
 drops the removed suffix in reverse order and proves the remaining live prefix
 and vacant suffix; `drain_prefix` now reuses it with a retained length of zero.
 [buffer_truncate.evg](../examples/buffer_truncate.evg) truncates two unique owners
-to one, reads the survivor, and releases the remaining storage at scope exit.
+to one, pops the survivor, and releases the remaining storage at scope exit.
 Truncating to zero also permits `release_empty()` afterward.
 
 This bootstrap method currently requires positive capacity and a requested
 length no greater than the current length. Joining a zero-capacity branch with
-the mutated owning array is not yet supported. A subsequent `pop()` can also
-fail the checker's universal-proof dependency check; reading the survivor and
-ordinary cleanup are supported. These are implementation gaps, not desired
-restrictions on the final Vec API. Truncation currently proves initialization
+the mutated owning array is not yet supported. This is an implementation gap,
+not a desired restriction on the final Vec API. Truncation currently proves initialization
 and cleanup, not a quantified element-value preservation contract.
+
+Truncation followed by `pop()` now verifies and replays its proof artifact.
+Loop checking restores deferred input-cell observations along with memory and
+proof state. An index observed only in the arbitrary iteration no longer
+becomes the canonical index for a later caller read. The snapshot retains only
+the existing recipe keys; it does not copy payloads or enumerate capacity.

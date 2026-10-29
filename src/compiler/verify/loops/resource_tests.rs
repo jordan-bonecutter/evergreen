@@ -151,3 +151,16 @@ fn deferred_input_payloads_are_not_mistaken_for_iteration_local_allocations() {
         .unwrap_err()
         .contains("outside its modifies frame"));
 }
+
+#[test]
+fn loop_iteration_observations_do_not_capture_later_buffer_indices() {
+    let source = include_str!("../../../../examples/buffer_truncate.evg");
+    let (program, _) = replay(source);
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    // The returned owner survives, but its old slot is now vacant.
+    let stale = source.replace(
+        "    *survivor",
+        "    let invalid = values.get(0); *survivor",
+    );
+    assert!(verify(&stale).is_err());
+}

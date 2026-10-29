@@ -16,6 +16,9 @@ pub(super) struct Head {
     results: usize,
     contexts: usize,
     censuses: BTreeMap<Reference, Linear>,
+    // Recipes are append-only. Save their keys, not another copy of payloads.
+    ports: BTreeMap<String, BTreeSet<Linear>>,
+    initial_planes: BTreeSet<PlaneId>,
 }
 
 impl Head {
@@ -34,6 +37,7 @@ impl Head {
         if let Some(control) = &ctx.proof.control {
             cost = cost.saturating_add(control.storage_weight()?);
         }
+        cost = cost.saturating_add(Self::observation_weight(ctx));
         ctx.charge_value_work(cost)?;
         Ok(Self {
             memory: ctx.snapshot_memory()?,
@@ -48,6 +52,13 @@ impl Head {
             contexts: ctx.proof.recursive_contexts.len(),
             censuses: ctx.censuses.clone(),
             control: ctx.proof.control.clone(),
+            ports: ctx
+                .arrays
+                .ports
+                .iter()
+                .map(|(id, cells)| (id.clone(), cells.keys().cloned().collect()))
+                .collect(),
+            initial_planes: ctx.arrays.initial_planes.keys().copied().collect(),
         })
     }
 
@@ -71,7 +82,32 @@ impl Head {
         Ok(())
     }
 
-    pub(super) fn restore(self, ctx: &mut Context<'_>) {
+    fn observation_weight(ctx: &Context<'_>) -> usize {
+        let mut cost = ctx.arrays.initial_planes.len();
+        for (identity, cells) in &ctx.arrays.ports {
+            cost = cost.saturating_add(identity.len() + 1);
+            for index in cells.keys() {
+                cost = cost.saturating_add(index.terms.len() + 1);
+            }
+        }
+        cost
+    }
+
+    pub(super) fn restore(self, ctx: &mut Context<'_>) -> Result<()> {
+        ctx.charge_value_work(Self::observation_weight(ctx))?;
+        // Iteration-only observations cannot canonicalize later exit reads.
+        // Their recipes may use the arbitrary iteration index, which is not
+        // the index selected by a caller after the loop. Keep only head ports.
+        ctx.arrays.ports.retain(|identity, cells| {
+            let Some(indices) = self.ports.get(identity) else {
+                return false;
+            };
+            cells.retain(|index, _| indices.contains(index));
+            true
+        });
+        ctx.arrays
+            .initial_planes
+            .retain(|plane, _| self.initial_planes.contains(plane));
         ctx.censuses = self.censuses;
         ctx.storage.memory = self.memory;
         ctx.proof.subjects.restore(self.state);
@@ -84,5 +120,6 @@ impl Head {
         ctx.proof.results.truncate(self.results);
         ctx.proof.recursive_contexts.truncate(self.contexts);
         ctx.proof.control = self.control;
+        Ok(())
     }
 }

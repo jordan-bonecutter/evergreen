@@ -185,7 +185,7 @@ impl Context<'_> {
         self.loop_assumption(&head, head_subjects.clone(), vec![entry])?;
         let mut parents = vec![entry];
         parents.extend(self.loop_step(source, &targets, &saved)?);
-        saved.restore(self);
+        saved.restore(self)?;
         self.loop_assumption(&head, head_subjects, parents)?;
         // Recheck guard well-formedness in the restored head; the source has
         // no effects, so it denotes the same tested value.
