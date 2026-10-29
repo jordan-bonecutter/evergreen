@@ -136,3 +136,30 @@ fn matching_rejects_missing_duplicate_unreachable_and_ill_typed_cases() {
         "fn main() -> usize {let owner: unique(usize) = alloc(42); match true {true => drop(owner), false => ()}; *owner}",
     ] {assert!(verify(source).is_err(), "accepted {source}");}
 }
+
+#[test]
+fn integer_matches_evaluate_once_preserve_guards_and_clean_up_the_selected_arm() {
+    let source = include_str!("../../../examples/match_literals.evg");
+    let (program, bundle) = prove(source).unwrap();
+    let (value, events) = program.run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert_eq!(events, ["drop Resource"]);
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let signed = "fn select(n: i8) -> usize {match n {-128 => 42, -1 => 7, _ => 0}} fn main() -> usize {select(-128)}";
+    assert_eq!(verify(signed).unwrap().run().unwrap().to_string(), "42");
+    for invalid in [
+        "fn main() -> usize {match 1 {1 => 42}}",
+        "fn main() -> usize {match 1 {1 => 42, 01 => 7, _ => 0}}",
+        "fn main() -> usize {match 0 {0 => 42, -0 => 7, _ => 0}}",
+        "fn main() -> usize {match 1 {1 => 42, _ => 0, 2 => 7}}",
+        "fn main() -> usize {let n: u8 = 1; match n {256 => 42, _ => 0}}",
+        "fn main() -> usize {let n: u8 = 1; match n {-1 => 42, _ => 0}}",
+    ] {
+        assert!(verify(invalid).is_err(), "accepted {invalid}");
+    }
+}

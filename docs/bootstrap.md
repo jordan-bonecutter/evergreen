@@ -653,7 +653,7 @@ Fields with their own destructors are also supported when the parent has none. P
 open invariant updates, nested record patterns, and record wildcard patterns remain unsupported.
 See `examples/destructure.evg`.
 
-### Boolean match
+### Literal match
 
 `match` accepts exhaustive Boolean cases and a final `_` fallback:
 
@@ -684,6 +684,22 @@ tag. Named data patterns, payload bindings, and guards remain future work.
 scrutinee once, selects a raw-union member, and runs in both backends.
 `examples/match_blocks.evg` checks arm-local destructors and writes to caller
 storage with a `modifies` contract.
+
+Integer matches accept signed decimal literals and require a final `_` arm:
+
+```evg
+match code {
+    0 => on_zero(),
+    1 => on_one(),
+    _ => on_other(),
+}
+```
+
+The input is bound once, and the arms lower to ordinary equality tests and
+conditionals. Literals must fit the input type; duplicate numeric values and
+arms after `_` are rejected. Integer exhaustiveness is not inferred from the
+type's range yet. `examples/match_literals.evg` checks a side-effecting input,
+an arm-local destructor, and the selected result.
 
 The same expression scopes work in `if` arms and standalone `{ ... }` values.
 An `if` without `else` has an implicit unit alternative; both branches must

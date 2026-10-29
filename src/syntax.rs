@@ -1036,7 +1036,7 @@ impl Parser {
                 line,
             }
         } else if self.eat("match") {
-            self.boolean_match(line)?
+            self.match_expression(line)?
         } else if self.peek() == "{" {
             self.block_expression()?
         } else if self.eat("if") {

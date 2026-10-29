@@ -1,0 +1,30 @@
+fn next(counter: &usize) -> usize
+    where
+        *counter < usize::MAX
+    modifies(counter)
+    ensures
+        result == old(*counter) &&
+        *counter == old(*counter) + 1
+{
+    let previous = *counter;
+    *counter = previous + 1;
+    previous
+}
+
+type Resource struct {value: usize}
+impl Drop for Resource {
+    fn drop({value}) {}
+}
+
+fn main() -> usize {
+    let counter: usize = 0;
+    match next(&counter) {
+        0 => {
+            proof once: counter == 1;
+            let item = Resource {value: 42};
+            item.value
+        },
+        1 => 1,
+        _ => 2,
+    }
+}

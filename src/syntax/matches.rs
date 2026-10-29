@@ -1,12 +1,23 @@
-//! Exhaustive Boolean matching lowers to the ordinary checked conditional.
+//! Literal matching lowers to ordinary checked conditionals.
 //! The scrutinee is evaluated once; type/ownership/effect rules stay shared.
 
 use super::*;
 
 impl Parser {
-    pub(super) fn boolean_match(&mut self, line: usize) -> Result<Expr, String> {
+    pub(super) fn match_expression(&mut self, line: usize) -> Result<Expr, String> {
+        // Source names cannot use the evg_ prefix; token positions keep nested
+        // lowered matches distinct without exposing a new runtime construct.
+        let temporary = format!("evg_match_{}", self.pos);
         let condition = self.expr(0)?;
         self.expect("{")?;
+        if matches!(self.peek(), "true" | "false" | "_") {
+            self.boolean_match(condition, line)
+        } else {
+            self.integer_match(condition, temporary, line)
+        }
+    }
+
+    fn boolean_match(&mut self, condition: Expr, line: usize) -> Result<Expr, String> {
         let mut yes = None;
         let mut no = None;
         let mut wildcard = false;
@@ -60,6 +71,92 @@ impl Parser {
         };
         Ok(Expr {
             kind: Kind::If(Box::new(condition), Box::new(yes), Box::new(no)),
+            line,
+        })
+    }
+
+    fn integer_match(
+        &mut self,
+        value: Expr,
+        temporary: String,
+        line: usize,
+    ) -> Result<Expr, String> {
+        let mut arms = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut fallback = None;
+        while !self.eat("}") {
+            if fallback.is_some() {
+                return Err(self.err("unreachable match arm after _"));
+            }
+            let arm_line = self.line();
+            let pattern = if self.eat("_") {
+                None
+            } else {
+                let negative = self.eat("-");
+                let digits = self.peek();
+                if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err(self.err("expected an integer literal or _ match pattern"));
+                }
+                let text = format!("{}{digits}", if negative { "-" } else { "" });
+                let number: i128 = text
+                    .parse()
+                    .map_err(|_| self.err("integer literal exceeds bootstrap limit"))?;
+                self.pos += 1;
+                if !seen.insert(number) {
+                    return Err(self.err("duplicate integer match arm"));
+                }
+                Some(number)
+            };
+            self.expect("=>")?;
+            let arm = if self.peek() == "{" {
+                self.block_expression()?
+            } else {
+                self.expr(0)?
+            };
+            match pattern {
+                Some(number) => arms.push((number, arm_line, arm)),
+                None => fallback = Some(arm),
+            }
+            if self.eat("}") {
+                break;
+            }
+            self.expect(",")?;
+        }
+        let Some(mut tail) = fallback else {
+            return Err(self.err("integer match requires a final _ arm"));
+        };
+        for (number, arm_line, arm) in arms.into_iter().rev() {
+            let condition = Expr {
+                kind: Kind::Binary(
+                    "==".into(),
+                    Box::new(Expr {
+                        kind: Kind::Name(temporary.clone()),
+                        line: arm_line,
+                    }),
+                    Box::new(Expr {
+                        kind: Kind::Number(number),
+                        line: arm_line,
+                    }),
+                ),
+                line: arm_line,
+            };
+            tail = Expr {
+                kind: Kind::If(Box::new(condition), Box::new(arm), Box::new(tail)),
+                line: arm_line,
+            };
+            if !tail.bounded_depth(128) {
+                return Err(self.err("expression tree depth limit reached (128)"));
+            }
+        }
+        Ok(Expr {
+            kind: Kind::Block(
+                vec![Statement::Let {
+                    name: temporary,
+                    ty: None,
+                    value,
+                }],
+                Box::new(tail),
+            ),
             line,
         })
     }
