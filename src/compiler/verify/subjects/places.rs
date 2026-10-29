@@ -30,21 +30,8 @@ impl Context<'_> {
                 Ok(Some(cases))
             }
             Kind::Index(base, index) => {
-                let index = match &index.kind {
-                    Kind::Number(n) | Kind::Constant(_, n) => Linear::number(*n),
-                    Kind::Name(name) => {
-                        let value = self
-                            .locals
-                            .places
-                            .get(name)
-                            .and_then(|plane| self.storage.memory.get(*plane).ok())
-                            .or_else(|| self.locals.values.get(name));
-                        let Some(Symbol::Number(_, n)) = value else {
-                            return Ok(None);
-                        };
-                        n.clone()
-                    }
-                    _ => return Ok(None),
+                let Some(index) = self.subject_index(index, depth + 1)? else {
+                    return Ok(None);
                 };
                 let Some(mut cases) = self.subject_cases(base, depth + 1)? else {
                     return Ok(None);
@@ -100,6 +87,59 @@ impl Context<'_> {
         }
     }
 
+    // Observe the same arithmetic used to select a place, without evaluating
+    // user calls or creating a second unknown result for machine overflow.
+    fn subject_index(&mut self, expression: &Expr, depth: usize) -> Result<Option<Linear>> {
+        let ty = self.hint(expression).unwrap_or(Ty::Nat);
+        self.subject_index_value(expression, &ty, depth)
+    }
+
+    fn subject_index_value(
+        &mut self,
+        expression: &Expr,
+        ty: &Ty,
+        depth: usize,
+    ) -> Result<Option<Linear>> {
+        self.charge_value_work(1)?;
+        if depth >= 32 {
+            return Ok(None);
+        }
+        match &expression.kind {
+            Kind::Number(n) | Kind::Constant(_, n) => Ok(Some(Linear::number(*n))),
+            Kind::Name(name) => {
+                let value = self
+                    .locals
+                    .places
+                    .get(name)
+                    .and_then(|plane| self.storage.memory.get(*plane).ok())
+                    .or_else(|| self.locals.values.get(name));
+                Ok(match value {
+                    Some(Symbol::Number(_, number)) => Some(number.clone()),
+                    _ => None,
+                })
+            }
+            Kind::Binary(op, a, b) if matches!(op.as_str(), "+" | "-") => {
+                let Some(a) = self.subject_index_value(a, ty, depth + 1)? else {
+                    return Ok(None);
+                };
+                let Some(b) = self.subject_index_value(b, ty, depth + 1)? else {
+                    return Ok(None);
+                };
+                let number = if op == "+" { a.add(&b)? } else { a.sub(&b)? };
+                if let Ty::Machine(machine) = ty {
+                    let (lo, hi) = machine.bounds();
+                    let fits = Formula::Ge(number.sub(&Linear::number(lo))?)
+                        .and(Formula::Ge(Linear::number(hi).sub(&number)?));
+                    if !self.checked_entails(&fits)? {
+                        return Ok(None);
+                    }
+                }
+                Ok(Some(number))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Resolve only existing storage and simple index values. This deliberately
     /// does not call `eval`, user functions, or expression elaboration twice.
     pub(super) fn subject_place(
@@ -140,23 +180,7 @@ impl Context<'_> {
                 let Some((reference, mut path)) = self.subject_place(base, depth + 1)? else {
                     return Ok(None);
                 };
-                let index = match &index.kind {
-                    Kind::Number(n) | Kind::Constant(_, n) => Some(Linear::number(*n)),
-                    Kind::Name(name) => {
-                        let value = self
-                            .locals
-                            .places
-                            .get(name)
-                            .and_then(|&id| self.storage.memory.get(id).ok())
-                            .or_else(|| self.locals.values.get(name));
-                        match value {
-                            Some(Symbol::Number(_, number)) => Some(number.clone()),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                };
-                let Some(index) = index else {
+                let Some(index) = self.subject_index(index, depth + 1)? else {
                     return Ok(None);
                 };
                 path.push(Projection::Index(index));

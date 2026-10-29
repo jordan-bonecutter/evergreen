@@ -893,3 +893,9 @@ siblings. Every exported clause still comes from checked conjunction elimination
 this neither invents evidence for the incomplete clause nor bypasses its freshness
 checks. Relocation's boundary helper can therefore advertise payload equality
 alongside the four range-state guarantees used by its caller's loop.
+
+Storage footprints can resolve addition and subtraction in indices, including
+`old((*data)[length - 1])`, from already-bound numeric values. Collection does
+not execute calls or allocate array elements. For machine arithmetic, every
+intermediate result must be provably within its type's bounds; otherwise the
+footprint stays incomplete instead of inventing an exact overflow result.

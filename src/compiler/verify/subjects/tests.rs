@@ -656,12 +656,12 @@ fn old_pointee_uses_the_saved_world_while_dereferencing_an_old_pointer_is_live()
 #[test]
 fn complex_old_subjects_resolve_saved_storage_without_changing_live_revisions() {
     with_source(
-        "fn main() {let data: [usize; 2] = [7, 9]; let pointer = &data;}",
+        "fn main() {let data: [usize; 2] = [7, 9]; let pointer = &data; let length: usize = 1;}",
         |ctx, body| {
             for statement in body {
                 ctx.statement(statement).unwrap();
             }
-            let mut function = syntax::parse("fn checkpoint(pointer: &[usize; 2]) -> usize ensures result == old((*pointer)[0]) {0}")
+            let mut function = syntax::parse("fn checkpoint(pointer: &[usize; 2], length: usize) -> usize ensures result == old((*pointer)[length - 1]) {0}")
             .unwrap().functions.remove(0);
             function.entry_memory = true;
             ctx.capture_old(&function).unwrap();
@@ -675,6 +675,12 @@ fn complex_old_subjects_resolve_saved_storage_without_changing_live_revisions() 
             let before = ctx.claim_subjects(place).unwrap();
             let historical = ctx.claim_subjects(old).unwrap();
             assert!(historical.complete);
+            let overflow = syntax::parse("fn probe() {data[length - 2]}")
+                .unwrap()
+                .functions
+                .remove(0)
+                .result;
+            assert!(!ctx.claim_subjects(&overflow).unwrap().complete);
             assert!(historical.reads.is_empty());
             assert_eq!(historical.past.len(), 1);
             ctx.assign_starting_owners(
