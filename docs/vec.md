@@ -173,9 +173,9 @@ The concrete counterpart supplies the payload type; normal union selection
 still requires proof that `T` is active. [slot_value_contracts.evg](../examples/slot_value_contracts.evg)
 shows checked initialization and reading contracts, including an `old` snapshot.
 This supplies individual-slot value guarantees for vacant storage. Quantified
-`same_value` over union-element arrays and equality of owning payloads remain
-unsupported; preserving the public Vec's full value contracts still requires
-that work.
+`same_value` over union-element arrays remains unsupported; preserving the public
+Vec's full relocation value contract still requires that work. Individual owning
+values can now be compared as described below.
 
 `Buffer::truncate(length)` consumes the header and returns a buffer with the
 requested shorter length and unchanged capacity. Use
@@ -239,8 +239,20 @@ matching snapshots still require current plane revisions. The combined growth
 example and truncation/replay regression pass with these contracts.
 
 The transport scripts now use `using saved_proof` to prove a transformation and
-apply it in one block. `arrays/prefix.evg` is 130 lines, `arrays/drain.evg` is 70,
-and the owning `Buffer` is 174 (down from 290). Buffer's methods use named range
-predicates; its type invariant still spells out the quantifiers because wrapping
+apply it in one block. Buffer's methods use named range predicates; its type invariant still spells out the quantifiers because wrapping
 those repeatedly checked invariant clauses in predicate calls exceeds the current
 work budget. This is a presentation/performance limitation, not a weaker invariant.
+
+
+`Buffer::push` now guarantees `same_value` between the inserted slot and its input;
+`pop` guarantees it between the result and the old last slot. Ideal equality
+compares scalar fields and live pointer identities without copying ownership or
+executing destructors. Records with destructors and fields whose pointer bounds
+depend on sibling fields are supported. Whole owning arrays retain value equality
+when their immutable contents identity is unchanged; this does not enumerate
+capacity. Distinct sparse array identities still need a quantified relation.
+
+[buffer_values.evg](../examples/buffer_values.evg) passes a record with a destructor
+through push/pop, proves its tag and allocation address are preserved, and drops
+it once. These are individual-value guarantees. A quantified preservation contract
+for the relocated owning prefix, and migration of the public Vec API, remain work.

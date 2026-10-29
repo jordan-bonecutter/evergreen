@@ -1,4 +1,4 @@
-//! Ideal value equality lowers record products to their scalar projections.
+//! Ideal value equality compares record fields and live pointer identities.
 //! Indexed operands retain contents identities; no bound cell is materialized.
 
 use super::*;
@@ -23,7 +23,21 @@ impl Value {
         }
     }
 
-    fn field(&self, name: &str, ty: Ty) -> Result<Self> {
+    // This is an ideal observation of pointer identity, not another owner.
+    fn reference(&self) -> Result<Symbol> {
+        match self {
+            Self::Observed(value @ (Symbol::Ref(..) | Symbol::RefCases(..))) => Ok(value.clone()),
+            Self::Observed(Symbol::Unique(ty, reference)) => {
+                Ok(Symbol::Ref(ty.clone(), *reference, Vec::new()))
+            }
+            Self::Observed(Symbol::Shared(ty, owner)) => {
+                Ok(Symbol::Ref(ty.clone(), owner.reference(), Vec::new()))
+            }
+            _ => Err("value equality requires an observed live pointer".into()),
+        }
+    }
+
+    fn field(&self, name: &str, resolve_type: impl FnOnce() -> Result<Ty>) -> Result<Self> {
         match self {
             Self::Observed(Symbol::Record(_, fields)) => Ok(Self::Observed(
                 fields
@@ -37,7 +51,7 @@ impl Value {
                 let mut contents = contents.clone();
                 contents.fields.push(name.into());
                 Ok(Self::Indexed {
-                    ty,
+                    ty: resolve_type()?,
                     contents,
                     index: index.clone(),
                 })
@@ -73,10 +87,7 @@ impl Context<'_> {
         let a = self.structural_operand(a, hint.as_ref())?;
         let b = self.structural_operand(b, Some(&a.ty()))?;
         self.compatible(&a.ty(), &b.ty(), line)?;
-        if !self.history_element(&a.ty()) || !self.history_element(&b.ty()) {
-            return Err(format!("line {line}: same_value currently requires scalar values or reference-free records without runtime cleanup"));
-        }
-        Ok(Symbol::Bool(self.structural_equality(&a, &b, 0)?))
+        Ok(Symbol::Bool(self.structural_equality(&a, &b, line, 0)?))
     }
 
     fn structural_operand(&mut self, expression: &Expr, hint: Option<&Ty>) -> Result<Value> {
@@ -115,7 +126,13 @@ impl Context<'_> {
         Ok(Value::Observed(self.eval(expression, hint)?))
     }
 
-    fn structural_equality(&mut self, a: &Value, b: &Value, depth: usize) -> Result<Formula> {
+    fn structural_equality(
+        &mut self,
+        a: &Value,
+        b: &Value,
+        line: usize,
+        depth: usize,
+    ) -> Result<Formula> {
         self.charge_value_work(1)?;
         for value in [a, b] {
             if let Value::Observed(value) = value {
@@ -132,12 +149,31 @@ impl Context<'_> {
                 self.charge_value_work(fields.len())?;
                 let mut result = Formula::True;
                 for (name, ty) in fields {
-                    let ty = self.resolve(&ty)?;
-                    let left = a.field(&name, ty.clone())?;
-                    let right = b.field(&name, ty)?;
-                    result = result.and(self.structural_equality(&left, &right, depth + 1)?);
+                    // Observed fields already carry their instantiated types,
+                    // including bounds dependent on sibling record fields.
+                    let left = a.field(&name, || self.resolve(&ty))?;
+                    let right = b.field(&name, || self.resolve(&ty))?;
+                    result =
+                        result.and(self.structural_equality(&left, &right, line, depth + 1)?);
                 }
                 Ok(result)
+            }
+            Ty::Shape(_) => Ok(Formula::True),
+            Ty::Union(_) => {
+                let (Value::Observed(left), Value::Observed(right)) = (a, b) else {
+                    return Err("union value equality requires observed values".into());
+                };
+                self.validate_argument(left, line)?;
+                self.validate_argument(right, line)?;
+                if left == right {
+                    Ok(Formula::True)
+                } else {
+                    Err("union value equality requires identical observed alternatives; compare selected live members explicitly".into())
+                }
+            }
+            Ty::Array(_, _) => self.structural_array_equality(a, b, line, depth),
+            Ty::Ref(_) | Ty::Unique(_) | Ty::Shared(_) => {
+                self.reference_equality(&a.reference()?, &b.reference()?)
             }
             ty if scalar(&ty) => {
                 let a = self.structural_scalar(a)?;
@@ -153,8 +189,59 @@ impl Context<'_> {
                     })
                 })
             }
-            _ => Err("same_value requires initialized scalar fields".into()),
+            _ => Err("same_value cannot compare this ideal value kind".into()),
         }
+    }
+
+    fn structural_array_equality(
+        &mut self,
+        a: &Value,
+        b: &Value,
+        line: usize,
+        depth: usize,
+    ) -> Result<Formula> {
+        let (
+            Value::Observed(
+                left @ Symbol::Array {
+                    identity: a_id,
+                    items: a_items,
+                    ..
+                },
+            ),
+            Value::Observed(
+                right @ Symbol::Array {
+                    identity: b_id,
+                    items: b_items,
+                    ..
+                },
+            ),
+        ) = (a, b)
+        else {
+            return Err("whole-array equality requires observed array values".into());
+        };
+        self.validate_argument(left, line)?;
+        self.validate_argument(right, line)?;
+        if a_id == b_id {
+            return Ok(Formula::True);
+        }
+        let (Some(a_items), Some(b_items)) = (a_items, b_items) else {
+            return Err(
+                "sparse array equality requires matching immutable contents identities".into(),
+            );
+        };
+        if a_items.len() != b_items.len() {
+            return Ok(Formula::False);
+        }
+        let mut result = Formula::True;
+        for (left, right) in a_items.iter().zip(b_items) {
+            result = result.and(self.structural_equality(
+                &Value::Observed(left.clone()),
+                &Value::Observed(right.clone()),
+                line,
+                depth + 1,
+            )?);
+        }
+        Ok(result)
     }
 
     fn structural_scalar(&mut self, value: &Value) -> Result<Operand> {

@@ -48,7 +48,8 @@ impl<T> Buffer<T> {
             self.len < self.cap
         modifies(&self.len, &(*self.data)[self.len])
         ensures
-            self.len == old(self.len) + 1
+            self.len == old(self.len) + 1 &&
+            same_value((*self.data)[old(self.len)], item)
     {
         proof before_live:
             arrays::initialized_prefix::<T>(&*self.data, integer::from(self.len)) by {omega};
@@ -79,7 +80,8 @@ impl<T> Buffer<T> {
             self.len > 0
         modifies(&self.len, &(*self.data)[self.len - 1])
         ensures
-            self.len + 1 == old(self.len)
+            self.len + 1 == old(self.len) &&
+            same_value(result, old((*self.data)[self.len - 1]))
     {
         proof before_live:
             arrays::initialized_prefix::<T>(&*self.data, integer::from(self.len)) by {omega};

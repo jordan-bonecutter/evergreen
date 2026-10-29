@@ -23,6 +23,7 @@ fn structural_values_replay_without_runtime_equality_or_copy_permission() {
     replay("fn duplicate(x: Item) -> Item ensures same_value(result, x) {x} fn main() {let item = Item {pair: Pair {x: 7, valid: true}, tag: 3}; let other = duplicate(item); proof _: same_value(item, other); proof _: other.pair.x == 7;}");
     replay("fn check(x: Item, y: Item) where same_value(x, y) ensures x.tag == y.tag && x.pair.x == y.pair.x && x.pair.valid == y.pair.valid {}");
     replay("fn check(x: Item) {proof _: same_value(x, x);}");
+    replay("fn check(x: &Item) {proof _: same_value(x, x);}");
     let source = format!("{TYPES} fn check(x: Item) {{proof _: same_value(x, x);}}")
         .replace("impl Copy for Item {}", "");
     verify(&source).unwrap();
@@ -37,7 +38,6 @@ fn structural_indexed_values_preserve_fields_and_bounds() {
         "fn check(x: Item, y: Item) where x.pair.x == y.pair.x && x.tag == y.tag {proof _: same_value(x, y);}",
         "fn check(data: &[Item; 8]) {proof _: forall(i: integer) {same_value((*data)[i], (*data)[i])};}",
         "fn check(x: Item) -> bool {same_value(x, x)}",
-        "fn check(x: &Item) {proof _: same_value(x, x);}",
     ] {
         assert!(verify(&format!("{TYPES} {body}")).is_err(), "{body}");
     }
@@ -95,7 +95,6 @@ fn record_collection_contracts_execute_replay_and_remain_sparse() {
 fn structural_equality_does_not_mint_authority_or_observe_invalid_storage() {
     for source in [
         "type Value struct {n: usize} fn main() {let a = Value {n: 7}; let b = a; proof _: same_value(a, b);}",
-        "type R struct {n: usize} impl Drop for R {fn drop({n}) {}} fn check(x: R) {proof _: same_value(x, x);}",
         "type Empty struct {} fn check(data: &[Empty; 0]) {proof _: forall(i: integer) where(i == 0) {same_value((*data)[i], (*data)[i])};}",
         "fn main() {proof _: same_value(usize::MAX + 1, usize::MAX + 1);}",
         "fn main() {proof _: same_value(true, 1);}",
@@ -104,4 +103,35 @@ fn structural_equality_does_not_mint_authority_or_observe_invalid_storage() {
     }
     replay("module hidden {opaque type Value struct {x: usize} fn make(x: usize) -> Value {Value {x: x}}} fn check(x: hidden::Value) {proof _: same_value(x, x);}");
     replay("type Empty struct {} fn check(data: &[Empty; 0]) {proof _: forall(i: integer) where(0 <= i && i < 0) {same_value((*data)[i], (*data)[i])} by {intro i; omega};}");
+}
+
+#[test]
+fn owning_value_contracts_preserve_identity_without_copying_or_reviving_storage() {
+    let source = include_str!("../../../../../examples/buffer_values.evg");
+    let (program, certificate) = prove(source).unwrap();
+    let (value, events) = program.run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.as_str() == "drop Item")
+            .count(),
+        1
+    );
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &certificate)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    verify("type Sized struct {cap: usize, data: unique(usize, cap)} impl Drop for Sized {fn drop({cap, data}) {}} fn identity(value: Sized) -> Sized ensures same_value(result, value) {value} fn main() -> usize {42}").unwrap();
+    verify("fn identity(value: [unique(usize); 2]) -> [unique(usize); 2] ensures same_value(result, value) {value} fn main() -> usize {42}").unwrap();
+    for bad in [
+        "fn main() {let a = alloc(42); let b = alloc(42); proof _: same_value(a, b);}",
+        "fn stale(owner: unique(usize)) {drop(owner); proof _: same_value(old(owner), old(owner));}",
+        "fn duplicate(owner: unique(usize)) {proof _: same_value(owner, owner); let first = owner; let second = owner;}",
+    ] {
+        assert!(verify(bad).is_err(), "accepted {bad}");
+    }
 }

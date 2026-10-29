@@ -866,3 +866,19 @@ its `apply`/`exact` block; it does not make the frame property automatic.
 `using` accepts checked proof names, not unproved fact names. Admission-dependent
 proofs retain their dependencies and must pass the existing current-state check;
 a stale `trustme` proof cannot be revived by wrapping it in `using`.
+
+## Observing owning values
+
+`same_value` is ideal-only. For live references and owned pointers it compares
+pointer identity, not pointed-to contents. Equal pointee bytes do not imply equal
+pointers. Observing equality neither duplicates an owner nor revives a released
+plane, and does not grant runtime Copy permission. Records compare their fields,
+even when they have a destructor; the comparison does not execute that destructor.
+
+Whole observed arrays with the same immutable contents identity compare equal
+without expanding elements. Distinct dense arrays compare their stored elements;
+distinct sparse arrays still require a range relation not yet supported here.
+Unions currently require identical observed alternatives or explicit selection
+of their live members. Shapes have no accessible payload value to compare:
+value equality between shapes says nothing about their representation bytes.
+Use `same_representation` for that separate claim.

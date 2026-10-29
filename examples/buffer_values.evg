@@ -1,0 +1,27 @@
+// Value contracts preserve fields and pointer identity without granting Copy.
+type Item struct {owner: unique(usize), tag: usize}
+
+impl Drop for Item {
+    fn drop({owner, tag}) {}
+}
+
+fn identity(value: Item) -> Item
+    ensures
+        same_value(result, value)
+{
+    value
+}
+
+fn main() -> usize {
+    let values = vec::Buffer::<Item>::new(2);
+    let item = identity(Item {owner: alloc(42), tag: 7});
+    let address = &*item.owner;
+    values.push(item);
+    let returned = values.pop();
+    proof tag_preserved: returned.tag == 7;
+    proof pointer_preserved: &*returned.owner == address;
+    let answer = *returned.owner;
+    drop(returned);
+    drop(values);
+    answer
+}
