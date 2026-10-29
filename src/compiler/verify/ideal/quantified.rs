@@ -61,6 +61,27 @@ impl<'a> Context<'a> {
             let value = self.eval(expression, Some(&ty))?;
             actuals.insert(parameter.clone(), value);
         }
+        self.charge_value_work(values_weight(actuals.values())? + 1 + name.len() / 32)?;
+        let key = applications::Application::scalar_arguments(name, &actuals)?;
+        if let Some((value, condition)) = self.applications.quantified.get(&key) {
+            let weight = symbol_weight(value)?
+                + condition
+                    .as_ref()
+                    .map(Formula::storage_weight)
+                    .transpose()?
+                    .unwrap_or(0);
+            let value = value.clone();
+            let condition = condition.clone();
+            self.charge_value_work(weight)?;
+            if let Some(condition) = condition {
+                self.defer_quantified_check(
+                    condition,
+                    format!("precondition of quantified call to {name}"),
+                    line,
+                )?;
+            }
+            return Ok(value);
+        }
         let (value, precondition, spent) = {
             let mut budget = Budget::new(MAX_VALUE_WORK.saturating_sub(self.work.value_work));
             let mut importer = Importer::new(self, &mut budget);
@@ -95,6 +116,19 @@ impl<'a> Context<'a> {
             (value.and_then(Value::scalar), precondition, budget.spent)
         };
         self.charge_value_work(spent)?;
+        if let Some(value) = &value {
+            self.charge_value_work(
+                symbol_weight(value)?
+                    + precondition
+                        .as_ref()
+                        .map(Formula::storage_weight)
+                        .transpose()?
+                        .unwrap_or(0),
+            )?;
+            self.applications
+                .quantified
+                .insert(key, (value.clone(), precondition.clone()));
+        }
         if let Some(condition) = precondition {
             self.defer_quantified_check(
                 condition,

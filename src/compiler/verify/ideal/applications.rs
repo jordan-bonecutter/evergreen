@@ -18,10 +18,31 @@ pub(super) struct Application {
     arguments: Vec<Argument>,
 }
 
+impl Application {
+    pub(super) fn scalar_arguments(name: &str, values: &BTreeMap<String, Symbol>) -> Result<Self> {
+        let arguments = values
+            .values()
+            .map(|value| match value {
+                Symbol::Number(ty, n) => Ok(Argument::Number(ty.clone(), n.clone())),
+                Symbol::Bool(p) => Ok(Argument::Bool(p.clone())),
+                Symbol::Unit => Ok(Argument::Unit),
+                _ => Err("quantified call has a nonscalar argument".into()),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self {
+            function: name.into(),
+            arguments,
+        })
+    }
+}
+
 #[derive(Default)]
 pub(in crate::compiler::verify) struct Applications {
     model: BTreeMap<Application, Symbol>,
     pub(super) computed: BTreeMap<Application, Symbol>,
+    // Exact scalar computations only. A cached precondition is a proposition,
+    // never evidence that the current quantified domain satisfies it.
+    pub(super) quantified: BTreeMap<Application, (Symbol, Option<Formula>)>,
 }
 
 impl Context<'_> {
