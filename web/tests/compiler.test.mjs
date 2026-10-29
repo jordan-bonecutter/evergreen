@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { examples } from '../public/examples.js';
+import { lessons, meetsGoal } from '../public/lessons.js';
 import { runProgram, MAX_OUTPUT } from '../public/runtime.js';
 
 const compiler = await WebAssembly.compile(await readFile(new URL('../dist/evergreen-compiler.wasm', import.meta.url)));
@@ -166,4 +167,117 @@ test('zero-sized fields and arrays preserve neighboring bytes', async () => {
   assert.equal((await execute(source)).result, '42');
   assert.equal((await execute('fn main() -> bool {let a: [unit; 2] = [(), ()]; &a[0] == &a[1]}')).result, 'true');
   assert.equal((await compile('fn main() {let a: [unit; 2] = [(), ()]; proof _: &a[0] != &a[1];}')).metadata.ok, false);
+});
+
+
+test('Learn solutions and worked examples complete their goals; unfinished exercises do not', async () => {
+  for (const lesson of lessons) {
+    const solution = await execute(lesson.solution);
+    assert.equal(meetsGoal(lesson, {ok: true, ...solution.metadata, ...solution}), true, lesson.id);
+    const starter = await compile(lesson.starter);
+    if (starter.metadata.ok) {
+      const run = await runProgram(starter.module, starter.metadata.resultKind);
+      assert.equal(meetsGoal(lesson, {...starter.metadata, ...run}), lesson.demonstration === true, lesson.id);
+    } else {
+      assert.equal(starter.metadata.stage, 'verify', lesson.id);
+      assert.equal(starter.module.length, 0, lesson.id);
+    }
+  }
+});
+
+test('the final Learn proof rejects missing steps, wrong evidence, and an underflow-permitting contract', async () => {
+  const lesson = lessons.find(lesson => lesson.id === 'proof-challenge');
+  for (const source of [
+    lesson.starter,
+    lesson.solution.replace('        omega', '        exact missing'),
+    lesson.solution.replace('n > 0', 'n >= 0'),
+    lesson.solution.replace('        rfl;\n        omega', '        rfl'),
+  ]) {
+    const {metadata, module} = await compile(source);
+    assert.equal(metadata.ok, false, source);
+    assert.equal(metadata.stage, 'verify');
+    assert.equal(module.length, 0);
+  }
+  const admitted = lesson.solution.replace('constructor;\n        rfl;\n        omega', 'trustme');
+  const {metadata, module} = await compile(admitted);
+  if (metadata.ok) {
+    const result = await runProgram(module, metadata.resultKind);
+    assert.equal(meetsGoal(lesson, {...metadata, ...result}), false, 'an admitted proof must not earn progress');
+  } else assert.equal(module.length, 0);
+  assert.equal(meetsGoal(lesson, {ok: true, output: '', result: '42', assumptions: [{goal: 'unchecked proof'}]}), false);
+});
+
+
+test('NonZero.add needs a bound that preserves the refinement for all callers', async () => {
+  const lesson = lessons.find(lesson => lesson.id === 'nonzero-add');
+  const starter = await compile(lesson.starter);
+  assert.equal(starter.metadata.ok, false);
+  assert.match(starter.metadata.error, /invariant of NonZero/);
+  assert.equal(starter.module.length, 0);
+  for (const source of [
+    lesson.solution.replace('integer::from(self) + integer::from(other) <= integer::from(usize::MAX)', 'true'),
+    lesson.solution.replace('NonZero(10)', 'NonZero(usize::MAX)'),
+  ]) assert.equal((await compile(source)).metadata.ok, false, source);
+  assert.equal((await execute(lesson.solution)).result, '42');
+});
+
+test('the loop capstone needs both its invariant and its universal proof', async () => {
+  const lesson = lessons.find(lesson => lesson.id === 'loop-forall');
+  for (const source of [
+    lesson.starter,
+    lesson.solution.replace('invariant(count <= 42)', 'invariant(true)'),
+    lesson.solution.replace('            intro i;\n            omega', '            exact missing'),
+    lesson.solution.replace('            intro i;\n            omega', '            intro i'),
+  ]) {
+    const {metadata, module} = await compile(source);
+    assert.equal(metadata.ok, false, source);
+    assert.equal(module.length, 0);
+  }
+  assert.equal((await execute(lesson.solution)).result, '42');
+});
+
+test('the overflow lesson distinguishes an ideal sum from an unspecified machine result', async () => {
+  const lesson = lessons.find(lesson => lesson.id === 'overflow');
+  const starter = await compile(lesson.starter);
+  assert.equal(starter.metadata.ok, false);
+  assert.match(starter.metadata.error, /proof fits/);
+  const withoutBound = lesson.starter.replace('    proof fits: exact_sum <= integer::from(u8::MAX);\n', '');
+  const mismatch = await compile(withoutBound);
+  assert.equal(mismatch.metadata.ok, false);
+  assert.match(mismatch.metadata.error, /proof agrees/);
+  const idealSum = lesson.starter
+    .replace('    proof fits: exact_sum <= integer::from(u8::MAX);', '    proof mathematical: exact_sum == 260;')
+    .replace('    proof agrees: integer::from(machine_sum) == exact_sum;', '');
+  assert.equal((await compile(idealSum)).metadata.ok, true);
+  const escaping = await compile(lesson.solution.replace('    machine_sum\n}', '    exact_sum\n}'));
+  assert.equal(escaping.metadata.ok, false, 'ideal data cannot become the runtime return value');
+});
+
+test('overflow is allowed and its stored result can satisfy a precondition after a runtime check', async () => {
+  const lesson = lessons.find(lesson => lesson.id === 'observed-overflow');
+  const starter = await compile(lesson.starter);
+  assert.equal(starter.metadata.ok, false);
+  assert.match(starter.metadata.error, /precondition of accept_small/);
+  assert.equal(starter.module.length, 0);
+  const overflowing = await execute(lesson.solution);
+  assert.equal(meetsGoal(lesson, {...overflowing.metadata, ...overflowing}), true);
+  // Both branch paths must satisfy the lesson without fixing an overflow value.
+  const accepted = await execute(lesson.solution.replace('250 + 10', '2 + 3'));
+  assert.equal(accepted.output, lesson.expected.outputs[0]);
+  assert.equal(meetsGoal(lesson, {...accepted.metadata, ...accepted}), true);
+  const skipped = await execute(lesson.solution.replace('250 + 10', '20 + 10'));
+  assert.equal(skipped.output, lesson.expected.outputs[1]);
+  assert.equal(meetsGoal(lesson, {...skipped.metadata, ...skipped}), true);
+  for (const source of [
+    lesson.solution.replace('if candidate < 10', 'if true'),
+    lesson.solution.replace('if candidate < 10', 'if candidate <= 10'),
+  ]) {
+    const {metadata, module} = await compile(source);
+    assert.equal(metadata.ok, false);
+    assert.match(metadata.error, /precondition of accept_small/);
+    assert.equal(module.length, 0);
+  }
+  const guessed = await compile(lesson.solution.replace('    if candidate < 10', '    proof guessed: candidate == 4;\n    if candidate < 10'));
+  assert.equal(guessed.metadata.ok, false);
+  assert.match(guessed.metadata.error, /proof guessed/);
 });

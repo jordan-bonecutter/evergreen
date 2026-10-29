@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#00822a">
+  <meta name="description" content="Learn Evergreen by doing: short, interactive examples from your first program to a compiler-checked proof.">
+  <title>Learn Evergreen</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="./fonts/UbuntuMono-Regular.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./learn.css">
+  <script type="module" src="./learn.js"></script>
+</head>
+<body class="learn-page">
+  <a class="skip-link" href="#lesson-title">Skip to lesson</a>
+  <div class="site-shell">
+    <header class="site-header">
+      <a href="./" class="wordmark" aria-label="Evergreen home"><img src="./logo.svg" width="31" height="43" alt=""><span>evergreen</span></a>
+      <nav aria-label="Main navigation"><a href="./#why">The Core Idea</a><a href="./#playground">Playground</a><a href="./learn.html" aria-current="page">Learn</a><a class="source-link" href="https://github.com/jordan-bonecutter/evergreen">Source <span aria-hidden="true">↗</span></a></nav>
+    </header>
+    <main class="learn-main">
+      <div class="learn-intro"><h1 class="eyebrow"><span class="green-dash" aria-hidden="true"></span> LEARN</h1></div>
+      <div class="learn-layout">
+        <aside class="lesson-sidebar" aria-label="Course outline">
+          <nav id="lesson-list" aria-label="Lessons"></nav>
+        </aside>
+        <article class="lesson-content" aria-labelledby="lesson-title">
+          <div class="lesson-heading"><h2 id="lesson-title" tabindex="-1"></h2><p id="lesson-introduction"></p></div>
+          <details id="proof-walkthrough" class="proof-walkthrough" hidden><summary>Follow the proof goals</summary><ol id="proof-steps"></ol></details>
+          <section class="lesson-goal" aria-labelledby="goal-title"><span class="goal-marker" aria-hidden="true">↳</span><div><h3 id="goal-title">Your goal</h3><p id="goal"></p><p class="expected-label">EXPECTED <code id="expected"></code></p></div></section>
+          <div class="playground">
+            <div class="toolbar"><div class="run-controls"><button id="reset" class="button quiet" type="button">Reset</button><button id="stop" class="button quiet" type="button" hidden>Stop</button><button id="run" class="button primary" type="button" disabled><span aria-hidden="true">▶</span><span id="run-label">Loading compiler…</span></button></div></div>
+            <div class="panes">
+              <div class="editor-pane"><div class="pane-heading"><label for="source"><span class="file-dot" aria-hidden="true"></span>main.evg</label><span class="language-label">EVERGREEN</span></div><div class="editor-wrap"><pre id="line-numbers" aria-hidden="true">1</pre><textarea id="source" aria-label="Evergreen lesson source code" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off" maxlength="100000"></textarea></div></div>
+              <div class="console-pane"><div class="pane-heading"><span><span aria-hidden="true">&gt;_</span> Output</span><button id="clear" class="text-button" type="button">Clear</button></div><div class="console-body"><pre id="output" tabindex="0" aria-label="Program output and compiler diagnostics">Run your code to check the goal.</pre><div id="execution-result" hidden></div></div></div>
+            </div>
+            <div class="status-bar"><span id="status" role="status" aria-live="polite">Loading WebAssembly compiler…</span><button id="download" class="text-button" type="button" hidden>Download .wasm ↓</button></div>
+            <details id="trust" hidden><summary id="trust-summary"></summary><p>Console output uses the browser host. Its external contract is recorded as a trusted assumption; your proof obligations are checked by Evergreen.</p><pre id="trust-details"></pre></details>
+          </div>
+          <div class="lesson-help"><button id="hint" class="text-button" type="button" aria-expanded="false" aria-controls="hints">Need a hint?</button><span id="hint-count"></span><button id="complete" class="text-button" type="button">Complete for me <span aria-hidden="true">↗</span></button></div>
+          <ol id="hints" hidden></ol>
+          <div id="goal-feedback" class="goal-feedback" role="status" aria-live="polite">Make your change, then run to check your goal.</div>
+          <section id="proof-explanation" class="proof-explanation" hidden><h3>Why did you need the proof?</h3><p id="proof-why"></p></section>
+          <section id="takeaway" class="takeaway" hidden><h3>What you learned</h3><p id="takeaway-text"></p></section>
+          <div class="lesson-navigation"><button id="previous" class="button quiet" type="button">← Previous</button><button id="next" class="button primary" type="button">Next example →</button><a id="open-playground" class="button primary" href="./#playground" hidden>Explore the playground →</a></div>
+          <noscript><p class="noscript">The interactive lessons need JavaScript and WebAssembly. You can also <a href="https://github.com/jordan-bonecutter/evergreen">build Evergreen locally</a>.</p></noscript>
+        </article>
+      </div>
+    </main>
+    <footer><a href="./" class="wordmark"><img src="./logo.svg" width="24" height="34" alt=""><span>evergreen</span></a><a href="https://github.com/jordan-bonecutter/evergreen">Read the source <span aria-hidden="true">↗</span></a></footer>
+  </div>
+</body>
+</html>

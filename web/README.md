@@ -1,6 +1,6 @@
 # Evergreen website
 
-Static landing page and a browser playground. No runtime npm dependencies or server API.
+Static landing page, browser playground, and interactive Learn course. No runtime npm dependencies or server API.
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -8,6 +8,12 @@ node web/build.mjs
 node --test web/tests/compiler.test.mjs
 python3 -m http.server 4173 --directory web/dist
 ```
+
+Open http://localhost:4173. The separate [Learn page](http://localhost:4173/learn.html)
+has fifteen examples and exercises, progressive hints, solutions, per-lesson drafts and progress,
+and worked proofs leading to challenges with overflow, ideal integers, methods, loop invariants, and universal claims. Both pages share the real compiler Worker, run/stop
+controls, diagnostics, and resource limits. Lesson solutions and intentionally
+incomplete starters are checked in the browser compiler test suite.
 
 Open http://localhost:4173. Node 22+ and Rust are required for development.
 The build compiles `web/compiler` to Wasm and copies the site and root `logo.svg`
