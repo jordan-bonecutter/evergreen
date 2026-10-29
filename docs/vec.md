@@ -116,8 +116,12 @@ intended conditional storage invariant, zero-allocation empty construction,
 typed element borrowing, and complete destruction of a move-only prefix.
 `arrays::drain_prefix` implements that cleanup in Evergreen. The remaining
 in-place mutation work must change length and slot initialization together;
-current invariant-update blocks still restrict ownership transfers. The example
-is storage groundwork, not a second public Vec API.
+[`buffer_updates.evg`](../examples/buffer_updates.evg) now performs push and pop
+inside checked invariant-update blocks. Each operation transports the old prefix
+and suffix proofs to the changed array revision, and restores both invariants
+before closing the block. No admission or element-by-element proof expansion is
+needed: capacity eight and a billion have identical obligation and certificate
+counts. The example is storage groundwork, not a second public Vec API.
 
 Run [vec_generic.evg](../examples/vec_generic.evg) with:
 

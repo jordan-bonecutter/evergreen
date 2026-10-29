@@ -171,6 +171,14 @@ impl Context<'_> {
         goal: &Formula,
         depth: usize,
     ) -> Result<Option<evidence::NodeId>> {
+        // Specialization matches one selector atom, optionally negated. A
+        // compound goal cannot match any candidate: reduce its connectives
+        // first instead of walking every in-scope range for each connective.
+        if !matches!(goal, Formula::Predicate { .. })
+            && !matches!(goal, Formula::Not(inner) if matches!(inner.as_ref(), Formula::Predicate { .. }))
+        {
+            return Ok(None);
+        }
         let candidates = self
             .proof
             .witnesses

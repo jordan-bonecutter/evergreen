@@ -154,7 +154,7 @@ impl Context<'_> {
             Formula::Not(atom) if matches!(atom.as_ref(), Formula::Predicate { .. }) => {
                 (atom.as_ref(), true)
             }
-            Formula::And(..) | Formula::Or(..) | Formula::Not(..) => {
+            Formula::And(..) | Formula::Or(..) | Formula::Not(..) | Formula::Forall { .. } => {
                 return self.reduce_selector_formula(goal, 0);
             }
             _ => return Ok(None),
