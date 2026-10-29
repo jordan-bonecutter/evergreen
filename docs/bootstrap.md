@@ -2145,7 +2145,10 @@ union-element allocation, including its vacant suffix; it does not expose spare
 capacity as initialized values. The older filled-capacity APIs are removed.
 
 See [vec.md](vec.md) for contracts, examples, and current verifier limitations.
-In particular, repeated populated growth can exceed the work budget, and some
+Repeated populated growth and the record collection example now verify within
+the existing work budget. Longer compositions can still exceed it. Owned record
+loop frames support pushing into Vec; pre-loop payload references are invalidated
+when its owned storage is abstracted. Borrowed/shared payloads and some
 conditional storage joins remain unsupported. The reusable Copy-array loop
 `vec::copy_prefix` remains independent of Vec in `stdlib/vec/copy.evg`.
 

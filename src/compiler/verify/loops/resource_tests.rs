@@ -164,3 +164,26 @@ fn loop_iteration_observations_do_not_capture_later_buffer_indices() {
     );
     assert!(verify(&stale).is_err());
 }
+
+#[test]
+fn owned_record_frames_support_vec_push_and_invalidate_old_payloads() {
+    let source = include_str!("../../../../examples/vec_loop.evg");
+    assert_eq!(replay(source).0.run().unwrap().to_string(), "42");
+    let record = "type Owner struct {data: unique(usize)} fn main() -> usize {let owner = Owner {data: alloc(42)}; let index: usize = 0; while index < 1 invariant index <= 1 modifies(&owner, &index) decreases(1 - index) {*owner.data = 7; index = index + 1;} *owner.data}";
+    assert_eq!(replay(record).0.run().unwrap().to_string(), "7");
+    for bad in [
+        record
+            .replace("let index:", "let stale = &*owner.data; let index:")
+            .replace("} *owner.data}", "} *stale}"),
+        record.replace("modifies(&owner, &index)", "modifies(&index)"),
+        record
+            .replace("let index:", "let outside = alloc(9); let index:")
+            .replace("*owner.data = 7;", "drop(outside); *owner.data = 7;"),
+        record.replace(
+            "} *owner.data}",
+            "} proof _: *owner.data == 42; *owner.data}",
+        ),
+    ] {
+        assert!(verify(&bad).is_err(), "accepted {bad}");
+    }
+}

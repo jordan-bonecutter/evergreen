@@ -1,4 +1,4 @@
-//! Resource array frames abstract a forest of unique payload allocations.
+//! Resource frames abstract owned records and arrays of unique payload allocations.
 //! Borrowed links and shared censuses need a richer frame and remain excluded.
 
 use super::*;
@@ -15,22 +15,32 @@ pub(super) struct Payloads {
 }
 
 impl Context<'_> {
-    pub(super) fn resource_loop_array(&mut self, ty: &Ty) -> Result<bool> {
-        let Ty::Array(element, _) = ty else {
-            return Ok(false);
+    pub(super) fn resource_loop_frame(&mut self, ty: &Ty) -> Result<bool> {
+        let payload = match ty {
+            Ty::Record(_) => {
+                if self.scalar_field_value(ty) && !self.has_runtime_cleanup(ty) {
+                    return Ok(false);
+                }
+                ty
+            }
+            Ty::Array(element, _) => {
+                let Ty::Union(members) = element.as_ref() else {
+                    return Ok(false);
+                };
+                if members.len() != 2 {
+                    return Ok(false);
+                }
+                let Some(Ty::Shape(payload)) = members.iter().find(|ty| matches!(ty, Ty::Shape(_)))
+                else {
+                    return Ok(false);
+                };
+                if !members.contains(payload.as_ref()) {
+                    return Ok(false);
+                }
+                payload.as_ref()
+            }
+            _ => return Ok(false),
         };
-        let Ty::Union(members) = element.as_ref() else {
-            return Ok(false);
-        };
-        if members.len() != 2 {
-            return Ok(false);
-        }
-        let Some(Ty::Shape(payload)) = members.iter().find(|ty| matches!(ty, Ty::Shape(_))) else {
-            return Ok(false);
-        };
-        if !members.contains(payload.as_ref()) {
-            return Ok(false);
-        }
         let mut pending = vec![Visit::Type(heap::syntax_type(payload, 0)?)];
         let mut records = BTreeSet::new();
         let mut active = BTreeSet::new();

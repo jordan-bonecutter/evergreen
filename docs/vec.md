@@ -87,6 +87,16 @@ header's allocation authority.
 - [`vec_local_storage.evg`](../examples/vec_local_storage.evg): a helper with a
   local Vec and a scalar contract, called repeatedly without replaying its heap
   implementation. No references or owners cross that helper's boundary.
+- [`vec_loop.evg`](../examples/vec_loop.evg): push in a measured loop, with the
+  vector included in the loop's `modifies` frame. Its invariant relates length
+  to the cursor and retains capacity.
+
+Owned records can now be loop frames when their payload graph contains only
+unique ownership and reference-free values. This includes Vec with scalar or
+supported owning elements. The checker abstracts the record's owned allocations
+at the arbitrary loop head; references into pre-loop payloads cannot be reused
+afterward. Borrowed/shared payloads remain unsupported. Scalar records without
+cleanup keep their existing frame behavior.
 
 The former Copy-only `filled` and `reallocate_filled` APIs are removed. Use `new`
 and initialize live elements explicitly. `into_data` is replaced by

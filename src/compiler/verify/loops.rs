@@ -154,7 +154,7 @@ impl Context<'_> {
         for target in &targets {
             let plane = self.storage.memory.plane(target.reference)?;
             let old = project(self.storage.memory.read(target.reference)?, &target.path)?.clone();
-            let resource = self.resource_loop_array(&target.ty)?;
+            let resource = self.resource_loop_frame(&target.ty)?;
             if resource {
                 // Old payload identities cannot survive arbitrary iteration.
                 // This abstracts ownership; it executes no source destructor.
@@ -253,7 +253,7 @@ impl Context<'_> {
         let mut consumable = BTreeSet::new();
         let mut resource_arrays = BTreeSet::new();
         for target in targets {
-            if self.resource_loop_array(&target.ty)? {
+            if self.resource_loop_frame(&target.ty)? {
                 let value =
                     project(self.storage.memory.read(target.reference)?, &target.path)?.clone();
                 let payloads = self.loop_owned_payloads(&value)?;
@@ -406,12 +406,16 @@ impl Context<'_> {
             };
             let allowed = match ty.as_ref() {
                 Ty::Array(element, _) => {
-                    self.history_element(element) || self.resource_loop_array(&ty)?
+                    self.history_element(element) || self.resource_loop_frame(&ty)?
+                }
+                Ty::Record(_) => {
+                    self.scalar_field_value(&ty) && !self.has_runtime_cleanup(&ty)
+                        || self.resource_loop_frame(&ty)?
                 }
                 ty => self.scalar_field_value(ty) && !self.has_runtime_cleanup(ty),
             };
             if !allowed {
-                return Err(format!("line {line}: loop frames support scalar storage and owned arrays of T | shape(T); borrowed or shared payloads and standalone owner replacement are not yet supported"));
+                return Err(format!("line {line}: loop frames support scalar storage, owned records, and owned arrays of T | shape(T); borrowed or shared payloads and standalone owner replacement are not yet supported"));
             }
             let plane = self.storage.memory.plane(reference)?;
             for target in &targets {
@@ -422,9 +426,9 @@ impl Context<'_> {
                 }
             }
             let owned = self.owns_plane(plane)?;
-            if self.resource_loop_array(&ty)? && !owned {
+            if self.resource_loop_frame(&ty)? && !owned {
                 return Err(format!(
-                    "line {line}: resource loop frames require ownership of the backing array"
+                    "line {line}: resource loop frames require ownership of their backing storage"
                 ));
             }
             if !self.write_permitted(reference, &path, owned)? {

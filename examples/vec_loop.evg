@@ -1,0 +1,17 @@
+fn main() -> usize {
+    let values = vec::Vec::<usize>::new(8);
+    let index: usize = 0;
+    while index < 8
+        invariant
+            index <= 8 &&
+            values.length() == index &&
+            values.capacity() == 8
+        modifies(&values, &index)
+        decreases(8 - index)
+    {
+        values.push(42);
+        index = index + 1;
+    }
+    proof filled: values.length() == 8;
+    values.pop()
+}
