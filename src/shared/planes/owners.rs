@@ -52,6 +52,13 @@ impl SharedOwners {
 }
 
 impl Ownership {
+    pub(super) fn snapshot_weight(&self) -> usize {
+        match self {
+            Self::Unique => 0,
+            Self::Shared(tokens) => tokens.materialized.len().saturating_add(tokens.early.len()),
+        }
+    }
+
     pub(super) fn early_count(&self) -> usize {
         match self {
             Self::Unique => 0,

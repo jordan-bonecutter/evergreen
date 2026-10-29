@@ -393,6 +393,7 @@ impl Context<'_> {
 
     pub(super) fn take_symbol(&mut self, plane: PlaneId) -> Result<Symbol> {
         self.note_state_write(plane, &[])?;
+        self.charge_value_work(symbol_weight(self.storage.memory.get(plane)?)?)?;
         self.storage.memory.take(plane)
     }
 }

@@ -63,7 +63,8 @@ struct Plane<T> {
     ownership: owners::Ownership,
     census_revision: u64,
     generation: u64,
-    value: Option<T>,
+    // Snapshots share immutable contents; writes install a new payload.
+    value: Option<Arc<T>>,
 }
 
 #[derive(Debug)]
@@ -113,6 +114,12 @@ impl<T> Memory<T> {
         }
     }
 
+    pub(crate) fn snapshot_weight(&self) -> usize {
+        self.planes.iter().fold(self.planes.len(), |cost, plane| {
+            cost.saturating_add(plane.ownership.snapshot_weight())
+        })
+    }
+
     pub(crate) fn states(&self) -> Vec<(PlaneId, u64, Option<&T>)> {
         self.planes
             .iter()
@@ -124,7 +131,7 @@ impl<T> Memory<T> {
                         slot,
                     },
                     plane.generation,
-                    plane.value.as_ref(),
+                    plane.value.as_deref(),
                 )
             })
             .collect()
@@ -146,7 +153,7 @@ impl<T> Memory<T> {
             ownership: owners::Ownership::Unique,
             census_revision: 0,
             generation: 0,
-            value: Some(value),
+            value: Some(Arc::new(value)),
         });
         Ok(id)
     }
@@ -175,7 +182,7 @@ impl<T> Memory<T> {
             .enumerate()
             .skip(checkpoint)
             .filter_map(|(slot, plane)| {
-                plane.value.as_ref().map(|value| {
+                plane.value.as_deref().map(|value| {
                     (
                         PlaneId {
                             owner: self.owner,
@@ -205,7 +212,7 @@ impl<T> Memory<T> {
         if !plane.ownership.is_unique() {
             return Err("cannot materialize a consumed input plane".into());
         }
-        plane.value = Some(initial.clone());
+        plane.value = Some(Arc::new(initial.clone()));
         Ok(())
     }
 
@@ -262,7 +269,7 @@ impl<T> Memory<T> {
         }
         self.planes
             .get(id.slot)
-            .and_then(|p| p.value.as_ref())
+            .and_then(|p| p.value.as_deref())
             .ok_or_else(|| "use of shape(T): plane is moved or dropped".into())
     }
 
@@ -279,7 +286,7 @@ impl<T> Memory<T> {
                 "reference has type never: its plane was replaced, moved, or dropped".into(),
             );
         }
-        p.value.as_ref().ok_or_else(|| "dropped plane".into())
+        p.value.as_deref().ok_or_else(|| "dropped plane".into())
     }
 
     pub fn plane(&self, reference: Reference) -> Result<PlaneId, String> {
@@ -304,11 +311,14 @@ impl<T> Memory<T> {
                 .checked_add(1)
                 .ok_or("plane generation exhausted")?;
         }
-        p.value = Some(value);
+        p.value = Some(Arc::new(value));
         Ok(())
     }
 
-    pub fn take(&mut self, id: PlaneId) -> Result<T, String> {
+    pub fn take(&mut self, id: PlaneId) -> Result<T, String>
+    where
+        T: Clone,
+    {
         if id.owner != self.owner {
             return Err("plane belongs to a different arena".into());
         }
@@ -325,7 +335,10 @@ impl<T> Memory<T> {
             .generation
             .checked_add(1)
             .ok_or("plane generation exhausted")?;
-        p.value.take().ok_or_else(|| "cannot move shape(T)".into())
+        p.value
+            .take()
+            .map(|value| Arc::unwrap_or_clone(value))
+            .ok_or_else(|| "cannot move shape(T)".into())
     }
 }
 
@@ -409,6 +422,10 @@ mod tests {
         let plane = original.allocate(7).unwrap();
         let reference = original.borrow(plane).unwrap();
         let mut branch = original.snapshot();
+        assert!(Arc::ptr_eq(
+            original.planes[plane.slot].value.as_ref().unwrap(),
+            branch.planes[plane.slot].value.as_ref().unwrap(),
+        ));
         branch.write(plane, 42, false).unwrap();
         assert_eq!(*original.read(reference).unwrap(), 7);
         assert_eq!(*branch.read(reference).unwrap(), 42);

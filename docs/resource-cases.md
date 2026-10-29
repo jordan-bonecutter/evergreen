@@ -78,3 +78,12 @@ changed planes. It must retain arena identity, generations, ownership census
 revisions, and branch isolation. Snapshot charging must reflect shared metadata,
 while writes must charge any actual payload copies. Merely discounting today's
 deep copies or raising the budget would hide the cost rather than remove it.
+
+Plane payloads now use immutable shared storage. A snapshot copies plane metadata
+and owner-token sets but shares payloads; writes install new payloads, and taking
+a value clones its payload only if another snapshot retains it. The verifier
+charges snapshot metadata and conservatively charges payload work at `take`.
+This is payload sharing, not yet a persistent map for the plane metadata itself.
+The combined buffer probe now passes the previous budget failure and reaches an
+unproved initialized-prefix invariant after `pop`; the full migration is still
+unfinished.

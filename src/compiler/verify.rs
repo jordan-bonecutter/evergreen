@@ -790,14 +790,16 @@ impl<'a> Context<'a> {
 
     fn snapshot_memory(&mut self) -> Result<Memory<Symbol>> {
         self.charge_value_work(
-            store_weight(&self.storage.memory)?
+            self.storage
+                .memory
+                .snapshot_weight()
                 .saturating_add(self.censuses.len().saturating_mul(2)),
         )?;
         Ok(self.storage.memory.snapshot())
     }
 
     fn clone_store(&mut self, store: &Memory<Symbol>) -> Result<Memory<Symbol>> {
-        self.charge_value_work(store_weight(store)?)?;
+        self.charge_value_work(store.snapshot_weight())?;
         Ok(store.snapshot())
     }
 
