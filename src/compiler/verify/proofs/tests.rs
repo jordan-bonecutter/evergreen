@@ -26,6 +26,44 @@ fn script(ctx: &mut Context<'_>, goal: &Formula, steps: &[&str]) -> evidence::No
 }
 
 #[test]
+fn logical_lookup_skips_unrelated_predicates_without_losing_admissions() {
+    with_context(&mut Session::search(), |ctx| {
+        let atom = |symbol: String| Formula::Predicate {
+            symbol,
+            arguments: vec![Linear::variable("index")],
+        };
+        // Deliberately large unrelated witnesses should cost a candidate
+        // lookup, not repeated normalization of their complete formulas.
+        for i in 0..64 {
+            let mut claim = atom(format!("unrelated_{i}"));
+            for j in 0..16 {
+                claim = claim.and(atom(format!("unused_{i}_{j}")));
+            }
+            let node = ctx.proof.evidence.admit(claim).unwrap();
+            ctx.proof.witnesses.insert(format!("unused_{i}"), node);
+        }
+        let goal = atom("wanted".into());
+        let wanted = ctx.proof.evidence.admit(goal.clone()).unwrap();
+        ctx.proof.witnesses.insert("wanted".into(), wanted);
+        let before = ctx.work.value_work;
+        assert_eq!(ctx.logical_assumption(&goal, None).unwrap(), Some(wanted));
+        assert!(ctx.work.value_work - before < 512);
+        assert!(ctx.proof.evidence.has_admissions(wanted));
+        assert!(ctx
+            .logical_assumption(&atom("absent".into()), None)
+            .unwrap()
+            .is_none());
+
+        // Normalization can erase an atom. Filter on the normalized goal so
+        // a checked True remains usable for `irrelevant || true`.
+        let truth = script(ctx, &Formula::True, &["omega"]);
+        ctx.proof.witnesses.insert("truth".into(), truth);
+        let erased = Formula::Or(Box::new(atom("erased".into())), Box::new(Formula::True));
+        assert_eq!(ctx.logical_assumption(&erased, None).unwrap(), Some(truth));
+    });
+}
+
+#[test]
 fn tactics_track_only_the_admissions_they_use_and_replay_the_same_graph() {
     fn check(session: &mut Session) -> evidence::AdmissionDependencies {
         with_context(session, |ctx| {

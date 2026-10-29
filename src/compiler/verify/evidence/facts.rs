@@ -2,7 +2,10 @@
 //! only the evidence arena can create a proof concluding one of these facts.
 
 use super::Formula;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct FactId(usize);
@@ -11,6 +14,7 @@ pub(super) struct FactId(usize);
 pub(super) struct Facts {
     entries: Vec<Arc<Formula>>,
     by_formula: BTreeMap<Arc<Formula>, FactId>,
+    predicates: Vec<BTreeSet<String>>,
 }
 
 impl Facts {
@@ -22,12 +26,32 @@ impl Facts {
         &self.entries[id.0]
     }
 
+    pub(super) fn mentions_predicate(&self, id: FactId, symbol: &str) -> bool {
+        self.predicates[id.0].contains(symbol)
+    }
+
     /// Called after graph/storage limits and formula depth have been checked.
     pub(super) fn intern(&mut self, formula: Formula) -> FactId {
         if let Some(id) = self.find(&formula) {
             return id;
         }
         let id = FactId(self.entries.len());
+        let mut predicates = BTreeSet::new();
+        let mut pending = vec![&formula];
+        while let Some(part) = pending.pop() {
+            match part {
+                Formula::Predicate { symbol, .. } => {
+                    predicates.insert(symbol.clone());
+                }
+                Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b) => {
+                    pending.extend([&**a, &**b])
+                }
+                Formula::Not(inner) => pending.push(inner),
+                Formula::Forall { domain, body, .. } => pending.extend([&**domain, &**body]),
+                _ => {}
+            }
+        }
+        self.predicates.push(predicates);
         let formula = Arc::new(formula);
         self.entries.push(Arc::clone(&formula));
         self.by_formula.insert(formula, id);
@@ -55,5 +79,34 @@ mod tests {
         assert_eq!(facts.entries.len(), 3);
         let indexed = facts.by_formula.get_key_value(&implication).unwrap().0;
         assert!(Arc::ptr_eq(indexed, &facts.entries[id.0]));
+    }
+
+    #[test]
+    fn predicate_index_covers_nested_guards_and_preserves_distinct_versions() {
+        let atom = |symbol: &str| Formula::Predicate {
+            symbol: symbol.into(),
+            arguments: vec![Linear::variable("i")],
+        };
+        let nested = Formula::Forall {
+            variable: "i".into(),
+            domain: Box::new(atom("guard")),
+            body: Box::new(Formula::Implies(
+                Box::new(Formula::Not(Box::new(atom("before")))),
+                Box::new(Formula::And(
+                    Box::new(atom("after")),
+                    Box::new(Formula::Or(Box::new(atom("left")), Box::new(atom("right")))),
+                )),
+            )),
+        };
+        let mut facts = Facts::default();
+        let id = facts.intern(nested.clone());
+        for symbol in ["guard", "before", "after", "left", "right"] {
+            assert!(facts.mentions_predicate(id, symbol));
+        }
+        assert!(!facts.mentions_predicate(id, "later"));
+        assert_eq!(id, facts.intern(nested));
+        assert_eq!(facts.predicates.len(), 1);
+        let other = facts.intern(atom("later"));
+        assert!(!facts.mentions_predicate(other, "before"));
     }
 }

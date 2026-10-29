@@ -85,9 +85,7 @@ impl Context<'_> {
                     .proof
                     .evidence
                     .derive(proposition.clone(), evidence::Rule::Reuse(checked))?;
-                if proposition.is_arithmetic()
-                    && self.evidence_dependencies(node)?.admissions.is_empty()
-                {
+                if proposition.is_arithmetic() && !self.proof.evidence.has_admissions(node) {
                     self.assume_from(&proposition, paths::Origin::Evidence(node))?;
                 } else {
                     if let Some(post) = &function.post {

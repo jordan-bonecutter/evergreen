@@ -118,6 +118,15 @@ impl Evidence {
             .ok_or_else(|| "proof dependency source is not a proposition".into())
     }
 
+    // This is a rejection filter, never evidence. Alpha-renaming and logical
+    // normalization cannot introduce a predicate symbol absent from a fact.
+    pub(super) fn claim_mentions_predicate(&self, id: NodeId, symbol: &str) -> bool {
+        self.nodes
+            .get(id.0)
+            .and_then(|node| node.claim)
+            .is_some_and(|fact| self.facts.mentions_predicate(fact, symbol))
+    }
+
     pub(super) fn admit_source(&mut self, claim: Formula, trust: TrustId) -> Result<NodeId> {
         let node = self.insert_node(
             Some(claim),

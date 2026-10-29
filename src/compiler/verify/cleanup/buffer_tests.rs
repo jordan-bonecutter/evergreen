@@ -28,6 +28,37 @@ fn buffer_updates_move_payloads_and_keep_range_proofs_sparse() {
 }
 
 #[test]
+fn buffer_updates_drop_each_payload_once() {
+    let source = format!(
+        "type Resource struct {{owner: unique(usize)}}
+         impl Drop for Resource {{fn drop({{owner}}) {{}}}}
+         {}",
+        UPDATES
+            .replace_evg("unique(usize)", "Resource")
+            .replace_evg("alloc(7)", "Resource {owner: alloc(7)}")
+            .replace_evg("alloc(42)", "Resource {owner: alloc(42)}")
+            .replace_evg("let answer = *item;", "let answer = *item.owner;")
+    );
+    let (program, _) = replay(&source);
+    let (answer, events) = program.run_with_events().unwrap();
+    assert_eq!(answer.to_string(), "42");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.as_str() == "drop Resource")
+            .count(),
+        2
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.contains("Buffer"))
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn buffer_updates_require_valid_ranges_and_reject_stale_slot_views() {
     for bad in [
         UPDATES.replace_evg("self.len = self.len + 1;", ""),

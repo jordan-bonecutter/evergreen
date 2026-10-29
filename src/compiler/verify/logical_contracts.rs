@@ -11,6 +11,24 @@ mod tests;
 #[cfg(test)]
 mod type_tests;
 
+// Search the normalized goal: a connective may erase a predicate in the
+// original expression, and that erased symbol must not restrict candidates.
+fn first_predicate(formula: &Formula) -> Option<&str> {
+    let mut pending = vec![formula];
+    while let Some(part) = pending.pop() {
+        match part {
+            Formula::Predicate { symbol, .. } => return Some(symbol),
+            Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b) => {
+                pending.extend([&**a, &**b]);
+            }
+            Formula::Not(inner) => pending.push(inner),
+            Formula::Forall { domain, body, .. } => pending.extend([&**domain, &**body]),
+            _ => {}
+        }
+    }
+    None
+}
+
 impl Context<'_> {
     pub(super) fn guarded_claim_evidence(
         &mut self,
@@ -87,7 +105,7 @@ impl Context<'_> {
     ) -> Result<()> {
         for node in self.contract_clauses(root, snapshot)? {
             let claim = self.proof.evidence.claim(node)?.clone();
-            if claim.is_arithmetic() && self.evidence_dependencies(node)?.admissions.is_empty() {
+            if claim.is_arithmetic() && !self.proof.evidence.has_admissions(node) {
                 self.assume_from(&claim, paths::Origin::Evidence(node))?;
             } else {
                 self.proof.claims.insert(node);
@@ -101,13 +119,21 @@ impl Context<'_> {
         goal: &Formula,
         subjects: Option<&subjects::Snapshot>,
     ) -> Result<Option<evidence::NodeId>> {
+        self.charge_value_work(goal.storage_weight()?)?;
+        let normalized = goal.normalized();
+        let selector = first_predicate(&normalized);
         let witnesses = self.proof.witnesses.values().copied().collect::<Vec<_>>();
         self.charge_value_work(witnesses.len())?;
         let mut admitted = None;
         for node in witnesses {
+            if selector
+                .is_some_and(|symbol| !self.proof.evidence.claim_mentions_predicate(node, symbol))
+            {
+                continue;
+            }
             let claim = self.proof.evidence.claim(node)?.clone();
             if self.witness_matches(node, &claim, goal, subjects)? {
-                if self.evidence_dependencies(node)?.admissions.is_empty() {
+                if !self.proof.evidence.has_admissions(node) {
                     return Ok(Some(node));
                 }
                 admitted.get_or_insert(node);
@@ -128,9 +154,14 @@ impl Context<'_> {
         };
         self.charge_value_work(candidates.len())?;
         for node in candidates {
+            if selector
+                .is_some_and(|symbol| !self.proof.evidence.claim_mentions_predicate(node, symbol))
+            {
+                continue;
+            }
             let claim = self.proof.evidence.claim(node)?.clone();
             self.charge_value_work(claim.storage_weight()?)?;
-            let exact = claim.normalized().alpha_equal(&goal.normalized());
+            let exact = claim.normalized().alpha_equal(&normalized);
             if !exact && !self.contract_contains(&claim, goal)? {
                 continue;
             }
@@ -139,7 +170,7 @@ impl Context<'_> {
             };
             // An admission cannot jump to a different value merely because
             // elaboration simplified both propositions to the same formula.
-            let trusted = !self.evidence_dependencies(node)?.admissions.is_empty();
+            let trusted = self.proof.evidence.has_admissions(node);
             if trusted && !exact {
                 continue;
             }

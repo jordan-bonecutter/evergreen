@@ -145,8 +145,7 @@ impl Context<'_> {
         if !self.same_proposition(claim, goal)? {
             return Ok(false);
         }
-        let dependencies = self.evidence_dependencies(node)?;
-        if dependencies.admissions.is_empty() {
+        if !self.proof.evidence.has_admissions(node) {
             return Ok(true);
         }
         let Some(snapshot) = self
@@ -170,7 +169,7 @@ impl Context<'_> {
         name: &str,
         line: usize,
     ) -> Result<()> {
-        if self.evidence_dependencies(node)?.admissions.is_empty() {
+        if !self.proof.evidence.has_admissions(node) {
             return Ok(());
         }
         if let Some(snapshot) = self
@@ -249,8 +248,9 @@ impl Context<'_> {
             return Ok(None);
         };
         for &parent in &support.parents {
-            let dependencies = self.evidence_dependencies(parent)?;
-            if !dependencies.admissions.is_empty() || !dependencies.pending_summaries.is_empty() {
+            if self.proof.evidence.has_admissions(parent)
+                || self.proof.evidence.has_pending_summaries(parent)
+            {
                 return Ok(None);
             }
         }
@@ -486,7 +486,7 @@ impl Context<'_> {
                         }
                     }
                 }
-                if !self.evidence_dependencies(source)?.admissions.is_empty() {
+                if self.proof.evidence.has_admissions(source) {
                     if let Some(conclusion) = &theorem_subjects {
                         if !subjects.is_some_and(|goal| goal.complete && goal.key == conclusion.key)
                         {

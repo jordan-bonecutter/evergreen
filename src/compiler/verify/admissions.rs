@@ -19,15 +19,6 @@ impl Formula {
 }
 
 impl Context<'_> {
-    pub(super) fn evidence_dependencies(
-        &mut self,
-        node: evidence::NodeId,
-    ) -> Result<evidence::AdmissionDependencies> {
-        let dependencies = self.proof.evidence.admissions(node);
-        self.charge_value_work(dependencies.work)?;
-        Ok(dependencies)
-    }
-
     fn relevant_claims(
         &mut self,
         goal: &Formula,
@@ -126,7 +117,6 @@ impl Context<'_> {
         line: usize,
     ) -> Result<paths::Support> {
         self.work.obligations += 1;
-        let candidates = self.relevant_claims(goal, subjects)?;
         let checked = extend_from(
             &self.proof.paths,
             goal,
@@ -135,11 +125,9 @@ impl Context<'_> {
             self.session,
             &mut self.work.value_work,
         )?;
-        if candidates.is_empty() {
-            return self.check_arithmetic_paths(&checked, label, line);
-        }
         // Prefer a checked proof with no admissions. Optional query failures
-        // are recorded, making the fallback and its support replayable.
+        // are recorded, making the fallback and its support replayable. Do
+        // not inspect historical facts unless the ordinary paths need them.
         let mut ordinary = checked.closed.clone();
         let mut complete = true;
         for path in checked.iter() {
@@ -152,6 +140,10 @@ impl Context<'_> {
         }
         if complete {
             return Ok(ordinary);
+        }
+        let candidates = self.relevant_claims(goal, subjects)?;
+        if candidates.is_empty() {
+            return self.check_arithmetic_paths(&checked, label, line);
         }
         let mut temporary = self.candidate_paths(&candidates)?;
         temporary = extend_from(

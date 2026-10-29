@@ -562,7 +562,8 @@ mod tests {
         let mut forged = bundle.clone();
         let record = Arc::make_mut(&mut forged.records)
             .iter_mut()
-            .find(|r| !r.optional && r.certificate.is_some())
+            // Successful admission-free probes are checked certificates too.
+            .find(|r| r.certificate.is_some())
             .unwrap();
         record.certificate =
             Some(Certificate::from_weights(BTreeMap::from([(usize::MAX, 1)])).unwrap());

@@ -38,7 +38,7 @@ impl Context<'_> {
             dependencies.to_vec(),
             self.proof.control.as_ref().unwrap_or(&Formula::True),
         )?;
-        if arithmetic && self.evidence_dependencies(node)?.admissions.is_empty() {
+        if arithmetic && !self.proof.evidence.has_admissions(node) {
             if let Some(subjects) = subjects {
                 self.record_recursive_context(node, subjects)?;
             }

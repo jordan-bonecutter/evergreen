@@ -106,11 +106,7 @@ impl Context<'_> {
         node: evidence::NodeId,
         snapshot: subjects::Snapshot,
     ) -> Result<()> {
-        if self
-            .evidence_dependencies(node)?
-            .pending_summaries
-            .is_empty()
-        {
+        if !self.proof.evidence.has_pending_summaries(node) {
             return Ok(());
         }
         let guard = self.proof.control.as_ref().unwrap_or(&Formula::True);

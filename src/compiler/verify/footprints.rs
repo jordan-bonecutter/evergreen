@@ -65,8 +65,9 @@ impl Context<'_> {
             support.add_rows(path, &rows);
         }
         for &parent in &support.parents {
-            let dependencies = self.evidence_dependencies(parent)?;
-            if !dependencies.admissions.is_empty() || !dependencies.pending_summaries.is_empty() {
+            if self.proof.evidence.has_admissions(parent)
+                || self.proof.evidence.has_pending_summaries(parent)
+            {
                 return Ok(false);
             }
         }

@@ -115,7 +115,7 @@ impl Context<'_> {
                 && (binding.is_some()
                     || subjects.is_some_and(|goal| goal.complete && goal.key == body.key))
         });
-        if !self.evidence_dependencies(theorem)?.admissions.is_empty() && !preserves_subjects {
+        if self.proof.evidence.has_admissions(theorem) && !preserves_subjects {
             return Err(format!(
                 "line {line}: specialize {name} concludes a different subject or state"
             ));

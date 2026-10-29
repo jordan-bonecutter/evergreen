@@ -343,7 +343,7 @@ impl Context<'_> {
             return self.import_logical_contract(proposition.clone(), subjects, parents);
         }
         let node = self.proof.evidence.contract(proposition.clone(), parents)?;
-        if self.evidence_dependencies(node)?.admissions.is_empty() {
+        if !self.proof.evidence.has_admissions(node) {
             self.assume_from(proposition, paths::Origin::Evidence(node))
         } else {
             self.publish_evidence(node, subjects)?;

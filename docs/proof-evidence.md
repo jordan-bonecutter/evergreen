@@ -234,6 +234,16 @@ without evidence, separately admitted proofs of the same conclusion, sharing
 through deep derivations, and storage limits for both fresh formulas and scoped
 hypotheses.
 
+Each interned proposition also records its predicate symbols. Logical lookup
+uses a symbol from the normalized goal to reject unrelated candidates before
+cloning and comparing their formulas. This index establishes no truth: matching
+candidates still require the original evidence, admission, and revision checks.
+Arithmetic queries first try the ordinary checked paths and inspect historical
+facts only if that fails. Admission and pending-summary presence use flags
+maintained on DAG insertion; exporting the actual dependencies still traverses
+the graph. Concrete machine words already within their target bounds need no
+arithmetic search to establish those same bounds again.
+
 This implements the first lazy state layer described in `README2.md`: writes
 record transitions and projection/fact lookup is demanded by a proof. Formula
 elaboration, contract decomposition, and path collection still perform eager

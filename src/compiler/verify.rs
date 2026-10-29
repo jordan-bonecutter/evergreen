@@ -1325,7 +1325,7 @@ impl<'a> Context<'a> {
                 .proof
                 .evidence
                 .contract(p.clone(), self.proof.contract_parents.clone())?;
-            if self.evidence_dependencies(node)?.admissions.is_empty() {
+            if !self.proof.evidence.has_admissions(node) {
                 self.assume_from(p, paths::Origin::Evidence(node))
             } else {
                 self.proof.value_claims.push(node);
@@ -1371,7 +1371,7 @@ impl<'a> Context<'a> {
 
     fn prove(&mut self, p: &Formula, label: &str, line: usize) -> Result<()> {
         let node = self.prove_subjects(p, None, label, line)?;
-        if !self.evidence_dependencies(node)?.admissions.is_empty() {
+        if self.proof.evidence.has_admissions(node) {
             self.proof.value_claims.push(node);
         }
         Ok(())
@@ -1825,8 +1825,7 @@ impl<'a> Context<'a> {
                     self.proof.claims.insert(evidence);
                 } else {
                     self.publish_evidence(evidence, subjects)?;
-                    let dependencies = self.evidence_dependencies(evidence)?;
-                    if dependencies.admissions.is_empty() {
+                    if !self.proof.evidence.has_admissions(evidence) {
                         self.assume_from(&p, paths::Origin::Evidence(evidence))?;
                     } else {
                         self.proof.claims.insert(evidence);
@@ -2197,6 +2196,12 @@ impl<'a> Context<'a> {
         }
         if let Symbol::Number(Ty::Machine(t), n) = &value {
             let (lo, hi) = t.bounds();
+            // A concrete in-range word needs no path search. Keep symbolic
+            // bounds in the proof graph; this fast path uses only the exact
+            // literal value and the selected target representation.
+            if n.terms.is_empty() && lo <= n.constant && n.constant <= hi {
+                return Ok(value);
+            }
             self.prove(
                 &Formula::Ge(n.sub(&Linear::number(lo))?),
                 "machine integer lower bound",

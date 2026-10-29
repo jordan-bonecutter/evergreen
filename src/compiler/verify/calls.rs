@@ -450,7 +450,7 @@ impl<'a> Context<'a> {
         // subsequent storage observation. Ambient parents carry admissions
         // whose use must remain visible even through frontend assumptions.
         for &node in &call_dependencies {
-            if !self.evidence_dependencies(node)?.admissions.is_empty() {
+            if self.proof.evidence.has_admissions(node) {
                 self.proof.contract_parents.push(node);
             }
         }
