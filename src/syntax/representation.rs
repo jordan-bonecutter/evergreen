@@ -179,7 +179,7 @@ impl Parser {
         self.expect("=")?;
         if !self.eat("make_type") {
             return Err(self.err(
-                "type aliases are not supported; use a struct with a where clause for a refined type, or make_type(...) for a primitive representation",
+                "type aliases with '=' are not supported; use 'type NonZero usize where self != 0;' for a refined scalar, a struct with a where clause for fields, or make_type(...) for a primitive representation",
             ));
         }
         self.expect("(")?;

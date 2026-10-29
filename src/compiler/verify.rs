@@ -1803,8 +1803,12 @@ impl<'a> Context<'a> {
                 } else {
                     format!("proof {name}")
                 };
-                let evidence =
-                    self.proof_script_for(&p, &label, proposition.line, steps, Some(&subjects))?;
+                let evidence = self
+                    .proof_script_for(&p, &label, proposition.line, steps, Some(&subjects))
+                    .inspect_err(|error| {
+                        self.session
+                            .note_source_obligation(error, syntax::display::expression(proposition))
+                    })?;
                 if !p.is_arithmetic() {
                     // Logical theorems remain state-indexed candidates. They
                     // cannot become arithmetic assumptions without elimination.

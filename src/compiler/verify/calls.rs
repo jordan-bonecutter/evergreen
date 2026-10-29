@@ -89,6 +89,23 @@ impl<'a> Context<'a> {
         // result receipts belong to the arguments, not to the callee's result.
         self.proof.results.truncate(results);
         self.apply_call(name, function, actuals, line)
+            .inspect_err(|error| {
+                if error.starts_with(&format!(
+                    "line {line}: cannot prove precondition of {name}:"
+                )) {
+                    if let (Some(pre), Ok(parameters)) =
+                        (&function.pre, function.supplied_parameters(args.len()))
+                    {
+                        let replacements = parameters
+                            .into_iter()
+                            .zip(args)
+                            .map(|((name, _), arg)| (name.as_str(), arg))
+                            .collect();
+                        let source = syntax::display::substituted(pre, &replacements);
+                        self.session.note_source_obligation(error, source);
+                    }
+                }
+            })
     }
 
     fn eval_ownership_call(

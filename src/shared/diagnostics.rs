@@ -30,6 +30,9 @@ pub struct Diagnostic {
     pub origin: SourceOrigin,
     pub line: Option<usize>,
     pub obligation: Option<String>,
+    /// Source-level claim for presentation; the normalized obligation is retained
+    /// separately for tools that need the verifier's internal form.
+    pub source_obligation: Option<Box<str>>,
     pub requirement: Option<Box<Requirement>>,
     pub source: Option<Box<SourceText>>,
 }
@@ -46,6 +49,7 @@ impl Diagnostic {
             origin: SourceOrigin::Unspecified,
             line,
             obligation: None,
+            source_obligation: None,
             requirement: None,
             source: None,
         }
@@ -73,7 +77,11 @@ impl fmt::Display for Diagnostic {
         if let Some(required) = &self.requirement {
             write!(f, "\nrequired: {}", required.text)?;
         }
-        if let Some(goal) = &self.obligation {
+        if let Some(goal) = self
+            .source_obligation
+            .as_deref()
+            .or(self.obligation.as_deref())
+        {
             write!(f, "\nobligation: {goal}")?;
         }
         Ok(())

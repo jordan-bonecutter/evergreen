@@ -60,7 +60,7 @@ test('browser diagnostics include source excerpts, requirement locations, and pr
   assert.doesNotMatch(metadata.error, /\u001b\[/);
   const unknown = await compile('fn nonzero(x: usize) where x != 0 {} fn main() {nonzero(usize::MAX + 1);}');
   assert.equal(unknown.metadata.ok, false);
-  assert.match(unknown.metadata.error, /unproved obligation: unknown usize != 0/);
+  assert.match(unknown.metadata.error, /unproved obligation: \(\(usize::MAX \+ 1\) != 0\)/);
   assert.doesNotMatch(unknown.metadata.error, /evg_\d+/);
 });
 
@@ -94,6 +94,16 @@ test('block inference preserves unsigned comparisons', async () => {
 test('record constructor results are copied before subsequent calls reuse the stack', async () => {
   const source = examples.nonzero.replace('    0\n}', '    let other = NonZero::new(20);\n    my_nonzero.data\n}');
   assert.equal((await execute(source)).result, '10');
+});
+
+test('refined scalars preserve their condition through construction and borrowed writes', async () => {
+  const source = 'type NonZero usize where self != 0; impl Copy for NonZero {} fn id(x: NonZero) -> NonZero {x} fn main() -> usize {let n: NonZero = 42; id(n)}';
+  assert.equal((await execute(source)).result, '42');
+  assert.equal((await compile(source.replace('= 42', '= 0'))).metadata.ok, false);
+  const array = 'type NonZero usize where self != 0; fn main() -> usize {let values: [NonZero; 2] = [20, 22]; values[0] + values[1]}';
+  assert.equal((await execute(array)).result, '42');
+  const borrow = 'type NonZero usize where self != 0; fn zero(x: &usize) modifies(x) ensures *x == 0 {*x = 0;} fn main() {let n: NonZero = 1; zero(&n);}';
+  assert.equal((await compile(borrow)).metadata.ok, false);
 });
 
 test('unsupported features produce target diagnostics after verification', async () => {

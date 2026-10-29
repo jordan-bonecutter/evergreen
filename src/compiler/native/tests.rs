@@ -243,6 +243,7 @@ fn native_execution_agrees_with_the_interpreter() {
     let mut cases = [
         include_str!("../../../examples/null.evg"),
         include_str!("../../../examples/non_overflowing_sum.evg"),
+        include_str!("../../../examples/refined_scalar.evg"),
         include_str!("../../../examples/rc_generic_view.evg"),
         include_str!("../../../examples/inferred_generics.evg"),
         include_str!("../../../examples/utf8_byte_proofs.evg"),

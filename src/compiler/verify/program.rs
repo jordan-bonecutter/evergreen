@@ -89,6 +89,14 @@ fn prepare(parsed: &mut syntax::Program) -> Result<()> {
 }
 
 fn check_record(s: &Struct, declarations: Declarations<'_>, session: &mut Session) -> Result<()> {
+    if s.refined_scalar()
+        .is_some_and(|base| !matches!(base, Type::Machine(_) | Type::Bool | Type::Int | Type::Nat))
+    {
+        return Err(format!(
+            "line {}: scalar refinements require an integer or bool base type",
+            s.line
+        ));
+    }
     let structs = declarations.structs;
     let mut ctx = Context::new(declarations, session);
     ctx.locals.module = s.module.clone();

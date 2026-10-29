@@ -13,8 +13,10 @@ This initial backend supports machine integers, Boolean/unit values, functions
 with scalar results, conditionals, arithmetic and comparisons, local scalar
 arrays, borrowed references, assignments, and invariant-checked loops.
 Proofs, ideal bindings, and contracts are erased after verification.
-Records with scalar fields and no destructor, including constructor results, are supported.
-Owning pointers, raw unions, aggregate function parameters and array results,
+Records with scalar fields and no destructor, including constructor results,
+by-value parameters, and local arrays of those records, are supported. This also
+covers named scalar refinements such as `type NonZero usize where self != 0;`.
+Owning pointers, raw unions, by-value array parameters and array results,
 reference results, Linux syscalls, and atomics are currently rejected with target
 diagnostics. Compilation checks all runtime declarations, including unused ones.
 

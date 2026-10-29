@@ -204,12 +204,24 @@ impl Context<'_> {
         let element = initial.ty();
         let syntax = syntax_type(&element, line)?;
         let uninitialized = self.shape_initializer(&initial);
-        if !payload_type(&syntax, self.declarations.structs)
-            || !runtime_type(&syntax, self.declarations.structs)
-            || !uninitialized
-                && (self.symbol_is_move_only(&initial) || !self.history_element(&element))
-        {
-            return Err("filled allocation requires copyable scalar or flat scalar-record elements without references".into());
+        if !payload_type(&syntax, self.declarations.structs) {
+            return Err(
+                "filled allocation cannot currently store elements containing borrowed references"
+                    .into(),
+            );
+        }
+        if !runtime_type(&syntax, self.declarations.structs) {
+            return Err("filled allocation requires an element type with a runtime layout".into());
+        }
+        if !uninitialized && self.symbol_is_move_only(&initial) {
+            let name = syntax::display::expression(&Expr {
+                kind: Kind::Type(syntax.clone()),
+                line,
+            });
+            return Err(format!("filled allocation repeats its initializer, but {name} does not implement Copy; initialize vacant slots individually for move-only elements"));
+        }
+        if !uninitialized && !self.history_element(&element) {
+            return Err("filled allocation currently supports scalar-only records; nested arrays, owning pointers, and runtime cleanup need individual slot initialization".into());
         }
         let stride = crate::compiler::layout::of(&syntax, self.declarations.structs)?.size;
         let maximum = (crate::compiler::layout::MAX_ALLOCATION_BYTES / stride as u64) as i128;
@@ -342,6 +354,18 @@ impl Context<'_> {
 #[cfg(test)]
 mod filled_tests {
     use super::*;
+
+    #[test]
+    fn filled_allocation_errors_identify_the_failed_requirement() {
+        for (source, expected) in [
+            ("type Item struct {n: usize} fn main() {let p = alloc(2, Item{n: 1});}", "Item does not implement Copy"),
+            ("fn main() {let n: usize = 1; let p = alloc(2, &n);}", "containing borrowed references"),
+            ("type Item struct {data: [usize; 2]} impl Copy for Item {} fn main() {let p = alloc(2, Item{data: [1, 2]});}", "nested arrays"),
+        ] {
+            let error = verify(source).unwrap_err();
+            assert!(error.contains(expected), "{error}");
+        }
+    }
 
     #[test]
     fn runtime_planes_initialize_every_cell_and_replay() {

@@ -463,6 +463,17 @@ pub struct Struct {
 }
 
 impl Struct {
+    /// Source scalar refinements use the existing invariant-bearing storage
+    /// representation. This field name cannot be written as a source identifier.
+    pub(crate) const SCALAR_VALUE: &'static str = "$value";
+
+    pub(crate) fn refined_scalar(&self) -> Option<&Type> {
+        match self.fields.as_slice() {
+            [(name, ty)] if name == Self::SCALAR_VALUE => Some(ty),
+            _ => None,
+        }
+    }
+
     pub fn runtime_fields(&self) -> impl Iterator<Item = &(String, Type)> {
         self.fields
             .iter()
@@ -1207,11 +1218,18 @@ impl Parser {
         if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
             return Err(self.err("struct names must start with an uppercase letter"));
         }
-        self.expect("struct")?;
-        self.expect("{")?;
         let mut fields = Vec::new();
         let mut ideal_fields = std::collections::BTreeSet::new();
-        if !self.eat("}") {
+        let refined = !self.eat("struct");
+        if refined {
+            fields.push((Struct::SCALAR_VALUE.into(), self.ty()?));
+            if self.peek() != "where" {
+                return Err(self.err("a refined scalar type requires a where clause"));
+            }
+        } else {
+            self.expect("{")?;
+        }
+        if !refined && !self.eat("}") {
             loop {
                 let erased = self.eat("ideal");
                 let n = self.name()?;

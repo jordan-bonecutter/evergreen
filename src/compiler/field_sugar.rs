@@ -6,8 +6,22 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type Scope = BTreeMap<String, Type>;
 
+mod refinements;
+#[cfg(test)]
+mod tests;
+
 pub(super) fn expand(program: &mut Program) {
     let shapes = Shapes {
+        refinements: program
+            .structs
+            .iter()
+            .filter_map(|s| Some((s.name.clone(), s.refined_scalar()?.clone())))
+            .collect(),
+        all_parameters: program
+            .functions
+            .iter()
+            .map(|f| (f.name.clone(), f.params.clone()))
+            .collect(),
         records: program
             .structs
             .iter()
@@ -53,10 +67,10 @@ pub(super) fn expand(program: &mut Program) {
             shapes.ty(ty, &scope);
         }
         for (_, fact) in &mut record.facts {
-            shapes.expr(fact, &scope, None);
+            shapes.expr(fact, &scope, Some(&Type::Bool));
         }
         if let Some(invariant) = &mut record.invariant {
-            shapes.expr(invariant, &scope, None);
+            shapes.expr(invariant, &scope, Some(&Type::Bool));
         }
     }
     for function in &mut program.functions {
@@ -68,6 +82,8 @@ pub(super) fn expand(program: &mut Program) {
 }
 
 struct Shapes {
+    refinements: BTreeMap<String, Type>,
+    all_parameters: BTreeMap<String, Vec<(String, Type)>>,
     records: BTreeMap<String, Vec<(String, Type)>>,
     returns: Scope,
     parameters: BTreeMap<String, Vec<(String, Type)>>,
@@ -298,6 +314,12 @@ impl Shapes {
     }
 
     fn expr(&self, expr: &mut Expr, scope: &Scope, expected: Option<&Type>) -> Option<Type> {
+        let hint = expected.and_then(|ty| self.refined_base(ty)).or(expected);
+        let actual = self.expr_inner(expr, scope, hint);
+        self.refine_expression(expr, actual, expected)
+    }
+
+    fn expr_inner(&self, expr: &mut Expr, scope: &Scope, expected: Option<&Type>) -> Option<Type> {
         match &mut expr.kind {
             Kind::Forall {
                 variable,
@@ -344,7 +366,11 @@ impl Shapes {
                     .map(|(_, t)| t.clone())
             }
             Kind::Unary(op, value) => {
-                let ty = self.expr(value, scope, None)?;
+                let ty = if matches!(op.as_str(), "-" | "!") {
+                    self.scalar_expression(value, scope, expected)
+                } else {
+                    self.expr(value, scope, None)
+                }?;
                 match (op.as_str(), ty) {
                     ("&", ty) => Some(Type::Ref(Box::new(ty))),
                     ("*", Type::Ref(inner) | Type::Unique(inner) | Type::Shared(inner)) => {
@@ -356,7 +382,7 @@ impl Shapes {
             }
             Kind::Index(base, index) => {
                 let ty = self.expr(base, scope, None);
-                self.expr(index, scope, None);
+                self.scalar_expression(index, scope, None);
                 match ty {
                     Some(Type::Array(inner, _)) => Some(*inner),
                     _ => None,
@@ -365,8 +391,12 @@ impl Shapes {
             Kind::Call(name, args) => {
                 let mut first = None;
                 let mut types = Vec::new();
+                let declared = self
+                    .all_parameters
+                    .get(name)
+                    .filter(|params| params.len() == args.len());
                 for (i, arg) in args.iter_mut().enumerate() {
-                    let ty = self.expr(arg, scope, None);
+                    let ty = self.expr(arg, scope, declared.map(|params| &params[i].1));
                     if i == 0 {
                         first = ty.clone();
                     }
@@ -387,6 +417,7 @@ impl Shapes {
                     let Type::Named(target) = ty else {
                         return None;
                     };
+                    let receiver_type = Type::Named(target.clone());
                     let (function, result, kind) =
                         self.methods.get(&(target, method.to_owned()))?;
                     if *kind == MethodReceiver::Reference {
@@ -394,11 +425,23 @@ impl Shapes {
                             line: receiver.line,
                             kind: Kind::Unary("&".into(), Box::new(receiver)),
                         };
+                        types[0] = Some(Type::Ref(Box::new(receiver_type)));
+                    } else {
+                        types[0] = Some(receiver_type);
                     }
                     args[0] = receiver;
                     *name = function.clone();
                     self.infer_lengths(name, args, &types, scope);
+                    self.refine_arguments(name, args, &types);
                     return Some(result.clone());
+                }
+                self.refine_arguments(name, args, &types);
+                if matches!(name.as_str(), "integer" | "nat") {
+                    for (arg, ty) in args.iter_mut().zip(&types) {
+                        if let Some(base) = ty.as_ref().and_then(|ty| self.refined_base(ty)) {
+                            self.refine_expression(arg, ty.clone(), Some(base));
+                        }
+                    }
                 }
                 if let Some(machine) = MachineInt::parse(name) {
                     return Some(Type::Machine(machine));
@@ -460,8 +503,13 @@ impl Shapes {
                 self.expr(tail, &local, expected)
             }
             Kind::Binary(op, left, right) => {
-                let ty = self.expr(left, scope, None);
-                self.expr(right, scope, None);
+                let hint = if matches!(op.as_str(), "+" | "-" | "*") {
+                    expected
+                } else {
+                    None
+                };
+                let ty = self.scalar_expression(left, scope, hint);
+                self.scalar_expression(right, scope, ty.as_ref().or(hint));
                 if matches!(
                     op.as_str(),
                     "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||" | "=>"

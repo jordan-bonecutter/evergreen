@@ -2,6 +2,9 @@
 
 use super::{Expr, GenericArgument, Kind, Type};
 
+mod substitution;
+pub(crate) use substitution::substituted;
+
 pub(crate) fn expression(expr: &Expr) -> String {
     show(expr, &mut 80)
 }
@@ -12,7 +15,14 @@ fn show(expr: &Expr, budget: &mut usize) -> String {
     }
     *budget -= 1;
     match &expr.kind {
+        Kind::Field(base, field) if field == super::Struct::SCALAR_VALUE => show(base, budget),
         Kind::Name(name) => name.clone(),
+        Kind::Constant(integer, value) if *value == integer.bounds().1 && *value != 0 => {
+            format!("{}::MAX", type_name(&Type::Machine(*integer), budget))
+        }
+        Kind::Constant(integer, value) if *value == integer.bounds().0 && *value != 0 => {
+            format!("{}::MIN", type_name(&Type::Machine(*integer), budget))
+        }
         Kind::Number(value) | Kind::Constant(_, value) => value.to_string(),
         Kind::Bool(value) => value.to_string(),
         Kind::Unit => "()".into(),

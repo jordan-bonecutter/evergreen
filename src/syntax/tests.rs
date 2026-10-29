@@ -185,7 +185,10 @@ fn imports_are_explicit_package_dependencies_before_declarations() {
 #[test]
 fn mistaken_refined_alias_reports_the_supported_alternative() {
     let error = parse("type NonZero = usize where self != 0; fn main() -> usize {0}").unwrap_err();
-    assert!(error.contains("type aliases are not supported"), "{error}");
+    assert!(
+        error.contains("type aliases with '=' are not supported"),
+        "{error}"
+    );
     assert!(error.contains("struct with a where clause"), "{error}");
 }
 #[test]

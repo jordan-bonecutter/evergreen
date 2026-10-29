@@ -61,7 +61,9 @@ fn supported(ty: &Type) -> Result<()> {
     match ty {
         Type::Machine(_) | Type::Bool | Type::Unit | Type::Named(_) => Ok(()),
         Type::Ref(inner) => supported(inner),
-        Type::Array(inner, _) if scalar(inner) => Ok(()),
+        Type::Array(inner, _) if scalar(inner) || matches!(inner.as_ref(), Type::Named(_)) => {
+            Ok(())
+        }
         _ => Err(format!(
             "WebAssembly target does not yet support runtime type {ty:?}"
         )),
@@ -666,7 +668,7 @@ fn emit_inner(program: &VerifiedProgram) -> Result<Vec<u8>> {
             .filter(|(name, _)| !function.ideal_params.contains(name))
         {
             supported(ty)?;
-            if layout::aggregate(ty) {
+            if layout::aggregate(ty) && !matches!(ty, Type::Named(_)) {
                 return Err(
                     "WebAssembly target currently requires arrays to be passed by reference".into(),
                 );

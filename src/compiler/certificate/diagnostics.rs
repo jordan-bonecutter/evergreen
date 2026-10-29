@@ -26,6 +26,10 @@ impl Session {
         self.failure(message).obligation = Some(goal);
     }
 
+    pub(crate) fn note_source_obligation(&mut self, message: &str, goal: String) {
+        self.failure(message).source_obligation = Some(goal.into_boxed_str());
+    }
+
     pub(crate) fn note_requirement(&mut self, message: &str, requirement: Requirement) {
         self.failure(message).requirement = Some(Box::new(requirement));
     }

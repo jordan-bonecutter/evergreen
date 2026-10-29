@@ -1,0 +1,30 @@
+type NonZero usize where self != 0;
+
+impl NonZero {
+    fn new(x: usize) -> Self
+        where
+            x != 0
+        ensures
+            result == x
+    {
+        x
+    }
+}
+
+fn decrement(value: &usize)
+    where
+        *value > 1
+    modifies(value)
+    ensures
+        *value == old(*value) - 1
+{
+    *value = *value - 1;
+}
+
+fn main() -> usize {
+    let value = NonZero::new(43);
+    decrement(&value);
+    proof same_size: size_of(NonZero) == size_of(usize);
+    proof same_alignment: align_of(NonZero) == align_of(usize);
+    value
+}

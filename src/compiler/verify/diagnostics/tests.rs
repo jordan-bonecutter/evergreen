@@ -14,7 +14,7 @@ fn equality_diagnostics_hide_the_pair_of_internal_inequalities() {
         Formula::Ge(value.clone()).and(Formula::Ge(Linear::number(10).sub(&value).unwrap()));
     assert_eq!(
         super::obligation(&bounded, &BTreeMap::new()),
-        "(value >= 0 && -value + 10 >= 0)"
+        "(value >= 0 && value <= 10)"
     );
 
     let source = "type NonZero struct {data: usize} where data != 0; impl NonZero {fn new(x: usize) -> Self where x != 0 {return NonZero {data: x};}} fn main() -> usize {let my_nonzero = NonZero::new(usize::MAX + 1); 0}";
@@ -41,6 +41,32 @@ fn typed_unknowns_keep_distinct_values_distinguishable() {
         super::obligation(&Formula::Ge(first), &types),
         "unknown u8 >= 0"
     );
+}
+
+#[test]
+fn unknown_machine_bounds_are_printed_as_source_comparisons() {
+    let source = "fn increment(n: usize) -> usize where n < usize::MAX ensures result == n + 1 {n + 1} fn main() -> usize {increment(usize::MAX + 1)}";
+    let error = verify_diagnostic(source).unwrap_err();
+    assert_eq!(
+        error.obligation.as_deref(),
+        Some("unknown usize < usize::MAX")
+    );
+    assert_eq!(
+        error.source_obligation.as_deref(),
+        Some("((usize::MAX + 1) < usize::MAX)")
+    );
+    assert_eq!(error.requirement.unwrap().text, "(n < usize::MAX)");
+}
+
+#[test]
+fn source_obligations_preserve_proof_syntax_and_substitute_arguments_simultaneously() {
+    let source = "fn require(a: usize, b: usize) where a < b {} fn main() {let b: usize = 42; require(b, 1);}";
+    let error = verify_diagnostic(source).unwrap_err();
+    assert_eq!(error.source_obligation.as_deref(), Some("(b < 1)"));
+    let error = verify_diagnostic("fn main() {let x: usize = 42; proof _: x == 7;}").unwrap_err();
+    assert_eq!(error.source_obligation.as_deref(), Some("(x == 7)"));
+    let error = verify_diagnostic("fn main() {not_declared();}").unwrap_err();
+    assert!(error.source_obligation.is_none());
 }
 
 #[test]

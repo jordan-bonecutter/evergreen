@@ -177,8 +177,15 @@ constructs it; `Null(value)` requires a proof that the input is zero, and
 conversions fail. It has no dereference, borrowing, allocation, or destruction
 authority over another plane. It can be used as the empty case of a raw union
 such as `Null | unique(T, capacity)`. Its layout and Copy permission are declared
-in the target file. This built-in singleton does not enable general scalar
-refinement aliases. See `examples/null.evg`.
+in the target file. See `examples/null.evg`.
+
+Named scalar refinements use `type NonZero usize where self != 0;`, without an
+equals sign or a source-level wrapper field. Construction and replacement prove
+the condition; arithmetic uses the underlying scalar. A borrow as `&usize` still
+has to preserve the enclosing refinement when written. Layouts retain the base
+scalar's size and alignment, and copying the named value requires an explicit
+`impl Copy`. See [refined scalars](refined-scalars.md) and
+`examples/refined_scalar.evg`.
 
 `integer` and `nat` are proof-only mathematical integers and naturals. They may occur
 in `ideal fn` and `ideal type` definitions and proof expressions, but cannot be
@@ -2410,9 +2417,14 @@ The underline currently covers the source line rather than a precise token span.
 
 A failed invariant includes the declared predicate and its definition location.
 Failed preconditions and postconditions similarly identify their declarations.
-The normalized unproved obligation is also printed; failure to prove it does not
-necessarily mean the statement is false. Proof diagnostics do not change proof
-search or the contents of a certificate.
+The unproved obligation uses source syntax when available. Call preconditions
+substitute the supplied argument expressions without evaluating them again;
+claims containing local binders retain their declaration spelling to avoid
+variable capture. Explicit proof failures retain the written proposition.
+Normalized formulas remain in the structured diagnostic for tooling, with typed
+unknowns and readable comparisons as the fallback presentation. Failure to prove
+a statement does not mean it is false. Diagnostics do not change proof search or
+the contents of a certificate.
 
 Colors are automatic when stderr is a terminal. `--color always` forces ANSI
 colors, `--color never` disables them, and `NO_COLOR` disables automatic colors.

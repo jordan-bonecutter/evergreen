@@ -67,7 +67,11 @@ pub fn render(diagnostic: &Diagnostic, files: &[PathBuf], input: &str, color: bo
             );
         }
     }
-    if let Some(goal) = &diagnostic.obligation {
+    if let Some(goal) = diagnostic
+        .source_obligation
+        .as_deref()
+        .or(diagnostic.obligation.as_deref())
+    {
         let _ = write!(
             out,
             "\n  {blue}={reset} unproved obligation: {}",

@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn obligation(goal: &Formula, types: &BTreeMap<String, Ty>) -> String {
     let labels = scalar_labels(goal, types);
-    show(goal, &mut 64, &labels)
+    show(goal, &mut 64, &labels, types)
 }
 
 fn scalar_labels(goal: &Formula, types: &BTreeMap<String, Ty>) -> BTreeMap<String, String> {
@@ -63,7 +63,12 @@ fn scalar_labels(goal: &Formula, types: &BTreeMap<String, Ty>) -> BTreeMap<Strin
     labels
 }
 
-fn show(goal: &Formula, budget: &mut usize, labels: &BTreeMap<String, String>) -> String {
+fn show(
+    goal: &Formula,
+    budget: &mut usize,
+    labels: &BTreeMap<String, String>,
+    types: &BTreeMap<String, Ty>,
+) -> String {
     if *budget == 0 {
         return "…".into();
     }
@@ -71,7 +76,7 @@ fn show(goal: &Formula, budget: &mut usize, labels: &BTreeMap<String, String>) -
     match goal {
         Formula::True => "true".into(),
         Formula::False => "false".into(),
-        Formula::Ge(row) => format!("{} >= 0", linear(row, labels)),
+        Formula::Ge(row) => inequality(row, labels, types),
         Formula::Predicate { symbol, arguments } => format!(
             "{symbol}({})",
             arguments
@@ -86,22 +91,22 @@ fn show(goal: &Formula, budget: &mut usize, labels: &BTreeMap<String, String>) -
         }
         Formula::And(a, b) => format!(
             "({} && {})",
-            show(a, budget, labels),
-            show(b, budget, labels)
+            show(a, budget, labels, types),
+            show(b, budget, labels, types)
         ),
         Formula::Or(a, b) => format!(
             "({} || {})",
-            show(a, budget, labels),
-            show(b, budget, labels)
+            show(a, budget, labels, types),
+            show(b, budget, labels, types)
         ),
         Formula::Not(value) if equality_row(value).is_some() => {
             format!("{} != 0", linear(equality_row(value).unwrap(), labels))
         }
-        Formula::Not(value) => format!("!({})", show(value, budget, labels)),
+        Formula::Not(value) => format!("!({})", show(value, budget, labels, types)),
         Formula::Implies(a, b) => format!(
             "({} => {})",
-            show(a, budget, labels),
-            show(b, budget, labels)
+            show(a, budget, labels, types),
+            show(b, budget, labels, types)
         ),
         Formula::Forall {
             variable,
@@ -109,10 +114,43 @@ fn show(goal: &Formula, budget: &mut usize, labels: &BTreeMap<String, String>) -
             body,
         } => format!(
             "forall({variable}) where {} {{{}}}",
-            show(domain, budget, labels),
-            show(body, budget, labels)
+            show(domain, budget, labels, types),
+            show(body, budget, labels, types)
         ),
     }
+}
+
+fn inequality(
+    row: &Linear,
+    labels: &BTreeMap<String, String>,
+    types: &BTreeMap<String, Ty>,
+) -> String {
+    if row.terms.len() == 1 {
+        let (name, coefficient) = row.terms.first_key_value().unwrap();
+        let label = labels.get(name).unwrap_or(name);
+        if *coefficient == -1 {
+            if let Some(Ty::Machine(integer)) = types.get(name) {
+                let (_, maximum) = integer.bounds();
+                if row.constant.checked_add(1) == Some(maximum) {
+                    let constant = crate::syntax::Expr {
+                        kind: crate::syntax::Kind::Constant(*integer, maximum),
+                        line: 0,
+                    };
+                    return format!(
+                        "{label} < {}",
+                        crate::syntax::display::expression(&constant)
+                    );
+                }
+            }
+            return format!("{label} <= {}", row.constant);
+        }
+        if *coefficient == 1 {
+            if let Some(bound) = row.constant.checked_neg() {
+                return format!("{label} >= {bound}");
+            }
+        }
+    }
+    format!("{} >= 0", linear(row, labels))
 }
 
 // Equality is encoded by opposite inequalities in the arithmetic kernel.
@@ -174,6 +212,8 @@ impl super::Context<'_> {
         origin: crate::shared::diagnostics::SourceOrigin,
         kind: &'static str,
     ) -> String {
+        self.session
+            .note_source_obligation(&error, crate::syntax::display::expression(expression));
         self.session.note_requirement(
             &error,
             crate::shared::diagnostics::Requirement {
