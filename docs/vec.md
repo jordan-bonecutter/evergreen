@@ -262,7 +262,9 @@ zero-capacity case is explicitly separate so the contract does not observe an
 array through `Null`. Ordinary `get`/`pop` reads can now recover scalar fields
 of reference-free payloads from those checked range guarantees, including records
 with destructors. [buffer_record_values.evg](../examples/buffer_record_values.evg)
-proves the popped tag is still 42 after reallocation and drops both records once.
+proves that both a borrowed read and the popped tag are still 42 after
+reallocation and drops both records once. It verifies and replays within the
+unchanged work budget, and its native executable returns 42. Quantified bounds
+proved from their domains alone reuse closed proofs; implicit contract proof
+planning also avoids repeating its initial failed lookup.
 Pointer-bearing payload identity recovery and public Vec migration remain work.
-A combined record example using both get and pop after growth still exceeds the
-current work limit during cleanup; each read path verifies separately.

@@ -7,8 +7,9 @@ fn main() -> usize {
     values.push(Item {tag: 7});
     values.push(Item {tag: 42});
     values = values.reallocate(4);
+    let seen = values.get(1).tag;
     let item = values.pop();
-    proof preserved: item.tag == 42;
+    proof preserved: seen == 42 && item.tag == 42;
     let answer = item.tag;
     drop(item);
     drop(values);

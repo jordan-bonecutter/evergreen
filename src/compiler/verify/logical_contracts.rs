@@ -235,7 +235,10 @@ impl Context<'_> {
             if depth >= 64 || steps.len() >= 1024 {
                 return Err(format!("line {line}: logical contract proof limit reached"));
             }
-            if !part.is_arithmetic() && self.logical_assumption(part, subjects.as_ref())?.is_some()
+            // The root lookup above already failed in this same proof state.
+            if depth != 0
+                && !part.is_arithmetic()
+                && self.logical_assumption(part, subjects.as_ref())?.is_some()
             {
                 steps.push("omega".into());
                 continue;
