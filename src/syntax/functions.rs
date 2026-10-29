@@ -68,10 +68,11 @@ impl Parser {
         }
         let name = self.name()?;
         let generics = self.generic_parameters()?;
-        let mut parameters = self.function_parameters(receiver, method)?;
-        if parameters.receiver_pattern.is_some() && (by_reference || (!method && name != "drop")) {
-            return Err(self
-                .err("receiver patterns require a consuming method or fn drop inside impl Drop"));
+        let mut parameters = self.function_parameters(receiver)?;
+        if parameters.receiver_pattern.is_some() && (method || name != "drop") {
+            return Err(
+                self.err("a bare receiver pattern currently requires fn drop inside impl Drop")
+            );
         }
         if method {
             if parameters.values.iter().any(|(name, _)| name == "self") {
@@ -177,15 +178,10 @@ impl Parser {
         ))
     }
 
-    fn function_parameters(
-        &mut self,
-        receiver: Option<&str>,
-        method: bool,
-    ) -> Result<Parameters, String> {
+    fn function_parameters(&mut self, receiver: Option<&str>) -> Result<Parameters, String> {
         self.expect("(")?;
         let mut values = Vec::new();
         let mut ideal = Vec::new();
-        let mut receiver_pattern = None;
         if self.eat("{") {
             let target =
                 receiver.ok_or_else(|| self.err("receiver patterns require an impl scope"))?;
@@ -208,13 +204,12 @@ impl Parser {
                     }
                 }
             }
-            receiver_pattern = Some(fields);
-            if !method {
-                values.push(("self".into(), Type::Named(target.to_owned())));
-            }
-            if self.peek() != ")" {
-                self.expect(",")?;
-            }
+            self.expect(")")?;
+            return Ok(Parameters {
+                values: vec![("self".into(), Type::Named(target.to_owned()))],
+                ideal,
+                receiver_pattern: Some(fields),
+            });
         }
         if !self.eat(")") {
             loop {
@@ -242,7 +237,7 @@ impl Parser {
         Ok(Parameters {
             values,
             ideal,
-            receiver_pattern,
+            receiver_pattern: None,
         })
     }
 
