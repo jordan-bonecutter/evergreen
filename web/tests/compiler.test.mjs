@@ -100,12 +100,13 @@ test('record constructor results are copied before subsequent calls reuse the st
 });
 
 test('refined scalars preserve their condition through construction and borrowed writes', async () => {
-  const source = 'type NonZero usize where self != 0; impl Copy for NonZero {} fn id(x: NonZero) -> NonZero {x} fn main() -> usize {let n: NonZero = 42; id(n)}';
+  const source = 'type NonZero usize where self != 0; impl Copy for NonZero {} fn id(x: NonZero) -> NonZero {x} fn main() -> usize {let n: NonZero = NonZero(42); id(n)}';
   assert.equal((await execute(source)).result, '42');
-  assert.equal((await compile(source.replace('= 42', '= 0'))).metadata.ok, false);
-  const array = 'type NonZero usize where self != 0; fn main() -> usize {let values: [NonZero; 2] = [20, 22]; values[0] + values[1]}';
+  assert.equal((await execute('fn main() -> bool {true <=> (42 == 42)}')).result, 'true');
+  assert.equal((await compile(source.replace('NonZero(42)', 'NonZero(0)'))).metadata.ok, false);
+  const array = 'type NonZero usize where self != 0; fn main() -> usize {let values: [NonZero; 2] = [NonZero(20), NonZero(22)]; values[0] + values[1]}';
   assert.equal((await execute(array)).result, '42');
-  const borrow = 'type NonZero usize where self != 0; fn zero(x: &usize) modifies(x) ensures *x == 0 {*x = 0;} fn main() {let n: NonZero = 1; zero(&n);}';
+  const borrow = 'type NonZero usize where self != 0; fn zero(x: &usize) modifies(x) ensures *x == 0 {*x = 0;} fn main() {let n: NonZero = NonZero(1); zero(&n);}';
   assert.equal((await compile(borrow)).metadata.ok, false);
 });
 

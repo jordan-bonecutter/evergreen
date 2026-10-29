@@ -270,6 +270,7 @@ impl Engine {
                 )
             }
             GenericDeclaration::Record { mut definition, .. } => {
+                definition.display_type = Some(Type::Apply(name.to_owned(), actual.clone()));
                 if definition
                     .fields
                     .iter()

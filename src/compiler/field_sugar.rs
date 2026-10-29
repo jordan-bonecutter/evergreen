@@ -16,7 +16,7 @@ pub(super) fn expand_for(program: &mut Program, target: crate::compiler::TargetK
         refinements: program
             .structs
             .iter()
-            .filter_map(|s| Some((s.name.clone(), s.refined_scalar()?.clone())))
+            .filter_map(|s| Some((s.name.clone(), s.refined_base()?.clone())))
             .collect(),
         all_parameters: program
             .functions
@@ -219,6 +219,7 @@ impl Shapes {
             self.ty(ty, &scope);
         }
         self.ty(&mut function.ret, &scope);
+        self.refine_return_paths(function);
         for expr in function.pre.iter_mut().chain(function.decreases.iter_mut()) {
             self.expr(expr, &scope, None);
         }
@@ -351,13 +352,25 @@ impl Shapes {
             }
             Kind::Field(base, name) => {
                 let mut ty = self.expr(base, scope, None)?;
-                while let Type::Ref(inner) | Type::Unique(inner) | Type::Shared(inner) = ty {
-                    let operand = (**base).clone();
-                    **base = Expr {
-                        line: operand.line,
-                        kind: Kind::Unary("*".into(), Box::new(operand)),
-                    };
-                    ty = *inner;
+                loop {
+                    match ty {
+                        Type::Ref(inner) | Type::Unique(inner) | Type::Shared(inner) => {
+                            let operand = (**base).clone();
+                            **base = Expr {
+                                line: operand.line,
+                                kind: Kind::Unary("*".into(), Box::new(operand)),
+                            };
+                            ty = *inner;
+                        }
+                        _ if name != crate::syntax::Struct::REFINED_VALUE => {
+                            let Some(inner) = self.refined_base(&ty) else {
+                                break;
+                            };
+                            refinements::project(base);
+                            ty = inner.clone();
+                        }
+                        _ => break,
+                    }
                 }
                 let Type::Named(record) = ty else {
                     return None;
@@ -369,7 +382,7 @@ impl Shapes {
                     .map(|(_, t)| t.clone())
             }
             Kind::Unary(op, value) => {
-                let ty = if matches!(op.as_str(), "-" | "!") {
+                let ty = if matches!(op.as_str(), "-" | "!" | "*") {
                     self.scalar_expression(value, scope, expected)
                 } else {
                     self.expr(value, scope, None)
@@ -384,7 +397,7 @@ impl Shapes {
                 }
             }
             Kind::Index(base, index) => {
-                let ty = self.expr(base, scope, None);
+                let ty = self.scalar_expression(base, scope, None);
                 self.scalar_expression(index, scope, None);
                 match ty {
                     Some(Type::Array(inner, _)) => Some(*inner),
@@ -515,7 +528,7 @@ impl Shapes {
                 self.scalar_expression(right, scope, ty.as_ref().or(hint));
                 if matches!(
                     op.as_str(),
-                    "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||" | "=>"
+                    "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||" | "=>" | "<=>"
                 ) {
                     Some(Type::Bool)
                 } else {

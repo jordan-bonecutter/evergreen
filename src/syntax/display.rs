@@ -15,7 +15,7 @@ fn show(expr: &Expr, budget: &mut usize) -> String {
     }
     *budget -= 1;
     match &expr.kind {
-        Kind::Field(base, field) if field == super::Struct::SCALAR_VALUE => show(base, budget),
+        Kind::Field(base, field) if field == super::Struct::REFINED_VALUE => show(base, budget),
         Kind::Name(name) => name.clone(),
         Kind::Constant(integer, value) if *value == integer.bounds().1 && *value != 0 => {
             format!("{}::MAX", type_name(&Type::Machine(*integer), budget))

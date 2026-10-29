@@ -49,6 +49,8 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, String> {
             while i < chars.len() && chars[i].is_ascii_digit() {
                 i += 1;
             }
+        } else if c == '<' && chars.get(i + 1) == Some(&'=') && chars.get(i + 2) == Some(&'>') {
+            i += 3;
         } else if "(){}[],:;.+-*/%<>=!&|".contains(c) {
             i += 1;
             if i < chars.len()

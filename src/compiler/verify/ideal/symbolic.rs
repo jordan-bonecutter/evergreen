@@ -106,9 +106,9 @@ pub(super) fn binary(
             "&&" => a.and(b),
             "||" => a.or(b),
             "=>" => a.not().or(b),
-            "==" | "!=" => {
+            "==" | "!=" | "<=>" => {
                 let equal = a.clone().and(b.clone()).or(a.not().and(b.not()));
-                if op == "==" {
+                if op != "!=" {
                     equal
                 } else {
                     equal.not()

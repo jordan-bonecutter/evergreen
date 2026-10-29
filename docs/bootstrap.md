@@ -185,9 +185,11 @@ authority over another plane. It can be used as the empty case of a raw union
 such as `Null | unique(T, capacity)`. Its layout and Copy permission are declared
 in the target file. See `examples/null.evg`.
 
-Named scalar refinements use `type NonZero usize where self != 0;`, without an
-equals sign or a source-level wrapper field. Construction and replacement prove
-the condition; arithmetic uses the underlying scalar. A borrow as `&usize` still
+Named refinements use `type NonZero usize where self != 0;`, without an
+equals sign or a source-level wrapper field. Explicit construction with
+`NonZero(value)` proves the condition; implicit wrapping is rejected. There is no
+separate base-type whitelist: ordinary layout and ownership checks apply.
+Arithmetic uses the underlying scalar. A borrow as `&usize` still
 has to preserve the enclosing refinement when written. Layouts retain the base
 scalar's size and alignment, and copying the named value requires an explicit
 `impl Copy`. See [refined scalars](refined-scalars.md) and

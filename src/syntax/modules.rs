@@ -115,6 +115,11 @@ impl Scope<'_> {
                 }
             }
             Kind::Call(name, args) => {
+                if name == "Self" {
+                    if let Some(target) = self.self_type {
+                        *name = target.to_owned();
+                    }
+                }
                 if name == "shape" {
                     for argument in args {
                         self.type_expression(argument);
@@ -338,6 +343,15 @@ pub(crate) fn qualify(program: &mut Program) {
                 .map(|s| defined(s.module.as_deref(), &s.name)),
         )
         .collect::<BTreeSet<_>>();
+    let constructors = program
+        .structs
+        .iter()
+        .chain(program.generics.iter().filter_map(|d| match d {
+            GenericDeclaration::Record { definition, .. } => Some(definition.as_ref()),
+            _ => None,
+        }))
+        .filter(|s| s.refined_base().is_some())
+        .map(|s| defined(s.module.as_deref(), &s.name));
     let functions = program
         .functions
         .iter()
@@ -370,6 +384,7 @@ pub(crate) fn qualify(program: &mut Program) {
                 .iter()
                 .map(|s| defined(s.module.as_deref(), &s.name)),
         )
+        .chain(constructors)
         .collect::<BTreeSet<_>>();
     for implementation in &mut program.copy_impls {
         implementation.target = resolve(

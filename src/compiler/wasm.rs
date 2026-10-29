@@ -69,7 +69,11 @@ fn supported(ty: &Type) -> Result<()> {
             Ok(())
         }
         _ => Err(format!(
-            "WebAssembly target does not yet support runtime type {ty:?}"
+            "WebAssembly target does not yet support runtime type {}",
+            crate::syntax::display::expression(&Expr {
+                kind: Kind::Type(ty.clone()),
+                line: 0
+            })
         )),
     }
 }
@@ -224,7 +228,7 @@ impl Emitter<'_> {
             Kind::Binary(op, _, _)
                 if matches!(
                     op.as_str(),
-                    "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||" | "=>"
+                    "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||" | "=>" | "<=>"
                 ) =>
             {
                 Some(Type::Bool)
@@ -502,7 +506,7 @@ impl Emitter<'_> {
             }
             Kind::Binary(op, a, b) => {
                 let arithmetic = matches!(op.as_str(), "+" | "-" | "*");
-                let logical = matches!(op.as_str(), "&&" | "||" | "=>");
+                let logical = matches!(op.as_str(), "&&" | "||" | "=>" | "<=>");
                 let operand = if logical {
                     Type::Bool
                 } else {
@@ -520,7 +524,7 @@ impl Emitter<'_> {
                     "*" => 0x7e,
                     "&&" => 0x83,
                     "||" => 0x84,
-                    "==" => 0x51,
+                    "==" | "<=>" => 0x51,
                     "!=" => 0x52,
                     "<" => {
                         if signed {
@@ -557,7 +561,7 @@ impl Emitter<'_> {
                         ))
                     }
                 });
-                if !arithmetic && !logical {
+                if (!arithmetic && !logical) || op == "<=>" {
                     self.code.push(0xad);
                 }
                 if arithmetic {

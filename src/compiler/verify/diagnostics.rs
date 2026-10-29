@@ -3,6 +3,8 @@
 use super::{Formula, Linear, Ty};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod types;
+
 pub(super) fn obligation(goal: &Formula, types: &BTreeMap<String, Ty>) -> String {
     let labels = scalar_labels(goal, types);
     show(goal, &mut 64, &labels, types)

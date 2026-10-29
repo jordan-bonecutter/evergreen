@@ -7,7 +7,7 @@ impl NonZero {
         ensures
             result == x
     {
-        x
+        NonZero(x)
     }
 }
 

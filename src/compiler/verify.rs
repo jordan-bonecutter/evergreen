@@ -497,7 +497,18 @@ fn place_index_expression(e: &Expr) -> bool {
         Kind::Binary(op, a, b)
             if matches!(
                 op.as_str(),
-                "+" | "-" | "*" | "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||" | "=>"
+                "+" | "-"
+                    | "*"
+                    | "=="
+                    | "!="
+                    | "<"
+                    | "<="
+                    | ">"
+                    | ">="
+                    | "&&"
+                    | "||"
+                    | "=>"
+                    | "<=>"
             ) =>
         {
             place_index_expression(a) && place_index_expression(b)
@@ -1461,9 +1472,27 @@ impl<'a> Context<'a> {
                 self.compatible(a, b, line)?;
                 self.prove(&equal(n, m)?, "array length equality", line)
             }
-            _ => Err(format!(
-                "line {line}: type mismatch: expected {expected:?}, got {got:?}"
-            )),
+            _ => {
+                let expected_name = self.diagnostic_type(expected);
+                let got_name = self.diagnostic_type(got);
+                let help = match expected {
+                    Ty::Record(name)
+                        if self
+                            .declarations
+                            .structs
+                            .get(name)
+                            .is_some_and(|s| s.refined_base().is_some()) =>
+                    {
+                        format!(
+                            "; construct {expected_name} explicitly with {expected_name}(value)"
+                        )
+                    }
+                    _ => String::new(),
+                };
+                Err(format!(
+                    "line {line}: type mismatch: expected {expected_name}, got {got_name}{help}"
+                ))
+            }
         }
     }
 
@@ -2082,7 +2111,7 @@ impl<'a> Context<'a> {
             Kind::Binary(op, _, _)
                 if matches!(
                     op.as_str(),
-                    "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||" | "=>"
+                    "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||" | "=>" | "<=>"
                 ) =>
             {
                 Some(Ty::Bool)
@@ -2877,13 +2906,14 @@ impl<'a> Context<'a> {
                     Ok(Symbol::Number(ty, n.scale(-1)?))
                 }
             }
-            Kind::Binary(op, a, b) if matches!(op.as_str(), "&&" | "||" | "=>") => {
+            Kind::Binary(op, a, b) if matches!(op.as_str(), "&&" | "||" | "=>" | "<=>") => {
                 let a = self.eval(a, Some(&Ty::Bool))?.proposition()?;
                 // Logical expressions are pure. Both operands must be well-defined.
                 let b = self.eval(b, Some(&Ty::Bool))?.proposition()?;
                 Ok(Symbol::Bool(match op.as_str() {
                     "&&" => Formula::And(Box::new(a), Box::new(b)),
                     "=>" => Formula::Implies(Box::new(a), Box::new(b)),
+                    "<=>" => self.symbol_equal(&Symbol::Bool(a), &Symbol::Bool(b))?,
                     _ => Formula::Or(Box::new(a), Box::new(b)),
                 }))
             }

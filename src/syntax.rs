@@ -463,6 +463,8 @@ impl Statement {
 #[derive(Clone, Debug)]
 pub struct Struct {
     pub(crate) source: SourceOrigin,
+    /// Source spelling of a specialized type, for diagnostics only.
+    pub(crate) display_type: Option<Type>,
     pub copy: bool,
     pub name: String,
     pub fields: Vec<(String, Type)>,
@@ -476,13 +478,13 @@ pub struct Struct {
 }
 
 impl Struct {
-    /// Source scalar refinements use the existing invariant-bearing storage
+    /// Source refinements use the existing invariant-bearing storage
     /// representation. This field name cannot be written as a source identifier.
-    pub(crate) const SCALAR_VALUE: &'static str = "$value";
+    pub(crate) const REFINED_VALUE: &'static str = "$value";
 
-    pub(crate) fn refined_scalar(&self) -> Option<&Type> {
+    pub(crate) fn refined_base(&self) -> Option<&Type> {
         match self.fields.as_slice() {
-            [(name, ty)] if name == Self::SCALAR_VALUE => Some(ty),
+            [(name, ty)] if name == Self::REFINED_VALUE => Some(ty),
             _ => None,
         }
     }
@@ -1106,7 +1108,7 @@ impl Parser {
                 continue;
             }
             let prec = match self.peek() {
-                "=>" => 0,
+                "=>" | "<=>" => 0,
                 "||" => 1,
                 "&&" => 2,
                 "==" | "!=" => 3,
@@ -1241,9 +1243,9 @@ impl Parser {
         let mut ideal_fields = std::collections::BTreeSet::new();
         let refined = !self.eat("struct");
         if refined {
-            fields.push((Struct::SCALAR_VALUE.into(), self.ty()?));
+            fields.push((Struct::REFINED_VALUE.into(), self.ty()?));
             if self.peek() != "where" {
-                return Err(self.err("a refined scalar type requires a where clause"));
+                return Err(self.err("a refined type requires a where clause"));
             }
         } else {
             self.expect("{")?;
@@ -1293,6 +1295,7 @@ impl Parser {
             generics,
             Struct {
                 source: SourceOrigin::Input(0),
+                display_type: None,
                 copy: false,
                 name,
                 fields,

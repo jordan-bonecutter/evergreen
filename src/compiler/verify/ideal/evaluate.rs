@@ -374,7 +374,7 @@ impl<'a> Machine<'a, '_, '_> {
             }
             Kind::Binary(op, a, b) => {
                 let arithmetic = matches!(op.as_str(), "+" | "-" | "*");
-                let ty = if matches!(op.as_str(), "&&" | "||" | "=>") {
+                let ty = if matches!(op.as_str(), "&&" | "||" | "=>" | "<=>") {
                     Ty::Bool
                 } else {
                     (if arithmetic { expected } else { None })
@@ -515,11 +515,12 @@ fn binary<'a>(
     if symbolic::is_symbolic(&a) || symbolic::is_symbolic(&b) {
         return symbolic::binary(op, a, b, budget);
     }
-    if matches!(op, "&&" | "||" | "=>") {
+    if matches!(op, "&&" | "||" | "=>" | "<=>") {
         let (a, b) = (a.boolean()?, b.boolean()?);
         return Ok(Some(Value::Bool(match op {
             "&&" => a && b,
             "||" => a || b,
+            "<=>" => a == b,
             _ => !a || b,
         })));
     }

@@ -1,5 +1,5 @@
-//! Scalar refinements lower to ordinary invariant-bearing storage. Conversion
-//! proposes construction or projection; the verifier still checks every value,
+//! Refinements lower to ordinary invariant-bearing storage. Conversion
+//! proposes payload projection; the verifier still checks every value,
 //! borrow, enclosing invariant, and write footprint using its existing rules.
 
 use super::*;
@@ -21,16 +21,18 @@ impl Shapes {
             return actual;
         }
         if let Some(base) = actual.as_ref().and_then(|ty| self.refined_base(ty)) {
+            // Only project towards an actual underlying type. Unrelated
+            // nominal types must retain their names in the eventual error.
+            let mut target = base;
+            while Some(target) != expected {
+                let Some(inner) = self.refined_base(target) else {
+                    return actual;
+                };
+                target = inner;
+            }
             let base = base.clone();
             project(expr);
             return self.refine_expression(expr, Some(base), expected);
-        }
-        if let Some(Type::Named(name)) = expected {
-            if self.refinements.contains_key(name) {
-                let value = expr.clone();
-                expr.kind = Kind::Record(name.clone(), vec![(Struct::SCALAR_VALUE.into(), value)]);
-                return expected.cloned();
-            }
         }
         if let (Some(Type::Ref(actual)), Some(Type::Ref(expected))) = (&actual, expected) {
             if self
@@ -56,10 +58,11 @@ impl Shapes {
         scope: &Scope,
         expected: Option<&Type>,
     ) -> Option<Type> {
-        let actual = self.expr(expr, scope, expected);
-        if let Some(base) = actual.as_ref().and_then(|ty| self.refined_base(ty)) {
+        let mut actual = self.expr(expr, scope, expected);
+        while let Some(base) = actual.as_ref().and_then(|ty| self.refined_base(ty)) {
+            let base = base.clone();
             project(expr);
-            return Some(base.clone());
+            actual = Some(base);
         }
         actual
     }
@@ -88,9 +91,40 @@ impl Shapes {
             self.refine_expression(arg, actual.clone(), Some(ty));
         }
     }
+
+    pub(super) fn refine_return_paths(&self, function: &mut Function) {
+        use crate::syntax::ReturnProjection;
+        for borrow in &mut function.borrows {
+            let mut ty = &function.ret;
+            let mut path = Vec::new();
+            let mut steps = borrow.path.iter();
+            loop {
+                while let Some(base) = self.refined_base(ty) {
+                    path.push(ReturnProjection::Field(Struct::REFINED_VALUE.into()));
+                    ty = base;
+                }
+                let Some(step) = steps.next() else {
+                    borrow.path = path;
+                    break;
+                };
+                let next = match (ty, step) {
+                    (Type::Named(name), ReturnProjection::Field(field)) => self
+                        .records
+                        .get(name)
+                        .and_then(|fields| fields.iter().find(|(name, _)| name == field))
+                        .map(|(_, ty)| ty),
+                    (Type::Array(element, _), ReturnProjection::Index(_)) => Some(element.as_ref()),
+                    _ => None,
+                };
+                let Some(next) = next else { break };
+                path.push(step.clone());
+                ty = next;
+            }
+        }
+    }
 }
 
-fn project(expr: &mut Expr) {
+pub(super) fn project(expr: &mut Expr) {
     let value = expr.clone();
-    expr.kind = Kind::Field(Box::new(value), Struct::SCALAR_VALUE.into());
+    expr.kind = Kind::Field(Box::new(value), Struct::REFINED_VALUE.into());
 }

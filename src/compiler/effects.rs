@@ -168,7 +168,7 @@ fn expression(
             t
         }
         Kind::Binary(op, a, b) => {
-            if matches!(op.as_str(), "&&" | "||" | "=>") {
+            if matches!(op.as_str(), "&&" | "||" | "=>" | "<=>") {
                 expression(a, Some(&Type::Bool), env, functions, safe)?;
                 expression(b, Some(&Type::Bool), env, functions, safe)?;
                 Type::Bool

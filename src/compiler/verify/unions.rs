@@ -293,7 +293,8 @@ impl Context<'_> {
                 };
             }
             return Err(format!(
-                "line {line}: {expected:?} is not a raw union member"
+                "line {line}: {} is not a raw union member",
+                self.diagnostic_type(expected)
             ));
         }
         Ok(value)

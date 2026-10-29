@@ -44,7 +44,7 @@ impl Operation {
             "&&" => Self::Logical(Logical::And),
             "||" => Self::Logical(Logical::Or),
             "=>" => Self::Logical(Logical::Implies),
-            "==" => Self::Compare(Comparison::Equal),
+            "==" | "<=>" => Self::Compare(Comparison::Equal),
             "!=" => Self::Compare(Comparison::NotEqual),
             "<" => Self::Compare(Comparison::Less),
             "<=" => Self::Compare(Comparison::LessEqual),
@@ -108,7 +108,7 @@ impl Emitter<'_> {
     ) -> Result<Type> {
         let operation = Operation::parse(operator)?;
         let arithmetic = matches!(operation, Operation::Arithmetic(_));
-        let operand = if matches!(operation, Operation::Logical(_)) {
+        let operand = if operator == "<=>" || matches!(operation, Operation::Logical(_)) {
             Type::Bool
         } else {
             (if arithmetic { expected.cloned() } else { None })
