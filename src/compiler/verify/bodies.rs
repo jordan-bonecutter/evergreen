@@ -85,6 +85,25 @@ impl Context<'_> {
             }
             let inputs = self.storage.inputs.clone();
             let (value, post) = self.check_function_body(function, result_type, &inputs, false)?;
+            // Modified input types are implicit output contracts too. Re-prove
+            // their logical clauses before the callee's lexical proofs disappear.
+            for input in inputs
+                .iter()
+                .filter(|input| !function.modifies.is_empty() && input.guard == Formula::True)
+            {
+                let Ty::Record(name) = input.pointee.as_ref() else {
+                    continue;
+                };
+                let target = project(self.storage.memory.read(input.reference)?, &input.path)?;
+                if !matches!(target, Symbol::Record(actual, _) if actual == name) {
+                    continue;
+                }
+                self.charge_value_work(symbol_weight(target)?)?;
+                let target =
+                    project(self.storage.memory.read(input.reference)?, &input.path)?.clone();
+                returned_claims
+                    .extend(self.publish_checked_result_invariants(&target, function.result.line)?);
+            }
             // Export this function's postcondition and returned nominal type.
             // Inner call receipts cannot masquerade as its returned value.
             self.proof.results.truncate(results);

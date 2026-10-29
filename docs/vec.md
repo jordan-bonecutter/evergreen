@@ -139,3 +139,11 @@ Run [vec_generic.evg](../examples/vec_generic.evg) with:
 cargo run --locked --offline -- run examples/vec_generic.evg
 cargo run --locked --offline -- build examples/vec_generic.evg
 ```
+
+[`buffer_growth.evg`](../examples/buffer_growth.evg) now verifies the combined
+owning-buffer sequence: allocate vacant capacity, push two owners, reallocate,
+pop one owner, and clean up the remainder. Actual body rechecks re-prove and
+export logical invariants of unconditionally available modified record inputs
+before restoring the caller's lexical proof scope. This closes the previous
+post-pop invariant gap without assuming the invariant or increasing the work
+limit. Conditional input views and the public Vec API migration remain work.
