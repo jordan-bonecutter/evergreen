@@ -953,3 +953,20 @@ This filter only removes impossible candidates; successful lookup still checks
 proof rules, guards, dependencies, and current revisions. Negations and
 implications remain conservatively unfiltered because normalization may change
 their outer connective.
+
+## Ordinary reads from whole-value ranges
+
+A checked positive whole-value range can now describe an ordinary read of a
+reference-free union payload. The observer remembers only already-materialized
+scalar/record cells under their immutable contents identities. On demand it
+specializes the range, checks its domain and current/historical dependencies,
+and interprets equality of active alternatives and available scalar fields.
+Remembering a cell does not cache a successful proof or assert a default for
+unobserved indices.
+
+This reuses the existing checked-read interpretation boundary. Pointer-bearing
+values, arrays, and copied representation bytes are excluded. Whole-value
+inequality and substitution of whole-value relations into arbitrary Boolean
+contexts are also excluded: payload interpretation is an implication, not an
+equivalence. Equality predicates are indexed by contents version so unrelated
+range proofs are skipped before their formulas are traversed.

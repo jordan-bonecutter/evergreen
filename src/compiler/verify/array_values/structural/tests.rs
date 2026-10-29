@@ -186,3 +186,28 @@ fn main() -> usize {42}
     let unrelated = source.replace(" && j == integer::from(index) - 1", "");
     assert!(verify(&unrelated).is_err());
 }
+
+#[test]
+fn owning_buffer_growth_exposes_reference_free_payload_values() {
+    let source = include_str!("../../../../../examples/buffer_record_values.evg");
+    let (program, certificate) = prove(source).unwrap();
+    let (value, events) = program.run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.as_str() == "drop Item")
+            .count(),
+        2
+    );
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &certificate)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let wrong = source.replace("Item {tag: 42}", "Item {tag: 43}");
+    let error = verify(&wrong).unwrap_err();
+    assert!(error.contains("cannot prove proof preserved"), "{error}");
+}

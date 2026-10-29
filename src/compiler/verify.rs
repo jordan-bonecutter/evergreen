@@ -2444,6 +2444,9 @@ impl<'a> Context<'a> {
                 self.read_resource_version(element, identity, index)?
             };
             self.observe_input_slot_types(identity, index, &value)?;
+            if !self.ty_has_reference(element) {
+                self.observe_array_values(identity, index, &value)?;
+            }
             return Ok(value);
         }
         if self.ty_has_reference(element) {

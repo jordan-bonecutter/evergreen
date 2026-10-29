@@ -104,6 +104,7 @@ impl Context<'_> {
                 };
                 self.charge_value_work(symbol_weight(&array)?)?;
                 self.remember_scalar_literal(&array)?;
+                self.remember_scalar_payloads(&array)?;
                 let Symbol::Array {
                     element,
                     len,

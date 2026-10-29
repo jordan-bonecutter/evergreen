@@ -259,5 +259,10 @@ also proves a quantified preservation contract for the entire owning prefix,
 using sparse immutable value histories through its transfer loop.
 `Buffer::reallocate` exposes that guarantee for every old live index. Its
 zero-capacity case is explicitly separate so the contract does not observe an
-array through `Null`. Connecting these quantified guarantees to ordinary payload
-reads and migrating the public Vec API remain work.
+array through `Null`. Ordinary `get`/`pop` reads can now recover scalar fields
+of reference-free payloads from those checked range guarantees, including records
+with destructors. [buffer_record_values.evg](../examples/buffer_record_values.evg)
+proves the popped tag is still 42 after reallocation and drops both records once.
+Pointer-bearing payload identity recovery and public Vec migration remain work.
+A combined record example using both get and pop after growth still exceeds the
+current work limit during cleanup; each read path verifies separately.

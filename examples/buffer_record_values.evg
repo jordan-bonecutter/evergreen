@@ -1,0 +1,16 @@
+type Item struct {tag: usize}
+impl Drop for Item {
+    fn drop({tag}) {}
+}
+fn main() -> usize {
+    let values = vec::Buffer::<Item>::new(2);
+    values.push(Item {tag: 7});
+    values.push(Item {tag: 42});
+    values = values.reallocate(4);
+    let item = values.pop();
+    proof preserved: item.tag == 42;
+    let answer = item.tag;
+    drop(item);
+    drop(values);
+    answer
+}

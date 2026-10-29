@@ -56,7 +56,55 @@ impl Equality {
     }
 }
 
+// Only immutable, reference-free payload facts can cross this observation
+// boundary. No pointer identity, owner, array, or representation bytes are read.
+fn scalar_payload(value: &Symbol) -> bool {
+    match value {
+        Symbol::Number(..) | Symbol::Bool(_) | Symbol::Unit | Symbol::Shape(_) => true,
+        Symbol::Record(_, fields) => fields.values().all(scalar_payload),
+        Symbol::Union { payloads, .. } => payloads.iter().flatten().all(scalar_payload),
+        _ => false,
+    }
+}
+
 impl Context<'_> {
+    pub(in crate::compiler::verify) fn remember_scalar_payloads(
+        &mut self,
+        array: &Symbol,
+    ) -> Result<()> {
+        let Symbol::Array {
+            element,
+            identity,
+            items,
+            cells,
+            ..
+        } = array
+        else {
+            return Ok(());
+        };
+        if self.ty_has_reference(element) {
+            return Ok(());
+        }
+        self.charge_value_work(
+            values_weight(cells.values())?.saturating_add(values_weight(items.iter().flatten())?),
+        )?;
+        for (index, value) in items
+            .iter()
+            .flatten()
+            .enumerate()
+            .map(|(index, value)| (Linear::number(index as i128), value))
+            .chain(cells.iter().map(|(index, value)| (index.clone(), value)))
+        {
+            if scalar_payload(value) {
+                self.arrays
+                    .reads
+                    .entry((identity.clone(), index))
+                    .or_insert_with(|| value.clone());
+            }
+        }
+        Ok(())
+    }
+
     pub(in crate::compiler::verify) fn observe_array_values(
         &mut self,
         identity: &str,
@@ -80,6 +128,12 @@ impl Context<'_> {
         observed: &Observation<'_>,
         world: Option<state::WorldId>,
     ) -> Result<()> {
+        // Only direct equality recipes for this immutable contents identity can
+        // describe this observation. The index filters candidates, never proves them.
+        let Some(predicates) = self.arrays.value_predicates.get(observed.identity).cloned() else {
+            return Ok(());
+        };
+        self.charge_value_work(predicates.len())?;
         let candidates = if let Some(world) = world {
             let (candidates, work) = self.proof.subjects.historical_candidates(world)?;
             self.charge_value_work(work)?;
@@ -97,6 +151,13 @@ impl Context<'_> {
         };
         self.charge_value_work(candidates.len())?;
         for theorem in candidates {
+            if !predicates.iter().any(|symbol| {
+                self.proof
+                    .evidence
+                    .claim_mentions_predicate(theorem, symbol)
+            }) {
+                continue;
+            }
             self.charge_value_work(self.proof.evidence.claim(theorem)?.storage_weight()?)?;
             let Formula::Forall { variable, body, .. } =
                 self.proof.evidence.claim(theorem)?.clone()
@@ -130,7 +191,11 @@ impl Context<'_> {
                     let Some(value) = observed.project(contents)? else {
                         continue;
                     };
-                    if !scalar(&value.ty()) {
+                    if !scalar(&value.ty())
+                        && !(contents.whole
+                            && !self.ty_has_reference(&value.ty())
+                            && scalar_payload(value))
+                    {
                         continue;
                     }
                     let Some(term) = array_predicates::specialization_index(
@@ -222,6 +287,13 @@ impl Context<'_> {
         let Some((symbol, arguments, negated)) = atom(claim) else {
             return Ok(None);
         };
+        let whole = key.0.as_ref().is_some_and(|contents| contents.whole)
+            || key.1.as_ref().is_some_and(|contents| contents.whole);
+        // Whole-value inequality need not imply inequality of a selected scalar
+        // payload (the active alternatives could differ).
+        if whole && negated {
+            return Ok(None);
+        }
         let recipe = &self.arrays.value_equalities[key];
         // Definitions can be instantiated mathematically with different
         // captures. Only the original captures describe this storage version.
@@ -245,6 +317,9 @@ impl Context<'_> {
                 else {
                     return Ok(None);
                 };
+                if whole && (!scalar_payload(&value) || self.ty_has_reference(&value.ty())) {
+                    return Ok(None);
+                }
                 self.symbol_equal(observed, &value)?
             }
         };
@@ -304,6 +379,9 @@ impl Context<'_> {
                     identity = base.clone();
                 }
                 None if !self.arrays.value_literals.contains_key(&identity) => {
+                    if contents.whole {
+                        return Ok(None);
+                    }
                     return self
                         .historical_scalar_value(
                             &contents.with_identity(identity),

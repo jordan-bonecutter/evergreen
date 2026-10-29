@@ -100,6 +100,13 @@ impl Context<'_> {
                 let Some(key) = self.arrays.value_equality_origins.get(symbol).cloned() else {
                     return Ok(None);
                 };
+                // Whole payload interpretation is implication-only. It cannot
+                // be substituted beneath negation or an implication antecedent.
+                if key.0.as_ref().is_some_and(|contents| contents.whole)
+                    || key.1.as_ref().is_some_and(|contents| contents.whole)
+                {
+                    return Ok(None);
+                }
                 for (side, contents) in [&key.0, &key.1].into_iter().enumerate() {
                     let Some(contents) = contents.as_ref().filter(|contents| {
                         contents.identity == observed.identity
