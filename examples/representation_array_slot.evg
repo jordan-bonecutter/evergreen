@@ -3,8 +3,10 @@ fn main() -> usize {
     let source: unique(unique(usize) | shape(unique(usize)), 2) = alloc(2, shape(unique(usize)));
     let target: unique(unique(usize) | shape(unique(usize)), 3) = alloc(3, shape(unique(usize)));
     (*source)[1] = alloc(42);
+    let address = &*(*source)[1];
     arrays::relocate::<unique(usize)>(&(*source)[1], &(*target)[2]);
     let value: unique(usize) = move((*target)[2]);
+    proof identity_preserved: &*value == address;
     let a: unique(shape(unique(usize)), 2) = source;
     let b: unique(shape(unique(usize)), 3) = target;
     drop(a);

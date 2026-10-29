@@ -9,7 +9,8 @@ fn relocate<T>(source: &(T | shape(T)), target: &(T | shape(T)))
     modifies(source, target)
     ensures
         typeof(*source) == shape(T) &&
-        typeof(*target) == T
+        typeof(*target) == T &&
+        same_value(*target, old(*source))
 {
     *target = copy_representation(source);
     transfer_type(source, target);

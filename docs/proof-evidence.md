@@ -878,7 +878,10 @@ even when they have a destructor; the comparison does not execute that destructo
 Whole observed arrays with the same immutable contents identity compare equal
 without expanding elements. Distinct dense arrays compare their stored elements;
 distinct sparse arrays still require a range relation not yet supported here.
-Unions currently require identical observed alternatives or explicit selection
-of their live members. Shapes have no accessible payload value to compare:
+Observed unions compare matching active alternatives and their payloads.
+Inactive alternatives are not read; missing active observations are rejected.
+This also lets the single-slot relocation contract state that their destination preserves the
+source entry value after the source becomes a shape. Quantified union-array
+value comparisons remain unfinished. Shapes have no accessible payload value to compare:
 value equality between shapes says nothing about their representation bytes.
 Use `same_representation` for that separate claim.

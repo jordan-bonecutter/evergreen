@@ -135,3 +135,14 @@ fn owning_value_contracts_preserve_identity_without_copying_or_reviving_storage(
         assert!(verify(bad).is_err(), "accepted {bad}");
     }
 }
+
+#[test]
+fn union_value_equality_compares_only_matching_live_payloads() {
+    replay("fn check(x: &(usize | bool), y: &(usize | bool)) where typeof(*x) == usize && typeof(*y) == usize {let a: usize = *x; let b: usize = *y; if a == b {proof _: same_value(*x, *y);}}");
+    for bad in [
+        "fn main() {let a: usize | bool = 7; let b: usize | bool = 8; proof _: same_value(a, b);}",
+        "fn main() {let a: usize | bool = 1; let b: usize | bool = true; proof _: same_value(a, b);}",
+    ] {
+        assert!(verify(bad).is_err(), "accepted {bad}");
+    }
+}

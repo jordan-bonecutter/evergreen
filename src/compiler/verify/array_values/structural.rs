@@ -159,18 +159,7 @@ impl Context<'_> {
                 Ok(result)
             }
             Ty::Shape(_) => Ok(Formula::True),
-            Ty::Union(_) => {
-                let (Value::Observed(left), Value::Observed(right)) = (a, b) else {
-                    return Err("union value equality requires observed values".into());
-                };
-                self.validate_argument(left, line)?;
-                self.validate_argument(right, line)?;
-                if left == right {
-                    Ok(Formula::True)
-                } else {
-                    Err("union value equality requires identical observed alternatives; compare selected live members explicitly".into())
-                }
-            }
+            Ty::Union(_) => self.structural_union_equality(a, b, line, depth),
             Ty::Array(_, _) => self.structural_array_equality(a, b, line, depth),
             Ty::Ref(_) | Ty::Unique(_) | Ty::Shared(_) => {
                 self.reference_equality(&a.reference()?, &b.reference()?)
@@ -191,6 +180,73 @@ impl Context<'_> {
             }
             _ => Err("same_value cannot compare this ideal value kind".into()),
         }
+    }
+
+    fn structural_union_equality(
+        &mut self,
+        a: &Value,
+        b: &Value,
+        line: usize,
+        depth: usize,
+    ) -> Result<Formula> {
+        let (Value::Observed(left), Value::Observed(right)) = (a, b) else {
+            return Err("union value equality requires observed values".into());
+        };
+        self.validate_argument(left, line)?;
+        self.validate_argument(right, line)?;
+        if left == right {
+            return Ok(Formula::True);
+        }
+        let (
+            Symbol::Union {
+                members: a_members,
+                active: a_active,
+                payloads: a_payloads,
+            },
+            Symbol::Union {
+                members: b_members,
+                active: b_active,
+                payloads: b_payloads,
+            },
+        ) = (left, right)
+        else {
+            return Err("union value equality requires union storage".into());
+        };
+        if a_members != b_members {
+            return Err("union value equality requires matching member types".into());
+        }
+        let base = self.proof.paths.clone();
+        let mut result = Formula::False;
+        for (index, (left, right)) in a_payloads.iter().zip(b_payloads).enumerate() {
+            self.charge_value_work(1)?;
+            let tag = Linear::number(index as i128);
+            let guard = equal(a_active, &tag)?.and(equal(b_active, &tag)?);
+            self.proof.paths = extend(
+                &base,
+                &guard,
+                false,
+                self.session,
+                &mut self.work.value_work,
+            )?;
+            let comparison = (|| {
+                let paths = self.proof.paths.clone();
+                if self.checked_impossible(&paths, &Formula::True)? {
+                    return Ok(Formula::False);
+                }
+                let (Some(left), Some(right)) = (left, right) else {
+                    return Err("union value equality requires an observed active payload".into());
+                };
+                self.structural_equality(
+                    &Value::Observed(left.clone()),
+                    &Value::Observed(right.clone()),
+                    line,
+                    depth + 1,
+                )
+            })();
+            self.proof.paths = base.clone();
+            result = result.or(guard.and(comparison?));
+        }
+        Ok(result)
     }
 
     fn structural_array_equality(
