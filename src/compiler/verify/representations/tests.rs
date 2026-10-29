@@ -109,3 +109,21 @@ fn buffer_growth_with_representation_relocation_fits_the_work_budget() {
         0
     );
 }
+
+#[test]
+fn sparse_transfer_ranges_preserve_entry_values_and_replay() {
+    let source = include_str!("../../../../examples/owning_array_transfer.evg");
+    let (program, certificate) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &certificate)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let huge = source.replace_evg('3', "1000000000");
+    assert_eq!(verify(&huge).unwrap().obligations, program.obligations);
+    let retired = source.replace_evg("same_value((*target)[i]", "same_value((*data)[i]");
+    assert!(verify(&retired).is_err());
+}

@@ -130,6 +130,8 @@ pub(super) struct Arrays {
     pub(super) history: BTreeMap<String, ArrayHistory>,
     // Whole-value frames for resource stores whose selector history retains a uniform default.
     pub(super) whole_stores: BTreeMap<String, (String, Linear)>,
+    // Successful type transfers identify the written element with an earlier source value.
+    pub(super) value_transfers: BTreeMap<String, (String, Linear)>,
     pub(super) read_depth: usize,
     pub(super) inputs: BTreeSet<String>,
     pub(super) ports: BTreeMap<String, BTreeMap<Linear, Symbol>>,

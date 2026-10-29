@@ -194,6 +194,11 @@ impl Context<'_> {
     ) -> Result<Option<Formula>> {
         let mut sides = [0, 1];
         if let (Some(a), Some(b)) = (&key.0, &key.1) {
+            if !self.arrays.value_transfers.contains_key(&a.identity)
+                && self.arrays.value_transfers.contains_key(&b.identity)
+            {
+                sides = [1, 0];
+            }
             let mut ancestor = b.identity.clone();
             for _ in 0..64 {
                 self.charge_value_work(1)?;
@@ -217,10 +222,31 @@ impl Context<'_> {
             self.charge_value_work(1 + index.terms.len())?;
             let selected = if side == 0 { left } else { right };
             let same = equal(selected, &index)?;
-            let recipe = self.declare_value_equality(key)?;
-            let changed = Formula::Predicate {
-                symbol: recipe.symbol,
-                arguments: vec![left.clone(), right.clone()],
+            let changed = if let Some((source, at)) =
+                self.arrays.value_transfers.get(&contents.identity).cloned()
+            {
+                self.charge_value_work(1 + at.terms.len())?;
+                if side == 0 {
+                    self.value_equality(
+                        &(Some(contents.with_identity(source)), key.1.clone()),
+                        &at,
+                        right,
+                        depth + 1,
+                    )?
+                } else {
+                    self.value_equality(
+                        &(key.0.clone(), Some(contents.with_identity(source))),
+                        left,
+                        &at,
+                        depth + 1,
+                    )?
+                }
+            } else {
+                let recipe = self.declare_value_equality(key)?;
+                Formula::Predicate {
+                    symbol: recipe.symbol,
+                    arguments: vec![left.clone(), right.clone()],
+                }
             };
             let previous_key = if side == 0 {
                 (Some(contents.with_identity(base)), key.1.clone())

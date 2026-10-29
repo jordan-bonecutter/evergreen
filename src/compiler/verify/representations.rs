@@ -155,6 +155,14 @@ impl Context<'_> {
             line,
             Some(&target_place),
         )?;
+        let source_value = match self.eval(source, None)? {
+            Symbol::Ref(source_union, source_reference, source_path)
+                if source_union == target_union =>
+            {
+                self.array_element_identity(source_reference, &source_path)?
+            }
+            _ => None,
+        };
         let value = self.move_union_member_into_shape(
             &source_place,
             &ty,
@@ -172,6 +180,11 @@ impl Context<'_> {
         let stored = self.replace_reference_contents(reference, &path, initialized, line);
         self.locals.values.remove(&pending);
         stored?;
+        if let (Some(source), Some((destination, _))) =
+            (source_value, self.array_element_identity(reference, &path)?)
+        {
+            self.arrays.value_transfers.insert(destination, source);
+        }
         let stamp = self
             .proof
             .subjects
@@ -179,5 +192,20 @@ impl Context<'_> {
         self.proof.representations.insert(stamp, source_bits);
         self.validate_live(line)?;
         Ok(Symbol::Unit)
+    }
+    fn array_element_identity(
+        &mut self,
+        reference: Reference,
+        path: &[Projection<Linear>],
+    ) -> Result<Option<(String, Linear)>> {
+        let Some((Projection::Index(index), parent)) = path.split_last() else {
+            return Ok(None);
+        };
+        self.charge_value_work(1 + parent.len() + index.terms.len())?;
+        let Symbol::Array { identity, .. } = project(self.storage.memory.read(reference)?, parent)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some((identity.clone(), index.clone())))
     }
 }

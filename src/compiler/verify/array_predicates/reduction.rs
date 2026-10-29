@@ -227,8 +227,58 @@ impl Context<'_> {
                     pending.extend([(&**a, left), (&**b, right)]);
                     continue;
                 }
-                let Some(term) = observations::specialization_term(part, goal, &variable)? else {
-                    continue;
+                let exact = observations::specialization_term(part, goal, &variable)?;
+                let mut congruence = Vec::new();
+                let term = if let Some(term) = exact {
+                    term
+                } else {
+                    // One bound index may occur in several predicate arguments.
+                    // A guarded store can make those arguments equal without
+                    // making their syntax identical. Check each equality before
+                    // transporting the specialized predicate through congruence.
+                    let (
+                        Formula::Predicate {
+                            symbol: a,
+                            arguments: aa,
+                        },
+                        Formula::Predicate {
+                            symbol: b,
+                            arguments: ba,
+                        },
+                    ) = (part, goal)
+                    else {
+                        continue;
+                    };
+                    if a != b || aa.len() != ba.len() {
+                        continue;
+                    }
+                    let mut candidate = None;
+                    for (pattern, wanted) in aa.iter().zip(ba) {
+                        if pattern.terms.contains_key(&variable) {
+                            candidate =
+                                observations::specialization_index(pattern, wanted, &variable)?;
+                            if candidate.is_some() {
+                                break;
+                            }
+                        }
+                    }
+                    let Some(term) = candidate else { continue };
+                    let Formula::Predicate { arguments, .. } = part.substitute(&variable, &term)?
+                    else {
+                        unreachable!()
+                    };
+                    for (actual, wanted) in arguments.iter().zip(ba) {
+                        let Some(proof) =
+                            self.reduce_selector_formula(&equal(actual, wanted)?, depth + 1)?
+                        else {
+                            break;
+                        };
+                        congruence.push(proof);
+                    }
+                    if congruence.len() != ba.len() {
+                        continue;
+                    }
+                    term
                 };
                 let mut source = theorem;
                 if self.proof.evidence.check_closed(theorem).is_ok() {
@@ -263,6 +313,15 @@ impl Context<'_> {
                             evidence::Rule::AndRight(instance)
                         } else {
                             evidence::Rule::AndLeft(instance)
+                        },
+                    )?;
+                }
+                if !congruence.is_empty() {
+                    instance = self.proof.evidence.derive(
+                        goal.clone(),
+                        evidence::Rule::PredicateCongruence {
+                            source: instance,
+                            equalities: congruence,
                         },
                     )?;
                 }

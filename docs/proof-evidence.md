@@ -919,3 +919,28 @@ than depending on the spelling/order of generated identities.
 The example verifies with the same obligation count at capacities three and
 one billion; only the small case is executed. Its certificate replays without
 proof search, and extending its unchanged range over the extracted slot fails.
+
+## Sparse transfer relations
+
+[`owning_array_transfer.evg`](../examples/owning_array_transfer.evg) proves a
+range equal to its source entry values after two successive type transfers.
+Only a successful `transfer_type` records this relation: the destination's new
+array version names the source version and index captured before the move.
+A representation copy alone still carries no such live-value relation.
+Source and destination must have the same union type for this whole-element
+relation; independently checked layout compatibility alone is insufficient.
+
+Range specialization can use an arithmetic proof that repeated occurrences of
+its bound index are equal. It first specializes the universal theorem, then
+uses the kernel's existing predicate-congruence rule with a checked equality
+for every argument. Removing the index equality makes the proof fail.
+
+Historical quantified array comparisons observe saved contents identities,
+not the current liveness of their former payload owners. This permits describing
+values across relocation without reviving a reference or authorizing a read.
+Ordinary payload observations retain their existing liveness checks.
+
+The full-prefix relocation proof has also been prototyped with source-prefix
+and destination-suffix value invariants. Its declaration verifies, but the full
+Buffer growth/release integration exceeds the current proof-work limit. That
+stronger loop contract is not installed yet; the limit has not been raised.

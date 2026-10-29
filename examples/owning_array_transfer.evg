@@ -1,0 +1,35 @@
+fn transfer(
+    capacity: usize,
+    data: &[unique(usize) | shape(unique(usize)); capacity],
+    target: &[unique(usize) | shape(unique(usize)); capacity]
+)
+    where
+        capacity >= 2 &&
+        arrays::initialized_prefix::<unique(usize)>(data, 2) &&
+        arrays::vacant_suffix::<unique(usize)>(target, 0)
+    modifies(&(*data)[0], &(*target)[0], &(*data)[1], &(*target)[1])
+    ensures
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < 2 &&
+            i < integer::from(capacity)
+        ) {same_value((*target)[i], old(*data)[i])}
+{
+    arrays::relocate::<unique(usize)>(&(*data)[0], &(*target)[0]);
+    arrays::relocate::<unique(usize)>(&(*data)[1], &(*target)[1]);
+}
+fn main() -> usize {
+    let source: unique(unique(usize) | shape(unique(usize)), 3) = alloc(3, shape(unique(usize)));
+    let target: unique(unique(usize) | shape(unique(usize)), 3) = alloc(3, shape(unique(usize)));
+    (*source)[0] = alloc(7);
+    (*source)[1] = alloc(42);
+    transfer(3, &*source, &*target);
+    let first: unique(usize) = move((*target)[0]);
+    let last: unique(usize) = move((*target)[1]);
+    let a: unique(shape(unique(usize)), 3) = source;
+    let b: unique(shape(unique(usize)), 3) = target;
+    drop(a);
+    drop(b);
+    *last
+}

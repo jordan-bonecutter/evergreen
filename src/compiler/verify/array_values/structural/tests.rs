@@ -164,3 +164,25 @@ fn owning_array_frames_remain_sparse_and_do_not_preserve_the_changed_slot() {
     let changed = source.replace("i < integer::from(length) - 1", "i < integer::from(length)");
     assert!(verify(&changed).is_err());
 }
+
+#[test]
+fn range_specialization_checks_congruence_for_repeated_indices() {
+    let source = r#"fn check(capacity: usize, a: &[unique(usize) | shape(unique(usize)); capacity], b: &[unique(usize) | shape(unique(usize)); capacity], index: usize)
+where 0 < index && index <= capacity && (forall(i: integer) where (0 <= i && i < integer::from(capacity)) {same_value((*a)[i], (*b)[i])})
+ensures forall(j: integer) where (0 <= j && j < integer::from(capacity) && j == integer::from(index) - 1) {same_value((*a)[integer::from(index) - 1], (*b)[j])}
+{
+proof before: forall(i: integer) where (0 <= i && i < integer::from(capacity)) {same_value((*a)[i], (*b)[i])} by {assumption};
+proof after: forall(j: integer) where (0 <= j && j < integer::from(capacity) && j == integer::from(index) - 1) {same_value((*a)[integer::from(index) - 1], (*b)[j])} by {using before; intro prior; intro j; omega};
+}
+fn main() -> usize {42}
+"#;
+    let (_, certificate) = prove(source).unwrap();
+    assert_eq!(
+        verify_with_certificate(source, &certificate)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let unrelated = source.replace(" && j == integer::from(index) - 1", "");
+    assert!(verify(&unrelated).is_err());
+}

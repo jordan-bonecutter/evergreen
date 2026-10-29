@@ -94,7 +94,14 @@ impl Context<'_> {
         if self.locals.quantified_evaluation != 0 {
             if let Some((base, index, fields)) = projections::indexed_parts(expression) {
                 let index = self.eval(index, Some(&Ty::Int))?.number()?;
-                let array = self.storage(base)?;
+                // A quantified comparison needs the saved contents identity,
+                // not live access to the owners formerly stored in that array.
+                let array = match &base.kind {
+                    Kind::Call(name, arguments) if name == "old" && arguments.len() == 1 => {
+                        self.old_expression(&arguments[0], None)?
+                    }
+                    _ => self.storage(base)?,
+                };
                 self.charge_value_work(symbol_weight(&array)?)?;
                 self.remember_scalar_literal(&array)?;
                 let Symbol::Array {
