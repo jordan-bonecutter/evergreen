@@ -4,13 +4,16 @@ module vec;
 opaque type Vec<T = usize> struct {cap: usize, len: usize, data: Null | unique(T, cap)} where (
     fact length_fits = len <= cap;
     fact storage_matches_capacity = (cap == 0) == (typeof(data) == Null);
-    length_fits && storage_matches_capacity
+    length_fits &&
+    storage_matches_capacity
 );
 
 fn allocate_buffer<T = usize>(capacity: usize, initial: T) -> unique(T, capacity)
     where
-        (capacity > 0 &&
-        integer(capacity) * integer(size_of(T)) <= integer(isize::MAX))
+        (
+            capacity > 0 &&
+            integer(capacity) * integer(size_of(T)) <= integer(isize::MAX)
+        )
 {
     alloc(capacity, initial)
 }
@@ -131,16 +134,21 @@ impl<T> Vec<T> {
     // invalidates references into that buffer.
     method& reallocate(new_capacity: usize) -> Self
         where
-            (self.len <= new_capacity &&
-            integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
+            (
+                self.len <= new_capacity &&
+                integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX)
+            )
         ensures
             (
                 result.len == old(self.len) &&
                 result.cap == new_capacity &&
                 (
                     if old(self.len) > 0 {
-                        forall(i: integer) where (0 <= i &&
-                        i < integer::from(old(self.len))) {same_value((*result.data)[i], old(*self.data)[i])}
+                        forall(i: integer)
+                        where (
+                            0 <= i &&
+                            i < integer::from(old(self.len))
+                        ) {same_value((*result.data)[i], old(*self.data)[i])}
                     } else {true}
                 )
             )
@@ -150,16 +158,21 @@ impl<T> Vec<T> {
 
     method& reallocate_filled(new_capacity: usize, initial: T) -> Self
         where
-            (self.len <= new_capacity &&
-            integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX))
+            (
+                self.len <= new_capacity &&
+                integer(new_capacity) * integer(size_of(T)) <= integer(isize::MAX)
+            )
         ensures
             (
                 result.len == old(self.len) &&
                 result.cap == new_capacity &&
                 (
                     if old(self.len) > 0 {
-                        forall(i: integer) where (0 <= i &&
-                        i < integer::from(old(self.len))) {same_value((*result.data)[i], old(*self.data)[i])}
+                        forall(i: integer)
+                        where (
+                            0 <= i &&
+                            i < integer::from(old(self.len))
+                        ) {same_value((*result.data)[i], old(*self.data)[i])}
                     } else {true}
                 )
             )

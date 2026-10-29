@@ -4,14 +4,18 @@ type Data struct {count: usize, value: usize}
 
 fn main() -> usize {
     let first: shared(Data) = alloc(Data {count: 1, value: 42});
-    first.count = first.count + 1 starts_owner(first);
+    starts_owner(first) {
+        first.count = first.count + 1;
+    }
     proof accurate_before_copy: nat(first.count) == owner_count(first);
 
     let second = first;
-    proof accurate_after_copy: nat(first.count) == owner_count(first) by {exact accurate_before_copy};
-    proof exactly_two: owner_count(first) == 2;
+    proof accurate_after_copy:
+        nat(first.count) == owner_count(first) by {exact accurate_before_copy};
+    proof exactly_two:
+        owner_count(first) == 2;
 
-    // Ending an existing lifetime still requires consuming its actual pointer.
+        // Ending an existing lifetime still requires consuming its actual pointer.
     first.count = first.count - 1;
     leak(first);
     proof sole_owner: owner_count(second) == 1;

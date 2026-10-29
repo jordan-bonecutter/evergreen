@@ -4,7 +4,8 @@ type Pair struct {chosen: Checked, other: usize}
 fn choose(flag: bool, a: Checked, b: Checked) -> Checked
     ensures
         ((flag &&
-        result.value == a.value) || (!flag &&
+        result.value == a.value) ||
+        (!flag &&
         result.value == b.value))
 {
     if flag {a} else {b}
@@ -12,10 +13,13 @@ fn choose(flag: bool, a: Checked, b: Checked) -> Checked
 
 fn nested(flag: bool) -> Pair
     ensures
-        (((flag &&
-        result.chosen.value == 7) || (!flag &&
-        result.chosen.value == 42)) &&
-        result.other == 1)
+        (
+            ((flag &&
+            result.chosen.value == 7) ||
+            (!flag &&
+            result.chosen.value == 42)) &&
+            result.other == 1
+        )
 {
     if flag {
         Pair {

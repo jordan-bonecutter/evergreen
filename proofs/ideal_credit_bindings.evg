@@ -16,7 +16,8 @@ fn use_budget(ideal credit: credits::Credit, amount: usize) -> usize
     ideal let original = credits::units(&credit);
     ideal let parts = credits::split(credit, nat(amount));
     ideal let credits::Split {left, right} = parts;
-    proof conserved: credits::units(&left) + credits::units(&right) == original;
+    proof conserved:
+        credits::units(&left) + credits::units(&right) == original;
     let value = spend_credit(left, amount);
     spend_credit(right, value)
 }

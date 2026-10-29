@@ -236,3 +236,21 @@ Conditional input-cell identities and integration into the general move-only Vec
 remain unfinished. Sparse resource arrays currently separate
 incompatible branch states rather than merging them into a universal range
 summary. Proof and case work remain bounded by the bootstrap's general budgets.
+
+[`conditional_buffer.evg`](../examples/conditional_buffer.evg) puts the prefix
+and suffix guarantees in a nominal type with `Null | unique(T | shape(T), cap)`
+storage. Zero capacity selects `Null` and executes no allocation. The range
+invariants guard their pointer observations with the actual union member, so
+they are well-formed even before the capacity/member relation is assumed.
+Typed reads demand the appropriate range clause only when the pointer member
+is active. Logical conjunction/disjunction elimination derives that clause from
+the current invariant; stale storage, an unknown branch, or an admitted branch
+condition cannot provide it. No Vec-specific compiler rule is involved.
+
+Its destructor immediately decomposes the header, then calls the source helper
+`arrays::drain_prefix`. Complete decomposition permits ordinary checked helper
+calls: the parent no longer has a live invariant, while every argument, borrowed
+write permission, and nested cleanup remains checked. This example covers empty,
+reserved, and populated buffers and nominal payload destructors. In-place
+push/pop still need ownership transitions inside invariant updates before the
+public Vec implementation can adopt the representation.

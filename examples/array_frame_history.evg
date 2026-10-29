@@ -13,10 +13,14 @@ fn store(
 )
     modifies(&(*data)[if flag {0} else {1}])
     ensures
-        ((flag => (*data)[0] == 42 &&
-        (*data)[1] == old((*data)[1])) &&
-        (!flag => (*data)[1] == 42 &&
-        (*data)[0] == old((*data)[0])))
+        (
+            (flag =>
+            (*data)[0] == 42 &&
+            (*data)[1] == old((*data)[1])) &&
+            (!flag =>
+            (*data)[1] == 42 &&
+            (*data)[0] == old((*data)[0]))
+        )
 {
     *select(data, flag) = 42;
 }

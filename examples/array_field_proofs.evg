@@ -13,14 +13,32 @@ fn set_x(
         at < 2
     modifies(&(*data)[at].point.x)
     ensures
-        (forall(i: integer) where (i == integer::from(at)) {(*data)[i].point.x == value}) &&
-        (forall(i: integer) where (0 <= i &&
-        i < 2) {(*data)[i].point.y == old(*data)[i].point.y}) &&
-        (forall(i: integer) where (0 <= i &&
-        i < 2 &&
-        i != integer::from(at)) {(*data)[i].point.x == old(*data)[i].point.x}) &&
-        (forall(i: integer) where (0 <= i &&
-        i < 2) {(*data)[i].valid == old(*data)[i].valid})
+        (forall(i: integer)
+        where (
+            i == integer::from(at)
+        ) {(*data)[i].point.x == value}) &&
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < 2
+            ) {(*data)[i].point.y == old(*data)[i].point.y}
+        ) &&
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < 2 &&
+                i != integer::from(at)
+            ) {(*data)[i].point.x == old(*data)[i].point.x}
+        ) &&
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < 2
+            ) {(*data)[i].valid == old(*data)[i].valid}
+        )
 {
     (*data)[at].point.x = value;
 }
@@ -40,7 +58,10 @@ fn main() -> usize
         }
     ];
     set_x(&data, 1, 42);
-    proof _: data[0].point.x == 7 && data[0].point.y == 9 && !data[0].valid;
+    proof _:
+        data[0].point.x == 7 &&
+        data[0].point.y == 9 &&
+        !data[0].valid;
     proof _: data[1].point.y == 13 && data[1].valid;
     data[1].point.x
 }

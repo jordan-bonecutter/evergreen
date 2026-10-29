@@ -2,7 +2,8 @@ type Pair struct {left: usize, right: usize} where (
     fact balanced = left == right;
     fact bounded = left <= 100;
     fact unused_false_claim = left != left;
-    balanced && bounded
+    balanced &&
+    bounded
 );
 
 fn main() -> usize
@@ -16,6 +17,7 @@ fn main() -> usize
         // balanced is open, but bounded must still hold at every step.
         proof open_state: !(pair::balanced);
         pair.right = pair.left;
-    } proof after: pair::balanced;
+    }
+    proof after: pair::balanced;
     pair.right
 }

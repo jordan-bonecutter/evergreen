@@ -5,8 +5,10 @@ fn set_second(
 )
     modifies((*views)[1].target)
     ensures
-        (*(*views)[1].target == value &&
-        *(*views)[0].target == old(*(*views)[0].target))
+        (
+            *(*views)[1].target == value &&
+            *(*views)[0].target == old(*(*views)[0].target)
+        )
 {
     *(*views)[1].target = value;
 }

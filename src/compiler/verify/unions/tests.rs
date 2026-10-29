@@ -132,9 +132,12 @@ fn source_destructors_dispose_only_the_active_allocation_and_its_payload() {
         "fn discard_owner(value: unique(Resource)) {}",
         "fn discard_owner(value: unique(Resource)) {let extra: unique(usize) = alloc(0);}",
     );
-    assert!(verify(&allocating)
-        .unwrap_err()
-        .contains("destructor calls require"));
+    // After complete decomposition the helper receives ordinary local owners.
+    // Its allocation and all cleanup are checked by the normal call machinery.
+    assert_eq!(
+        verify(&allocating).unwrap().run().unwrap().to_string(),
+        "42"
+    );
     let false_flag = source.replace_evg("present: true", "present: false");
     assert!(verify(&false_flag)
         .unwrap_err()

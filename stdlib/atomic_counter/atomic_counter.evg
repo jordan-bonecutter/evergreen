@@ -5,14 +5,23 @@ module atomic_counter;
 fn increment_from(value: &usize, observed: usize) -> bool
     modifies(value)
     ensures
-        ((result &&
-        nat(*value) == nat(old(*value)) + 1) || (!result &&
-        *value == old(*value) &&
-        *value == usize::MAX))
+        (
+            (result &&
+            nat(*value) == nat(old(*value)) + 1) ||
+            (!result &&
+            *value == old(*value) &&
+            *value == usize::MAX)
+        )
 {
     let finished = false;
     let incremented = false;
-    fact maintained = (!finished => *value == old(*value)) && (finished => ((incremented && nat(*value) == nat(old(*value)) + 1) || (!incremented && *value == old(*value) && *value == usize::MAX)));
+    fact maintained = (!finished => *value == old(*value)) && (
+        finished =>
+        (
+            (incremented && nat(*value) == nat(old(*value)) + 1) ||
+            (!incremented && *value == old(*value) && *value == usize::MAX)
+        )
+    );
     while !finished
         invariant
             (maintained)
@@ -24,7 +33,10 @@ fn increment_from(value: &usize, observed: usize) -> bool
         incremented = finished && observed != usize::MAX;
         // Carry the CAS observation into the outer invariant before the
         // iteration-local result is cleaned up.
-        proof observation: actual == old(*value) && (!finished => *value == actual);
+        proof observation:
+            actual == old(*value) &&
+            (!finished =>
+            *value == actual);
         observed = actual;
         // Export the invariant independently of the iteration-local CAS result.
         proof _: maintained;
@@ -36,10 +48,13 @@ fn increment_from(value: &usize, observed: usize) -> bool
 fn try_increment(value: &usize) -> bool
     modifies(value)
     ensures
-        ((result &&
-        nat(*value) == nat(old(*value)) + 1) || (!result &&
-        *value == old(*value) &&
-        *value == usize::MAX))
+        (
+            (result &&
+            nat(*value) == nat(old(*value)) + 1) ||
+            (!result &&
+            *value == old(*value) &&
+            *value == usize::MAX)
+        )
 {
     increment_from(value, 0)
 }
@@ -47,13 +62,24 @@ fn try_increment(value: &usize) -> bool
 fn decrement_from(value: &usize, observed: usize) -> usize
     modifies(value)
     ensures
-        (result == old(*value) &&
-        (result == 0 => *value == 0) &&
-        (result > 0 => nat(*value) + 1 == nat(result)))
+        (
+            result == old(*value) &&
+            (result == 0 =>
+            *value == 0) &&
+            (result > 0 =>
+            nat(*value) + 1 == nat(result))
+        )
 {
     let finished = false;
     let previous: usize = 0;
-    fact maintained = (!finished => *value == old(*value)) && (finished => (previous == old(*value) && (previous == 0 => *value == 0) && (previous > 0 => nat(*value) + 1 == nat(previous))));
+    fact maintained = (!finished => *value == old(*value)) && (
+        finished =>
+        (
+            previous == old(*value) &&
+            (previous == 0 => *value == 0) &&
+            (previous > 0 => nat(*value) + 1 == nat(previous))
+        )
+    );
     while !finished
         invariant
             (maintained)
@@ -65,7 +91,10 @@ fn decrement_from(value: &usize, observed: usize) -> usize
         previous = actual;
         // Carry the CAS observation into the outer invariant before the
         // iteration-local result is cleaned up.
-        proof observation: actual == old(*value) && (!finished => *value == actual);
+        proof observation:
+            actual == old(*value) &&
+            (!finished =>
+            *value == actual);
         observed = actual;
         proof _: maintained;
     }
@@ -77,9 +106,13 @@ fn decrement_from(value: &usize, observed: usize) -> usize
 fn decrement(value: &usize) -> usize
     modifies(value)
     ensures
-        (result == old(*value) &&
-        (result == 0 => *value == 0) &&
-        (result > 0 => nat(*value) + 1 == nat(result)))
+        (
+            result == old(*value) &&
+            (result == 0 =>
+            *value == 0) &&
+            (result > 0 =>
+            nat(*value) + 1 == nat(result))
+        )
 {
     decrement_from(value, 0)
 }

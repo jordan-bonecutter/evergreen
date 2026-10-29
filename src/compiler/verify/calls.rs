@@ -187,13 +187,16 @@ impl<'a> Context<'a> {
                     .into(),
             );
         }
+        // Complete decomposition leaves ordinary local values, with no parent
+        // invariant to observe. Calls still check every input and write effect.
         if self.execution.dropping
             && self.execution.phase == Phase::Runtime
+            && !self.drop_receiver_consumed()
             && !self.declarations.cleanup_helpers.contains(name)
             && !crate::compiler::effects::disposes_parameters(f)
         {
             return Err(
-                "destructor calls require checked ownership-free effects or a parameter-disposal helper".into(),
+                "destructor calls require checked ownership-free effects, a parameter-disposal helper, or complete self decomposition".into(),
             );
         }
         if self.execution.phase == Phase::Runtime && f.unspecified_arithmetic {

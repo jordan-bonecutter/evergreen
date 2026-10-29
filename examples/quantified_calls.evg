@@ -8,16 +8,21 @@ ideal fn nonnegative(n: integer) -> bool {
 }
 
 fn check_byte(byte: u8) {
-    proof bounds: forall(i: integer) where (nonnegative(i)) {affine(i) + integer::from(byte) >= 2} by {
-        intro i;
-        omega
-    };
+    proof bounds:
+        forall(i: integer)
+        where (
+            nonnegative(i)
+        ) {affine(i) + integer::from(byte) >= 2} by {
+            intro i;
+            omega
+        };
 
-    // Specialization retains the definition and the captured byte's revision.
-    proof selected: affine(7) + integer::from(byte) >= 2 by {
-        specialize bounds(7);
-        omega
-    };
+        // Specialization retains the definition and the captured byte's revision.
+    proof selected:
+        affine(7) + integer::from(byte) >= 2 by {
+            specialize bounds(7);
+            omega
+        };
 }
 
 fn main() -> usize {

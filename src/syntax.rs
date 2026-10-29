@@ -945,11 +945,13 @@ impl Parser {
                 line,
             }
         } else if self.eat("forall") {
+            let start = self.pos - 1;
             self.expect("(")?;
             let variable = self.name()?;
             self.expect(":")?;
             self.expect("integer")?;
             self.expect(")")?;
+            let domain_start = (self.peek() == "where").then_some(self.pos);
             let domain = if self.eat("where") {
                 self.expect("(")?;
                 let domain = self.expr(0)?;
@@ -964,6 +966,9 @@ impl Parser {
             self.expect("{")?;
             let body = self.expr(0)?;
             self.expect("}")?;
+            if let Some(hints) = &mut self.format_hints {
+                hints.quantifiers.insert(start, (self.pos, domain_start));
+            }
             Expr {
                 kind: Kind::Forall {
                     variable,

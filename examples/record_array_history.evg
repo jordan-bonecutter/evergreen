@@ -7,9 +7,11 @@ fn set_left(
         (index < 2)
     modifies(&(*data)[index].left)
     ensures
-        ((*data)[index].left == 42 &&
-        (*data)[index].right == old((*data)[index].right) &&
-        (*data)[if index == 0 {1} else {0}].left == old((*data)[if index == 0 {1} else {0}].left))
+        (
+            (*data)[index].left == 42 &&
+            (*data)[index].right == old((*data)[index].right) &&
+            (*data)[if index == 0 {1} else {0}].left == old((*data)[if index == 0 {1} else {0}].left)
+        )
 {
     (*data)[index].left = 42;
 }
@@ -23,7 +25,8 @@ fn check(index: usize, flag: bool) -> usize
     let data: [Pair; 2] = [Pair {left: 7, right: 9}, Pair {left: 11, right: 13}];
     let selected = &data[index].left;
     let effect = if flag {set_left(&data, index)} else {()};
-    proof sibling: data[if index == 0 {1} else {0}].left == (if index == 0 {11} else {7});
+    proof sibling:
+        data[if index == 0 {1} else {0}].left == (if index == 0 {11} else {7});
     proof other_field: data[index].right == (if index == 0 {9} else {13});
     if flag {*selected} else {42}
 }

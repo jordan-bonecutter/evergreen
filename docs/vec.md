@@ -111,6 +111,14 @@ contracts and external payload identity preservation across the loop are still
 missing. Vec continues to use its previous Copy implementation until these
 operations and the nominal invariants are integrated.
 
+[`conditional_buffer.evg`](../examples/conditional_buffer.evg) now checks the
+intended conditional storage invariant, zero-allocation empty construction,
+typed element borrowing, and complete destruction of a move-only prefix.
+`arrays::drain_prefix` implements that cleanup in Evergreen. The remaining
+in-place mutation work must change length and slot initialization together;
+current invariant-update blocks still restrict ownership transfers. The example
+is storage groundwork, not a second public Vec API.
+
 Run [vec_generic.evg](../examples/vec_generic.evg) with:
 
 ```sh

@@ -2,27 +2,47 @@ fn new_buffer<T>(capacity: usize) -> unique(T | shape(T), capacity)
     where
         integer(capacity) * integer(size_of(T)) <= integer(isize::MAX)
     ensures
-        (forall(i: integer) where (0 <= i &&
-        i < integer(capacity)) {typeof((*result)[i]) == shape(T)})
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer(capacity)
+            ) {typeof((*result)[i]) == shape(T)}
+        )
 {
     alloc(capacity, shape(T))
 }
 
 fn main() -> usize {
     let buffer = new_buffer::<unique(usize)>(8);
-    proof initially_empty: forall(i: integer) where (0 <= i && i < 8) {typeof((*buffer)[i]) == shape(unique(usize))} by {assumption};
+    proof initially_empty:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < 8
+        ) {typeof((*buffer)[i]) == shape(unique(usize))} by {assumption};
 
     (*buffer)[3] = alloc(42);
-    proof empty_suffix: forall(i: integer) where (4 <= i && i < 8) {typeof((*buffer)[i]) == shape(unique(usize))} by {
-        intro i;
-        omega
-    };
+    proof empty_suffix:
+        forall(i: integer)
+        where (
+            4 <= i &&
+            i < 8
+        ) {typeof((*buffer)[i]) == shape(unique(usize))} by {
+            intro i;
+            omega
+        };
 
     let value: unique(usize) = (*buffer)[3];
-    proof empty_again: forall(i: integer) where (0 <= i && i < 8) {typeof((*buffer)[i]) == shape(unique(usize))} by {
-        intro i;
-        omega
-    };
+    proof empty_again:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < 8
+        ) {typeof((*buffer)[i]) == shape(unique(usize))} by {
+            intro i;
+            omega
+        };
 
     let empty: unique(shape(unique(usize)), 8) = buffer;
     drop(empty);

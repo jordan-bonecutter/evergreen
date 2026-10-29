@@ -14,7 +14,8 @@ fn maybe_increment(r: &usize, flag: bool) -> ()
     modifies(r)
     ensures
         ((flag &&
-        *r == old(*r) + 1) || (!flag &&
+        *r == old(*r) + 1) ||
+        (!flag &&
         *r == old(*r)))
 {
     if flag {increment(r)} else {()}

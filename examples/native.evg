@@ -17,7 +17,8 @@ fn add(a: usize, b: usize) -> usize
 fn choose(flag: bool, a: usize, b: usize) -> usize
     ensures
         ((flag &&
-        result == a) || (!flag &&
+        result == a) ||
+        (!flag &&
         result == b))
 {
     if flag {a} else {b}

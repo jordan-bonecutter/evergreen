@@ -5,7 +5,8 @@
 ideal type RcProtocol struct {count: nat, owners: nat, credits: nat,} where (
     fact accounting = count == owners + credits;
     fact bounded = count <= 18446744073709551615;
-    accounting && bounded
+    accounting &&
+    bounded
 );
 
 ideal fn reserve(state: RcProtocol) -> RcProtocol
@@ -13,9 +14,11 @@ ideal fn reserve(state: RcProtocol) -> RcProtocol
         (state.owners > 0 &&
         state.count < 18446744073709551615)
     ensures
-        (result.count == state.count + 1 &&
-        result.owners == state.owners &&
-        result.credits == state.credits + 1)
+        (
+            result.count == state.count + 1 &&
+            result.owners == state.owners &&
+            result.credits == state.credits + 1
+        )
 {
     RcProtocol {count: state.count + 1, owners: state.owners, credits: state.credits + 1}
 }
@@ -24,9 +27,11 @@ ideal fn publish(state: RcProtocol) -> RcProtocol
     where
         (state.credits > 0)
     ensures
-        (result.count == state.count &&
-        result.owners == state.owners + 1 &&
-        result.credits + 1 == state.credits)
+        (
+            result.count == state.count &&
+            result.owners == state.owners + 1 &&
+            result.credits + 1 == state.credits
+        )
 {
     RcProtocol {count: state.count, owners: state.owners + 1, credits: state.credits - 1}
 }
@@ -36,9 +41,11 @@ ideal fn retain(state: RcProtocol) -> RcProtocol
         (state.owners > 0 &&
         state.count < 18446744073709551615)
     ensures
-        (result.count == state.count + 1 &&
-        result.owners == state.owners + 1 &&
-        result.credits == state.credits)
+        (
+            result.count == state.count + 1 &&
+            result.owners == state.owners + 1 &&
+            result.credits == state.credits
+        )
 {
     publish(reserve(state))
 }
@@ -47,9 +54,11 @@ ideal fn retire(state: RcProtocol) -> RcProtocol
     where
         (state.owners > 0)
     ensures
-        (result.count == state.count &&
-        result.owners + 1 == state.owners &&
-        result.credits == state.credits + 1)
+        (
+            result.count == state.count &&
+            result.owners + 1 == state.owners &&
+            result.credits == state.credits + 1
+        )
 {
     RcProtocol {count: state.count, owners: state.owners - 1, credits: state.credits + 1}
 }
@@ -58,9 +67,11 @@ ideal fn decrement(state: RcProtocol) -> RcProtocol
     where
         (state.credits > 0)
     ensures
-        (result.count + 1 == state.count &&
-        result.owners == state.owners &&
-        result.credits + 1 == state.credits)
+        (
+            result.count + 1 == state.count &&
+            result.owners == state.owners &&
+            result.credits + 1 == state.credits
+        )
 {
     RcProtocol {count: state.count - 1, owners: state.owners, credits: state.credits - 1}
 }
@@ -69,9 +80,11 @@ ideal fn release(state: RcProtocol) -> RcProtocol
     where
         (state.owners > 0)
     ensures
-        (result.count + 1 == state.count &&
-        result.owners + 1 == state.owners &&
-        result.credits == state.credits)
+        (
+            result.count + 1 == state.count &&
+            result.owners + 1 == state.owners &&
+            result.credits == state.credits
+        )
 {
     decrement(retire(state))
 }

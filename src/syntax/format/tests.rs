@@ -1,6 +1,15 @@
 use super::*;
 
 #[test]
+fn owner_start_blocks_indent_the_write_and_preserve_following_proofs() {
+    let input = "fn clone() { starts_owner(self.data) { self.data.count=self.data.count+1; } proof accurate: nat(self.data.count)==owner_count(self.data); Self { data:self.data } }";
+    let formatted = source(input).unwrap();
+    assert!(formatted.contains("    starts_owner(self.data) {\n        self.data.count = self.data.count + 1;\n    }\n    proof accurate:"), "{formatted}");
+    assert_eq!(source(&formatted).unwrap(), formatted);
+    assert!(super::super::parse(&formatted).is_ok());
+}
+
+#[test]
 fn contracts_have_indented_keywords_and_trailing_conjunctions() {
     let input = "fn reserve(x: &usize) -> usize where *x < usize::MAX && *x > 0 modifies(x) ensures result == old(*x) { *x }";
     let expected = "fn reserve(x: &usize) -> usize\n    where\n        *x < usize::MAX &&\n        *x > 0\n    modifies(x)\n    ensures\n        result == old(*x)\n{\n    *x\n}\n";
@@ -85,4 +94,28 @@ fn generic_reference_type_observations_keep_angle_and_reference_spacing() {
         indirect.contains("typeof(x) == &&Pair<usize>"),
         "{indirect}"
     );
+}
+
+#[test]
+fn long_proofs_indent_quantifiers_and_each_domain_clause() {
+    let input = "fn check() {proof initialized: forall(i: integer) where (0 <= i && i < integer::from(length) && i < integer::from(capacity)) {typeof((*data)[i]) == T} by {assumption};}";
+    let expected = "fn check() {\n    proof initialized:\n        forall(i: integer)\n        where (\n            0 <= i &&\n            i < integer::from(length) &&\n            i < integer::from(capacity)\n        ) {typeof((*data)[i]) == T} by {assumption};\n}\n";
+    assert_eq!(source(input).unwrap(), expected);
+    assert_eq!(source(expected).unwrap(), expected);
+}
+
+#[test]
+fn proof_continuations_keep_comments_nested_groups_and_following_statements() {
+    for input in [
+        "fn check() {proof frame: (forall(i: integer) where(0 <= i && i < integer::from(length)) {typeof(old(*data)[i]) == T}) => (forall(i: integer) where(0 <= i && i < integer::from(length) - 1) {typeof((*data)[i]) == T}) by {intro prior; intro i; omega}; let after: usize = 42;}",
+        "fn check() {proof initialized: forall(i: integer) where(0 <= i && // lower bound\ni < integer::from(length) && i < integer::from(capacity)) {typeof((*data)[i]) == T} by {assumption}; // named witness\nlet after: usize = 42;}",
+        "fn check() {proof forall(i: integer) where(0 <= i && i < integer::from(length) && i < integer::from(capacity)) {i == i} by {intro i; omega}; let after: usize = 42;}",
+    ] {
+        let formatted = source(input).unwrap();
+        assert!(formatted.contains("\n    let after: usize = 42;\n}"), "{formatted}");
+        assert_eq!(source(&formatted).unwrap(), formatted);
+        assert!(super::super::parse(&formatted).is_ok(), "{formatted}");
+    }
+    let short = source("fn check(x: usize) {proof _: x == x;}").unwrap();
+    assert!(short.contains("    proof _: x == x;"), "{short}");
 }

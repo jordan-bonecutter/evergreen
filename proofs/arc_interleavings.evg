@@ -16,7 +16,10 @@ ideal fn old_owner_releases_before_clone_publication(state: RcProtocol) -> RcPro
     let reserved = reserve(state);
     let retired = retire(reserved);
     let pending = decrement(retired);
-    proof protected: pending.count == 1 && pending.owners == 0 && pending.credits == 1;
+    proof protected:
+        pending.count == 1 &&
+        pending.owners == 0 &&
+        pending.credits == 1;
     publish(pending)
 }
 
@@ -25,9 +28,11 @@ ideal fn clone_drop_interleaving(state: RcProtocol) -> RcProtocol
         (state.owners > 0 &&
         state.count < 18446744073709551615)
     ensures
-        (result.count == state.count &&
-        result.owners == state.owners &&
-        result.credits == state.credits)
+        (
+            result.count == state.count &&
+            result.owners == state.owners &&
+            result.credits == state.credits
+        )
 {
     let reserved = reserve(state);
     let retired = retire(reserved);
@@ -52,9 +57,11 @@ ideal fn cas_failure_preserves_state(state: RcProtocol, observed: nat) -> RcProt
     where
         (state.count != observed)
     ensures
-        (result.count == state.count &&
-        result.owners == state.owners &&
-        result.credits == state.credits)
+        (
+            result.count == state.count &&
+            result.owners == state.owners &&
+            result.credits == state.credits
+        )
 {
     state
 }

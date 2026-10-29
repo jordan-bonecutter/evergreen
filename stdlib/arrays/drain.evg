@@ -1,0 +1,96 @@
+module arrays;
+
+// Drop exactly the initialized prefix, then release the entirely vacant buffer.
+fn drain_prefix<T>(capacity: usize, data: unique(T | shape(T), capacity), length: usize)
+    where
+        length <= capacity &&
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(length) &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == T}
+        ) &&
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer::from(length) <= i &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == shape(T)}
+        )
+{
+    let remaining = length;
+    while remaining > 0
+        invariant
+            remaining <= capacity &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < integer::from(remaining) &&
+                    i < integer::from(capacity)
+                ) {typeof((*data)[i]) == T}
+            ) &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer::from(remaining) <= i &&
+                    i < integer::from(capacity)
+                ) {typeof((*data)[i]) == shape(T)}
+            )
+        modifies(&*data, &remaining)
+        decreases remaining
+    {
+        let value = arrays::take_last::<T>(capacity, &*data, remaining);
+        drop(value);
+        remaining = remaining - 1;
+    }
+    proof vacant:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer::from(remaining) <= i &&
+            i < integer::from(capacity)
+        ) {typeof((*data)[i]) == shape(T)} by {assumption};
+    proof finish:
+        (
+            remaining == 0 &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer::from(remaining) <= i &&
+                    i < integer::from(capacity)
+                ) {typeof((*data)[i]) == shape(T)}
+            )
+        ) =>
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == shape(T)}
+        ) by {
+            intro premise;
+            cases premise with done,
+            suffix;
+            intro i;
+            specialize suffix(i);
+            omega
+        };
+    proof empty:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer::from(capacity)
+        ) {typeof((*data)[i]) == shape(T)} by {
+            apply finish;
+            constructor;
+            omega;
+            exact vacant
+        };
+    arrays::release_empty::<T>(capacity, data);
+}

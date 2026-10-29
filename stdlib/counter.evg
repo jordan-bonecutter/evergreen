@@ -15,10 +15,13 @@ fn counter_increment(count: &usize) -> bool
 fn counter_try_increment(count: &usize) -> bool
     modifies(count)
     ensures
-        ((result &&
-        nat(*count) == nat(old(*count)) + 1) || (!result &&
-        *count == old(*count) &&
-        old(*count) == usize::MAX))
+        (
+            (result &&
+            nat(*count) == nat(old(*count)) + 1) ||
+            (!result &&
+            *count == old(*count) &&
+            old(*count) == usize::MAX)
+        )
 {
     if *count == usize::MAX {false} else {counter_increment(count)}
 }

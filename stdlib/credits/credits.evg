@@ -19,8 +19,10 @@ ideal fn take(credit: &Credit, amount: nat) -> Credit
         (amount <= (*credit).units)
     modifies(&(*credit).units)
     ensures
-        (result.units == amount &&
-        result.units + (*credit).units == old((*credit).units))
+        (
+            result.units == amount &&
+            result.units + (*credit).units == old((*credit).units)
+        )
 {
     (*credit).units = (*credit).units - amount;
     Credit {units: amount}
@@ -30,8 +32,10 @@ ideal fn split(credit: Credit, amount: nat) -> Split
     where
         (amount <= credit.units)
     ensures
-        (result.left.units == amount &&
-        result.left.units + result.right.units == credit.units)
+        (
+            result.left.units == amount &&
+            result.left.units + result.right.units == credit.units
+        )
 {
     let Credit {units} = credit;
     Split {

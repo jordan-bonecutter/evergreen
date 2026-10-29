@@ -18,12 +18,16 @@ fn scenario(flag: bool, first: usize, second: usize, queried: usize) -> usize
         second < 2 &&
         queried < 2)
     ensures
-        (result == (if flag &&
-        second == queried {13} else {
-            if first == queried {42} else {
-                if queried == 0 {7} else {9}
-            }
-        }))
+        (
+            result == (
+                if flag &&
+                second == queried {13} else {
+                    if first == queried {42} else {
+                        if queried == 0 {7} else {9}
+                    }
+                }
+            )
+        )
 {
     let data: [usize; 2] = [7, 9];
     let chosen = &data[queried];

@@ -1,14 +1,18 @@
 // A numeric ledger, not allocation ownership or an Rc implementation.
 type Ledger struct {count: usize, owners: usize} where (
     fact accurate = count == owners;
-    fact zero_is_safe = count == 0 => owners == 0;
-    accurate && zero_is_safe
+    fact zero_is_safe = count == 0 =>
+    owners == 0;
+    accurate &&
+    zero_is_safe
 );
 
 type BorrowedLedger struct {count: &usize, owners: usize} where (
     fact accurate = *count == owners;
-    fact zero_is_safe = *count == 0 => owners == 0;
-    accurate && zero_is_safe
+    fact zero_is_safe = *count == 0 =>
+    owners == 0;
+    accurate &&
+    zero_is_safe
 );
 
 fn set(slot: &usize, value: usize) -> &usize

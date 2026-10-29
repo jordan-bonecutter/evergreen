@@ -3,33 +3,72 @@ fn keep_empty<T, const N: usize>(
     data: &[T | shape(T); N]
 ) -> &[T | shape(T); N]
     where
-        (forall(i: integer) where (0 <= i &&
-        i < integer(N)) {typeof((*data)[i]) == shape(T)})
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer(N)
+            ) {typeof((*data)[i]) == shape(T)}
+        )
     borrows(data)
     ensures
-        (forall(i: integer) where (0 <= i &&
-        i < integer(N)) {typeof((*result)[i]) == shape(T)})
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer(N)
+            ) {typeof((*result)[i]) == shape(T)}
+        )
 {
-    proof empty: forall(i: integer) where (0 <= i && i < integer(N)) {typeof((*data)[i]) == shape(T)} by {assumption};
+    proof empty:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer(N)
+        ) {typeof((*data)[i]) == shape(T)} by {assumption};
 
-    // Prove the restriction rule independently, then apply the input guarantee.
-    proof restrict: (forall(i: integer) where (0 <= i && i < integer(N)) {typeof((*data)[i]) == shape(T)}) => (forall(j: integer) where (4 <= j && j < integer(N)) {typeof((*data)[j]) == shape(T)}) by {
-        intro all;
-        intro j;
-        specialize all(j);
-        omega
-    };
-    proof suffix: forall(i: integer) where (4 <= i && i < integer(N)) {typeof((*data)[i]) == shape(T)} by {
-        apply restrict;
-        exact empty
-    };
+        // Prove the restriction rule independently, then apply the input guarantee.
+    proof restrict:
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer(N)
+            ) {typeof((*data)[i]) == shape(T)}
+        ) =>
+        (
+            forall(j: integer)
+            where (
+                4 <= j &&
+                j < integer(N)
+            ) {typeof((*data)[j]) == shape(T)}
+        ) by {
+            intro all;
+            intro j;
+            specialize all(j);
+            omega
+        };
+    proof suffix:
+        forall(i: integer)
+        where (
+            4 <= i &&
+            i < integer(N)
+        ) {typeof((*data)[i]) == shape(T)} by {
+            apply restrict;
+            exact empty
+        };
     data
 }
 
 fn main() -> usize {
     let data: unique(unique(usize) | shape(unique(usize)), 8) = alloc(8, shape(unique(usize)));
     let view = keep_empty::<unique(usize), 8>(&*data);
-    proof preserved: forall(i: integer) where (0 <= i && i < 8) {typeof((*view)[i]) == shape(unique(usize))} by {assumption};
+    proof preserved:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < 8
+        ) {typeof((*view)[i]) == shape(unique(usize))} by {assumption};
     let empty: unique(shape(unique(usize)), 8) = data;
     drop(empty);
     42

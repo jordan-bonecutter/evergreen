@@ -4,44 +4,122 @@ fn take_last<T, const N: usize>(
     length: usize
 ) -> T
     where
-        (0 < length &&
-        length <= N &&
-        (forall(i: integer) where (0 <= i &&
-        i < integer(length) &&
-        i < integer(N)) {typeof((*data)[i]) == T}) &&
-        (forall(i: integer) where (0 <= i &&
-        integer(length) <= i &&
-        i < integer(N)) {typeof((*data)[i]) == shape(T)}))
+        (
+            0 < length &&
+            length <= N &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < integer(length) &&
+                    i < integer(N)
+                ) {typeof((*data)[i]) == T}
+            ) &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer(length) <= i &&
+                    i < integer(N)
+                ) {typeof((*data)[i]) == shape(T)}
+            )
+        )
     modifies(&(*data)[length - 1])
     ensures
-        (forall(i: integer) where (0 <= i &&
-        i < integer(length) - 1 &&
-        i < integer(N)) {typeof((*data)[i]) == T} &&
-        (forall(i: integer) where (0 <= i &&
-        integer(length) - 1 <= i &&
-        i < integer(N)) {typeof((*data)[i]) == shape(T)}))
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer(length) - 1 &&
+                i < integer(N)
+            ) {typeof((*data)[i]) == T} &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer(length) - 1 <= i &&
+                    i < integer(N)
+                ) {typeof((*data)[i]) == shape(T)}
+            )
+        )
 {
-    proof initialized: forall(i: integer) where (0 <= i && i < integer(length) && i < integer(N)) {typeof((*data)[i]) == T} by {assumption};
-    proof vacant: forall(i: integer) where (0 <= i && integer(length) <= i && i < integer(N)) {typeof((*data)[i]) == shape(T)} by {assumption};
+    proof initialized:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer(length) &&
+            i < integer(N)
+        ) {typeof((*data)[i]) == T} by {assumption};
+    proof vacant:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer(length) <= i &&
+            i < integer(N)
+        ) {typeof((*data)[i]) == shape(T)} by {assumption};
     let value: T = move((*data)[length - 1]);
-    proof frame: (forall(i: integer) where (0 <= i && i < integer(length) && i < integer(N)) {typeof(old(*data)[i]) == T}) => (forall(i: integer) where (0 <= i && i < integer(length) - 1 && i < integer(N)) {typeof((*data)[i]) == T}) by {
-        intro prior;
-        intro i;
-        omega
-    };
-    proof prefix: forall(i: integer) where (0 <= i && i < integer(length) - 1 && i < integer(N)) {typeof((*data)[i]) == T} by {
-        apply frame;
-        exact initialized
-    };
-    proof empty_frame: (forall(i: integer) where (0 <= i && integer(length) <= i && i < integer(N)) {typeof(old(*data)[i]) == shape(T)}) => (forall(i: integer) where (0 <= i && integer(length) - 1 <= i && i < integer(N)) {typeof((*data)[i]) == shape(T)}) by {
-        intro prior;
-        intro i;
-        omega
-    };
-    proof suffix: forall(i: integer) where (0 <= i && integer(length) - 1 <= i && i < integer(N)) {typeof((*data)[i]) == shape(T)} by {
-        apply empty_frame;
-        exact vacant
-    };
+    proof frame:
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer(length) &&
+                i < integer(N)
+            ) {typeof(old(*data)[i]) == T}
+        ) =>
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer(length) - 1 &&
+                i < integer(N)
+            ) {typeof((*data)[i]) == T}
+        ) by {
+            intro prior;
+            intro i;
+            omega
+        };
+    proof prefix:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer(length) - 1 &&
+            i < integer(N)
+        ) {typeof((*data)[i]) == T} by {
+            apply frame;
+            exact initialized
+        };
+    proof empty_frame:
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer(length) <= i &&
+                i < integer(N)
+            ) {typeof(old(*data)[i]) == shape(T)}
+        ) =>
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer(length) - 1 <= i &&
+                i < integer(N)
+            ) {typeof((*data)[i]) == shape(T)}
+        ) by {
+            intro prior;
+            intro i;
+            omega
+        };
+    proof suffix:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer(length) - 1 <= i &&
+            i < integer(N)
+        ) {typeof((*data)[i]) == shape(T)} by {
+            apply empty_frame;
+            exact vacant
+        };
     if length > 1 {
         let survivor: &T = &(*data)[0];
     }
@@ -51,44 +129,94 @@ fn take_last<T, const N: usize>(
 fn drain<T, const N: usize>(data: unique(T | shape(T), N), length: usize)
     where
         length <= N &&
-        (forall(i: integer) where (0 <= i &&
-        i < integer(length) &&
-        i < integer(N)) {typeof((*data)[i]) == T}) &&
-        (forall(i: integer) where (0 <= i &&
-        integer(length) <= i &&
-        i < integer(N)) {typeof((*data)[i]) == shape(T)})
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer(length) &&
+                i < integer(N)
+            ) {typeof((*data)[i]) == T}
+        ) &&
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer(length) <= i &&
+                i < integer(N)
+            ) {typeof((*data)[i]) == shape(T)}
+        )
 {
     let remaining = length;
     while remaining > 0
         invariant
             remaining <= N &&
-            (forall(i: integer) where (0 <= i &&
-            i < integer(remaining) &&
-            i < integer(N)) {typeof((*data)[i]) == T}) &&
-            (forall(i: integer) where (0 <= i &&
-            integer(remaining) <= i &&
-            i < integer(N)) {typeof((*data)[i]) == shape(T)})
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < integer(remaining) &&
+                    i < integer(N)
+                ) {typeof((*data)[i]) == T}
+            ) &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer(remaining) <= i &&
+                    i < integer(N)
+                ) {typeof((*data)[i]) == shape(T)}
+            )
         modifies(&*data, &remaining)
         decreases(remaining)
     {
         let value = take_last::<T, N>(&*data, remaining);
         drop(value);
         remaining = remaining - 1;
-    } proof vacant: forall(i: integer) where (0 <= i && integer(remaining) <= i && i < integer(N)) {typeof((*data)[i]) == shape(T)} by {assumption};
-    proof finish: (remaining == 0 && (forall(i: integer) where (0 <= i && integer(remaining) <= i && i < integer(N)) {typeof((*data)[i]) == shape(T)})) => (forall(i: integer) where (0 <= i && i < integer(N)) {typeof((*data)[i]) == shape(T)}) by {
-        intro premise;
-        cases premise with done,
-        suffix;
-        intro i;
-        specialize suffix(i);
-        omega
-    };
-    proof empty: forall(i: integer) where (0 <= i && i < integer(N)) {typeof((*data)[i]) == shape(T)} by {
-        apply finish;
-        constructor;
-        omega;
-        exact vacant
-    };
+    }
+    proof vacant:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer(remaining) <= i &&
+            i < integer(N)
+        ) {typeof((*data)[i]) == shape(T)} by {assumption};
+    proof finish:
+        (
+            remaining == 0 &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer(remaining) <= i &&
+                    i < integer(N)
+                ) {typeof((*data)[i]) == shape(T)}
+            )
+        ) =>
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer(N)
+            ) {typeof((*data)[i]) == shape(T)}
+        ) by {
+            intro premise;
+            cases premise with done,
+            suffix;
+            intro i;
+            specialize suffix(i);
+            omega
+        };
+    proof empty:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer(N)
+        ) {typeof((*data)[i]) == shape(T)} by {
+            apply finish;
+            constructor;
+            omega;
+            exact vacant
+        };
     arrays::release_empty::<T>(data);
 }
 fn main() -> usize {

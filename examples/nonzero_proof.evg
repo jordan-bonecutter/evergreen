@@ -20,7 +20,8 @@ impl NonZero {
 fn main() -> usize {
     let x = NonZero::new(10);
     let y = NonZero::new(20);
-    proof fits: integer(x.data) + integer(y.data) < integer(usize::MAX) by {omega};
+    proof fits:
+        integer(x.data) + integer(y.data) < integer(usize::MAX) by {omega};
     let z = x.add(y);
     proof sum_is_thirty: z.data == 30 by {omega};
     proof result_is_nonzero: z.data != 0 by {omega};

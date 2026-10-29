@@ -2,8 +2,10 @@
 // not the proposed owner_count(plane) ownership primitive or an Rc implementation.
 type Ledger struct {count: usize, owners: usize} where (
     fact reference_count_is_accurate = owners == count;
-    fact reference_count_is_0_implies_no_owners = count == 0 => owners == 0;
-    reference_count_is_accurate && reference_count_is_0_implies_no_owners
+    fact reference_count_is_0_implies_no_owners = count == 0 =>
+    owners == 0;
+    reference_count_is_accurate &&
+    reference_count_is_0_implies_no_owners
 );
 
 fn main() -> usize

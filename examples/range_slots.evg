@@ -2,10 +2,17 @@ fn first<T, const N: usize>(
     data: &[T | shape(T); N]
 ) -> &T
     where
-        (N > 0 &&
-        (forall(i: integer) where (0 <= i &&
-        i < 1 &&
-        i < integer(N)) {typeof((*data)[i]) == T}))
+        (
+            N > 0 &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < 1 &&
+                    i < integer(N)
+                ) {typeof((*data)[i]) == T}
+            )
+        )
     borrows(&(*data)[0])
 {
     &(*data)[0]
@@ -15,10 +22,17 @@ fn take_first<T, const N: usize>(
     data: &[T | shape(T); N]
 ) -> T
     where
-        (N > 0 &&
-        (forall(i: integer) where (0 <= i &&
-        i < 1 &&
-        i < integer(N)) {typeof((*data)[i]) == T}))
+        (
+            N > 0 &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < 1 &&
+                    i < integer(N)
+                ) {typeof((*data)[i]) == T}
+            )
+        )
     modifies(&(*data)[0])
     ensures
         (typeof((*data)[0]) == shape(T))

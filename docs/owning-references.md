@@ -21,7 +21,7 @@ A unique rvalue converts to an expected `shared(T)` by transferring its claim.
 On the current target, shared pointers have Copy permission through the target's
 explicit pointer Copy declaration. Reading one as a runtime value creates a
 fresh claim, or materializes a previously marked early owner without counting it
-again. An assignment such as `n = n + 1 starts_owner(pointer);` marks that
+again. A block such as `starts_owner(pointer) { n = n + 1; }` marks that
 owner's lifetime start. Every newly started owner must be materialized before
 the function returns. Specification observations, address calculation, and borrows do not
 copy owning pointers. Copy records and arrays copy each shared-pointer leaf;

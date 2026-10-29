@@ -4,6 +4,9 @@
 use super::*;
 
 #[cfg(test)]
+mod conditional_tests;
+mod projection;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod type_tests;
@@ -127,7 +130,8 @@ impl Context<'_> {
         for node in candidates {
             let claim = self.proof.evidence.claim(node)?.clone();
             self.charge_value_work(claim.storage_weight()?)?;
-            if !claim.normalized().alpha_equal(&goal.normalized()) {
+            let exact = claim.normalized().alpha_equal(&goal.normalized());
+            if !exact && !self.contract_contains(&claim, goal)? {
                 continue;
             }
             let Some(snapshot) = self.proof.evidence.subjects(node).cloned() else {
@@ -136,6 +140,9 @@ impl Context<'_> {
             // An admission cannot jump to a different value merely because
             // elaboration simplified both propositions to the same formula.
             let trusted = !self.evidence_dependencies(node)?.admissions.is_empty();
+            if trusted && !exact {
+                continue;
+            }
             if trusted && !subjects.is_some_and(|goal| goal.complete && goal.key == snapshot.key) {
                 continue;
             }
@@ -143,9 +150,15 @@ impl Context<'_> {
             let scope = self
                 .reference_claim_scope(&snapshot, subjects)?
                 .and(available);
-            let Some(node) = self.guarded_claim_evidence(node, &scope)? else {
+            let Some(mut node) = self.guarded_claim_evidence(node, &scope)? else {
                 continue;
             };
+            if !exact {
+                let Some(projected) = self.project_contract_fact(node, goal)? else {
+                    continue;
+                };
+                node = projected;
+            }
             if !trusted {
                 return Ok(Some(node));
             }

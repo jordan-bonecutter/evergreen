@@ -2,8 +2,10 @@
 // transition with borrowed proof quantities, not deallocation authority or Rc.
 type CountLedger struct {count: &usize, owners: usize} where (
     fact accurate = *count == owners;
-    fact zero_is_safe = *count == 0 => owners == 0;
-    accurate && zero_is_safe
+    fact zero_is_safe = *count == 0 =>
+    owners == 0;
+    accurate &&
+    zero_is_safe
 );
 
 ideal fn discard_unit(token: borrow_credits::Token)
@@ -12,8 +14,10 @@ ideal fn discard_unit(token: borrow_credits::Token)
 {}
 fn read_remaining(ideal token: borrow_credits::Token, count: &usize) -> usize
     where
-        (borrow_credits::target(&token) == count &&
-        borrow_credits::units(&token) == nat(*count))
+        (
+            borrow_credits::target(&token) == count &&
+            borrow_credits::units(&token) == nat(*count)
+        )
     ensures
         (result == *count)
 {
@@ -40,6 +44,7 @@ fn release_budget(ideal budget: credits::Credit, count: &usize) -> usize
         ideal token = remaining;
         ideal let discarded = discard_unit(released);
         proof conserved: borrow_credits::units(&token) + 1 == original;
-    } proof matches_count: borrow_credits::units(&token) == nat(*count);
+    }
+    proof matches_count: borrow_credits::units(&token) == nat(*count);
     read_remaining(token, count)
 }

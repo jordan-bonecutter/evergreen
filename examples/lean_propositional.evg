@@ -1,19 +1,24 @@
 ideal fn transitive(a: bool, b: bool, c: bool) -> nat
     where
-        ((a => b) &&
-        (b => c))
+        ((a =>
+        b) &&
+        (b =>
+        c))
     ensures
-        ((a => c) &&
+        ((a =>
+        c) &&
         result == 42)
 {
     proof first: a => b by {simp_all};
     proof second: b => c by {simp_all};
-    proof composed: a => c by {
-        intro premise;
-        apply second;
-        apply first;
-        exact premise
-    };
+    proof composed:
+        a =>
+        c by {
+            intro premise;
+            apply second;
+            apply first;
+            exact premise
+        };
     42
 } proof {
     constructor;
@@ -22,13 +27,17 @@ ideal fn transitive(a: bool, b: bool, c: bool) -> nat
 }
 
 ideal fn package(a: bool, b: bool) -> nat {
-    proof package: a => b => (a && b) by {
-        intro left_value;
-        intro right_value;
-        constructor;
-        exact left_value;
-        exact right_value
-    };
+    proof package:
+        a =>
+        b =>
+        (a &&
+        b) by {
+            intro left_value;
+            intro right_value;
+            constructor;
+            exact left_value;
+            exact right_value
+        };
     42
 }
 

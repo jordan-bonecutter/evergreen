@@ -24,9 +24,10 @@ fn main() -> usize {
     let first = NonZero::new(10);
     let second = NonZero::new(32);
     let sum = first.add(&second);
-    proof _: sum.data == 42;
-    // The primitive operation's overflow value is unspecified. This source
-    // function deliberately promises a modular result and proves that policy.
+    proof _:
+        sum.data == 42;
+        // The primitive operation's overflow value is unspecified. This source
+        // function deliberately promises a modular result and proves that policy.
     let wrapped = usize::wrapping_add(usize::MAX, 1);
     proof _: wrapped == 0;
     sum.data

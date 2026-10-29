@@ -74,9 +74,13 @@ local checked hypothesis; that hypothesis and its path assumptions leave scope
 when the subgoal closes. `apply` uses a checked implication and creates its
 premise goals in declaration order, including curried implications. It can also
 apply a checked negation to prove false. `constructor` proves both conjuncts;
-`left` and `right` select a disjunct. `assumption` finds a matching named checked
-proof or introduced hypothesis; it does not invoke arithmetic search or treat a
-raw fact as a proof. `exact` requires the same normalized proposition, rather
+`left` and `right` select a disjunct. `assumption` reuses a matching checked
+proof, introduced hypothesis, or current contract clause. A function's `where`
+clause is available because every caller must prove it. Conditional clauses can
+be projected on demand when their branch follows from admission-free evidence;
+their original storage revisions must still be valid. This introduces no new
+unchecked assumption and does not treat a raw fact as a proof. `exact` requires
+the same normalized proposition, rather
 than merely another true statement.
 
 `cases h with first | second` requires a checked disjunction and creates two
@@ -2377,14 +2381,16 @@ it remain labeled as checked with trusted assumptions and are rejected by
 
 ### Explicit early shared ownership
 
-`assignment starts_owner(pointer);` starts an additional owner of a stored
+`starts_owner(pointer) { target = value; }` starts an additional owner of a stored
 `shared(T)` pointer at that write event. A later ordinary copy of the same
 allocation materializes the counted owner. No access or drop authority is granted
 early, and every promise created by a function must be fulfilled before return.
 Multiple pointers can be listed; each creates one obligation. The operands are
 pure stored places resolved before evaluating the assignment's right-hand side.
+The block contains exactly one assignment: it marks that write event, not an
+arbitrary sequence of statements. The former assignment-suffix syntax is rejected.
 
-The annotation keeps Rc's clone counter and owner census aligned without a
+The block keeps Rc's clone counter and owner census aligned without a
 Credit type or helper function. See [pointer-model.md](pointer-model.md),
 [rc.md](rc.md), and `examples/early_ownership.evg`. This assignment feature does
 not turn ordinary stores into atomics; success-conditioned atomic ownership

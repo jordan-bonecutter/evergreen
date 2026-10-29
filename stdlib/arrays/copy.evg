@@ -17,30 +17,50 @@ fn copy_range<T = usize>(
     modifies(target)
     ensures
         (
-            forall(i: integer) where (0 <= i &&
-            integer::from(start) <= i &&
-            i < integer::from(end) &&
-            i < integer::from(target_capacity) &&
-            i < integer::from(source_capacity)) {same_value((*target)[i], old(*source)[i])}
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer::from(start) <= i &&
+                i < integer::from(end) &&
+                i < integer::from(target_capacity) &&
+                i < integer::from(source_capacity)
+            ) {same_value((*target)[i], old(*source)[i])}
         ) &&
         (
-            forall(i: integer) where (0 <= i &&
-            i < integer::from(target_capacity) &&
-            (i < integer::from(start) || integer::from(end) <= i)) {same_value((*target)[i], old(*target)[i])}
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(target_capacity) &&
+                (i < integer::from(start) ||
+                integer::from(end) <= i)
+            ) {same_value((*target)[i], old(*target)[i])}
         )
 {
     // No bytes need writing for an empty range or the same source and target.
     let distinct = if start < end {&(*source)[start] != &(*target)[start]} else {false};
     let cursor = if distinct {start} else {end};
-    fact copied = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(cursor) && i < integer::from(target_capacity) && i < integer::from(source_capacity)) {same_value((*target)[i], old(*source)[i])};
-    fact untouched = forall(i: integer) where (0 <= i && i < integer::from(target_capacity) && (i < integer::from(start) || integer::from(cursor) <= i)) {same_value((*target)[i], old(*target)[i])};
+    fact copied = forall(i: integer)
+    where (
+        0 <= i &&
+        integer::from(start) <= i &&
+        i < integer::from(cursor) &&
+        i < integer::from(target_capacity) &&
+        i < integer::from(source_capacity)
+    ) {same_value((*target)[i], old(*source)[i])};
+    fact untouched = forall(i: integer)
+    where (
+        0 <= i &&
+        i < integer::from(target_capacity) &&
+        (i < integer::from(start) || integer::from(cursor) <= i)
+    ) {same_value((*target)[i], old(*target)[i])};
     while cursor < end
         invariant
             start <= cursor &&
             cursor <= end &&
             end <= source_capacity &&
             end <= target_capacity &&
-            (distinct || cursor == end) &&
+            (distinct ||
+            cursor == end) &&
             copied &&
             untouched
         modifies(target, &cursor)
@@ -49,77 +69,118 @@ fn copy_range<T = usize>(
         // These snapshots are proof-only; no array copy executes at runtime.
         ideal let before = *target;
         ideal let completed = integer::from(cursor);
-        fact before_copied = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < completed && i < integer::from(target_capacity) && i < integer::from(source_capacity)) {same_value(before[i], old(*source)[i])};
-        fact before_untouched = forall(i: integer) where (0 <= i && i < integer::from(target_capacity) && (i < integer::from(start) || completed <= i)) {same_value(before[i], old(*target)[i])};
+        fact before_copied = forall(i: integer)
+        where (
+            0 <= i &&
+            integer::from(start) <= i &&
+            i < completed &&
+            i < integer::from(target_capacity) &&
+            i < integer::from(source_capacity)
+        ) {same_value(before[i], old(*source)[i])};
+        fact before_untouched = forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer::from(target_capacity) &&
+            (i < integer::from(start) || completed <= i)
+        ) {same_value(before[i], old(*target)[i])};
         proof prior: before_copied by {assumption};
         proof rest: before_untouched by {assumption};
 
         (*target)[cursor] = (*source)[cursor];
         cursor = cursor + 1;
 
-        proof extend_prefix: (distinct && before_copied) => copied by {
-            intro premise;
-            cases premise with running,
-            previous;
-            intro i;
-            omega
-        };
-        proof extended: copied by {
-            apply extend_prefix;
-            constructor;
-            omega;
-            exact prior
-        };
-        proof preserve_rest: (distinct && integer::from(start) <= completed && before_untouched) => untouched by {
-            intro premise;
-            cases premise with active,
-            previous;
-            cases active with running,
-            started;
-            intro i;
-            omega
-        };
-        proof preserved: untouched by {
-            apply preserve_rest;
-            constructor;
-            constructor;
-            omega;
-            omega;
-            exact rest
-        };
+        proof extend_prefix:
+            (distinct &&
+            before_copied) =>
+            copied by {
+                intro premise;
+                cases premise with running,
+                previous;
+                intro i;
+                omega
+            };
+        proof extended:
+            copied by {
+                apply extend_prefix;
+                constructor;
+                omega;
+                exact prior
+            };
+        proof preserve_rest:
+            (distinct &&
+            integer::from(start) <= completed &&
+            before_untouched) =>
+            untouched by {
+                intro premise;
+                cases premise with active,
+                previous;
+                cases active with running,
+                started;
+                intro i;
+                omega
+            };
+        proof preserved:
+            untouched by {
+                apply preserve_rest;
+                constructor;
+                constructor;
+                omega;
+                omega;
+                exact rest
+            };
     }
 
     // At loop exit the copied prefix is exactly the requested range.
     proof prefix: copied by {assumption};
     proof suffix: untouched by {assumption};
-    fact final_copied = forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(end) && i < integer::from(target_capacity) && i < integer::from(source_capacity)) {same_value((*target)[i], old(*source)[i])};
-    fact final_untouched = forall(i: integer) where (0 <= i && i < integer::from(target_capacity) && (i < integer::from(start) || integer::from(end) <= i)) {same_value((*target)[i], old(*target)[i])};
-    proof finish: (cursor == end && copied) => final_copied by {
-        intro premise;
-        cases premise with at_end,
-        all;
-        intro i;
-        specialize all(i);
-        omega
-    };
-    proof complete: final_copied by {
-        apply finish;
-        constructor;
-        omega;
-        exact prefix
-    };
-    proof keep: (cursor == end && untouched) => final_untouched by {
-        intro premise;
-        cases premise with at_end,
-        all;
-        intro i;
-        specialize all(i);
-        omega
-    };
-    proof unchanged: final_untouched by {
-        apply keep;
-        constructor;
-        omega;
-        exact suffix
-    };
+    fact final_copied = forall(i: integer)
+    where (
+        0 <= i &&
+        integer::from(start) <= i &&
+        i < integer::from(end) &&
+        i < integer::from(target_capacity) &&
+        i < integer::from(source_capacity)
+    ) {same_value((*target)[i], old(*source)[i])};
+    fact final_untouched = forall(i: integer)
+    where (
+        0 <= i &&
+        i < integer::from(target_capacity) &&
+        (i < integer::from(start) || integer::from(end) <= i)
+    ) {same_value((*target)[i], old(*target)[i])};
+    proof finish:
+        (cursor == end &&
+        copied) =>
+        final_copied by {
+            intro premise;
+            cases premise with at_end,
+            all;
+            intro i;
+            specialize all(i);
+            omega
+        };
+    proof complete:
+        final_copied by {
+            apply finish;
+            constructor;
+            omega;
+            exact prefix
+        };
+    proof keep:
+        (cursor == end &&
+        untouched) =>
+        final_untouched by {
+            intro premise;
+            cases premise with at_end,
+            all;
+            intro i;
+            specialize all(i);
+            omega
+        };
+    proof unchanged:
+        final_untouched by {
+            apply keep;
+            constructor;
+            omega;
+            exact suffix
+        };
 }

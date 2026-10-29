@@ -5,26 +5,62 @@ fn finish(
 ) -> usize
     where
         2 <= capacity &&
-        (forall(i: integer) where (0 <= i &&
-        i < 2 &&
-        i < integer::from(capacity)) {typeof((*grown)[i]) == unique(usize)}) &&
-        (forall(i: integer) where (0 <= i &&
-        2 <= i &&
-        i < integer::from(capacity)) {typeof((*grown)[i]) == shape(unique(usize))})
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < 2 &&
+                i < integer::from(capacity)
+            ) {typeof((*grown)[i]) == unique(usize)}
+        ) &&
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                2 <= i &&
+                i < integer::from(capacity)
+            ) {typeof((*grown)[i]) == shape(unique(usize))}
+        )
 {
-    proof vacant: forall(i: integer) where (0 <= i && 2 <= i && i < integer::from(capacity)) {typeof((*grown)[i]) == shape(unique(usize))} by {assumption};
+    proof vacant:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            2 <= i &&
+            i < integer::from(capacity)
+        ) {typeof((*grown)[i]) == shape(unique(usize))} by {assumption};
     let first_view: &unique(usize) = &(*grown)[0];
     let last: unique(usize) = move((*grown)[1]);
     let first: unique(usize) = move((*grown)[0]);
-    proof frame: (forall(i: integer) where (0 <= i && 2 <= i && i < integer::from(capacity)) {typeof(old(*grown)[i]) == shape(unique(usize))}) => (forall(i: integer) where (0 <= i && i < integer::from(capacity)) {typeof((*grown)[i]) == shape(unique(usize))}) by {
-        intro previous;
-        intro i;
-        omega
-    };
-    proof empty: forall(i: integer) where (0 <= i && i < integer::from(capacity)) {typeof((*grown)[i]) == shape(unique(usize))} by {
-        apply frame;
-        exact vacant
-    };
+    proof frame:
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                2 <= i &&
+                i < integer::from(capacity)
+            ) {typeof(old(*grown)[i]) == shape(unique(usize))}
+        ) =>
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(capacity)
+            ) {typeof((*grown)[i]) == shape(unique(usize))}
+        ) by {
+            intro previous;
+            intro i;
+            omega
+        };
+    proof empty:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer::from(capacity)
+        ) {typeof((*grown)[i]) == shape(unique(usize))} by {
+            apply frame;
+            exact vacant
+        };
     arrays::release_empty::<unique(usize)>(capacity, grown);
     *last
 }

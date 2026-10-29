@@ -6,8 +6,10 @@ ideal fn split_credit(c: Credit, first: nat) -> Split
     where
         (first <= c.units)
     ensures
-        (result.left.units == first &&
-        result.left.units + result.right.units == c.units)
+        (
+            result.left.units == first &&
+            result.left.units + result.right.units == c.units
+        )
 {
     Split {
         left: Credit {units: first},

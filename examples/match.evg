@@ -37,7 +37,8 @@ fn main() -> usize {
     match tick(&calls) {
         false => {store(&selected, 1)},
         true => {store(&selected, 42)},
-    } proof called_once: calls == 1;
+    }
+    proof called_once: calls == 1;
     proof selected_true_arm: selected == 42;
     choose(false)
 }

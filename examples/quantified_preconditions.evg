@@ -7,10 +7,15 @@ ideal fn offset_from(index: integer, start: integer) -> integer
 }
 
 fn check_range(start: usize, end: usize) {
-    proof offsets: forall(i: integer) where (integer::from(start) <= i && i < integer::from(end)) {offset_from(i, integer::from(start)) >= 0} by {
-        intro i;
-        omega
-    };
+    proof offsets:
+        forall(i: integer)
+        where (
+            integer::from(start) <= i &&
+            i < integer::from(end)
+        ) {offset_from(i, integer::from(start)) >= 0} by {
+            intro i;
+            omega
+        };
 }
 
 fn main() -> usize {

@@ -120,6 +120,12 @@ const LIBRARIES: &[Library] = &[
         source: include_str!("../../stdlib/arrays/prefix.evg"),
     },
     Library {
+        module: Some("arrays"),
+        exports: &[],
+        path: "stdlib/arrays/drain.evg",
+        source: include_str!("../../stdlib/arrays/drain.evg"),
+    },
+    Library {
         module: None,
         exports: &["swap_usize", "swap_bool"],
         path: "stdlib/swap.evg",

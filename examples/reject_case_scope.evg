@@ -3,10 +3,11 @@ ideal fn main() -> nat {
         right;
         decide
     };
-    proof escaped: false by {
-        cases either with first | second;
-        exact first;
-        exact first
-    };
+    proof escaped:
+        false by {
+            cases either with first | second;
+            exact first;
+            exact first
+        };
     42
 }

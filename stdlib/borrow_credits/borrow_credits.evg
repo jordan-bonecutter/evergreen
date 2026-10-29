@@ -34,8 +34,10 @@ ideal fn take(token: &Token, amount: nat) -> Token
     modifies(&(*token).budget)
     borrows(target: (*token).target)
     ensures
-        (units(&result) == amount &&
-        units(token) + units(&result) == old(units(token)))
+        (
+            units(&result) == amount &&
+            units(token) + units(&result) == old(units(token))
+        )
 {
     Token {
         budget: credits::take(&(*token).budget, amount),
@@ -48,8 +50,10 @@ ideal fn split(token: Token, amount: nat) -> Split
         (amount <= units(&token))
     borrows(left.target: token.target, right.target: token.target)
     ensures
-        (units(&result.left) == amount &&
-        units(&result.left) + units(&result.right) == units(&token))
+        (
+            units(&result.left) == amount &&
+            units(&result.left) + units(&result.right) == units(&token)
+        )
 {
     let Token {budget, target} = token;
     let credits::Split {left, right} = credits::split(budget, amount);

@@ -21,7 +21,9 @@ drop(second);
 starts the future pointer's lifetime at the counter update:
 
 ```evg
-self.data.count = self.data.count + 1 starts_owner(self.data);
+starts_owner(self.data) {
+    self.data.count = self.data.count + 1;
+}
 Self {data: self.data}
 ```
 

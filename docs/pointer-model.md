@@ -42,10 +42,12 @@ owner prevents unique recovery and deallocation; it supplies no early access or
 drop authority. Materialization fulfills the existing ownership claim without
 adding another owner. Unfulfilled obligations cannot silently disappear.
 
-An assignment explicitly marks the point where a future owner begins:
+A structured block marks the write at which a future owner begins:
 
 ```evg
-self.data.count = self.data.count + 1 starts_owner(self.data);
+starts_owner(self.data) {
+    self.data.count = self.data.count + 1;
+}
 proof accurate: nat(self.data.count) == owner_count(self.data);
 Self {data: self.data}
 ```
@@ -55,7 +57,8 @@ before the right-hand side runs. At the store event the compiler starts one
 additional owner of that allocation and generation, before checking the resulting
 invariants. The later ordinary shared-pointer copy materializes that owner;
 it does not increment the census again. Multiple places can be listed to start
-multiple owners. The marker has no runtime representation.
+multiple owners. The block currently requires exactly one assignment; it does
+not provide atomicity. The marker has no runtime representation.
 
 Rc uses this directly in its clone method, with no allocation helper, Credit
 wrapper, or separate publication step. Accuracy is available after the increment

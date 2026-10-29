@@ -14,11 +14,14 @@ fn require(b: &Bounds) -> usize
         i < 4) {i < integer(b.limit)})
 {
     // Give the imported guarantee a name for explicit specialization.
-    proof bounds: forall(i: integer) where (0 <= i && i < 4) {i < integer(b.limit)} by {assumption};
-    proof lower_bound: 3 < integer(b.limit) by {
-        specialize bounds(3);
-        omega
-    };
+    proof bounds:
+        forall(i: integer) where (0 <= i &&
+        i < 4) {i < integer(b.limit)} by {assumption};
+    proof lower_bound:
+        3 < integer(b.limit) by {
+            specialize bounds(3);
+            omega
+        };
     b.limit - 4
 }
 
@@ -29,9 +32,14 @@ fn main() -> usize {
     let cursor: usize = 0;
     while cursor < 4
         invariant
-            (cursor <= 4 &&
-            (forall(i: integer) where (0 <= i &&
-            i < 4) {i < integer(b.limit)}))
+            (
+                cursor <= 4 &&
+                (forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < 4
+                ) {i < integer(b.limit)})
+            )
         modifies(&cursor)
         decreases(4 - cursor)
     {

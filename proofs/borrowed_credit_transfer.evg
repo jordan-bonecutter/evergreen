@@ -5,8 +5,10 @@ ideal fn take_existing(credit: &credits::Credit, amount: nat) -> credits::Credit
         (amount <= credits::units(credit))
     modifies(credit)
     ensures
-        (credits::units(&result) == amount &&
-        credits::units(credit) + credits::units(&result) == old(credits::units(credit)))
+        (
+            credits::units(&result) == amount &&
+            credits::units(credit) + credits::units(&result) == old(credits::units(credit))
+        )
 {
     credits::take(credit, amount)
 }
@@ -19,7 +21,8 @@ ideal fn transfer_existing(credit: credits::Credit) -> credits::Credit
 {
     let original: nat = credits::units(&credit);
     let taken = take_existing(&credit, 1);
-    proof transfer_conserves: credits::units(&credit) + credits::units(&taken) == original;
+    proof transfer_conserves:
+        credits::units(&credit) + credits::units(&taken) == original;
     proof one_transferred: credits::units(&taken) == 1;
     let restored = credits::join(credit, taken);
     proof total_restored: credits::units(&restored) == original;

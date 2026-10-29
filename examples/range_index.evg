@@ -3,10 +3,17 @@ fn get<T, const N: usize>(
     index: usize
 ) -> &T
     where
-        (index < N &&
-        (forall(i: integer) where (0 <= i &&
-        i < integer(N) &&
-        i == integer(index)) {typeof((*data)[i]) == T}))
+        (
+            index < N &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < integer(N) &&
+                    i == integer(index)
+                ) {typeof((*data)[i]) == T}
+            )
+        )
     borrows(&(*data)[index])
 {
     &(*data)[index]
@@ -17,10 +24,17 @@ fn take<T, const N: usize>(
     index: usize
 ) -> T
     where
-        (index < N &&
-        (forall(i: integer) where (0 <= i &&
-        i < integer(N) &&
-        i == integer(index)) {typeof((*data)[i]) == T}))
+        (
+            index < N &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < integer(N) &&
+                    i == integer(index)
+                ) {typeof((*data)[i]) == T}
+            )
+        )
     modifies(&(*data)[index])
     ensures
         (typeof((*data)[index]) == shape(T))

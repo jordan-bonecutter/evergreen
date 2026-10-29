@@ -6,7 +6,9 @@ fn increment(n: usize) -> usize {
 fn main() -> usize {
     let value = increment(usize::MAX);
     proof _: typeof(value) == usize;
-    proof _: value >= 0 && value <= usize::MAX;
-    // Neither value == 0 nor value == usize::MAX is provable.
+    proof _:
+        value >= 0 &&
+        value <= usize::MAX;
+        // Neither value == 0 nor value == usize::MAX is provable.
     value
 }

@@ -29,8 +29,10 @@ fn may_alias(
         (i < 2 &&
         j < 2)
     ensures
-        ((i == j => result == 42) &&
-        (i != j => result == data[j]))
+        ((i == j =>
+        result == 42) &&
+        (i != j =>
+        result == data[j]))
 {
     let left = at(2, &data, i);
     let right = at(2, &data, j);

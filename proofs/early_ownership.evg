@@ -3,7 +3,8 @@
 ideal type EarlyOwnership struct {count: nat, materialized: nat, early: nat} where (
     fact accounting = count == materialized + early;
     fact bounded = count <= 18446744073709551615;
-    accounting && bounded
+    accounting &&
+    bounded
 );
 
 ideal fn begin_ownership(state: EarlyOwnership) -> EarlyOwnership
@@ -88,7 +89,10 @@ ideal fn original_released_before_materialization(state: EarlyOwnership) -> Earl
 {
     let started = begin_ownership(state);
     let pending = release_materialized(started);
-    proof alive: pending.count == 1 && pending.materialized == 0 && pending.early == 1;
+    proof alive:
+        pending.count == 1 &&
+        pending.materialized == 0 &&
+        pending.early == 1;
     materialize(pending)
 }
 

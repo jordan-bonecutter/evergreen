@@ -17,10 +17,12 @@ fn advance(value: &usize)
         (*value == 41)
     modifies(value)
     ensures
-        (read(value) == old(read(value)) + 1 &&
-        old(read(value)) == 41 &&
-        is_answer(value) &&
-        !old(is_answer(value)))
+        (
+            read(value) == old(read(value)) + 1 &&
+            old(read(value)) == 41 &&
+            is_answer(value) &&
+            !old(is_answer(value))
+        )
 {
     *value = 42;
 }

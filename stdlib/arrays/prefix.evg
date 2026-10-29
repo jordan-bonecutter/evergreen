@@ -7,44 +7,122 @@ fn take_last<T>(
     length: usize
 ) -> T
     where
-        (0 < length &&
-        length <= capacity &&
-        (forall(i: integer) where (0 <= i &&
-        i < integer::from(length) &&
-        i < integer::from(capacity)) {typeof((*data)[i]) == T}) &&
-        (forall(i: integer) where (0 <= i &&
-        integer::from(length) <= i &&
-        i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)}))
+        (
+            0 < length &&
+            length <= capacity &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < integer::from(length) &&
+                    i < integer::from(capacity)
+                ) {typeof((*data)[i]) == T}
+            ) &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer::from(length) <= i &&
+                    i < integer::from(capacity)
+                ) {typeof((*data)[i]) == shape(T)}
+            )
+        )
     modifies(&(*data)[length - 1])
     ensures
-        (forall(i: integer) where (0 <= i &&
-        i < integer::from(length) - 1 &&
-        i < integer::from(capacity)) {typeof((*data)[i]) == T} &&
-        (forall(i: integer) where (0 <= i &&
-        integer::from(length) - 1 <= i &&
-        i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)}))
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(length) - 1 &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == T} &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer::from(length) - 1 <= i &&
+                    i < integer::from(capacity)
+                ) {typeof((*data)[i]) == shape(T)}
+            )
+        )
 {
-    proof initialized: forall(i: integer) where (0 <= i && i < integer::from(length) && i < integer::from(capacity)) {typeof((*data)[i]) == T} by {assumption};
-    proof vacant: forall(i: integer) where (0 <= i && integer::from(length) <= i && i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)} by {assumption};
+    proof initialized:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer::from(length) &&
+            i < integer::from(capacity)
+        ) {typeof((*data)[i]) == T} by {assumption};
+    proof vacant:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer::from(length) <= i &&
+            i < integer::from(capacity)
+        ) {typeof((*data)[i]) == shape(T)} by {assumption};
     let value: T = move((*data)[length - 1]);
-    proof frame: (forall(i: integer) where (0 <= i && i < integer::from(length) && i < integer::from(capacity)) {typeof(old(*data)[i]) == T}) => (forall(i: integer) where (0 <= i && i < integer::from(length) - 1 && i < integer::from(capacity)) {typeof((*data)[i]) == T}) by {
-        intro prior;
-        intro i;
-        omega
-    };
-    proof prefix: forall(i: integer) where (0 <= i && i < integer::from(length) - 1 && i < integer::from(capacity)) {typeof((*data)[i]) == T} by {
-        apply frame;
-        exact initialized
-    };
-    proof empty_frame: (forall(i: integer) where (0 <= i && integer::from(length) <= i && i < integer::from(capacity)) {typeof(old(*data)[i]) == shape(T)}) => (forall(i: integer) where (0 <= i && integer::from(length) - 1 <= i && i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)}) by {
-        intro prior;
-        intro i;
-        omega
-    };
-    proof suffix: forall(i: integer) where (0 <= i && integer::from(length) - 1 <= i && i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)} by {
-        apply empty_frame;
-        exact vacant
-    };
+    proof frame:
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(length) &&
+                i < integer::from(capacity)
+            ) {typeof(old(*data)[i]) == T}
+        ) =>
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(length) - 1 &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == T}
+        ) by {
+            intro prior;
+            intro i;
+            omega
+        };
+    proof prefix:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer::from(length) - 1 &&
+            i < integer::from(capacity)
+        ) {typeof((*data)[i]) == T} by {
+            apply frame;
+            exact initialized
+        };
+    proof empty_frame:
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer::from(length) <= i &&
+                i < integer::from(capacity)
+            ) {typeof(old(*data)[i]) == shape(T)}
+        ) =>
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer::from(length) - 1 <= i &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == shape(T)}
+        ) by {
+            intro prior;
+            intro i;
+            omega
+        };
+    proof suffix:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer::from(length) - 1 <= i &&
+            i < integer::from(capacity)
+        ) {typeof((*data)[i]) == shape(T)} by {
+            apply empty_frame;
+            exact vacant
+        };
     value
 }
 
@@ -60,48 +138,137 @@ fn prepend<T>(
         0 < start &&
         start <= end &&
         end <= capacity &&
-        (forall(i: integer) where (0 <= i &&
-        integer::from(start) <= i &&
-        i < integer::from(end) &&
-        i < integer::from(capacity)) {typeof((*data)[i]) == T}) &&
-        (forall(i: integer) where (0 <= i &&
-        (i < integer::from(start) || integer::from(end) <= i) &&
-        i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)})
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer::from(start) <= i &&
+                i < integer::from(end) &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == T}
+        ) &&
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                (i < integer::from(start) ||
+                integer::from(end) <= i) &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == shape(T)}
+        )
     modifies(&(*data)[start - 1])
     ensures
-        (forall(i: integer) where (0 <= i &&
-        integer::from(start) - 1 <= i &&
-        i < integer::from(end) &&
-        i < integer::from(capacity)) {typeof((*data)[i]) == T}) &&
-        (forall(i: integer) where (0 <= i &&
-        (i < integer::from(start) - 1 || integer::from(end) <= i) &&
-        i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)})
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer::from(start) - 1 <= i &&
+                i < integer::from(end) &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == T}
+        ) &&
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                (i < integer::from(start) - 1 ||
+                integer::from(end) <= i) &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == shape(T)}
+        )
 {
-    proof prior: forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(end) && i < integer::from(capacity)) {typeof((*data)[i]) == T} by {assumption};
-    proof vacant: forall(i: integer) where (0 <= i && (i < integer::from(start) || integer::from(end) <= i) && i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)} by {assumption};
+    proof prior:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer::from(start) <= i &&
+            i < integer::from(end) &&
+            i < integer::from(capacity)
+        ) {typeof((*data)[i]) == T} by {assumption};
+    proof vacant:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            (i < integer::from(start) ||
+            integer::from(end) <= i) &&
+            i < integer::from(capacity)
+        ) {typeof((*data)[i]) == shape(T)} by {assumption};
     (*data)[start - 1] = value;
-    proof extend: (forall(i: integer) where (0 <= i && integer::from(start) <= i && i < integer::from(end) && i < integer::from(capacity)) {typeof((old(*data))[i]) == T}) => (forall(i: integer) where (0 <= i && integer::from(start) - 1 <= i && i < integer::from(end) && i < integer::from(capacity)) {typeof((*data)[i]) == T}) by {
-        intro previous;
-        intro i;
-        omega
-    };
-    proof live: forall(i: integer) where (0 <= i && integer::from(start) - 1 <= i && i < integer::from(end) && i < integer::from(capacity)) {typeof((*data)[i]) == T} by {
-        apply extend;
-        exact prior
-    };
-    proof frame: (start <= end && (forall(i: integer) where (0 <= i && (i < integer::from(start) || integer::from(end) <= i) && i < integer::from(capacity)) {typeof((old(*data))[i]) == shape(T)})) => (forall(i: integer) where (0 <= i && (i < integer::from(start) - 1 || integer::from(end) <= i) && i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)}) by {
-        intro premise;
-        cases premise with ordered,
-        previous;
-        intro i;
-        omega
-    };
-    proof rest: forall(i: integer) where (0 <= i && (i < integer::from(start) - 1 || integer::from(end) <= i) && i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)} by {
-        apply frame;
-        constructor;
-        omega;
-        exact vacant
-    };
+    proof extend:
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer::from(start) <= i &&
+                i < integer::from(end) &&
+                i < integer::from(capacity)
+            ) {typeof((old(*data))[i]) == T}
+        ) =>
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer::from(start) - 1 <= i &&
+                i < integer::from(end) &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == T}
+        ) by {
+            intro previous;
+            intro i;
+            omega
+        };
+    proof live:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer::from(start) - 1 <= i &&
+            i < integer::from(end) &&
+            i < integer::from(capacity)
+        ) {typeof((*data)[i]) == T} by {
+            apply extend;
+            exact prior
+        };
+    proof frame:
+        (
+            start <= end &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    (i < integer::from(start) ||
+                    integer::from(end) <= i) &&
+                    i < integer::from(capacity)
+                ) {typeof((old(*data))[i]) == shape(T)}
+            )
+        ) =>
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                (i < integer::from(start) - 1 ||
+                integer::from(end) <= i) &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == shape(T)}
+        ) by {
+            intro premise;
+            cases premise with ordered,
+            previous;
+            intro i;
+            omega
+        };
+    proof rest:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            (i < integer::from(start) - 1 ||
+            integer::from(end) <= i) &&
+            i < integer::from(capacity)
+        ) {typeof((*data)[i]) == shape(T)} by {
+            apply frame;
+            constructor;
+            omega;
+            exact vacant
+        };
 }
 // Transfer an initialized prefix into fresh storage, then release the old buffer.
 // Payloads are moved once; this function never duplicates or drops a live element.
@@ -116,99 +283,250 @@ fn relocate_prefix<T>(
         length <= capacity &&
         length <= new_capacity &&
         integer::from(new_capacity) * integer::from(size_of(T)) <= integer::from(isize::MAX) &&
-        (forall(i: integer) where (0 <= i &&
-        i < integer::from(length) &&
-        i < integer::from(capacity)) {typeof((*data)[i]) == T}) &&
-        (forall(i: integer) where (0 <= i &&
-        integer::from(length) <= i &&
-        i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)})
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(length) &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == T}
+        ) &&
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer::from(length) <= i &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == shape(T)}
+        )
     ensures
-        (forall(i: integer) where (0 <= i &&
-        i < integer::from(length) &&
-        i < integer::from(new_capacity)) {typeof((*result)[i]) == T}) &&
-        (forall(i: integer) where (0 <= i &&
-        integer::from(length) <= i &&
-        i < integer::from(new_capacity)) {typeof((*result)[i]) == shape(T)})
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(length) &&
+                i < integer::from(new_capacity)
+            ) {typeof((*result)[i]) == T}
+        ) &&
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer::from(length) <= i &&
+                i < integer::from(new_capacity)
+            ) {typeof((*result)[i]) == shape(T)}
+        )
 {
     let target: unique(T | shape(T), new_capacity) = alloc(new_capacity, shape(T));
     let remaining = length;
-    proof initial_live: forall(i: integer) where (0 <= i && integer::from(remaining) <= i && i < integer::from(length) && i < integer::from(new_capacity)) {typeof((*target)[i]) == T} by {
-        intro i;
-        omega
-    };
-    proof initial_empty: forall(i: integer) where (0 <= i && (i < integer::from(remaining) || integer::from(length) <= i) && i < integer::from(new_capacity)) {typeof((*target)[i]) == shape(T)} by {
-        intro i;
-        omega
-    };
+    proof initial_live:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer::from(remaining) <= i &&
+            i < integer::from(length) &&
+            i < integer::from(new_capacity)
+        ) {typeof((*target)[i]) == T} by {
+            intro i;
+            omega
+        };
+    proof initial_empty:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            (i < integer::from(remaining) ||
+            integer::from(length) <= i) &&
+            i < integer::from(new_capacity)
+        ) {typeof((*target)[i]) == shape(T)} by {
+            intro i;
+            omega
+        };
     while remaining > 0
         invariant
             remaining <= length &&
             length <= capacity &&
             length <= new_capacity &&
-            (forall(i: integer) where (0 <= i &&
-            i < integer::from(remaining) &&
-            i < integer::from(capacity)) {typeof((*data)[i]) == T}) &&
-            (forall(i: integer) where (0 <= i &&
-            integer::from(remaining) <= i &&
-            i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)}) &&
-            (forall(i: integer) where (0 <= i &&
-            integer::from(remaining) <= i &&
-            i < integer::from(length) &&
-            i < integer::from(new_capacity)) {typeof((*target)[i]) == T}) &&
-            (forall(i: integer) where (0 <= i &&
-            (i < integer::from(remaining) || integer::from(length) <= i) &&
-            i < integer::from(new_capacity)) {typeof((*target)[i]) == shape(T)})
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    i < integer::from(remaining) &&
+                    i < integer::from(capacity)
+                ) {typeof((*data)[i]) == T}
+            ) &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer::from(remaining) <= i &&
+                    i < integer::from(capacity)
+                ) {typeof((*data)[i]) == shape(T)}
+            ) &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer::from(remaining) <= i &&
+                    i < integer::from(length) &&
+                    i < integer::from(new_capacity)
+                ) {typeof((*target)[i]) == T}
+            ) &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    (i < integer::from(remaining) ||
+                    integer::from(length) <= i) &&
+                    i < integer::from(new_capacity)
+                ) {typeof((*target)[i]) == shape(T)}
+            )
         modifies(&*data, &*target, &remaining)
         decreases remaining
     {
         let value = take_last::<T>(capacity, &*data, remaining);
         prepend::<T>(new_capacity, &*target, remaining, length, value);
         remaining = remaining - 1;
-    } proof before_empty: forall(i: integer) where (0 <= i && integer::from(remaining) <= i && i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)} by {assumption};
-    proof finish_empty: (remaining == 0 && (forall(i: integer) where (0 <= i && integer::from(remaining) <= i && i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)})) => (forall(i: integer) where (0 <= i && i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)}) by {
-        intro premise;
-        cases premise with done,
-        all;
-        intro i;
-        specialize all(i);
-        omega
-    };
-    proof empty: forall(i: integer) where (0 <= i && i < integer::from(capacity)) {typeof((*data)[i]) == shape(T)} by {
-        apply finish_empty;
-        constructor;
-        omega;
-        exact before_empty
-    };
-    proof before_live: forall(i: integer) where (0 <= i && integer::from(remaining) <= i && i < integer::from(length) && i < integer::from(new_capacity)) {typeof((*target)[i]) == T} by {assumption};
-    proof finish_live: (remaining == 0 && (forall(i: integer) where (0 <= i && integer::from(remaining) <= i && i < integer::from(length) && i < integer::from(new_capacity)) {typeof((*target)[i]) == T})) => (forall(i: integer) where (0 <= i && i < integer::from(length) && i < integer::from(new_capacity)) {typeof((*target)[i]) == T}) by {
-        intro premise;
-        cases premise with done,
-        all;
-        intro i;
-        specialize all(i);
-        omega
-    };
-    proof live: forall(i: integer) where (0 <= i && i < integer::from(length) && i < integer::from(new_capacity)) {typeof((*target)[i]) == T} by {
-        apply finish_live;
-        constructor;
-        omega;
-        exact before_live
-    };
-    proof before_rest: forall(i: integer) where (0 <= i && (i < integer::from(remaining) || integer::from(length) <= i) && i < integer::from(new_capacity)) {typeof((*target)[i]) == shape(T)} by {assumption};
-    proof finish_rest: (remaining == 0 && (forall(i: integer) where (0 <= i && (i < integer::from(remaining) || integer::from(length) <= i) && i < integer::from(new_capacity)) {typeof((*target)[i]) == shape(T)})) => (forall(i: integer) where (0 <= i && integer::from(length) <= i && i < integer::from(new_capacity)) {typeof((*target)[i]) == shape(T)}) by {
-        intro premise;
-        cases premise with done,
-        all;
-        intro i;
-        specialize all(i);
-        omega
-    };
-    proof rest: forall(i: integer) where (0 <= i && integer::from(length) <= i && i < integer::from(new_capacity)) {typeof((*target)[i]) == shape(T)} by {
-        apply finish_rest;
-        constructor;
-        omega;
-        exact before_rest
-    };
+    }
+    proof before_empty:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer::from(remaining) <= i &&
+            i < integer::from(capacity)
+        ) {typeof((*data)[i]) == shape(T)} by {assumption};
+    proof finish_empty:
+        (
+            remaining == 0 &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer::from(remaining) <= i &&
+                    i < integer::from(capacity)
+                ) {typeof((*data)[i]) == shape(T)}
+            )
+        ) =>
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(capacity)
+            ) {typeof((*data)[i]) == shape(T)}
+        ) by {
+            intro premise;
+            cases premise with done,
+            all;
+            intro i;
+            specialize all(i);
+            omega
+        };
+    proof empty:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer::from(capacity)
+        ) {typeof((*data)[i]) == shape(T)} by {
+            apply finish_empty;
+            constructor;
+            omega;
+            exact before_empty
+        };
+    proof before_live:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer::from(remaining) <= i &&
+            i < integer::from(length) &&
+            i < integer::from(new_capacity)
+        ) {typeof((*target)[i]) == T} by {assumption};
+    proof finish_live:
+        (
+            remaining == 0 &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    integer::from(remaining) <= i &&
+                    i < integer::from(length) &&
+                    i < integer::from(new_capacity)
+                ) {typeof((*target)[i]) == T}
+            )
+        ) =>
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(length) &&
+                i < integer::from(new_capacity)
+            ) {typeof((*target)[i]) == T}
+        ) by {
+            intro premise;
+            cases premise with done,
+            all;
+            intro i;
+            specialize all(i);
+            omega
+        };
+    proof live:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer::from(length) &&
+            i < integer::from(new_capacity)
+        ) {typeof((*target)[i]) == T} by {
+            apply finish_live;
+            constructor;
+            omega;
+            exact before_live
+        };
+    proof before_rest:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            (i < integer::from(remaining) ||
+            integer::from(length) <= i) &&
+            i < integer::from(new_capacity)
+        ) {typeof((*target)[i]) == shape(T)} by {assumption};
+    proof finish_rest:
+        (
+            remaining == 0 &&
+            (
+                forall(i: integer)
+                where (
+                    0 <= i &&
+                    (i < integer::from(remaining) ||
+                    integer::from(length) <= i) &&
+                    i < integer::from(new_capacity)
+                ) {typeof((*target)[i]) == shape(T)}
+            )
+        ) =>
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                integer::from(length) <= i &&
+                i < integer::from(new_capacity)
+            ) {typeof((*target)[i]) == shape(T)}
+        ) by {
+            intro premise;
+            cases premise with done,
+            all;
+            intro i;
+            specialize all(i);
+            omega
+        };
+    proof rest:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            integer::from(length) <= i &&
+            i < integer::from(new_capacity)
+        ) {typeof((*target)[i]) == shape(T)} by {
+            apply finish_rest;
+            constructor;
+            omega;
+            exact before_rest
+        };
     arrays::release_empty::<T>(data);
     target
 }

@@ -11,9 +11,11 @@ fn replace(
         (index < 2)
     modifies(&(*data)[index])
     ensures
-        ((*data)[index].point.x == 42 &&
-        (*data)[index].point.y == old((*data)[index].point.y) &&
-        (*data)[index].tag == 7)
+        (
+            (*data)[index].point.x == 42 &&
+            (*data)[index].point.y == old((*data)[index].point.y) &&
+            (*data)[index].tag == 7
+        )
 {
     let previous = (*data)[index];
     (*data)[index] = Sample {

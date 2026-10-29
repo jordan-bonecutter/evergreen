@@ -399,4 +399,6 @@ impl Context<'_> {
 }
 
 #[cfg(test)]
+mod buffer_tests;
+#[cfg(test)]
 mod tests;

@@ -7,20 +7,38 @@ fn replace_byte<const N: usize>(
         position < N
     modifies(&(*data)[position])
     ensures
-        (forall(i: integer) where (i == integer::from(position)) {(*data)[i] == value}) &&
-        (forall(i: integer) where (0 <= i &&
-        i < integer::from(N) &&
-        i != integer::from(position)) {(*data)[i] == old(*data)[i]})
+        (forall(i: integer)
+        where (
+            i == integer::from(position)
+        ) {(*data)[i] == value}) &&
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(N) &&
+                i != integer::from(position)
+            ) {(*data)[i] == old(*data)[i]}
+        )
 {
     (*data)[position] = value;
-    proof written: forall(i: integer) where (i == integer::from(position)) {(*data)[i] == value} by {
-        intro i;
-        omega
-    };
-    proof unchanged: forall(i: integer) where (0 <= i && i < integer::from(N) && i != integer::from(position)) {(*data)[i] == old(*data)[i]} by {
-        intro i;
-        omega
-    };
+    proof written:
+        forall(i: integer)
+        where (
+            i == integer::from(position)
+        ) {(*data)[i] == value} by {
+            intro i;
+            omega
+        };
+    proof unchanged:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer::from(N) &&
+            i != integer::from(position)
+        ) {(*data)[i] == old(*data)[i]} by {
+            intro i;
+            omega
+        };
 }
 
 fn main() -> u8
@@ -29,6 +47,7 @@ fn main() -> u8
 {
     let data: [u8; 3] = [7, 9, 11];
     replace_byte(&data, 1, 42);
-    proof updated: forall(i: integer) where (i == 1) {data[i] == 42} by {assumption};
+    proof updated:
+        forall(i: integer) where (i == 1) {data[i] == 42} by {assumption};
     data[1]
 }

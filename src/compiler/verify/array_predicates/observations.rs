@@ -94,16 +94,39 @@ impl Context<'_> {
             .collect::<BTreeSet<_>>();
         self.charge_value_work(candidates.len())?;
         for node in candidates {
-            self.charge_value_work(self.proof.evidence.claim(node)?.storage_weight()?)?;
-            let Formula::Forall { variable, body, .. } = self.proof.evidence.claim(node)?.clone()
-            else {
-                continue;
-            };
-            let Some(term) = specialization_term(&body, goal, &variable)? else {
-                continue;
-            };
-            if let Some(instance) = self.checked_array_specialization(node, &term, goal)? {
-                return Ok(Some(instance));
+            let root = self.proof.evidence.claim(node)?.clone();
+            self.charge_value_work(root.storage_weight()?)?;
+            let mut pending = vec![(&root, true)];
+            while let Some((claim, direct)) = pending.pop() {
+                self.charge_value_work(1)?;
+                match claim {
+                    Formula::Forall { variable, body, .. } => {
+                        let Some(term) = specialization_term(body, goal, variable)? else {
+                            continue;
+                        };
+                        let range = if direct {
+                            node
+                        } else {
+                            // Demand only the matching range. The logical
+                            // lookup checks its original revisions and branch
+                            // guard before exposing a conditional guarantee.
+                            let Some(range) = self.logical_assumption(claim, None)? else {
+                                continue;
+                            };
+                            range
+                        };
+                        if let Some(instance) =
+                            self.checked_array_specialization(range, &term, goal)?
+                        {
+                            return Ok(Some(instance));
+                        }
+                    }
+                    Formula::And(a, b) | Formula::Or(a, b) => {
+                        pending.push((b, false));
+                        pending.push((a, false));
+                    }
+                    _ => {}
+                }
             }
         }
         Ok(None)

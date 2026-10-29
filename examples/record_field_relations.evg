@@ -8,11 +8,17 @@ fn read(
 ) -> usize
     where
         at < 2 &&
-        (forall(i: integer) where (0 <= i &&
-        i < 2) {
-            ((*data)[i].value == 42 &&
-            (*data)[i].valid == true) || (*data)[i].fallback == 42
-        })
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < 2
+            ) {
+                ((*data)[i].value == 42 &&
+                (*data)[i].valid == true) ||
+                (*data)[i].fallback == 42
+            }
+        )
     ensures
         result == 42
 {
@@ -27,21 +33,31 @@ fn main() -> usize
         Reading {value: 42, fallback: 0, valid: true},
         Reading {value: 0, fallback: 42, valid: false}
     ];
-    proof indices: forall(i: integer) where (0 <= i && i < 2) {i == 0 || i == 1} by {
-        intro i;
-        omega
-    };
-    proof usable: forall(i: integer) where (0 <= i && i < 2) {
-        (data[i].value == 42 && data[i].valid == true) || data[i].fallback == 42
-    }
-    by {
-        intro i;
-        specialize indices(i) as either;
-        omega;
-        cases either with first | second;
-        omega;
-        omega
-    };
+    proof indices:
+        forall(i: integer) where (0 <= i &&
+        i < 2) {i == 0 ||
+        i == 1} by {
+            intro i;
+            omega
+        };
+    proof usable:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < 2
+        ) {
+            (data[i].value == 42 &&
+            data[i].valid == true) ||
+            data[i].fallback == 42
+        }
+        by {
+            intro i;
+            specialize indices(i) as either;
+            omega;
+            cases either with first | second;
+            omega;
+            omega
+        };
     let first = read(&data, 0);
     let second = read(&data, 1);
     proof _: first == second;

@@ -1,9 +1,12 @@
 module ledgers {
     type Ledger struct {count: usize, ideal owners: nat} where (
         fact accurate = nat(count) == owners;
-        fact zero_is_safe = count == 0 => owners == 0;
+        fact zero_is_safe = count == 0 =>
+        owners == 0;
         fact bounded = count <= 100;
-        accurate && zero_is_safe && bounded
+        accurate &&
+        zero_is_safe &&
+        bounded
     );
 
     fn store(slot: &usize, value: usize) -> &usize

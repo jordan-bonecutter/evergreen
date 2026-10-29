@@ -27,8 +27,10 @@ fn consume(
 )
     modifies(pending[0].target, pending[1].target)
     ensures
-        (*pending[0].target == pending[0].value &&
-        *pending[1].target == pending[1].value)
+        (
+            *pending[0].target == pending[0].value &&
+            *pending[1].target == pending[1].value
+        )
 {}
 fn main() -> usize
     ensures

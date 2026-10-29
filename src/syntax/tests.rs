@@ -3,6 +3,30 @@
 use super::*;
 
 #[test]
+fn owner_start_blocks_mark_exactly_one_assignment() {
+    let parsed = parse("fn main() { starts_owner(p, q) { p.count = p.count + 1; } }").unwrap();
+    let Statement::Assign { starts, .. } = &parsed.functions[0].body[0] else {
+        panic!("owner-start block did not lower to its write event");
+    };
+    assert_eq!(starts.len(), 2);
+    for source in [
+        "fn main() { starts_owner(p) {} }",
+        "fn main() { starts_owner(p) { n = 1; n = 2; } }",
+        "fn main() { starts_owner(p) { f(); } }",
+        "fn main() { starts_owner(p) { if flag { n = 1; } } }",
+        "fn main() { starts_owner(p) { starts_owner(q) { n = 1; } } }",
+        "fn main() { starts_owner() { n = 1; } }",
+    ] {
+        assert!(parse(source).is_err(), "accepted {source}");
+    }
+    let error = parse("fn main() { n = 1 starts_owner(p); }").unwrap_err();
+    assert!(
+        error.contains("use starts_owner(pointer) { target = value; }"),
+        "{error}"
+    );
+}
+
+#[test]
 fn strings_decode_to_utf8_bytes_and_keep_following_source_lines() {
     let source = "fn main() {let text = \"λ🦀\\n\\r\\t\\0\\\\\\\"\\x41\\u{1F980}\";}";
     let program = parse(source).unwrap();

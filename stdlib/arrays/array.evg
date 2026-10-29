@@ -45,8 +45,10 @@ fn swap(
         integer(right) < integer(n))
     modifies(&(*data)[left], &(*data)[right])
     ensures
-        ((*data)[left] == old(*data)[right] &&
-        (*data)[right] == old(*data)[left])
+        (
+            (*data)[left] == old(*data)[right] &&
+            (*data)[right] == old(*data)[left]
+        )
 {
     let previous = (*data)[left];
     (*data)[left] = (*data)[right];

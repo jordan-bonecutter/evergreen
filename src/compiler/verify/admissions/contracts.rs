@@ -56,34 +56,33 @@ impl Context<'_> {
 
     // A conditional guarantee may expose its live arm only after the other
     // arm has been ruled out. Keep that checked condition in the proof DAG.
-    fn select_contract_alternative(
+    pub(in crate::compiler::verify) fn select_contract_alternative(
         &mut self,
         source: evidence::NodeId,
         left: &Formula,
         right: &Formula,
     ) -> Result<Option<evidence::NodeId>> {
         for (rejected, selected, reject_left) in [(left, right, true), (right, left, false)] {
-            if !rejected.is_arithmetic() {
-                continue;
-            }
-            let negative = rejected.clone().not();
-            let Some(support) = self.probe_guard(&self.proof.paths.clone(), &negative)? else {
+            let Some((path, negative)) = self.refuted_contract_conjunct(rejected)? else {
                 continue;
             };
-            if support.parents.iter().any(|&node| {
-                self.proof.evidence.has_admissions(node)
-                    || self.proof.evidence.has_pending_summaries(node)
-            }) {
-                continue;
-            }
-            self.work.obligations += 1;
-            let negative = self.proof.evidence.arithmetic(negative, support)?;
             let (left_hypothesis, left_case) = self.proof.evidence.hypothesis(left.clone())?;
             let (right_hypothesis, right_case) = self.proof.evidence.hypothesis(right.clone())?;
-            let impossible = self.selector_contradiction(
-                negative,
-                if reject_left { left_case } else { right_case },
-            )?;
+            let mut contradicted = if reject_left { left_case } else { right_case };
+            for right in path {
+                let Formula::And(a, b) = self.proof.evidence.claim(contradicted)?.clone() else {
+                    return Err("conditional contract lost its conjunct".into());
+                };
+                contradicted = self.proof.evidence.derive(
+                    if right { *b } else { *a },
+                    if right {
+                        evidence::Rule::AndRight(contradicted)
+                    } else {
+                        evidence::Rule::AndLeft(contradicted)
+                    },
+                )?;
+            }
+            let impossible = self.selector_contradiction(negative, contradicted)?;
             let impossible = self
                 .proof
                 .evidence
@@ -102,6 +101,42 @@ impl Context<'_> {
                     },
                 )
                 .map(Some);
+        }
+        Ok(None)
+    }
+
+    // Refuting any conjunct refutes its containing alternative. Do not feed
+    // quantified or predicate-bearing clauses into the arithmetic solver.
+    fn refuted_contract_conjunct(
+        &mut self,
+        claim: &Formula,
+    ) -> Result<Option<(Vec<bool>, evidence::NodeId)>> {
+        let mut pending = vec![(claim, Vec::new())];
+        while let Some((claim, path)) = pending.pop() {
+            self.charge_value_work(1 + path.len())?;
+            if claim.is_arithmetic() {
+                let negative = claim.clone().not();
+                let Some(support) = self.probe_guard(&self.proof.paths.clone(), &negative)? else {
+                    continue;
+                };
+                if support.parents.iter().any(|&node| {
+                    self.proof.evidence.has_admissions(node)
+                        || self.proof.evidence.has_pending_summaries(node)
+                }) {
+                    continue;
+                }
+                self.work.obligations += 1;
+                let proof = self.proof.evidence.arithmetic(negative, support)?;
+                return Ok(Some((path, proof)));
+            }
+            if let Formula::And(a, b) = claim {
+                let mut right = path.clone();
+                right.push(true);
+                pending.push((b, right));
+                let mut left = path;
+                left.push(false);
+                pending.push((a, left));
+            }
         }
         Ok(None)
     }

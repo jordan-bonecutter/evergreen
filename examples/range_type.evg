@@ -1,5 +1,9 @@
 type Slot<T> struct {data: unique(T | shape(T), 1)} where (
-    fact initialized = forall(i: integer) where (0 <= i && i < 1) {typeof((*self.data)[i]) == T};
+    fact initialized = forall(i: integer)
+    where (
+        0 <= i &&
+        i < 1
+    ) {typeof((*self.data)[i]) == T};
     initialized
 );
 

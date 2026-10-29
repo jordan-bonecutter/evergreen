@@ -70,37 +70,55 @@ impl Parser {
     }
 
     fn body_statement(&mut self) -> Result<Option<Statement>, String> {
-        let statement = if self.eat("ideal") {
-            self.ideal_statement()?
-        } else if self.eat("update") {
-            self.update_statement()?
-        } else if self.eat("while") {
-            self.while_statement()?
-        } else if self.eat("proof") {
-            self.proof_statement()?
-        } else if self.eat("let") {
-            self.binding(BindingKind::Let)?
-        } else if self.eat("fact") {
-            self.binding(BindingKind::Fact)?
-        } else {
-            return Ok(None);
+        // Dispatch before constructing a statement, keeping recursive parsing
+        // from reserving a large result temporary for every keyword branch.
+        let parse: fn(&mut Self) -> Result<Statement, String> = match self.peek() {
+            "ideal" => Self::ideal_statement,
+            "update" => Self::update_statement,
+            "starts_owner" => Self::owner_start_statement,
+            "while" => Self::while_statement,
+            "proof" => Self::proof_statement,
+            "let" => |parser| parser.binding(BindingKind::Let),
+            "fact" => |parser| parser.binding(BindingKind::Fact),
+            _ => return Ok(None),
         };
-        Ok(Some(statement))
+        self.pos += 1;
+        parse(self).map(Some)
     }
 
     fn assignment(&mut self, target: Expr) -> Result<Statement, String> {
         let value = self.expr(0)?;
-        let starts = if self.eat("starts_owner") {
-            self.nonempty_expressions()?
-        } else {
-            Vec::new()
-        };
+        if self.peek() == "starts_owner" {
+            return Err(self.err("use starts_owner(pointer) { target = value; }"));
+        }
         self.expect(";")?;
         Ok(Statement::Assign {
             target,
             value,
-            starts,
+            starts: Vec::new(),
         })
+    }
+
+    fn owner_start_statement(&mut self) -> Result<Statement, String> {
+        let starts = self.nonempty_expressions()?;
+        if let Some(hints) = &mut self.format_hints {
+            hints.bodies.insert(self.pos);
+        }
+        self.expect("{")?;
+        // This scope marks one write event, not a transaction over an arbitrary
+        // sequence. Lower it to the existing checked assignment transition.
+        let target = self.expr(0)?;
+        if !self.eat("=") {
+            return Err(self.err("starts_owner requires exactly one assignment"));
+        }
+        let mut statement = self.assignment(target)?;
+        if !self.eat("}") {
+            return Err(self.err("starts_owner requires exactly one assignment"));
+        }
+        if let Statement::Assign { starts: owners, .. } = &mut statement {
+            *owners = starts;
+        }
+        Ok(statement)
     }
 
     fn while_statement(&mut self) -> Result<Statement, String> {
@@ -283,6 +301,7 @@ impl Parser {
     }
 
     fn proof_statement(&mut self) -> Result<Statement, String> {
+        let header = self.pos - 1;
         let name = if self.eat("_") {
             self.expect(":")?;
             "_".into()
@@ -297,6 +316,7 @@ impl Parser {
         } else {
             "_".into()
         };
+        let start = self.pos;
         let proposition = self.expr(0)?;
         let steps = if self.eat("by") {
             self.proof()?
@@ -304,6 +324,10 @@ impl Parser {
             vec!["omega".into()]
         };
         self.expect(";")?;
+        if let Some(hints) = &mut self.format_hints {
+            hints.proofs.insert(start, self.pos);
+            hints.proof_headers.insert(header);
+        }
         Ok(Statement::Proof {
             name,
             proposition,

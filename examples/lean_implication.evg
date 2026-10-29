@@ -1,12 +1,16 @@
 ideal fn implies(a: bool, b: bool) -> bool
     ensures
-        (a => b => a)
+        (a =>
+        b =>
+        a)
 {
     a => b
 } proof {simp_all}
 ideal fn main() -> nat
     ensures
-        ((true => false) => false)
+        ((true =>
+        false) =>
+        false)
 {
     ideal let answer: nat = 42;
     answer

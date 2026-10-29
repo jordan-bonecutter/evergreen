@@ -17,8 +17,9 @@ impl Drop for Counted {
     fn drop(self)
         modifies(self.release.count)
     {
-        proof still_live: *self.release.count > 0;
-        // Counted is consumed before its ReleaseCount field is cleaned up.
+        proof still_live:
+            *self.release.count > 0;
+            // Counted is consumed before its ReleaseCount field is cleaned up.
     }
 }
 

@@ -16,7 +16,11 @@ fn choose(flag: bool) -> usize
     let data: [usize; 2] = [7, 9];
     let first = &data[0];
     let selected = if flag {&data[0]} else {&data[1]};
-    proof exact_place: (flag => selected == &data[0]) && (!flag => selected == &data[1]);
+    proof exact_place:
+        (flag =>
+        selected == &data[0]) &&
+        (!flag =>
+        selected == &data[1]);
     *selected = 42;
     proof selected_written: *selected == 42;
     proof first_view: (flag => *first == 42) && (!flag => *first == 7);

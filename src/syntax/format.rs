@@ -10,6 +10,9 @@ pub(super) struct Hints {
     pub bodies: BTreeSet<usize>,
     pub angles: BTreeSet<usize>,
     pub prefix: BTreeSet<usize>,
+    pub proofs: BTreeMap<usize, usize>,
+    pub proof_headers: BTreeSet<usize>,
+    pub quantifiers: BTreeMap<usize, (usize, Option<usize>)>,
 }
 
 impl super::Parser {
@@ -154,6 +157,7 @@ struct Metrics {
     braces: usize,
     declarations: usize,
     commas: usize,
+    logical: usize,
 }
 
 fn groups(items: &[Item<'_>], hints: &Hints) -> BTreeMap<usize, (usize, bool)> {
@@ -168,6 +172,7 @@ fn groups(items: &[Item<'_>], hints: &Hints) -> BTreeMap<usize, (usize, bool)> {
         total.braces += usize::from(item.text == "{");
         total.declarations += usize::from(matches!(item.text, "fn" | "method"));
         total.commas += usize::from(item.text == ",");
+        total.logical += usize::from(matches!(item.text, "&&" | "||" | "=>" | "<=>"));
         totals.push(total);
     }
     let mut stack = Vec::new();
@@ -198,7 +203,9 @@ fn groups(items: &[Item<'_>], hints: &Hints) -> BTreeMap<usize, (usize, bool)> {
                             || after.declarations > before.declarations))
                     || (open == "(" && after.semicolons > before.semicolons)
                     || (after.width - before.width > 88
-                        && (open == "{" || after.commas > before.commas)));
+                        && (open == "{"
+                            || after.commas > before.commas
+                            || after.logical > before.logical)));
             groups.insert(start, (i, multiline));
         }
     }
@@ -216,11 +223,19 @@ fn closing(open: &str) -> &'static str {
 }
 
 fn render(items: &[Item<'_>], hints: &Hints) -> String {
-    let groups = groups(items, hints);
+    let mut groups = groups(items, hints);
+    let widths = layout_widths(items);
+    let mut quantifier_breaks = BTreeSet::new();
+    let code_items: BTreeMap<_, _> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| item.code.map(|code| (code, index)))
+        .collect();
     let mut stack: Vec<Group> = Vec::new();
     let mut writer = Writer::default();
     let mut indent = 0;
     let mut clause = None;
+    let mut proof = None;
     let mut previous = "";
     let mut previous_prefix = false;
     let mut previous_angle = false;
@@ -241,6 +256,37 @@ fn render(items: &[Item<'_>], hints: &Hints) -> String {
             continue;
         }
         let code = item.code.unwrap();
+        if hints.proof_headers.contains(&code) {
+            writer.newline();
+        }
+        if let Some((end, base)) = proof {
+            if code == end {
+                indent = base;
+                proof = None;
+            }
+        }
+        if let Some(&end) = hints.proofs.get(&code) {
+            let end_item = code_items.get(&end).copied().unwrap_or(items.len());
+            if writer.line.len() + widths[end_item] - widths[i] > 88 {
+                proof = Some((end, indent));
+                indent += 1;
+                writer.newline();
+            }
+        }
+        if let Some(&(end, Some(domain))) = hints.quantifiers.get(&code) {
+            let end_item = code_items.get(&end).copied().unwrap_or(items.len());
+            if indent * 4 + widths[end_item] - widths[i] > 88 {
+                quantifier_breaks.insert(domain);
+                if let Some(&open) = code_items.get(&(domain + 1)) {
+                    if let Some((_, multiline)) = groups.get_mut(&open) {
+                        *multiline = true;
+                    }
+                }
+            }
+        }
+        if quantifier_breaks.contains(&code) {
+            writer.newline();
+        }
         if let Some((end, base)) = clause {
             if code == end {
                 indent = base;
@@ -308,7 +354,13 @@ fn render(items: &[Item<'_>], hints: &Hints) -> String {
             writer.word(text, indent, space);
             let break_line = (text == ";" && !matches!(stack.last().map(|g| g.close), Some("]")))
                 || (text == "," && stack.last().is_some_and(|g| g.multiline))
-                || (text == "&&" && clause.is_some());
+                || (matches!(text, "&&" | "||" | "=>" | "<=>")
+                    && !prefix
+                    && (clause.is_some()
+                        || proof.is_some()
+                        || stack
+                            .last()
+                            .is_some_and(|group| group.multiline && group.close == ")")));
             if break_line && !trailing_comment {
                 writer.newline();
             }
@@ -318,6 +370,14 @@ fn render(items: &[Item<'_>], hints: &Hints) -> String {
         previous_angle = angle;
     }
     writer.finish()
+}
+
+fn layout_widths(items: &[Item<'_>]) -> Vec<usize> {
+    let mut widths = vec![0];
+    for item in items {
+        widths.push(widths.last().unwrap() + item.text.len() + 1);
+    }
+    widths
 }
 
 fn ends_expression(text: &str) -> bool {

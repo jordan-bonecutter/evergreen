@@ -7,8 +7,10 @@ opaque type Data<T> struct {count: usize, value: T}
 
 opaque type Rc<T = usize> struct {data: shared(Data<T>)} where (
     fact reference_count_is_accurate = nat(self.data.count) == owner_count(self.data);
-    fact zero_count_has_no_owners = self.data.count == 0 => owner_count(self.data) == 0;
-    reference_count_is_accurate && zero_count_has_no_owners
+    fact zero_count_has_no_owners = self.data.count == 0 =>
+    owner_count(self.data) == 0;
+    reference_count_is_accurate &&
+    zero_count_has_no_owners
 );
 
 fn new<T = usize>(value: T) -> Rc<T>
@@ -60,7 +62,9 @@ impl<T> Rc<T> {
             result.data.count == old(self.data.count) + 1 &&
             owner_count(result.data) == old(owner_count(self.data)) + 1
     {
-        self.data.count = self.data.count + 1 starts_owner(self.data);
+        starts_owner(self.data) {
+            self.data.count = self.data.count + 1;
+        }
         Self {data: self.data}
     }
 

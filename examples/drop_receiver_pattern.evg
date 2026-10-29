@@ -20,8 +20,9 @@ impl Drop for Resource {
         let Resource {data, child} = self;
         // Moving the pointer into a local does not move its allocation.
         proof payload_survives: *payload == 42;
-        proof local_owner_is_valid: *data == 42;
-        // Child and data are cleaned up once as locals, in reverse order.
+        proof local_owner_is_valid:
+            *data == 42;
+            // Child and data are cleaned up once as locals, in reverse order.
     }
 }
 

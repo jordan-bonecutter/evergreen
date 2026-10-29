@@ -1,4 +1,5 @@
 use super::*;
+use crate::syntax::format::test_edit::SourceEdit;
 
 fn replay(source: &str) -> VerifiedProgram {
     let (program, bundle) = prove(source).unwrap_or_else(|error| panic!("{error}\n{source}"));
@@ -16,11 +17,10 @@ fn replay(source: &str) -> VerifiedProgram {
 fn numeric_array_contracts_describe_ordinary_reads() {
     let source = include_str!("../../../../examples/array_value_store.evg");
     assert_eq!(replay(source).run().unwrap().to_string(), "42");
-    let implicit = source
-        .lines()
-        .filter(|line| !line.contains("proof updated:"))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let implicit = source.replace_evg(
+        "proof updated: forall(i: integer) where (i == 1) {data[i] == 42} by {assumption};",
+        "",
+    );
     assert_eq!(replay(&implicit).run().unwrap().to_string(), "42");
     let source = "fn read(data: &[u8; 8], index: usize) -> u8 where(index < 8 && (forall(i: integer) where(0 <= i && i < 8) {(*data)[i] == 7})) ensures result == 7 {(*data)[index]} fn main() -> usize {42}";
     replay(source);

@@ -22,7 +22,9 @@ fn main() -> usize {
     let reached_limit = atomic_counter::try_increment(&near_limit);
     proof largest_increment: reached_limit && near_limit == usize::MAX;
     let largest_old = atomic_counter::decrement(&near_limit);
-    proof largest_decrement: largest_old == usize::MAX && near_limit == usize::MAX - 1;
+    proof largest_decrement:
+        largest_old == usize::MAX &&
+        near_limit == usize::MAX - 1;
 
     let started_empty: usize = 0;
     let acquired_first = atomic_counter::try_increment(&started_empty);
