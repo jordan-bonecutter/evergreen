@@ -45,6 +45,14 @@ impl TargetKind {
         (1u64 << (self.word_bits() - 1)) - 1
     }
 
+    pub(crate) fn max_array_length(self, stride: usize) -> i128 {
+        if stride == 0 {
+            self.integer("usize").expect("word type").bounds().1
+        } else {
+            (self.max_allocation_bytes() / stride as u64) as i128
+        }
+    }
+
     pub(crate) fn integer(self, name: &str) -> Option<MachineInt> {
         MachineInt::for_word_bits(name, self.word_bits())
     }
@@ -361,6 +369,8 @@ mod tests {
     fn malformed_or_incompatible_target_data_fails_closed() {
         for source in [
             X86_64.replace_evg("size: 1, align: 1", "size: 2, align: 1"),
+            X86_64.replace_evg("size: 0, align: 1", "size: 1, align: 1"),
+            X86_64.replace_evg("size: 0, align: 1", "size: 0, align: 2"),
             X86_64.replace_evg("size: 8, align: 8", "size: 8, align: 3"),
             X86_64.replace_evg("size: 8, align: 8", "size: 8, align: 0"),
             X86_64.replace_evg("size: 8, align: 8", "size: 8, align: 16"),

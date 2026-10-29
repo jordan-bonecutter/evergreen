@@ -17,6 +17,7 @@ impl Emitter<'_> {
         let size = layout::of(ty, self.structs)?.size;
         let signed = matches!(ty, Type::Machine(integer) if integer.signed);
         self.code.extend(match (size, signed) {
+            (0, _) => &[0x31, 0xc0][..], // unit: no memory read
             (1, false) => &[0x0f, 0xb6, 0x00][..],
             (1, true) => &[0x48, 0x0f, 0xbe, 0x00],
             (2, false) => &[0x0f, 0xb7, 0x00],
@@ -30,6 +31,9 @@ impl Emitter<'_> {
     }
 
     fn store_scalar(&mut self, size: usize, destination: u8, offset: i32) -> Result<()> {
+        if size == 0 {
+            return Ok(());
+        }
         self.code.extend(match size {
             1 => &[0x88][..],
             2 => &[0x66, 0x89],

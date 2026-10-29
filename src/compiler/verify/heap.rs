@@ -237,7 +237,7 @@ impl Context<'_> {
             self.declarations.structs,
         )?
         .size;
-        let maximum = (self.declarations.target.max_allocation_bytes() / stride as u64) as i128;
+        let maximum = self.declarations.target.max_array_length(stride);
         self.prove(
             &Formula::Ge(count.clone()),
             "nonnegative allocation count",

@@ -844,6 +844,10 @@ impl Parser {
                     self.pos += 1;
                     Ok(Type::Bool)
                 }
+                "unit" => {
+                    self.pos += 1;
+                    Ok(Type::Unit)
+                }
                 _ if self.peek().starts_with(|c: char| c.is_ascii_alphabetic()) => {
                     let name = self.path_name()?;
                     Ok(if self.peek() == "<" {

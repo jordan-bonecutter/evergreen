@@ -142,6 +142,11 @@ impl Emitter<'_> {
             self.code.push(0xad);
             return Ok(());
         }
+        if self.size(ty)? == 0 {
+            self.code.push(0x1a); // discard address; unit has no stored bytes
+            self.i64(0);
+            return Ok(());
+        }
         let signed = matches!(ty, Type::Machine(integer) if integer.signed);
         self.code.push(match (self.size(ty)?, signed) {
             (1, true) => 0x30,
@@ -159,6 +164,10 @@ impl Emitter<'_> {
 
     // Destination i32 and value i64 are already on the operand stack.
     fn store(&mut self, ty: &Type) -> Result<()> {
+        if self.size(ty)? == 0 {
+            self.code.extend([0x1a, 0x1a]); // discard value and destination
+            return Ok(());
+        }
         if layout::aggregate(ty) {
             self.code.push(0xa7); // i32.wrap_i64 source
             self.i32(self.size(ty)?);

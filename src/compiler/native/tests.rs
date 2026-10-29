@@ -416,7 +416,7 @@ fn native_execution_agrees_with_the_interpreter() {
         "fn first(bytes: &[u8; length], length: usize) -> u8 where(length > 0) {(*bytes)[0]} fn change(length: &usize) -> usize modifies(length) ensures(result == 2 && *length == 2) {*length = 2; 2} fn main() -> u8 {let length: usize = 1; let bytes: [u8; 2] = [42, 7]; let byte = first(&bytes, change(&length)); if byte == 42 && length == 2 {42} else {1}}",
         include_str!("../../../examples/native_layouts.evg"),
         "type Tiny struct {data: [u8; 3]} impl Drop for Tiny {fn drop(self) {}} fn forward(value: Tiny) -> Tiny {value} fn main() -> u8 {let item = forward(Tiny {data: [1, 2, 42]}); item.data[2]}",
-        "fn main() -> u8 {let data: [[u64; 0]; 2] = [[], []]; if &data[0] != &data[1] {42} else {1}}",
+        "fn main() -> u8 {let data: [[u64; 0]; 2] = [[], []]; if &data[0] == &data[0] {42} else {1}}",
         "fn forward(a: [u8; 7], marker: u8) -> [u8; 7] {a} fn main() -> u8 {let a: [u8; 7] = [1, 2, 3, 4, 5, 6, 42]; let b = forward(a, 99); b[6]}",
         "type Mixed struct {a: u8, b: u32, c: i16, flag: bool} fn forward(x: Mixed, n: u8) -> Mixed {x} fn main() -> i16 {let x = Mixed {a: 255, b: 4294967295, c: -42, flag: true}; let y = forward(x, 7); if y.a == 255 && y.b == 4294967295 && y.c == -42 && y.flag {42} else {1}}",
         "fn forward(a: [u8; 3], b: i8, c: [u16; 3], d: i32) -> i32 {d} fn main() -> i32 {forward([1, 2, 3], -128, [4, 5, 65535], -42)}",
@@ -943,4 +943,22 @@ fn machine_overflow_chooses_low_bits_and_preserves_every_scalar_width() {
         }
     }
     std::fs::remove_dir_all(&directory).unwrap();
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn zero_sized_values_execute_without_touching_adjacent_bytes_or_filling_storage() {
+    let path = std::env::temp_dir().join(format!("evergreen-zero-sized-{}", std::process::id()));
+    for source in [
+        include_str!("../../../examples/zero_sized.evg"),
+        "fn main() -> usize {let data: unique(unit, usize::MAX) = alloc(usize::MAX, ()); (*data)[usize::MAX - 1] = (); drop(data); 42}",
+        "type Empty struct {} impl Drop for Empty {fn drop(self) {}} fn main() -> usize {let data = [Empty {}, Empty {}]; drop(data); 42}",
+        "fn main() -> usize {let p: unique(unit) = alloc(()); *p = (); drop(p); 42}",
+        "fn main() -> usize {let a: [[u64; 0]; 2] = [[], []]; if &a[0] == &a[1] {42} else {1}}",
+    ] {
+        let program = verify(source).unwrap();
+        let status = execute_test_binary(&path, &emit(&program).unwrap(), source);
+        assert_eq!(status.code(), Some(42), "{source}");
+    }
+    std::fs::remove_file(path).unwrap();
 }

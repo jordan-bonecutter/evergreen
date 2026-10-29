@@ -1,0 +1,35 @@
+// Empty values have no stored bytes, but still have types and live planes.
+type Empty struct {}
+type Packed struct {first: u8, empty: unit, last: u8}
+
+fn touch(value: &unit)
+    modifies(value)
+{
+    *value = ();
+}
+
+fn forward(
+    empty: [unit; 2],
+    answer: usize
+) -> usize {
+    answer
+}
+
+fn main() -> usize {
+    proof _: size_of(unit) == 0 && align_of(unit) == 1;
+    proof _: size_of(Empty) == 0 && size_of(
+        [u64; 0]
+    ) == 0;
+    proof _: align_of(
+        [u64; 0]
+    ) == 8 && size_of(
+        [unit; 1000000000]
+    ) == 0;
+    proof _: size_of(Packed) == 2;
+    let packed = Packed {first: 7, empty: (), last: 42};
+    touch(&packed.empty);
+    proof _: &packed.empty == &packed.empty;
+    let items: [unit; 2] = [(), ()];
+    touch(&items[1]);
+    if packed.first == 7 && packed.last == 42 {forward(items, 42)} else {0}
+}

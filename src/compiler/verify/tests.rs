@@ -389,7 +389,7 @@ fn ideal_record_fields_move_and_erase_with_runtime_values() {
     let empty =
         crate::compiler::layout::of(&Type::Named("packets::Empty".into()), &program.structs)
             .unwrap();
-    assert_eq!(empty.size, 1);
+    assert_eq!(empty.size, 0);
     assert!(empty.fields.is_empty());
     let duplicate = source.replace_evg(
         "let forwarded = packets::forward(packet);",
@@ -1070,7 +1070,7 @@ fn reference_equality_checks_identity_and_symbolic_projections() {
     assert_eq!(verify(indexed).unwrap().run().unwrap().to_string(), "42");
     let ideal = "ideal fn same(a: &usize, b: &usize) -> bool ensures(result == (a == b)) {a == b} fn main() -> usize {let n: usize = 7; proof alias: same(&n, &n); 42}";
     assert_eq!(verify(ideal).unwrap().run().unwrap().to_string(), "42");
-    let nominal = "type Empty struct {} fn main() -> usize {let a = Empty {}; let b = Empty {}; proof distinct: &a != &b; proof identity: &a == &a; 42}";
+    let nominal = "type Empty struct {} fn main() -> usize {let a = Empty {}; let b = Empty {}; proof identity: &a == &a; 42}";
     assert_eq!(verify(nominal).unwrap().run().unwrap().to_string(), "42");
 }
 

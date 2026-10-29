@@ -171,20 +171,20 @@ impl Context<'_> {
         }
         let supported_region = match &*place.ty {
             Ty::Union(members) => members.iter().any(|member| matches!(member, Ty::Shape(_))),
-            Ty::Machine(_) | Ty::Bool => true,
+            Ty::Machine(_) | Ty::Bool | Ty::Unit => true,
             Ty::Nat | Ty::Int => erased,
             Ty::Record(_) => {
                 self.history_element(&place.ty)
                     || erased && self.erased_ty(&place.ty) && self.scalar_field_value(&place.ty)
             }
             Ty::Array(element, _) => {
-                matches!(**element, Ty::Machine(_) | Ty::Bool)
+                matches!(**element, Ty::Machine(_) | Ty::Bool | Ty::Unit)
                     || matches!(**element, Ty::Record(_)) && self.history_element(element)
             }
             _ => false,
         };
         if !supported_region {
-            return Err("modifies targets require machine scalars, Booleans, proof-only integer/nat slots, copyable scalar-field records, or supported arrays".into());
+            return Err("modifies targets require machine scalars, Booleans, unit, proof-only integer/nat slots, copyable scalar-field records, or supported arrays".into());
         }
         Ok(())
     }

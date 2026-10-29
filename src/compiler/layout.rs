@@ -1,5 +1,5 @@
 //! Sizes and alignment from the selected Evergreen target profile.
-//! Fields retain declaration order. Empty values reserve one byte for identity.
+//! Fields retain declaration order. Empty values occupy zero bytes.
 //! This is not a C/FFI layout contract.
 
 use super::target::{Target, TargetKind};
@@ -169,7 +169,7 @@ fn compute_layout(
                 if !(2..=16).contains(&members.len()) {
                     return Err("raw unions require between 2 and 16 distinct members".into());
                 }
-                let mut size = 1;
+                let mut size = 0;
                 for (index, member) in members.iter().enumerate() {
                     let duplicate = members[..index].iter().try_fold(false, |found, prior| {
                         Ok::<_, String>(found || same_type(prior, member)?)
@@ -204,7 +204,6 @@ fn compute_layout(
                     .size
                     .checked_mul(array_length(count)?)
                     .ok_or("native array layout overflow")?
-                    .max(align)
             }
             Type::Named(name) => {
                 let definition = structs
@@ -246,7 +245,6 @@ fn compute_layout(
                 offset
                     .checked_next_multiple_of(align)
                     .ok_or("native layout alignment overflow")?
-                    .max(1)
             }
         };
         if size > limit {
@@ -305,7 +303,7 @@ mod tests {
         assert_eq!(layout.fields["last"].offset, 16);
         assert!(layout.fields.values().all(|f| f.offset % 8 == 0));
         let empty = definitions("type Empty struct {}");
-        assert_eq!(of(&Type::Named("Empty".into()), &empty).unwrap().size, 1);
+        assert_eq!(of(&Type::Named("Empty".into()), &empty).unwrap().size, 0);
     }
 
     #[test]
@@ -340,11 +338,11 @@ mod tests {
         assert_eq!(nested.fields["body"].offset, 4);
         assert_eq!(nested.fields["tail"].offset, 16);
         assert_eq!(of(&Type::Bool, &defs).unwrap().size, 1);
-        assert_eq!(of(&Type::Unit, &defs).unwrap().size, 1);
+        assert_eq!(of(&Type::Unit, &defs).unwrap().size, 0);
         let empty_arrays = definitions("type Storage struct {data: [[u64; 0]; 2], tail: u8}");
         let storage = of(&Type::Named("Storage".into()), &empty_arrays).unwrap();
-        assert_eq!((storage.size, storage.align), (24, 8));
-        assert_eq!(storage.fields["tail"].offset, 16);
+        assert_eq!((storage.size, storage.align), (8, 8));
+        assert_eq!(storage.fields["tail"].offset, 0);
     }
 
     #[test]

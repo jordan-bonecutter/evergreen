@@ -131,10 +131,10 @@ fn representation(value: Expr) -> Result<Representation, String> {
 
 impl ScalarDefinition {
     pub fn validate(&self) -> Result<(), String> {
-        if self.size == 0
-            || self.size > 8
+        if self.size > 8
             || !self.align.is_power_of_two()
-            || self.align > self.size
+            || (self.size == 0 && (self.represents != Representation::Unit || self.align != 1))
+            || (self.size != 0 && self.align > self.size)
             || !self.size.is_multiple_of(self.align)
         {
             return Err(format!(
@@ -159,7 +159,8 @@ impl ScalarDefinition {
                         }
             }
             Representation::Pointer { bits, .. } => usize::from(bits) == self.size * 8,
-            Representation::Boolean | Representation::Unit => self.size == 1,
+            Representation::Boolean => self.size == 1,
+            Representation::Unit => self.size == 0,
         };
         if !valid {
             return Err(format!(

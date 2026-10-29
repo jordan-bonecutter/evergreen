@@ -33,6 +33,21 @@ impl Context<'_> {
     }
 
     pub(super) fn reference_equality(&mut self, a: &Symbol, b: &Symbol) -> Result<Formula> {
+        let Ty::Ref(inner) = a.ty() else {
+            return Err("reference equality requires reference operands".into());
+        };
+        let nonempty = heap::syntax_type(&inner, 0)
+            .and_then(|ty| {
+                crate::compiler::layout::storage_for(
+                    self.declarations.target,
+                    &ty,
+                    self.declarations.structs,
+                )
+            })
+            .is_ok_and(|layout| layout.size > 0);
+        if !nonempty {
+            return self.empty_reference_equality(a, b);
+        }
         if matches!(a, Symbol::RefCases(..)) || matches!(b, Symbol::RefCases(..)) {
             for value in [a, b] {
                 self.validate_reference_addresses(value)?;
@@ -71,6 +86,44 @@ impl Context<'_> {
             same = same.and(component);
         }
         Ok(same)
+    }
+
+    fn empty_reference_equality(&mut self, a: &Symbol, b: &Symbol) -> Result<Formula> {
+        self.validate_reference_addresses(a)?;
+        self.validate_reference_addresses(b)?;
+        let identity = guarded_references::identity_equal(a, b)?;
+        if identity == Formula::True {
+            return Ok(identity);
+        }
+        // The same logical reference has the same address. Distinct empty
+        // objects may share one; address equality grants no plane authority.
+        let mut addresses = Formula::False;
+        for a in guarded_references::cases(a)? {
+            for b in guarded_references::cases(b)? {
+                self.charge_value_work(1 + a.guard.storage_weight()? + b.guard.storage_weight()?)?;
+                let left = self.empty_address(a.reference, &a.path)?;
+                let right = self.empty_address(b.reference, &b.path)?;
+                addresses = addresses.or(a
+                    .guard
+                    .clone()
+                    .and(b.guard.clone())
+                    .and(equal(&left, &right)?));
+            }
+        }
+        Ok(identity.or(addresses))
+    }
+
+    fn empty_address(&mut self, reference: Reference, path: &[Projection]) -> Result<Linear> {
+        self.charge_value_work(1 + path.len())?;
+        let key = (reference, path.to_vec());
+        if let Some(address) = self.work.empty_addresses.get(&key) {
+            return Ok(address.clone());
+        }
+        // Unconstrained numbers overapproximate addresses. In particular, two
+        // distinct zero-sized objects are not assumed to have different ones.
+        let address = self.arbitrary(&Ty::Int)?.number()?;
+        self.work.empty_addresses.insert(key, address.clone());
+        Ok(address)
     }
 
     pub(super) fn reference_ports_overlap(&mut self, inputs: &[InputReference]) -> Result<bool> {

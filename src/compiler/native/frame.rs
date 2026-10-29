@@ -7,7 +7,7 @@ impl Emitter<'_> {
         let object = layout::of(ty, self.structs)?;
         self.frame = self
             .frame
-            .checked_add(object.size)
+            .checked_add(object.size.max(1))
             .ok_or("native frame overflow")?
             .next_multiple_of(object.align);
         if self.frame + 16 > STACK {

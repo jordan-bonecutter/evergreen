@@ -157,3 +157,11 @@ test('wasm32 layout and narrow arithmetic agree before and after storage', async
     ['fn main() -> usize {let a: [usize; 2] = [7, 42]; let p = &a; (*p)[1]}', '42'],
   ]) assert.equal((await execute(source)).result, expected, source);
 });
+
+
+test('zero-sized fields and arrays preserve neighboring bytes', async () => {
+  const source = 'type Packed struct {first: u8, empty: unit, last: u8} fn touch(x: &unit) modifies(x) {*x = ();} fn main() -> usize {proof _: size_of(unit) == 0 && size_of(Packed) == 2; let p = Packed {first: 7, empty: (), last: 42}; touch(&p.empty); let a: [unit; 2] = [(), ()]; touch(&a[1]); if p.first == 7 && p.last == 42 {42} else {0}}';
+  assert.equal((await execute(source)).result, '42');
+  assert.equal((await execute('fn main() -> bool {let a: [unit; 2] = [(), ()]; &a[0] == &a[1]}')).result, 'true');
+  assert.equal((await compile('fn main() {let a: [unit; 2] = [(), ()]; proof _: &a[0] != &a[1];}')).metadata.ok, false);
+});

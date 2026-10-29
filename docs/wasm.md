@@ -22,6 +22,7 @@ diagnostics. Compilation checks all runtime declarations, including unused ones.
 
 [targets/wasm.evg](../targets/wasm.evg) defines four-byte `usize`, `isize`,
 `Null`, and references. Explicit `u64` and `i64` retain eight-byte storage.
+`unit` occupies zero bytes with alignment one, as on the native target.
 The target is selected before parsing constants, specializing generics, and
 checking contracts. Layout queries use that same profile. The internal calling
 convention carries scalars in i64 registers; arithmetic results are narrowed to

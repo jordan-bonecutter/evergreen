@@ -75,6 +75,8 @@ mod updates;
 mod validation;
 mod value_evidence;
 mod write_contracts;
+#[cfg(test)]
+mod zero_sized_tests;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum Ty {
@@ -1503,11 +1505,8 @@ impl<'a> Context<'a> {
                     )?
                     .size;
                     self.assume(&Formula::Ge(
-                        Linear::number(
-                            (self.declarations.target.max_allocation_bytes() / stride as u64)
-                                as i128,
-                        )
-                        .sub(length)?,
+                        Linear::number(self.declarations.target.max_array_length(stride))
+                            .sub(length)?,
                     ))?;
                 }
                 let value = self.arbitrary(t)?;

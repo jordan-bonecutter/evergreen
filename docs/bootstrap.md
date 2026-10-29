@@ -1123,9 +1123,14 @@ Native machine integers occupy their declared width (one, two, four, or eight
 bytes), aligned to that width. Booleans occupy one byte; references and plane
 owners occupy eight. Records retain declaration order, align each field, and
 include tail padding to their maximum field alignment. Fixed arrays contain
-consecutive elements, so `[u8; 7]` occupies seven bytes. Empty values reserve at least one
-byte, rounded to their alignment, to preserve distinct address identities inside
-arrays and records.
+consecutive elements, so `[u8; 7]` occupies seven bytes. `unit` (also spelled `()`)
+has size zero and alignment one. Empty records, zero-length arrays, and arrays of
+zero-sized elements also have size zero; arrays retain their element alignment.
+Distinct empty objects can share an address, so address inequality is not inferred
+from their distinct logical planes. Plane provenance, liveness, and Drop obligations
+remain independent of byte size. See `examples/zero_sized.evg`.
+The native stack and allocator may reserve private bookkeeping space for an
+empty root; this does not change its source layout or array stride.
 The private calling convention passes scalars in eight-byte stack slots and
 rounds aggregate argument slots up to eight bytes; that does not change the
 layout of addressable values. Copies access exactly the object size, including
@@ -2040,13 +2045,15 @@ references or move-only ownership. Repeating an owner or destructor-bearing valu
 is rejected instead of silently duplicating it.
 
 The checker proves nonnegative extents, index bounds, and that the allocation's
-byte size fits the x86-64 target's signed pointer range (`isize::MAX`). Incoming
+byte size fits the selected target's signed pointer range (`isize::MAX`). Incoming
 owned array types carry that addressability bound. The 64 KiB inline-layout limit
 applies to each repeated element, not the entire heap buffer. The native implementation uses a bounded initialization loop and a private
 eight-byte mapping-size header, allowing cleanup without reevaluating a mutable
 length variable. The header is not part of `T`'s layout or the source owner value.
 Linux rounds mappings to pages; there is no separate native heap quota. Empty
-allocations retain distinct identities and are still releasable. The interpreter
+allocations retain logical ownership and are still releasable. Filling an array
+of zero-sized values performs no repeated byte stores, even for `usize::MAX`
+elements; cleanup still runs for each live element that has a destructor. The interpreter
 retains its execution/value-work limits and rejects allocations exceeding its
 remaining work before reserving host storage.
 

@@ -59,7 +59,9 @@ module packets {
     {
         let a = Empty {expected: 1};
         let b = Empty {expected: 2};
-        if &a != &b {42} else {0}
+        // Different logical values need not occupy different byte addresses.
+        proof distinct_values: a.expected != b.expected;
+        if &a == &a {42} else {0}
     }
 
     type Resource struct {value: usize}

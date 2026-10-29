@@ -62,7 +62,7 @@ type isize = make_type(
 );
 
 type bool = make_type(size: 1, align: 1, represents: repr::Boolean {});
-type unit = make_type(size: 1, align: 1, represents: repr::Unit {});
+type unit = make_type(size: 0, align: 1, represents: repr::Unit {});
 type pointer = make_type(
     size: 8,
     align: 8,

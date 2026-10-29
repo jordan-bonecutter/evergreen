@@ -71,7 +71,7 @@ impl Emitter<'_> {
         )));
         let home = self.allocate(&result)?;
         self.copy_frame(home, &result)?;
-        if uninitialized {
+        if uninitialized || layout.size == 0 {
             self.frame_address(home);
             self.load_scalar(&result)?;
             return Ok(result);
