@@ -70,6 +70,19 @@ No credentials or secrets are embedded in the site or committed by this setup.
 
 ### evergreenlang.net
 
+From the repo root, publish to the existing site with:
+
+```sh
+make publish
+```
+
+This uses the current domain, hosted zone, `us-east-2`, and AWS SSO profile by
+default. Run `make login` first if your session has expired. Node 22+ with npm,
+Rust with the Wasm target, AWS CLI v2, and Make must be installed and on PATH.
+Use `make help` to see build, test, and local preview targets. Settings can be
+overridden, for example `make publish AWS_PROFILE=another-profile` or
+`make website-serve PORT=4174`. If Node is elsewhere, set `NODE=/path/to/node`.
+
 Deploy the registered domain using its existing public Route 53 hosted zone:
 
 ```sh

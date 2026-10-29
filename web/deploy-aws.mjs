@@ -27,7 +27,12 @@ if (!/^[A-Za-z][A-Za-z0-9-]{0,127}$/.test(values['stack-name'])) throw new Error
 if (Boolean(values.domain) !== Boolean(values['hosted-zone-id'])) throw new Error('Use --domain and --hosted-zone-id together.');
 if (values.domain && !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(values.domain)) throw new Error('Invalid domain name.');
 
-const env = { ...process.env, AWS_PAGER: '' };
+const env = {
+  ...process.env,
+  // Use npm beside the selected Node executable when NODE is an explicit path.
+  PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}`,
+  AWS_PAGER: '',
+};
 if (values.profile) env.AWS_PROFILE = values.profile;
 function run(command, args, { capture = false, cwd = root } = {}) {
   const result = spawnSync(command, args, { env, cwd, encoding: 'utf8', stdio: capture ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
