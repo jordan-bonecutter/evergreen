@@ -94,6 +94,7 @@ struct Node {
     subjects: Option<subjects::Snapshot>,
     has_admissions: bool,
     has_pending_summaries: bool,
+    has_opaque_context: bool,
 }
 
 #[derive(Default, Debug)]
@@ -340,6 +341,15 @@ impl Evidence {
         ) || parents
             .iter()
             .any(|id| self.nodes[id.0].has_pending_summaries);
+        let has_opaque_context = matches!(
+            rule,
+            NodeRule::Contract(_)
+                | NodeRule::ImportedTrust(_)
+                | NodeRule::Reference {
+                    pending: Some(_),
+                    ..
+                }
+        ) || parents.iter().any(|id| self.nodes[id.0].has_opaque_context);
         self.nodes.push(Node {
             claim,
             rule,
@@ -350,6 +360,7 @@ impl Evidence {
             subjects: None,
             has_admissions,
             has_pending_summaries,
+            has_opaque_context,
         });
         Ok(id)
     }
@@ -377,7 +388,7 @@ impl Evidence {
         self.nodes[node.0].subjects.as_ref()
     }
 
-    /// These two flags depend only on immutable parent edges and rule kinds.
+    /// These flags depend only on immutable parent edges and rule kinds.
     /// Subject attachment can change completeness, but never these flags.
     pub(super) fn has_admissions(&self, node: NodeId) -> bool {
         self.nodes[node.0].has_admissions
@@ -385,6 +396,11 @@ impl Evidence {
 
     pub(super) fn has_pending_summaries(&self, node: NodeId) -> bool {
         self.nodes[node.0].has_pending_summaries
+    }
+
+    // Rejection-only hint: universal introduction still checks freshness.
+    pub(super) fn has_opaque_context(&self, node: NodeId) -> bool {
+        self.nodes[node.0].has_opaque_context
     }
 
     pub(super) fn contract(&mut self, claim: Formula, parents: Vec<NodeId>) -> Result<NodeId> {

@@ -7,6 +7,17 @@ mod cases;
 mod negative;
 
 impl Context<'_> {
+    pub(super) fn selector_arithmetic_support(
+        &mut self,
+        goal: &Formula,
+    ) -> Result<Option<paths::Support>> {
+        if let Some(support) = self.scoped_arithmetic_support(goal)? {
+            return Ok(Some(support));
+        }
+        let support = self.probe_guard(&self.proof.paths.clone(), goal)?;
+        Ok(support.filter(|support| self.universal_support_usable(support)))
+    }
+
     pub(in crate::compiler::verify) fn reduce_selector_formula(
         &mut self,
         goal: &Formula,
@@ -17,10 +28,7 @@ impl Context<'_> {
             return Err("selector proof reduction depth limit reached".into());
         }
         if goal.is_arithmetic() {
-            let support = match self.scoped_arithmetic_support(goal)? {
-                Some(support) => Some(support),
-                None => self.probe_guard(&self.proof.paths.clone(), goal)?,
-            };
+            let support = self.selector_arithmetic_support(goal)?;
             return match support {
                 Some(support) => {
                     self.work.obligations += 1;

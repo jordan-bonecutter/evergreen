@@ -240,6 +240,20 @@ impl Context<'_> {
         result
     }
 
+    // Avoid selecting a runtime shortcut that ForallIntro cannot discharge.
+    // This only rejects candidates; the kernel still checks the chosen proof.
+    pub(super) fn universal_support_usable(&self, support: &paths::Support) -> bool {
+        !self
+            .locals
+            .logical_bindings
+            .iter()
+            .any(|binding| !binding.quantified)
+            || !support
+                .parents
+                .iter()
+                .any(|&parent| self.proof.evidence.has_opaque_context(parent))
+    }
+
     fn unreachable_logical_goal(&mut self, goal: &Formula) -> Result<Option<evidence::NodeId>> {
         if let Some(support) = self.scoped_arithmetic_support(&Formula::False)? {
             let impossible = self.proof.evidence.arithmetic(Formula::False, support)?;
@@ -259,6 +273,9 @@ impl Context<'_> {
             {
                 return Ok(None);
             }
+        }
+        if !self.universal_support_usable(&support) {
+            return Ok(None);
         }
         // Empty quantified domains need no facts about an arbitrary slot.
         // Keep local hypotheses open until the enclosing introduction rule

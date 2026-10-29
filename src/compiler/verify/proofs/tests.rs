@@ -340,3 +340,40 @@ fn using_checked_evidence_requires_a_proved_implication_and_current_admissions()
         .unwrap_err()
         .contains("earlier or unresolved state"));
 }
+
+#[test]
+fn selector_cases_prefer_scoped_proofs_over_opaque_runtime_contradictions() {
+    fn check(session: &mut Session) {
+        with_context(session, |ctx| {
+            let opaque = ctx.proof.evidence.contract(Formula::False, vec![]).unwrap();
+            ctx.assume_from(&Formula::False, paths::Origin::Evidence(opaque))
+                .unwrap();
+            let index = Linear::variable("i");
+            let atom = Formula::Predicate {
+                symbol: "present".into(),
+                arguments: vec![index.clone()],
+            };
+            let guard = Formula::Ge(index);
+            let range = |body| Formula::Forall {
+                variable: "i".into(),
+                domain: Box::new(Formula::True),
+                body: Box::new(body),
+            };
+            let premise = range(atom.clone());
+            let consequence = range(guard.clone().and(atom.clone()).or(guard.not().and(atom)));
+            let goal = Formula::Implies(Box::new(premise), Box::new(consequence));
+            let root = script(ctx, &goal, &["intro prior", "intro i", "omega"]);
+            ctx.proof.evidence.check_closed(root).unwrap();
+            assert!(!ctx.proof.evidence.has_opaque_context(root));
+            assert!(ctx.proof.evidence.admissions(root).complete);
+        });
+    }
+    let mut recording = Session::recording();
+    check(&mut recording);
+    recording.finish().unwrap();
+    let certificate = recording.bundle("scoped selector cases").unwrap();
+    let mut replay = Session::replay(&certificate);
+    check(&mut replay);
+    assert_eq!(replay.search_count(), 0);
+    replay.finish().unwrap();
+}

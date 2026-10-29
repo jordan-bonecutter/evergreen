@@ -42,9 +42,10 @@ impl Context<'_> {
         depth: usize,
     ) -> Result<Option<evidence::NodeId>> {
         self.charge_value_work(guard.storage_weight()?)?;
-        let paths = self.proof.paths.clone();
-        if self.probe_guard(&paths, guard)?.is_some()
-            || self.probe_guard(&paths, &guard.clone().not())?.is_some()
+        if self.selector_arithmetic_support(guard)?.is_some()
+            || self
+                .selector_arithmetic_support(&guard.clone().not())?
+                .is_some()
         {
             return Ok(None);
         }
