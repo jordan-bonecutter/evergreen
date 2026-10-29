@@ -115,3 +115,21 @@ fn intermediate_observations_do_not_leak_branch_facts_or_admissions() {
     }";
     assert!(verify(admitted).is_err());
 }
+
+#[test]
+fn repeated_relocation_preserves_whole_payloads_without_recreating_owners() {
+    let source = include_str!("../../../../examples/repeated_relocation.evg");
+    let (program, _) = replay(source);
+    let (value, events) = program.run_with_events().unwrap();
+    assert_eq!(value.to_string(), "42");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.as_str() == "drop Pair")
+            .count(),
+        1
+    );
+    let wrong = source.replace("x: 42", "x: 43");
+    let error = verify(&wrong).unwrap_err();
+    assert!(error.contains("cannot prove proof preserved"), "{error}");
+}

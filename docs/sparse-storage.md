@@ -220,8 +220,13 @@ execution, reject wrong slots, skipped elements, insufficient capacity, and
 stale views, and retain the same proof counts at billion-element capacities.
 The public relocation contract proves initialization, ownership safety, and
 `same_value` for the returned prefix. Reference-free payload reads can recover
-values from that guarantee. Following value relations across repeated relocation
-and preserving external payload references still need work. The public
+values from that guarantee. Reference-free records can follow these relations
+through multiple relocations, as shown in
+[`repeated_relocation.evg`](../examples/repeated_relocation.evg). Historical
+payloads are mathematical descriptions: they create no owner, cannot be read
+as live storage, and do not assume an inactive member's nominal invariant.
+Repeated growth through the full Vec API can still exceed the work budget;
+preserving external payload references also needs work. The public
 [Vec](vec.md) now uses this storage and source relocation implementation.
 
 A resource frame requires ownership of its backing array and matching

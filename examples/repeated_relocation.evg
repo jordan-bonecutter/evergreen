@@ -1,0 +1,14 @@
+type Pair struct {x: usize, valid: bool}
+impl Drop for Pair {
+    fn drop({x, valid}) {}
+}
+fn main() -> usize {
+    let data: unique(Pair | shape(Pair), 2) = alloc(2, shape(Pair));
+    (*data)[0] = Pair {x: 42, valid: true};
+    let middle = arrays::relocate_prefix::<Pair>(2, data, 1, 5);
+    let final_data = arrays::relocate_prefix::<Pair>(5, middle, 1, 9);
+    let value = arrays::take_last::<Pair>(9, &*final_data, 1);
+    arrays::release_empty::<Pair>(9, final_data);
+    proof preserved: value.x == 42 && value.valid;
+    value.x
+}

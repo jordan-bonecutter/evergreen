@@ -379,16 +379,11 @@ impl Context<'_> {
                     identity = base.clone();
                 }
                 None if !self.arrays.value_literals.contains_key(&identity) => {
-                    if contents.whole {
+                    if contents.whole && !self.historical_payload_type(ty) {
                         return Ok(None);
                     }
                     return self
-                        .historical_scalar_value(
-                            &contents.with_identity(identity),
-                            index,
-                            ty,
-                            source,
-                        )
+                        .historical_value(&contents.with_identity(identity), index, ty, source)
                         .map(Some);
                 }
                 _ => return Ok(None),
