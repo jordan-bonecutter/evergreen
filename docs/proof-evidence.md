@@ -335,7 +335,11 @@ proofs and local proof hypotheses point to their evidence nodes; negated-goal
 rows have a distinct origin and never become premise edges. Arithmetic proof
 steps reconstruct edges from kernel-checked certificate support during search
 and replay. Path deduplication retains distinct proof origins even for equal
-arithmetic constraints.
+arithmetic constraints. At the existing expansion threshold it also compacts
+repeated row/origin pairs inside retained paths. The first occurrence remains
+in source order; subsequent queries use the compact rows and origins together,
+so certificate indices still identify the corresponding premise. Compaction
+does not merge equal constraints supplied by different proofs.
 
 Path sets retain checked support for removed alternatives. Successful optional
 arithmetic queries reconstruct the contradiction's row support during both

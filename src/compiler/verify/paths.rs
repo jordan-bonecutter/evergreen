@@ -26,10 +26,6 @@ impl Path {
     pub(super) fn origin(&self, index: usize) -> Origin {
         self.origins[index]
     }
-
-    fn annotated(&self) -> impl Iterator<Item = (&Linear, Origin)> {
-        self.rows.iter().zip(self.origins.iter().copied())
-    }
 }
 
 impl From<Vec<Linear>> for Path {
@@ -284,17 +280,40 @@ pub(super) fn bounded(paths: Paths, session: &mut Session, work: &mut usize) -> 
     {
         let mut seen = BTreeSet::new();
         for path in paths.iter() {
-            let mut key = path.annotated().collect::<Vec<_>>();
-            key.sort_unstable();
-            key.dedup();
-            keep.push(seen.insert(key));
+            let mut indices = (0..path.len()).collect::<Vec<_>>();
+            indices.sort_unstable_by_key(|&i| (&path.rows[i], path.origins[i], i));
+            indices.dedup_by(|a, b| {
+                path.rows[*a] == path.rows[*b] && path.origins[*a] == path.origins[*b]
+            });
+            let key = indices
+                .iter()
+                .map(|&i| (&path.rows[i], path.origins[i]))
+                .collect::<Vec<_>>();
+            if seen.insert(key) {
+                // Retain the first occurrence, in original order. Future
+                // queries address this compact row/origin sequence together.
+                indices.sort_unstable();
+                keep.push(Some(indices));
+            } else {
+                keep.push(None);
+            }
         }
     }
     let live = paths
         .live
         .into_iter()
         .zip(keep)
-        .filter_map(|(path, keep)| keep.then_some(path))
+        .filter_map(|(path, indices)| {
+            let mut indices = indices?.into_iter().peekable();
+            let mut compact = Path::default();
+            for (i, (row, origin)) in path.rows.into_iter().zip(path.origins).enumerate() {
+                if indices.peek() == Some(&i) {
+                    indices.next();
+                    compact.push(row, origin);
+                }
+            }
+            Some(compact)
+        })
         .collect::<Vec<_>>();
     let mut unique = Paths {
         live,
@@ -334,7 +353,7 @@ mod tests {
             bounded(duplicates.into(), &mut session, &mut work)
                 .unwrap()
                 .live,
-            vec![first]
+            vec![Path::from(vec![x.clone(), Linear::number(7)])]
         );
         let mut paths = (1..=65)
             .map(|n| Path::from(vec![Linear::number(-n)]))
@@ -441,6 +460,14 @@ mod tests {
                 .live,
             vec![first, second]
         );
+        let mut repeated = Path::default();
+        for origin in [a, a, b, b] {
+            repeated.push(Linear::variable("x"), Origin::Evidence(origin));
+        }
+        let compact = bounded(vec![repeated; 65].into(), &mut Session::search(), &mut 0).unwrap();
+        assert_eq!(compact[0].len(), 2);
+        assert_eq!(compact[0].origin(0), Origin::Evidence(a));
+        assert_eq!(compact[0].origin(1), Origin::Evidence(b));
     }
 
     #[test]
