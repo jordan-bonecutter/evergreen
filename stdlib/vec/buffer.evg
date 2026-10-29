@@ -224,6 +224,18 @@ impl<T> Buffer<T> {
         }
         output
     }
+    method release_empty() -> Self
+        where
+            self.len == 0
+        ensures
+            result.len == 0 &&
+            result.cap == 0
+    {
+        let Self {cap, len, data} = self;
+        if cap == 0 {discard_buffer_zero(data)} else {arrays::drain_prefix::<T>(cap, data, len)};
+        Self::new(0)
+    }
+
     method reallocate(new_capacity: usize) -> Self
         where
             new_capacity > 0 &&

@@ -1,0 +1,12 @@
+// Exercise the source-defined owning storage used for Vec migration.
+fn main() -> usize {
+    let values = vec::Buffer::<unique(usize)>::new(0);
+    values = values.reallocate(8);
+    values.push(alloc(42));
+    let item = values.pop();
+    let answer = *item;
+    values = values.release_empty();
+    proof empty: values.length() == 0 && values.capacity() == 0;
+    drop(values);
+    answer
+}

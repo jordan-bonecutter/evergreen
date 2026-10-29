@@ -155,3 +155,13 @@ export logical invariants of unconditionally available modified record inputs
 before restoring the caller's lexical proof scope. This closes the previous
 post-pop invariant gap without assuming the invariant or increasing the work
 limit. Conditional input views and the public Vec API migration remain work.
+
+`vec::Buffer::release_empty()` consumes a buffer whose length is proved zero,
+releases any reserved allocation, and returns capacity zero backed by `Null`.
+[The release example](../examples/buffer_release.evg) grows from zero capacity,
+moves an owner through push/pop, and releases the empty reservation. Its native
+result is 42; releasing a populated buffer fails the precondition. General
+`Buffer::reallocate` still requires a positive destination capacity: combining
+its relocation and zero-destination branches currently exposes an unresolved
+universal-proof dependency in the relocation recheck. This is a checker gap,
+not an intended permanent API restriction.
