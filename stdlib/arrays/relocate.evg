@@ -51,71 +51,35 @@ fn relocate_last<T>(
         arrays::vacant_outside::<T>(target, integer::from(length), integer::from(end)) by {assumption};
     (*target)[length - 1] = copy_representation(&(*data)[length - 1]);
     transfer_type(&(*data)[length - 1], &(*target)[length - 1]);
-    proof frame:
-        old(arrays::initialized_prefix::<T>(data, integer::from(length))) =>
-        arrays::initialized_prefix::<T>(data, integer::from(length) - 1) by {
-            intro prior;
-            intro i;
-            omega
-        };
     proof prefix:
         arrays::initialized_prefix::<T>(data, integer::from(length) - 1) by {
-            apply frame;
-            exact initialized
-        };
-    proof empty_frame:
-        old(arrays::vacant_suffix::<T>(data, integer::from(length))) =>
-        arrays::vacant_suffix::<T>(data, integer::from(length) - 1) by {
+            using initialized;
             intro prior;
             intro i;
             omega
         };
     proof suffix:
         arrays::vacant_suffix::<T>(data, integer::from(length) - 1) by {
-            apply empty_frame;
-            exact vacant
-        };
-    proof extend:
-        (
-            old(
-                arrays::initialized_range::<T>(target, integer::from(length), integer::from(end))
-            )
-        ) =>
-        (
-            arrays::initialized_range::<T>(target, integer::from(length) - 1, integer::from(end))
-        ) by {
-            intro previous;
+            using vacant;
+            intro prior;
             intro i;
             omega
         };
     proof live:
         arrays::initialized_range::<T>(target, integer::from(length) - 1, integer::from(end)) by {
-            apply extend;
-            exact target_prior
-        };
-    proof target_frame:
-        (
-            length <= end &&
-            (
-                old(
-                    arrays::vacant_outside::<T>(target, integer::from(length), integer::from(end))
-                )
-            )
-        ) =>
-        (
-            arrays::vacant_outside::<T>(target, integer::from(length) - 1, integer::from(end))
-        ) by {
-            intro premise;
-            cases premise with ordered,
-            previous;
+            using target_prior;
+            intro prior;
             intro i;
             omega
         };
+    proof ordered: length <= end by {omega};
     proof rest:
         arrays::vacant_outside::<T>(target, integer::from(length) - 1, integer::from(end)) by {
-            apply target_frame;
-            constructor;
-            omega;
-            exact target_vacant
+            using ordered;
+            intro bounds;
+            using target_vacant;
+            intro prior;
+            intro i;
+            omega
         };
 }

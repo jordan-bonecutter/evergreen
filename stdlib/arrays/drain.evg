@@ -30,97 +30,30 @@ fn truncate_prefix<T>(
         drop(value);
         remaining = remaining - 1;
     }
+    proof done: remaining == kept by {omega};
     proof before_live:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            i < integer::from(remaining) &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == T} by {assumption};
-    proof frame_live:
-        (
-            remaining == kept &&
-            (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    i < integer::from(remaining) &&
-                    i < integer::from(capacity)
-                ) {typeof((*data)[i]) == T}
-            )
-        ) =>
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                i < integer::from(kept) &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == T}
-        ) by {
-            intro premise;
-            cases premise with done,
-            range;
-            intro i;
-            specialize range(i);
-            omega
-        };
+        arrays::initialized_prefix::<T>(&*data, integer::from(remaining)) by {assumption};
     proof after_live:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            i < integer::from(kept) &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == T} by {
-            apply frame_live;
-            constructor;
-            omega;
-            exact before_live
+        arrays::initialized_prefix::<T>(&*data, integer::from(kept)) by {
+            using done;
+            intro finished;
+            using before_live;
+            intro prior;
+            intro i;
+            specialize prior(i);
+            omega
         };
     proof before_vacant:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            integer::from(remaining) <= i &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == shape(T)} by {assumption};
-    proof frame_vacant:
-        (
-            remaining == kept &&
-            (
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    integer::from(remaining) <= i &&
-                    i < integer::from(capacity)
-                ) {typeof((*data)[i]) == shape(T)}
-            )
-        ) =>
-        (
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(kept) <= i &&
-                i < integer::from(capacity)
-            ) {typeof((*data)[i]) == shape(T)}
-        ) by {
-            intro premise;
-            cases premise with done,
-            range;
-            intro i;
-            specialize range(i);
-            omega
-        };
+        arrays::vacant_suffix::<T>(&*data, integer::from(remaining)) by {assumption};
     proof after_vacant:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            integer::from(kept) <= i &&
-            i < integer::from(capacity)
-        ) {typeof((*data)[i]) == shape(T)} by {
-            apply frame_vacant;
-            constructor;
-            omega;
-            exact before_vacant
+        arrays::vacant_suffix::<T>(&*data, integer::from(kept)) by {
+            using done;
+            intro finished;
+            using before_vacant;
+            intro prior;
+            intro i;
+            specialize prior(i);
+            omega
         };
     data
 }

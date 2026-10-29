@@ -51,84 +51,26 @@ impl<T> Buffer<T> {
             self.len == old(self.len) + 1
     {
         proof before_live:
-            forall(i: integer)
-            where (
-                0 <= i &&
-                i < integer::from(self.len) &&
-                i < integer::from(self.cap)
-            ) {typeof((*self.data)[i]) == T} by {omega};
+            arrays::initialized_prefix::<T>(&*self.data, integer::from(self.len)) by {omega};
         proof before_empty:
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(self.len) <= i &&
-                i < integer::from(self.cap)
-            ) {typeof((*self.data)[i]) == shape(T)} by {omega};
+            arrays::vacant_suffix::<T>(&*self.data, integer::from(self.len)) by {omega};
         update(*self) lifts initialized_prefix,
         vacant_suffix {
             (*self.data)[self.len] = item;
             self.len = self.len + 1;
-            proof frame_live:
-                (
-                    forall(i: integer)
-                    where (
-                        0 <= i &&
-                        i < integer::from(old(self.len)) &&
-                        i < integer::from(self.cap)
-                    ) {typeof(old(*self.data)[i]) == T}
-                ) =>
-                (
-                    forall(i: integer)
-                    where (
-                        0 <= i &&
-                        i < integer::from(self.len) &&
-                        i < integer::from(self.cap)
-                    ) {typeof((*self.data)[i]) == T}
-                ) by {
-                    intro prior;
-                    intro i;
-                    omega
-                };
             proof after_live:
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    i < integer::from(self.len) &&
-                    i < integer::from(self.cap)
-                ) {typeof((*self.data)[i]) == T} by {
-                    apply frame_live;
-                    exact before_live
-                };
-            proof frame_empty:
-                (
-                    forall(i: integer)
-                    where (
-                        0 <= i &&
-                        integer::from(old(self.len)) <= i &&
-                        i < integer::from(self.cap)
-                    ) {typeof(old(*self.data)[i]) == shape(T)}
-                ) =>
-                (
-                    forall(i: integer)
-                    where (
-                        0 <= i &&
-                        integer::from(self.len) <= i &&
-                        i < integer::from(self.cap)
-                    ) {typeof((*self.data)[i]) == shape(T)}
-                ) by {
+                arrays::initialized_prefix::<T>(&*self.data, integer::from(self.len)) by {
+                    using before_live;
                     intro prior;
                     intro i;
                     omega
                 };
             proof after_empty:
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    integer::from(self.len) <= i &&
-                    i < integer::from(self.cap)
-                ) {typeof((*self.data)[i]) == shape(T)} by {
-                    apply frame_empty;
-                    exact before_empty
+                arrays::vacant_suffix::<T>(&*self.data, integer::from(self.len)) by {
+                    using before_empty;
+                    intro prior;
+                    intro i;
+                    omega
                 };
         }
     }
@@ -140,86 +82,28 @@ impl<T> Buffer<T> {
             self.len + 1 == old(self.len)
     {
         proof before_live:
-            forall(i: integer)
-            where (
-                0 <= i &&
-                i < integer::from(self.len) &&
-                i < integer::from(self.cap)
-            ) {typeof((*self.data)[i]) == T} by {omega};
+            arrays::initialized_prefix::<T>(&*self.data, integer::from(self.len)) by {omega};
         proof before_empty:
-            forall(i: integer)
-            where (
-                0 <= i &&
-                integer::from(self.len) <= i &&
-                i < integer::from(self.cap)
-            ) {typeof((*self.data)[i]) == shape(T)} by {omega};
+            arrays::vacant_suffix::<T>(&*self.data, integer::from(self.len)) by {omega};
         let output: T | shape(T) = shape(T);
         update(*self) lifts initialized_prefix,
         vacant_suffix {
             let value: T = move((*self.data)[self.len - 1]);
             output = value;
             self.len = self.len - 1;
-            proof frame_live:
-                (
-                    forall(i: integer)
-                    where (
-                        0 <= i &&
-                        i < integer::from(old(self.len)) &&
-                        i < integer::from(self.cap)
-                    ) {typeof(old(*self.data)[i]) == T}
-                ) =>
-                (
-                    forall(i: integer)
-                    where (
-                        0 <= i &&
-                        i < integer::from(self.len) &&
-                        i < integer::from(self.cap)
-                    ) {typeof((*self.data)[i]) == T}
-                ) by {
-                    intro prior;
-                    intro i;
-                    omega
-                };
             proof after_live:
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    i < integer::from(self.len) &&
-                    i < integer::from(self.cap)
-                ) {typeof((*self.data)[i]) == T} by {
-                    apply frame_live;
-                    exact before_live
-                };
-            proof frame_empty:
-                (
-                    forall(i: integer)
-                    where (
-                        0 <= i &&
-                        integer::from(old(self.len)) <= i &&
-                        i < integer::from(self.cap)
-                    ) {typeof(old(*self.data)[i]) == shape(T)}
-                ) =>
-                (
-                    forall(i: integer)
-                    where (
-                        0 <= i &&
-                        integer::from(self.len) <= i &&
-                        i < integer::from(self.cap)
-                    ) {typeof((*self.data)[i]) == shape(T)}
-                ) by {
+                arrays::initialized_prefix::<T>(&*self.data, integer::from(self.len)) by {
+                    using before_live;
                     intro prior;
                     intro i;
                     omega
                 };
             proof after_empty:
-                forall(i: integer)
-                where (
-                    0 <= i &&
-                    integer::from(self.len) <= i &&
-                    i < integer::from(self.cap)
-                ) {typeof((*self.data)[i]) == shape(T)} by {
-                    apply frame_empty;
-                    exact before_empty
+                arrays::vacant_suffix::<T>(&*self.data, integer::from(self.len)) by {
+                    using before_empty;
+                    intro prior;
+                    intro i;
+                    omega
                 };
         }
         output

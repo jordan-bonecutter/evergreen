@@ -237,3 +237,10 @@ proofs remain explicit quantified scripts. Fact-call dependency lookup is indexe
 by call identity, so unrelated predicates no longer participate in that scan;
 matching snapshots still require current plane revisions. The combined growth
 example and truncation/replay regression pass with these contracts.
+
+The transport scripts now use `using saved_proof` to prove a transformation and
+apply it in one block. `arrays/prefix.evg` is 130 lines, `arrays/drain.evg` is 70,
+and the owning `Buffer` is 174 (down from 290). Buffer's methods use named range
+predicates; its type invariant still spells out the quantifiers because wrapping
+those repeatedly checked invariant clauses in predicate calls exceeds the current
+work budget. This is a presentation/performance limitation, not a weaker invariant.

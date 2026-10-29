@@ -21,29 +21,19 @@ fn take_last<T>(
     proof vacant:
         arrays::vacant_suffix::<T>(data, integer::from(length)) by {assumption};
     let value: T = move((*data)[length - 1]);
-    proof frame:
-        old(arrays::initialized_prefix::<T>(data, integer::from(length))) =>
-        arrays::initialized_prefix::<T>(data, integer::from(length) - 1) by {
-            intro prior;
-            intro i;
-            omega
-        };
     proof prefix:
         arrays::initialized_prefix::<T>(data, integer::from(length) - 1) by {
-            apply frame;
-            exact initialized
-        };
-    proof empty_frame:
-        old(arrays::vacant_suffix::<T>(data, integer::from(length))) =>
-        arrays::vacant_suffix::<T>(data, integer::from(length) - 1) by {
+            using initialized;
             intro prior;
             intro i;
             omega
         };
     proof suffix:
         arrays::vacant_suffix::<T>(data, integer::from(length) - 1) by {
-            apply empty_frame;
-            exact vacant
+            using vacant;
+            intro prior;
+            intro i;
+            omega
         };
     value
 }
@@ -98,75 +88,42 @@ fn relocate_prefix<T>(
         arrays::relocate_last::<T>(capacity, &*data, remaining, new_capacity, &*target, length);
         remaining = remaining - 1;
     }
+    proof done: remaining == 0 by {omega};
     proof before_empty:
         arrays::vacant_suffix::<T>(&*data, integer::from(remaining)) by {assumption};
-    proof finish_empty:
-        (
-            remaining == 0 &&
-            (arrays::vacant_suffix::<T>(&*data, integer::from(remaining)))
-        ) =>
-        (arrays::vacant_suffix::<T>(&*data, 0)) by {
-            intro premise;
-            cases premise with done,
-            all;
-            intro i;
-            specialize all(i);
-            omega
-        };
     proof empty:
         arrays::vacant_suffix::<T>(&*data, 0) by {
-            apply finish_empty;
-            constructor;
-            omega;
-            exact before_empty
+            using done;
+            intro finished;
+            using before_empty;
+            intro prior;
+            intro i;
+            specialize prior(i);
+            omega
         };
     proof before_live:
         arrays::initialized_range::<T>(&*target, integer::from(remaining), integer::from(length)) by {assumption};
-    proof finish_live:
-        (
-            remaining == 0 &&
-            (
-                arrays::initialized_range::<T>(&*target, integer::from(remaining), integer::from(length))
-            )
-        ) =>
-        (arrays::initialized_prefix::<T>(&*target, integer::from(length))) by {
-            intro premise;
-            cases premise with done,
-            all;
-            intro i;
-            specialize all(i);
-            omega
-        };
     proof live:
         arrays::initialized_prefix::<T>(&*target, integer::from(length)) by {
-            apply finish_live;
-            constructor;
-            omega;
-            exact before_live
+            using done;
+            intro finished;
+            using before_live;
+            intro prior;
+            intro i;
+            specialize prior(i);
+            omega
         };
     proof before_rest:
         arrays::vacant_outside::<T>(&*target, integer::from(remaining), integer::from(length)) by {assumption};
-    proof finish_rest:
-        (
-            remaining == 0 &&
-            (
-                arrays::vacant_outside::<T>(&*target, integer::from(remaining), integer::from(length))
-            )
-        ) =>
-        (arrays::vacant_suffix::<T>(&*target, integer::from(length))) by {
-            intro premise;
-            cases premise with done,
-            all;
-            intro i;
-            specialize all(i);
-            omega
-        };
     proof rest:
         arrays::vacant_suffix::<T>(&*target, integer::from(length)) by {
-            apply finish_rest;
-            constructor;
-            omega;
-            exact before_rest
+            using done;
+            intro finished;
+            using before_rest;
+            intro prior;
+            intro i;
+            specialize prior(i);
+            omega
         };
     arrays::release_empty::<T>(data);
     target

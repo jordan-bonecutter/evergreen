@@ -837,3 +837,32 @@ reporting is not yet exposed. `--deny-trust` remains strict.
 `examples/scoped_admissions.evg` demonstrates an admitted call followed by an
 independent proof about the changed value. `examples/reject_stale_admission.evg`
 rejects a second call that tries to reuse the old admission after mutation.
+
+## Explicit proof transformation
+
+`using saved` changes a goal `Q` into the goal `P => Q`, where `P` is the
+immutable proposition established by the named proof `saved`. The remaining
+script proves that implication, and the checker applies it to `saved` using the
+existing implication-elimination rule. It introduces no axiom or new kernel rule.
+
+For example, the extraction helper now writes:
+
+```evg
+proof prefix:
+    arrays::initialized_prefix::<T>(data, integer::from(length) - 1) by {
+        using initialized;
+        intro prior;
+        intro i;
+        omega
+    };
+```
+
+Here `initialized` proved the prefix at the earlier array revision. The script
+must establish that removing the last element preserves the smaller prefix at
+the current revision. The earlier proposition is not reinterpreted as a claim
+about current storage. This replaces a separately named frame implication plus
+its `apply`/`exact` block; it does not make the frame property automatic.
+
+`using` accepts checked proof names, not unproved fact names. Admission-dependent
+proofs retain their dependencies and must pass the existing current-state check;
+a stale `trustme` proof cannot be revived by wrapping it in `using`.

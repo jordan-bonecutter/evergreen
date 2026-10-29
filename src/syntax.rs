@@ -1170,7 +1170,7 @@ impl Parser {
             let step = match s.as_str() {
                 "omega" | "rfl" | "simp_all" | "decide" | "assumption" | "trustme"
                 | "constructor" | "left" | "right" => s,
-                "exact" | "intro" | "apply" => format!("{s} {}", self.name()?),
+                "exact" | "intro" | "apply" | "using" => format!("{s} {}", self.name()?),
                 "specialize" => {
                     let name = self.name()?;
                     self.expect("(")?;

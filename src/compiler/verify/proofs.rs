@@ -6,6 +6,7 @@ use evidence::Rule;
 #[cfg(test)]
 mod tests;
 mod universal;
+mod using;
 
 struct Script<'a> {
     steps: &'a [String],
@@ -351,6 +352,9 @@ impl Context<'_> {
                     Rule::OrRight(premise)
                 };
                 self.proof.evidence.derive(goal.clone(), rule)
+            }
+            _ if step.starts_with("using ") => {
+                self.using_proof(goal, &step[6..], script, depth, subjects)
             }
             _ if step.starts_with("exact ") => {
                 let name = &step[6..];

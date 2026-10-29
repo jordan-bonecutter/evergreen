@@ -305,3 +305,38 @@ fn unused_conjunction_evidence_does_not_taint_an_independent_proof() {
         ctx.proof.evidence.check_closed(root).unwrap();
     });
 }
+
+#[test]
+fn using_checked_evidence_requires_a_proved_implication_and_current_admissions() {
+    let source = "fn positive(x: usize) -> usize where x > 0 {
+        proof premise: x > 0 by {omega};
+        proof bound: x >= 1 by {using premise; intro prior; omega};
+        x
+    }
+    fn main() -> usize {positive(42)}";
+    let (program, certificate) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &certificate)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    assert!(verify(&source.replace("x >= 1", "x >= 2")).is_err());
+    assert!(verify(&source.replace("proof bound:", "x = 0; proof bound:")).is_err());
+    let fact = source.replace("proof premise: x > 0 by {omega};", "fact premise = x > 0;");
+    assert!(verify(&fact)
+        .unwrap_err()
+        .contains("requires a checked proof"));
+    let stale = "fn main() -> usize {
+        let x: usize = 7;
+        proof before: x == 7 by {trustme};
+        x = 8;
+        proof after: x == 8 by {using before; intro prior; omega};
+        42
+    }";
+    assert!(verify(stale)
+        .unwrap_err()
+        .contains("earlier or unresolved state"));
+}
