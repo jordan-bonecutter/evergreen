@@ -589,6 +589,8 @@ pub struct Function {
     pub(crate) unspecified_arithmetic: bool,
     /// Derived once during verification; compound old(...) needs an entry store.
     pub(crate) entry_memory: bool,
+    /// Named pointees actually observed by simple old(*parameter) expressions.
+    pub(crate) entry_pointees: Vec<String>,
 }
 
 struct Parser {

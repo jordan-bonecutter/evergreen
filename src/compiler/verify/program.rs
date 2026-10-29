@@ -196,10 +196,10 @@ fn check_destructors(
         .iter()
         .map(|(name, method)| {
             let mut method = method.clone();
-            method.entry_memory = needs_old_memory(&method);
-            (name.clone(), method)
+            prepare_entry_observations(&mut method)?;
+            Ok((name.clone(), method))
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<Result<BTreeMap<_, _>>>()?;
     Ok((drops, destructors))
 }
 
@@ -287,7 +287,7 @@ impl Verification {
     }
 
     fn check_function(&mut self, f: &mut Function, session: &mut Session) -> Result<()> {
-        f.entry_memory = needs_old_memory(f);
+        prepare_entry_observations(f)?;
         f.partial = f.external.is_some()
             || !f.ideal && crate::compiler::effects::unmeasured_loops(f)
             || !f.ideal && f.decreases.is_none() && crate::compiler::effects::recursive(f);

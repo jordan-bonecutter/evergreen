@@ -581,10 +581,12 @@ fn old_pointee_uses_the_saved_world_while_dereferencing_an_old_pointer_is_live()
         for statement in body {
             ctx.statement(statement).unwrap();
         }
-        let checkpoint = syntax::parse("fn checkpoint(pointer: &usize) {}")
-            .unwrap()
-            .functions
-            .remove(0);
+        let mut checkpoint =
+            syntax::parse("fn checkpoint(pointer: &usize) ensures old(*pointer) == 7 {}")
+                .unwrap()
+                .functions
+                .remove(0);
+        prepare_entry_observations(&mut checkpoint).unwrap();
         ctx.capture_old(&checkpoint).unwrap();
         let pointer = Expr {
             kind: Kind::Name("pointer".into()),

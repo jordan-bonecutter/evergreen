@@ -174,6 +174,7 @@ impl Parser {
                 partial: false,
                 unspecified_arithmetic: false,
                 entry_memory: false,
+                entry_pointees: Vec::new(),
             },
         ))
     }

@@ -67,8 +67,12 @@ The focused regression also checks certificate replay, rejects skipping a
 required transfer or reading a retired slot, and compares verification obligation
 counts at three-slot and billion-slot destination capacities.
 
-This is an elementwise building block, not bulk range copying. Switching the
-existing Buffer growth sequence to a loop using this contract currently exceeds
-the symbolic-work budget, so its production path still uses `take_last` and
-`prepend`. Proof-cost reduction and a range-level representation relation are
-still needed for the intended small bulk-relocation implementation.
+`arrays::relocate_prefix` now uses this operation in its source loop, and
+`Buffer::reallocate` uses that prefix relocation. The combined owning-buffer
+growth example verifies within the unchanged work limit and runs with the
+representation-transfer path. The checker avoids unused entry-pointee snapshots
+and skips trust-free evidence subgraphs when computing trust summaries.
+
+This remains elementwise copying, not one bulk copy followed by a range-level
+type transfer. That range representation relation and independent byte-loop
+proofs still need implementation.

@@ -95,3 +95,17 @@ fn representation_range_transfer_preserves_sparse_frames() {
     );
     assert!(verify(&stale).is_err());
 }
+
+#[test]
+fn buffer_growth_with_representation_relocation_fits_the_work_budget() {
+    let source = include_str!("../../../../examples/buffer_growth.evg");
+    let (program, certificate) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &certificate)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+}

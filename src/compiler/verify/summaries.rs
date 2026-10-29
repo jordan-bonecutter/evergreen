@@ -25,7 +25,19 @@ struct Dependencies {
 impl Context<'_> {
     fn roots_dependencies(&mut self, roots: &[evidence::NodeId]) -> Result<Dependencies> {
         let mut out = Dependencies::default();
-        let dependencies = self.proof.evidence.admissions_many(roots);
+        // Nodes already cache whether their ancestry contains trust or a
+        // pending recursive summary. Trust-free subgraphs need no traversal
+        // when computing a declaration's trust summary.
+        self.charge_value_work(roots.len())?;
+        let relevant = roots
+            .iter()
+            .copied()
+            .filter(|&node| {
+                self.proof.evidence.has_admissions(node)
+                    || self.proof.evidence.has_pending_summaries(node)
+            })
+            .collect::<Vec<_>>();
+        let dependencies = self.proof.evidence.admissions_many(&relevant);
         self.charge_value_work(dependencies.work)?;
         for source in dependencies.admissions {
             out.trusts.insert(self.proof.evidence.trust(source)?);

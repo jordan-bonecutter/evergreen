@@ -214,17 +214,22 @@ The first fixed-storage version is now implemented as `copy_representation`,
 `same_representation`, and `transfer_type`; see
 [representation-transfer.md](representation-transfer.md). It can move a whole
 owning array without per-element ownership proofs. Dynamic prefix views and
-Vec integration still need work, so `relocate_prefix` continues to use its loop.
+bulk relocation still need work. `relocate_prefix` now uses the checked
+representation-copy/type-transfer operation for each element in its source loop.
 
-Read-only expression predicates now capture argument contents only when their
-expression needs entry-state observations. Predicates without `old(...)` still
-record a proof-state revision, but do not copy argument pointees merely to set
-up the call. Both simple and compound `old(...)` retain the ordinary snapshot
-path. This removes unnecessary work without changing proof requirements.
-Converting all drain/Buffer range formulas and transport scripts to predicate
-helpers still exceeds the current work budget in the combined growth example;
-those broader refactors are not enabled yet.
+Entry-pointee snapshots are now selected from the declaration's actual
+`old(*parameter)` observations. Plain parameter values remain available for
+postcondition provenance; compound `old(...)` retains its entry-memory snapshot.
+This applies to ordinary functions and predicates through the same syntax walk.
+Trust summaries also skip evidence subgraphs already known to contain no
+admissions or pending recursive summaries.
 
+Together these changes allow the full Buffer growth example to use
+`arrays::relocate_last` within `relocate_prefix`, without increasing the checker
+work limit. The old `prepend` helper is no longer needed. Relocation now copies
+an inaccessible representation and transfers the live type, rather than moving
+an owning payload through an intermediate local. Both paths remain elementwise;
+a bulk range-copy/type-transfer operation is still future work.
 
 `truncate_prefix` and `drain_prefix` now expose the same named range predicates
 as relocation, including truncation's loop invariant. Their internal transport

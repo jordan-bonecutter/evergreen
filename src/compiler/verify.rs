@@ -694,73 +694,37 @@ fn effect_origin(expression: &Expr) -> Option<&str> {
     }
 }
 
-// Only functions that use a compound old(...) expression need an entry store.
-// Simple parameter snapshots retain their existing inexpensive representation.
-fn needs_old_memory(function: &Function) -> bool {
-    fn expression(e: &Expr) -> bool {
-        if matches!(&e.kind, Kind::Call(name, args) if name == "old" && args.len() == 1 && Context::old_key(&args[0]).is_none())
-        {
-            return true;
-        }
-        match &e.kind {
-            Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => expression(e),
-            Kind::Binary(_, a, b) | Kind::Index(a, b) => expression(a) || expression(b),
-            Kind::If(c, a, b) => expression(c) || expression(a) || expression(b),
-            Kind::Forall { domain, body, .. } => expression(domain) || expression(body),
-            Kind::Block(body, tail) => body.iter().any(statement) || expression(tail),
-            Kind::Array(items) | Kind::Call(_, items) => items.iter().any(expression),
-            Kind::Record(_, fields) => fields.iter().any(|(_, e)| expression(e)),
-            _ => false,
-        }
+// Prepare exactly the entry observations used by this declaration. Pointees
+// are not eagerly read merely because a function accepts a pointer.
+fn prepare_entry_observations(function: &mut Function) -> Result<()> {
+    use crate::syntax::visit::{self, Visitor};
+    #[derive(Default)]
+    struct Observations {
+        memory: bool,
+        pointees: BTreeSet<String>,
     }
-
-    fn ty(t: &Type) -> bool {
-        match t {
-            Type::Ref(t) | Type::Unique(t) | Type::Shared(t) | Type::Shape(t) => ty(t),
-            Type::Union(members) => members.iter().any(ty),
-            Type::Array(t, n) => ty(t) || expression(n),
-            _ => false,
-        }
-    }
-
-    fn statement(s: &Statement) -> bool {
-        match s {
-            Statement::Ideal(s) => statement(s),
-            Statement::Let { ty: t, value, .. } => t.as_ref().is_some_and(ty) || expression(value),
-            Statement::Destructure { value, .. }
-            | Statement::Fact { value, .. }
-            | Statement::Effect(value) => expression(value),
-            Statement::Proof { proposition, .. } => expression(proposition),
-            Statement::Assign { target, value, .. } => expression(target) || expression(value),
-            Statement::Update { body, .. } => body.iter().any(statement),
-            Statement::While {
-                condition,
-                invariant,
-                modifies,
-                decreases,
-                body,
-                ..
-            } => {
-                expression(condition)
-                    || expression(invariant)
-                    || decreases.as_ref().is_some_and(expression)
-                    || modifies.iter().any(expression)
-                    || body.iter().any(statement)
+    impl Visitor for Observations {
+        fn expr(&mut self, expression: &mut Expr) -> Result<()> {
+            if let Kind::Call(name, args) = &expression.kind {
+                if name == "old" && args.len() == 1 {
+                    match Context::old_key(&args[0]) {
+                        Some(key) => {
+                            if let Some(name) = key.strip_prefix('*') {
+                                self.pointees.insert(name.into());
+                            }
+                        }
+                        None => self.memory = true,
+                    }
+                }
             }
+            visit::walk_expr(self, expression)
         }
     }
-    function.params.iter().any(|(_, t)| ty(t))
-        || ty(&function.ret)
-        || function.pre.as_ref().is_some_and(expression)
-        || function.post.as_ref().is_some_and(expression)
-        || function.decreases.as_ref().is_some_and(expression)
-        || function
-            .borrows
-            .iter()
-            .any(|alias| expression(&alias.reference))
-        || function.modifies.iter().any(expression)
-        || function.body.iter().any(statement)
-        || expression(&function.result)
+    let mut observations = Observations::default();
+    observations.function(function)?;
+    function.entry_memory = observations.memory;
+    function.entry_pointees = observations.pointees.into_iter().collect();
+    Ok(())
 }
 
 struct EntryMemory {
@@ -1141,28 +1105,32 @@ impl<'a> Context<'a> {
         }
         self.entry.world = self.proof.subjects.save_world()?;
         self.charge_value_work(values_weight(self.locals.values.values())?)?;
-        let target_cost =
-            self.locals
-                .values
-                .values()
-                .try_fold(0usize, |cost, value| -> Result<usize> {
-                    let extra = if let Symbol::Ref(_, reference, fields) = value {
-                        symbol_weight(project(self.storage.memory.read(*reference)?, fields)?)?
-                    } else if let Symbol::Unique(_, reference) = value {
-                        symbol_weight(self.storage.memory.read(*reference)?)?
-                    } else if let Symbol::Shared(_, owner) = value {
-                        symbol_weight(self.storage.memory.read(owner.reference())?)?
-                    } else {
-                        0
-                    };
-                    Ok(cost.saturating_add(extra))
-                })?;
+        let target_cost = self
+            .locals
+            .values
+            .iter()
+            .filter(|(name, _)| function.entry_pointees.contains(name))
+            .try_fold(0usize, |cost, (_, value)| -> Result<usize> {
+                let extra = if let Symbol::Ref(_, reference, fields) = value {
+                    symbol_weight(project(self.storage.memory.read(*reference)?, fields)?)?
+                } else if let Symbol::Unique(_, reference) = value {
+                    symbol_weight(self.storage.memory.read(*reference)?)?
+                } else if let Symbol::Shared(_, owner) = value {
+                    symbol_weight(self.storage.memory.read(owner.reference())?)?
+                } else {
+                    0
+                };
+                Ok(cost.saturating_add(extra))
+            })?;
         self.charge_value_work(target_cost)?;
         self.entry.values.clear();
         let mut targets = Vec::new();
         let mut conditional_targets = Vec::new();
         for (name, value) in &self.locals.values {
             self.entry.values.insert(name.clone(), value.clone());
+            if !function.entry_pointees.contains(name) {
+                continue;
+            }
             if let Symbol::Ref(_, reference, fields) = value {
                 targets.push((name.clone(), *reference, fields.clone()));
             } else if matches!(value, Symbol::RefCases(..)) {

@@ -48,82 +48,6 @@ fn take_last<T>(
     value
 }
 
-// Initialize the preceding slot of a live interval. The rest stays vacant.
-fn prepend<T>(
-    capacity: usize,
-    data: &[T | shape(T); capacity],
-    start: usize,
-    end: usize,
-    value: T
-)
-    where
-        0 < start &&
-        start <= end &&
-        end <= capacity &&
-        (
-            arrays::initialized_range::<T>(data, integer::from(start), integer::from(end))
-        ) &&
-        (
-            arrays::vacant_outside::<T>(data, integer::from(start), integer::from(end))
-        )
-    modifies(&(*data)[start - 1])
-    ensures
-        (
-            arrays::initialized_range::<T>(data, integer::from(start) - 1, integer::from(end))
-        ) &&
-        (
-            arrays::vacant_outside::<T>(data, integer::from(start) - 1, integer::from(end))
-        )
-{
-    proof prior:
-        arrays::initialized_range::<T>(data, integer::from(start), integer::from(end)) by {assumption};
-    proof vacant:
-        arrays::vacant_outside::<T>(data, integer::from(start), integer::from(end)) by {assumption};
-    (*data)[start - 1] = value;
-    proof extend:
-        (
-            old(
-                arrays::initialized_range::<T>(data, integer::from(start), integer::from(end))
-            )
-        ) =>
-        (
-            arrays::initialized_range::<T>(data, integer::from(start) - 1, integer::from(end))
-        ) by {
-            intro previous;
-            intro i;
-            omega
-        };
-    proof live:
-        arrays::initialized_range::<T>(data, integer::from(start) - 1, integer::from(end)) by {
-            apply extend;
-            exact prior
-        };
-    proof frame:
-        (
-            start <= end &&
-            (
-                old(
-                    arrays::vacant_outside::<T>(data, integer::from(start), integer::from(end))
-                )
-            )
-        ) =>
-        (
-            arrays::vacant_outside::<T>(data, integer::from(start) - 1, integer::from(end))
-        ) by {
-            intro premise;
-            cases premise with ordered,
-            previous;
-            intro i;
-            omega
-        };
-    proof rest:
-        arrays::vacant_outside::<T>(data, integer::from(start) - 1, integer::from(end)) by {
-            apply frame;
-            constructor;
-            omega;
-            exact vacant
-        };
-}
 // Transfer an initialized prefix into fresh storage, then release the old buffer.
 // Payloads are moved once; this function never duplicates or drops a live element.
 fn relocate_prefix<T>(
@@ -171,8 +95,7 @@ fn relocate_prefix<T>(
         modifies(&*data, &*target, &remaining)
         decreases remaining
     {
-        let value = take_last::<T>(capacity, &*data, remaining);
-        prepend::<T>(new_capacity, &*target, remaining, length, value);
+        arrays::relocate_last::<T>(capacity, &*data, remaining, new_capacity, &*target, length);
         remaining = remaining - 1;
     }
     proof before_empty:

@@ -451,11 +451,7 @@ impl<'a> Context<'a> {
         self.locals.places.clear();
         self.bind_arguments(f, actuals.values, line)?;
         let reduced_fact = self.can_reduce_fact(f);
-        if reduced_fact && !Self::fact_needs_entry(f) {
-            self.entry.world = self.proof.subjects.save_world()?;
-        } else {
-            self.capture_old(f)?;
-        }
+        self.capture_old(f)?;
         let mut call_dependencies = Vec::new();
         let mut logical_precondition = None;
         if let Some(pre) = &f.pre {

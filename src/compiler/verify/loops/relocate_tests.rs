@@ -3,6 +3,7 @@ use crate::syntax::format::test_edit::SourceEdit;
 
 const EXAMPLE: &str = include_str!("../../../../examples/range_reallocate.evg");
 const LIBRARY: &str = include_str!("../../../../stdlib/arrays/prefix.evg");
+const RELOCATION: &str = include_str!("../../../../stdlib/arrays/relocate.evg");
 const RELEASE: &str = include_str!("../../../../stdlib/arrays/release.evg");
 
 fn replay(source: &str) -> (VerifiedProgram, usize) {
@@ -90,24 +91,25 @@ fn source_prefix_relocation_rejects_incorrect_members_bounds_and_stale_views() {
 
 #[test]
 fn source_prefix_relocation_rejects_skips_wrong_slots_and_missing_frames() {
+    let library = format!("{RELEASE}\u{1e}{RELOCATION}\u{1e}{LIBRARY}");
     for bad in [
-        LIBRARY.replace_evg("remaining = remaining - 1", "remaining = remaining - 2"),
-        LIBRARY.replace_evg("(*data)[start - 1] = value", "(*data)[start] = value"),
-        LIBRARY.replace_evg("move((*data)[length - 1])", "move((*data)[length])"),
-        LIBRARY.replace_evg(
+        library.replace_evg("remaining = remaining - 1", "remaining = remaining - 2"),
+        library.replace_evg("copy_representation(&(*data)[length - 1])", "copy_representation(&(*data)[length])"),
+        library.replace_evg("transfer_type(&(*data)[length - 1], &(*target)[length - 1]);", ""),
+        library.replace_evg(
             "modifies(&*data, &*target, &remaining)",
             "modifies(&*data, &remaining)",
         ),
-        LIBRARY.replace_evg(
-            "prepend::<T>(new_capacity, &*target, remaining, length, value);",
-            "drop(value);",
+        library.replace_evg(
+            "arrays::relocate_last::<T>(capacity, &*data, remaining, new_capacity, &*target, length);",
+            "",
         ),
-        LIBRARY.replace_evg(
+        library.replace_evg(
             "remaining = remaining - 1;",
             "arrays::release_empty::<T>(data); remaining = remaining - 1;",
         ),
     ] {
-        let error = verify(&format!("{RELEASE}\u{1e}{bad}\u{1e}{EXAMPLE}")).unwrap_err();
+        let error = verify(&format!("{bad}\u{1e}{EXAMPLE}")).unwrap_err();
         assert!(!error.contains("unknown function"), "{error}");
         assert!(!error.contains("work limit"), "{error}");
     }
