@@ -15,6 +15,34 @@ pub(super) struct Facts {
     entries: Vec<Arc<Formula>>,
     by_formula: BTreeMap<Arc<Formula>, FactId>,
     predicates: Vec<BTreeSet<String>>,
+    projectable_shapes: Vec<u16>,
+}
+
+fn shape(formula: &Formula) -> u16 {
+    match formula {
+        Formula::True => 1,
+        Formula::False => 2,
+        Formula::Ge(_) => 4,
+        Formula::And(..) => 8,
+        Formula::Or(..) => 16,
+        Formula::Not(_) => 32,
+        Formula::Forall { .. } => 64,
+        Formula::Predicate { .. } => 128,
+        Formula::Implies(..) => 256,
+    }
+}
+
+// Projection follows only conjunctions/disjunctions. Normalizing these may
+// select a child, so include all child shapes. Negation and implication can
+// change shape more broadly; keep them conservatively unfiltered.
+fn projectable_shapes(formula: &Formula) -> u16 {
+    match formula {
+        Formula::And(a, b) | Formula::Or(a, b) => {
+            shape(formula) | projectable_shapes(a) | projectable_shapes(b)
+        }
+        Formula::Not(_) | Formula::Implies(..) => u16::MAX,
+        _ => shape(formula),
+    }
 }
 
 impl Facts {
@@ -28,6 +56,10 @@ impl Facts {
 
     pub(super) fn mentions_predicate(&self, id: FactId, symbol: &str) -> bool {
         self.predicates[id.0].contains(symbol)
+    }
+
+    pub(super) fn may_project(&self, id: FactId, normalized_goal: &Formula) -> bool {
+        self.projectable_shapes[id.0] & shape(normalized_goal) != 0
     }
 
     /// Called after graph/storage limits and formula depth have been checked.
@@ -52,6 +84,7 @@ impl Facts {
             }
         }
         self.predicates.push(predicates);
+        self.projectable_shapes.push(projectable_shapes(&formula));
         let formula = Arc::new(formula);
         self.entries.push(Arc::clone(&formula));
         self.by_formula.insert(formula, id);
@@ -108,5 +141,15 @@ mod tests {
         assert_eq!(facts.predicates.len(), 1);
         let other = facts.intern(atom("later"));
         assert!(!facts.mentions_predicate(other, "before"));
+        assert!(!facts.may_project(id, &atom("before")));
+        assert!(facts.may_project(id, facts.get(id)));
+        let conjunction = Formula::And(Box::new(Formula::True), Box::new(facts.get(id).clone()));
+        let normalized = conjunction.normalized();
+        let conjunction = facts.intern(conjunction);
+        assert!(facts.may_project(conjunction, &normalized));
+        let implication = Formula::Implies(Box::new(Formula::True), Box::new(atom("after")));
+        let normalized = implication.normalized();
+        let implication = facts.intern(implication);
+        assert!(facts.may_project(implication, &normalized));
     }
 }

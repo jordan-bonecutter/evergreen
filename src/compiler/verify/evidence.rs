@@ -127,6 +127,14 @@ impl Evidence {
             .is_some_and(|fact| self.facts.mentions_predicate(fact, symbol))
     }
 
+    // A negative result skips a lookup; a positive result proves nothing.
+    pub(super) fn claim_may_project(&self, id: NodeId, normalized_goal: &Formula) -> bool {
+        self.nodes
+            .get(id.0)
+            .and_then(|node| node.claim)
+            .is_some_and(|fact| self.facts.may_project(fact, normalized_goal))
+    }
+
     pub(super) fn admit_source(&mut self, claim: Formula, trust: TrustId) -> Result<NodeId> {
         let node = self.insert_node(
             Some(claim),

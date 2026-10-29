@@ -55,10 +55,33 @@ fn relocate_prefix<T>(
         (arrays::vacant_suffix::<T>(&*data, integer::from(length)))
     ensures
         (arrays::initialized_prefix::<T>(&*result, integer::from(length))) &&
-        (arrays::vacant_suffix::<T>(&*result, integer::from(length)))
+        (arrays::vacant_suffix::<T>(&*result, integer::from(length))) &&
+        (
+            forall(i: integer)
+            where (
+                0 <= i &&
+                i < integer::from(length) &&
+                i < integer::from(capacity) &&
+                i < integer::from(new_capacity)
+            ) {same_value((*result)[i], old(*data)[i])}
+        )
 {
     let target: unique(T | shape(T), new_capacity) = alloc(new_capacity, shape(T));
     let remaining = length;
+    fact source_preserved = forall(i: integer)
+    where (
+        0 <= i &&
+        i < integer::from(remaining) &&
+        i < integer::from(capacity)
+    ) {same_value((*data)[i], old(*data)[i])};
+    fact target_preserved = forall(i: integer)
+    where (
+        integer::from(remaining) <= i &&
+        i < integer::from(length) &&
+        0 <= i &&
+        i < integer::from(capacity) &&
+        i < integer::from(new_capacity)
+    ) {same_value((*target)[i], old(*data)[i])};
     proof initial_live:
         arrays::initialized_range::<T>(&*target, integer::from(remaining), integer::from(length)) by {
             intro i;
@@ -81,12 +104,32 @@ fn relocate_prefix<T>(
             ) &&
             (
                 arrays::vacant_outside::<T>(&*target, integer::from(remaining), integer::from(length))
-            )
+            ) &&
+            (source_preserved) &&
+            (target_preserved)
         modifies(&*data, &*target, &remaining)
         decreases remaining
     {
+        proof source_values: source_preserved by {assumption};
+        proof target_values: target_preserved by {assumption};
         arrays::relocate_last::<T>(capacity, &*data, remaining, new_capacity, &*target, length);
         remaining = remaining - 1;
+        proof source_after:
+            source_preserved by {
+                using source_values;
+                intro prior;
+                intro i;
+                omega
+            };
+        proof target_after:
+            target_preserved by {
+                using source_values;
+                intro original;
+                using target_values;
+                intro prior;
+                intro i;
+                omega
+            };
     }
     proof done: remaining == 0 by {omega};
     proof before_empty:
@@ -120,6 +163,23 @@ fn relocate_prefix<T>(
             using done;
             intro finished;
             using before_rest;
+            intro prior;
+            intro i;
+            specialize prior(i);
+            omega
+        };
+    proof before_values: target_preserved by {assumption};
+    proof preserved:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer::from(length) &&
+            i < integer::from(capacity) &&
+            i < integer::from(new_capacity)
+        ) {same_value((*target)[i], old(*data)[i])} by {
+            using done;
+            intro finished;
+            using before_values;
             intro prior;
             intro i;
             specialize prior(i);

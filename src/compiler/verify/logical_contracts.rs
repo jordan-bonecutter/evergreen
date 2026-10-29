@@ -129,6 +129,9 @@ impl Context<'_> {
         self.charge_value_work(witnesses.len())?;
         let mut admitted = None;
         for node in witnesses {
+            if !self.proof.evidence.claim_may_project(node, &normalized) {
+                continue;
+            }
             if selectors
                 .iter()
                 .any(|symbol| !self.proof.evidence.claim_mentions_predicate(node, symbol))
@@ -158,6 +161,9 @@ impl Context<'_> {
         };
         self.charge_value_work(candidates.len())?;
         for node in candidates {
+            if !self.proof.evidence.claim_may_project(node, &normalized) {
+                continue;
+            }
             if selectors
                 .iter()
                 .any(|symbol| !self.proof.evidence.claim_mentions_predicate(node, symbol))

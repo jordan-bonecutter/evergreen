@@ -940,7 +940,16 @@ not the current liveness of their former payload owners. This permits describing
 values across relocation without reviving a reference or authorizing a read.
 Ordinary payload observations retain their existing liveness checks.
 
-The full-prefix relocation proof has also been prototyped with source-prefix
-and destination-suffix value invariants. Its declaration verifies, but the full
-Buffer growth/release integration exceeds the current proof-work limit. That
-stronger loop contract is not installed yet; the limit has not been raised.
+`arrays::relocate_prefix` now guarantees value preservation for the entire
+initialized prefix. Its loop tracks equality of the remaining source prefix and
+the completed destination suffix with the input's entry values. Local named
+facts share these formulas between the invariant and explicit transport proofs.
+The source allocation is released only after every element has been transferred.
+
+The full Buffer growth/release example verifies and replays within the unchanged
+work limit. Logical lookup now rejects candidates whose cached connective shapes
+cannot provide the requested fact before cloning and normalizing their formulas.
+This filter only removes impossible candidates; successful lookup still checks
+proof rules, guards, dependencies, and current revisions. Negations and
+implications remain conservatively unfiltered because normalization may change
+their outer connective.
