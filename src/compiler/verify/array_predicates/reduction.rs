@@ -192,6 +192,14 @@ impl Context<'_> {
         let nodes = open.into_iter().chain(closed).collect::<Vec<_>>();
         self.charge_value_work(nodes.len())?;
         for theorem in nodes {
+            if observations::atom(goal).is_some_and(|(symbol, _, _)| {
+                !self
+                    .proof
+                    .evidence
+                    .claim_mentions_predicate(theorem, symbol)
+            }) {
+                continue;
+            }
             // A live, checked contract can be restricted to a smaller domain.
             // Historical or admitted ranges still need explicit transport.
             if self.proof.evidence.check_closed(theorem).is_ok()

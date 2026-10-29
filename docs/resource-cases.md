@@ -83,3 +83,11 @@ Actual-body calls also re-prove and export logical invariants of unconditionally
 available modified record inputs before restoring caller proof scope. This
 preserves the checked initialized-prefix and vacant-suffix guarantees after
 `pop`. Conditional input views still need a corresponding guarded export path.
+
+Input-cell observation and quantified selector specialization now reject
+candidate proofs that do not mention the requested predicate before cloning
+their formulas. This uses the existing interned predicate index and leaves
+specialization, revision checks, and admission checks intact. It reduces work
+from unrelated array versions without changing the work limit. A combined
+positive/zero-capacity buffer reallocation body still exceeds that limit;
+zero-capacity release remains a separate checked operation.

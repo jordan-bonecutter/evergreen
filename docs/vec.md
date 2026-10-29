@@ -162,9 +162,10 @@ releases any reserved allocation, and returns capacity zero backed by `Null`.
 moves an owner through push/pop, and releases the empty reservation. Its native
 result is 42; releasing a populated buffer fails the precondition. General
 `Buffer::reallocate` still requires a positive destination capacity: combining
-its relocation and zero-destination branches currently exposes an unresolved
-universal-proof dependency in the relocation recheck. This is a checker gap,
-not an intended permanent API restriction.
+its relocation and zero-destination branches still exceeds the checker's work
+budget during declaration verification. The earlier loop-observation dependency
+failure is fixed. This is a checker limitation, not an intended permanent API
+restriction; `release_empty()` supplies the separate zero-destination operation.
 
 `same_value(slot, value)` can compare an initialized `T | shape(T)` slot with
 an ordinary scalar or reference-free record `T`, in either argument order.

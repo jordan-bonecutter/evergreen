@@ -3,7 +3,7 @@
 
 use super::*;
 
-fn atom(formula: &Formula) -> Option<(&str, &[Linear], bool)> {
+pub(super) fn atom(formula: &Formula) -> Option<(&str, &[Linear], bool)> {
     match formula {
         Formula::Predicate { symbol, arguments } => Some((symbol, arguments, false)),
         Formula::Not(inner) => match inner.as_ref() {
@@ -94,6 +94,11 @@ impl Context<'_> {
             .collect::<BTreeSet<_>>();
         self.charge_value_work(candidates.len())?;
         for node in candidates {
+            if atom(goal).is_some_and(|(symbol, _, _)| {
+                !self.proof.evidence.claim_mentions_predicate(node, symbol)
+            }) {
+                continue;
+            }
             let root = self.proof.evidence.claim(node)?.clone();
             self.charge_value_work(root.storage_weight()?)?;
             let mut pending = vec![(&root, true)];

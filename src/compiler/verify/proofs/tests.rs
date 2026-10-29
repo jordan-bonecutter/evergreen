@@ -39,7 +39,7 @@ fn logical_lookup_skips_unrelated_predicates_without_losing_admissions() {
             for j in 0..16 {
                 claim = claim.and(atom(format!("unused_{i}_{j}")));
             }
-            let node = ctx.proof.evidence.admit(claim).unwrap();
+            let (_, node) = ctx.proof.evidence.hypothesis(claim).unwrap();
             ctx.proof.witnesses.insert(format!("unused_{i}"), node);
         }
         let goal = atom("wanted".into()).and(atom("shared".into()));
@@ -53,6 +53,15 @@ fn logical_lookup_skips_unrelated_predicates_without_losing_admissions() {
             .logical_assumption(&atom("absent".into()), None)
             .unwrap()
             .is_none());
+
+        // Selector specialization must reject irrelevant open premises before
+        // cloning their full bodies, just as exact logical lookup does.
+        let before = ctx.work.value_work;
+        assert!(ctx
+            .prove_indexed_predicate(&atom("absent".into()), None, "missing selector", 1)
+            .unwrap()
+            .is_none());
+        assert!(ctx.work.value_work - before < 512);
 
         // Normalization can erase an atom. Filter on the normalized goal so
         // a checked True remains usable for `irrelevant || true`.
