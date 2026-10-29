@@ -3,6 +3,7 @@
 
 use super::*;
 
+mod ranges;
 #[cfg(test)]
 mod tests;
 
@@ -82,6 +83,9 @@ impl Context<'_> {
         args: &[Expr],
         line: usize,
     ) -> Result<Symbol> {
+        if args.len() == 3 {
+            return self.range_representation_call(name, args, line);
+        }
         match (name, args) {
             ("copy_representation", [source]) => {
                 if self.execution.phase != Phase::Runtime {

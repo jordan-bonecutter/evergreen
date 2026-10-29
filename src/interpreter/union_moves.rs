@@ -4,6 +4,107 @@
 use super::*;
 
 impl Evaluator<'_> {
+    pub(super) fn prefix_representation(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &BTreeMap<String, Value>,
+    ) -> Result<Value> {
+        let Value::Ref(_, source_ref, source_path) = self.expr(&args[0], env, None)? else {
+            return Err("prefix source must be a reference".into());
+        };
+        let Value::Ref(_, target_ref, target_path) = self.expr(&args[1], env, None)? else {
+            return Err("prefix destination must be a reference".into());
+        };
+        let count = usize::try_from(self.expr(&args[2], env, None)?.number()?)
+            .map_err(|_| "invalid prefix count")?;
+        if self.memory.plane(source_ref)? == self.memory.plane(target_ref)?
+            && (source_path.starts_with(&target_path) || target_path.starts_with(&source_path))
+        {
+            return Err("prefix storage overlaps".into());
+        }
+        let Value::Array(source_type, mut source) = copy_value(
+            project(self.memory.read(source_ref)?, &source_path)?,
+            &mut self.fuel,
+        )?
+        else {
+            return Err("prefix source is not an array".into());
+        };
+        let Value::Array(target_type, mut target) = copy_value(
+            project(self.memory.read(target_ref)?, &target_path)?,
+            &mut self.fuel,
+        )?
+        else {
+            return Err("prefix target is not an array".into());
+        };
+        if count > source.len() || count > target.len() {
+            return Err("prefix copy exceeds storage".into());
+        }
+        for index in 0..count {
+            self.fuel = self
+                .fuel
+                .checked_sub(1)
+                .ok_or("interpreter fuel exhausted")?;
+            let Value::Union(_, payload) = &source[index] else {
+                return Err("prefix source needs union slots".into());
+            };
+            let Value::Union(members, destination) = &target[index] else {
+                return Err("prefix target needs union slots".into());
+            };
+            let ty = target_type
+                .representation_payload()
+                .ok_or("ambiguous prefix payload")?;
+            if name == "copy_representation" {
+                if !matches!(
+                    destination.as_ref(),
+                    Value::Shape(_) | Value::Representation(..)
+                ) {
+                    return Err("prefix copy overwrites a live value".into());
+                }
+                let payload = if let Value::Representation(_, bytes) = payload.as_ref() {
+                    bytes.as_ref()
+                } else {
+                    payload.as_ref()
+                };
+                target[index] = Value::Union(
+                    members.clone(),
+                    Box::new(Value::Representation(
+                        Box::new(ty),
+                        Box::new(copy_value(payload, &mut self.fuel)?),
+                    )),
+                );
+            } else {
+                let Value::Representation(_, bytes) = destination.as_ref() else {
+                    return Err("prefix transfer has no copied bytes".into());
+                };
+                if payload.as_ref() != bytes.as_ref() || !payload.matches_type(&ty)? {
+                    return Err("prefix transfer representation or live-type mismatch".into());
+                }
+            }
+        }
+        if name == "transfer_type" {
+            for index in 0..count {
+                let Value::Union(source_members, payload) = source[index].clone() else {
+                    return Err("missing source union".into());
+                };
+                let Value::Union(target_members, bytes) = target[index].clone() else {
+                    return Err("missing target union".into());
+                };
+                source[index] = Value::Union(source_members, bytes);
+                target[index] = Value::Union(target_members, payload);
+            }
+            let mut root = copy_value(self.memory.read(source_ref)?, &mut self.fuel)?;
+            replace_projection(&mut root, &source_path, Value::Array(source_type, source))?;
+            self.memory
+                .write(self.memory.plane(source_ref)?, root, false)?;
+        }
+        let mut root = copy_value(self.memory.read(target_ref)?, &mut self.fuel)?;
+        replace_projection(&mut root, &target_path, Value::Array(target_type, target))?;
+        self.memory
+            .write(self.memory.plane(target_ref)?, root, false)?;
+        Ok(Value::Unit)
+    }
+
     pub(super) fn transfer_type(
         &mut self,
         args: &[Expr],

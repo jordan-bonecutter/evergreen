@@ -755,6 +755,13 @@ enum ArrayHistory {
         left: String,
         right: String,
     },
+    // One immutable interval recipe, independent of the number of elements.
+    Prefix {
+        end: Linear,
+        base_len: Linear,
+        base: String,
+        rest: String,
+    },
 }
 
 impl<'a> Context<'a> {
@@ -1013,7 +1020,12 @@ impl<'a> Context<'a> {
                 *identity = next;
                 return Ok(());
             }
-            if self.array_input_origin(identity)?.is_some() {
+            if self.array_input_origin(identity)?.is_some()
+                || matches!(
+                    self.arrays.history.get(identity),
+                    Some(ArrayHistory::Prefix { .. } | ArrayHistory::Store { .. })
+                )
+            {
                 let mut replacement = cells
                     .get(target)
                     .cloned()
@@ -2456,6 +2468,15 @@ impl<'a> Context<'a> {
                 self.observe_array_values(identity, index, &value)?;
             }
             return Ok(value);
+        }
+        if matches!(
+            self.arrays.history.get(identity),
+            Some(ArrayHistory::Prefix { .. })
+        ) {
+            if let Some(value) = cells.get(index) {
+                return Ok(value.clone());
+            }
+            return self.read_resource_version(element, identity, index);
         }
         if self.ty_has_reference(element) {
             if let Some(index) = constant_index(index) {

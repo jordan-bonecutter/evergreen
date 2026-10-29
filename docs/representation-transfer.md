@@ -67,12 +67,33 @@ The focused regression also checks certificate replay, rejects skipping a
 required transfer or reading a retired slot, and compares verification obligation
 counts at three-slot and billion-slot destination capacities.
 
-`arrays::relocate_prefix` now uses this operation in its source loop, and
-`Vec::reallocate` uses that prefix relocation. The combined owning-buffer
-growth example verifies within the unchanged work limit and runs with the
-representation-transfer path. The checker avoids unused entry-pointee snapshots
-and skips trust-free evidence subgraphs when computing trust summaries.
+`arrays::relocate_prefix` now uses the bulk forms of these generic operations.
+Its caller supplies vacant destination storage:
 
-This remains elementwise copying, not one bulk copy followed by a range-level
-type transfer. That range representation relation and independent byte-loop
-proofs still need implementation.
+```evg
+copy_representation(&*data, &*target, length);
+proof copied: same_representation(&*data, &*target, length) by {omega};
+transfer_type(&*data, &*target, length);
+arrays::release_empty::<T>(data);
+target
+```
+
+The copy writes bytes while leaving the destination vacant. Ideal equality
+compares current storage revisions and prefix length; writes invalidate prior
+observations. Transfer checks that equality, source-prefix initialization,
+source-suffix vacancy, destination vacancy, bounds, and disjointness. It moves
+the existing payload tree once without invoking payload destructors. Enclosing
+invariants are checked after both metadata updates; no source statement observes
+an intermediate type state.
+
+A sparse prefix recipe preserves source contents below the boundary and vacant
+contents above it. The trusted frontend imports the operation's checked type
+postcondition with its precondition/equality evidence as dependencies. Replay
+checks generated arithmetic certificates; the memory-operation model remains
+part of the frontend's trusted boundary, as with scalar transfer.
+
+Native code emits one range byte copy and erases the type transfer. The reference
+interpreter checks representations and updates dense debug metadata. There is no
+external memcpy dependency. Proving that an independently written Evergreen
+byte-copy loop establishes this same range representation relation remains
+future work.

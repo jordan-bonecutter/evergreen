@@ -183,3 +183,78 @@ fn literal_reduction_does_not_default_missing_or_uninitialized_storage() {
         }
     });
 }
+
+#[test]
+fn prefix_history_keeps_boundary_types_sparse_and_rejects_unproved_owner_selection() {
+    with_context(|ctx| {
+        let members = vec![Ty::Bool, Ty::Shape(Box::new(Ty::Bool))];
+        let live = Symbol::Union {
+            members: members.clone(),
+            active: Linear::number(0),
+            payloads: vec![
+                Some(Symbol::Bool(Formula::True)),
+                Some(Symbol::Shape(Box::new(Ty::Bool))),
+            ],
+        };
+        let vacant = Symbol::Union {
+            members: members.clone(),
+            active: Linear::number(1),
+            payloads: vec![None, Some(Symbol::Shape(Box::new(Ty::Bool)))],
+        };
+        ctx.arrays
+            .history
+            .insert("live".into(), ArrayHistory::Fill(live.clone()));
+        ctx.arrays
+            .history
+            .insert("vacant".into(), ArrayHistory::Uninitialized(vacant.clone()));
+        ctx.arrays.history.insert(
+            "prefix".into(),
+            ArrayHistory::Prefix {
+                end: Linear::number(2),
+                base_len: Linear::number(2),
+                base: "live".into(),
+                rest: "vacant".into(),
+            },
+        );
+        let array = Symbol::Array {
+            element: Box::new(Ty::Union(members.clone())),
+            len: Linear::number(1_000_000_000),
+            identity: "prefix".into(),
+            items: None,
+            cells: BTreeMap::new(),
+        };
+        let initialized = ctx
+            .array_member_range(&array, &Ty::Bool, &Linear::number(0), &Linear::number(2))
+            .unwrap();
+        ctx.prove(&initialized, "initialized prefix", 0).unwrap();
+        let empty = ctx
+            .array_member_range(
+                &array,
+                &Ty::Shape(Box::new(Ty::Bool)),
+                &Linear::number(2),
+                &Linear::number(1_000_000_000),
+            )
+            .unwrap();
+        ctx.prove(&empty, "vacant suffix", 0).unwrap();
+        let invalid = ctx
+            .array_member_range(&array, &Ty::Bool, &Linear::number(2), &Linear::number(3))
+            .unwrap();
+        assert!(ctx.prove(&invalid, "incorrect boundary", 0).is_err());
+        assert_eq!(
+            ctx.read_resource_version(&Ty::Union(members.clone()), "prefix", &Linear::number(2))
+                .unwrap(),
+            vacant
+        );
+        assert_eq!(
+            ctx.read_resource_version(&Ty::Union(members.clone()), "prefix", &Linear::number(0))
+                .unwrap(),
+            live
+        );
+        let ports = ctx.arrays.ports.len();
+        assert!(ctx
+            .read_resource_version(&Ty::Union(members), "prefix", &Linear::variable("unknown"))
+            .is_err());
+        assert_eq!(ctx.arrays.ports.len(), ports);
+        assert_eq!(ctx.arrays.history.len(), 3);
+    });
+}

@@ -68,6 +68,7 @@ fn main() -> usize {
     let data: unique(unique(usize) | shape(unique(usize)), 8) = alloc(8, shape(unique(usize)));
     (*data)[0] = alloc(7);
     (*data)[1] = alloc(42);
-    let grown = arrays::relocate_prefix::<unique(usize)>(8, data, 2, 16);
+    let target: unique(unique(usize) | shape(unique(usize)), 16) = alloc(16, shape(unique(usize)));
+    let grown = arrays::relocate_prefix::<unique(usize)>(8, data, 2, 16, target);
     finish(16, grown)
 }

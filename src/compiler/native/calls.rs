@@ -98,6 +98,25 @@ impl Emitter<'_> {
                 };
                 self.shape_value(value)?
             }
+            "copy_representation" if args.len() == 3 => {
+                let Type::Ref(array) = self.expr(&args[0], None)? else {
+                    return Err("prefix copy requires source reference".into());
+                };
+                let Type::Array(element, _) = *array else {
+                    return Err("prefix copy requires array storage".into());
+                };
+                let stride = layout::of(&element, self.structs)?.size;
+                self.code.push(0x50); // source address
+                self.expr(&args[1], None)?;
+                self.code.push(0x50); // destination address
+                self.expr(&args[2], None)?;
+                self.code.extend([0x48, 0x89, 0xc1, 0x48, 0xba]); // rcx = count; rdx = stride
+                self.code.extend((stride as u64).to_le_bytes());
+                self.code
+                    .extend([0x48, 0x0f, 0xaf, 0xca, 0x5f, 0x5e, 0xfc, 0xf3, 0xa4]); // imul rcx,rdx; pop rdi,rsi; cld; rep movsb
+                self.immediate(0);
+                Type::Unit
+            }
             "copy_representation" => {
                 let [source] = args else {
                     return Err("copy_representation requires one reference".into());

@@ -38,13 +38,14 @@ fn take_last<T>(
     value
 }
 
-// Transfer an initialized prefix into fresh storage, then release the old buffer.
+// Transfer into caller-provided vacant storage, then release the old buffer.
 // Payloads are moved once; this function never duplicates or drops a live element.
 fn relocate_prefix<T>(
     capacity: usize,
     data: unique(T | shape(T), capacity),
     length: usize,
-    new_capacity: usize
+    new_capacity: usize,
+    target: unique(T | shape(T), new_capacity)
 ) -> unique(T | shape(T), new_capacity)
     where
         0 < new_capacity &&
@@ -52,7 +53,8 @@ fn relocate_prefix<T>(
         length <= new_capacity &&
         integer::from(new_capacity) * integer::from(size_of(T)) <= integer::from(isize::MAX) &&
         (arrays::initialized_prefix::<T>(&*data, integer::from(length))) &&
-        (arrays::vacant_suffix::<T>(&*data, integer::from(length)))
+        (arrays::vacant_suffix::<T>(&*data, integer::from(length))) &&
+        arrays::vacant_suffix::<T>(&*target, 0)
     ensures
         (arrays::initialized_prefix::<T>(&*result, integer::from(length))) &&
         (arrays::vacant_suffix::<T>(&*result, integer::from(length))) &&
@@ -66,125 +68,9 @@ fn relocate_prefix<T>(
             ) {same_value((*result)[i], old(*data)[i])}
         )
 {
-    let target: unique(T | shape(T), new_capacity) = alloc(new_capacity, shape(T));
-    let remaining = length;
-    fact source_preserved = forall(i: integer)
-    where (
-        0 <= i &&
-        i < integer::from(remaining) &&
-        i < integer::from(capacity)
-    ) {same_value((*data)[i], old(*data)[i])};
-    fact target_preserved = forall(i: integer)
-    where (
-        integer::from(remaining) <= i &&
-        i < integer::from(length) &&
-        0 <= i &&
-        i < integer::from(capacity) &&
-        i < integer::from(new_capacity)
-    ) {same_value((*target)[i], old(*data)[i])};
-    proof initial_live:
-        arrays::initialized_range::<T>(&*target, integer::from(remaining), integer::from(length)) by {
-            intro i;
-            omega
-        };
-    proof initial_empty:
-        arrays::vacant_outside::<T>(&*target, integer::from(remaining), integer::from(length)) by {
-            intro i;
-            omega
-        };
-    while remaining > 0
-        invariant
-            remaining <= length &&
-            length <= capacity &&
-            length <= new_capacity &&
-            (arrays::initialized_prefix::<T>(&*data, integer::from(remaining))) &&
-            (arrays::vacant_suffix::<T>(&*data, integer::from(remaining))) &&
-            (
-                arrays::initialized_range::<T>(&*target, integer::from(remaining), integer::from(length))
-            ) &&
-            (
-                arrays::vacant_outside::<T>(&*target, integer::from(remaining), integer::from(length))
-            ) &&
-            (source_preserved) &&
-            (target_preserved)
-        modifies(&*data, &*target, &remaining)
-        decreases remaining
-    {
-        proof source_values: source_preserved by {assumption};
-        proof target_values: target_preserved by {assumption};
-        arrays::relocate_last::<T>(capacity, &*data, remaining, new_capacity, &*target, length);
-        remaining = remaining - 1;
-        proof source_after:
-            source_preserved by {
-                using source_values;
-                intro prior;
-                intro i;
-                omega
-            };
-        proof target_after:
-            target_preserved by {
-                using source_values;
-                intro original;
-                using target_values;
-                intro prior;
-                intro i;
-                omega
-            };
-    }
-    proof done: remaining == 0 by {omega};
-    proof before_empty:
-        arrays::vacant_suffix::<T>(&*data, integer::from(remaining)) by {assumption};
-    proof empty:
-        arrays::vacant_suffix::<T>(&*data, 0) by {
-            using done;
-            intro finished;
-            using before_empty;
-            intro prior;
-            intro i;
-            specialize prior(i);
-            omega
-        };
-    proof before_live:
-        arrays::initialized_range::<T>(&*target, integer::from(remaining), integer::from(length)) by {assumption};
-    proof live:
-        arrays::initialized_prefix::<T>(&*target, integer::from(length)) by {
-            using done;
-            intro finished;
-            using before_live;
-            intro prior;
-            intro i;
-            specialize prior(i);
-            omega
-        };
-    proof before_rest:
-        arrays::vacant_outside::<T>(&*target, integer::from(remaining), integer::from(length)) by {assumption};
-    proof rest:
-        arrays::vacant_suffix::<T>(&*target, integer::from(length)) by {
-            using done;
-            intro finished;
-            using before_rest;
-            intro prior;
-            intro i;
-            specialize prior(i);
-            omega
-        };
-    proof before_values: target_preserved by {assumption};
-    proof preserved:
-        forall(i: integer)
-        where (
-            0 <= i &&
-            i < integer::from(length) &&
-            i < integer::from(capacity) &&
-            i < integer::from(new_capacity)
-        ) {same_value((*target)[i], old(*data)[i])} by {
-            using done;
-            intro finished;
-            using before_values;
-            intro prior;
-            intro i;
-            specialize prior(i);
-            omega
-        };
+    copy_representation(&*data, &*target, length);
+    proof copied: same_representation(&*data, &*target, length) by {omega};
+    transfer_type(&*data, &*target, length);
     arrays::release_empty::<T>(data);
     target
 }

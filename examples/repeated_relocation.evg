@@ -5,8 +5,10 @@ impl Drop for Pair {
 fn main() -> usize {
     let data: unique(Pair | shape(Pair), 2) = alloc(2, shape(Pair));
     (*data)[0] = Pair {x: 42, valid: true};
-    let middle = arrays::relocate_prefix::<Pair>(2, data, 1, 5);
-    let final_data = arrays::relocate_prefix::<Pair>(5, middle, 1, 9);
+    let middle_storage: unique(Pair | shape(Pair), 5) = alloc(5, shape(Pair));
+    let middle = arrays::relocate_prefix::<Pair>(2, data, 1, 5, middle_storage);
+    let final_storage: unique(Pair | shape(Pair), 9) = alloc(9, shape(Pair));
+    let final_data = arrays::relocate_prefix::<Pair>(5, middle, 1, 9, final_storage);
     let value = arrays::take_last::<Pair>(9, &*final_data, 1);
     arrays::release_empty::<Pair>(9, final_data);
     proof preserved: value.x == 42 && value.valid;

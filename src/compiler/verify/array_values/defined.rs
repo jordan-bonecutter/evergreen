@@ -65,6 +65,23 @@ impl Context<'_> {
                     previous.filter(|previous| previous == &value)
                 })
             }
+            Some(ArrayHistory::Prefix {
+                end, base, rest, ..
+            }) => {
+                let Some(index) = index else {
+                    return Ok(None);
+                };
+                let guard = end.sub(index)?.add(&Linear::number(-1))?;
+                if !guard.terms.is_empty() {
+                    return Ok(None);
+                }
+                let identity = if guard.constant >= 0 {
+                    base.clone()
+                } else {
+                    rest.clone()
+                };
+                self.defined_array_value(&contents.with_identity(identity), Some(index), depth + 1)
+            }
             Some(ArrayHistory::Choice { left, right, .. }) => {
                 let left = contents.with_identity(left.clone());
                 let right = contents.with_identity(right.clone());

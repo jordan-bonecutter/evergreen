@@ -75,6 +75,7 @@ impl Engine {
         let builtin = match name.as_str() {
             "same_value" | "same_representation" => Some(Type::Bool),
             "transfer_type" => Some(Type::Unit),
+            "copy_representation" if args.len() == 3 => Some(Type::Unit),
             "copy_representation" => {
                 return Ok(match first {
                     Some(Type::Ref(inner)) => inner

@@ -975,6 +975,11 @@ impl Evaluator<'_> {
                         .ok_or("shape requires a type")?;
                     return Ok(Value::Shape(Box::new(ty)));
                 }
+                if matches!(name.as_str(), "copy_representation" | "transfer_type")
+                    && args.len() == 3
+                {
+                    return self.prefix_representation(name, args, env);
+                }
                 if name == "copy_representation" {
                     let [source] = args.as_slice() else {
                         return Err("copy_representation requires one reference".into());

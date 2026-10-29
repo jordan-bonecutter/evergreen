@@ -202,22 +202,22 @@ destructors. Runtime capacity parameters also verify. The billion-slot check
 uses the same obligation and certificate counts without allocating that buffer.
 
 [`range_reallocate.evg`](../examples/range_reallocate.evg) uses the source
-library's `arrays::relocate_prefix::<T>(capacity, buffer, length, new_capacity)`
-to move that prefix into fresh storage. Both capacities are runtime values.
-The destination capacity must be positive, fit the allocation layout, and hold
-the live prefix. Each iteration extracts the source's last initialized member
-with `arrays::take_last` and inserts it with `arrays::prepend` at the same index
-in the destination. Separate resource frames protect the two allocations.
-The source becomes entirely vacant and is released; the result has an
-initialized prefix and vacant suffix. The operation supports growth, shrinking,
-and an empty prefix without Copy permission or a payload destructor during
-transfer. A rechecked call with a proven-false initial loop condition preserves
-its storage directly; admissions cannot authorize this shortcut, and the
-function declaration still checks the general loop body.
+library's `arrays::relocate_prefix::<T>(capacity, buffer, length, new_capacity, target)`
+to move the live prefix into a caller-allocated, entirely vacant destination.
+Both capacities are runtime values. The helper copies the prefix bytes once,
+checks their representation equality, transfers the live types and existing
+ownership in one range operation, and releases the now-vacant source. It never
+allocates. Growth, shrinking, and empty prefixes do not require Copy permission
+or invoke payload destructors during transfer.
 
-The relocation tests replay certificates, check destructor counts and native
-execution, reject wrong slots, skipped elements, insufficient capacity, and
-stale views, and retain the same proof counts at billion-element capacities.
+The checker uses a sparse prefix history instead of expanding the range. Native
+code copies `length * stride` bytes in one range operation; the type transfer is
+erased. Inline source-slot references become invalid on release. References to
+separately allocated payloads survive until those payloads are dropped.
+
+Relocation tests check replay, destructor counts, stale proofs, missing copies,
+duplicate transfers, live destinations, aliases, and bounds. Billion-slot cases
+retain constant proof counts.
 The public relocation contract proves initialization, ownership safety, and
 `same_value` for the returned prefix. Reference-free payload reads can recover
 values from that guarantee. Reference-free records can follow these relations

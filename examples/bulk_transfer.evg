@@ -1,0 +1,15 @@
+fn main() -> usize {
+    let source: unique(usize | shape(usize), 2) = alloc(2, shape(usize));
+    (*source)[0] = 7;
+    (*source)[1] = 42;
+    let target: unique(usize | shape(usize), 5) = alloc(5, shape(usize));
+    copy_representation(&*source, &*target, 2);
+    proof copied: same_representation(&*source, &*target, 2) by {omega};
+    transfer_type(&*source, &*target, 2);
+    proof unchanged_bytes:
+        same_representation(&*source, &*target, 2) by {omega};
+    let value = arrays::take_last::<usize>(5, &*target, 2);
+    arrays::release_empty::<usize>(2, source);
+    arrays::drain_prefix::<usize>(5, target, 1);
+    value
+}

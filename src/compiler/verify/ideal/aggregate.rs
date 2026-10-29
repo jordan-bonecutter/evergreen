@@ -102,6 +102,17 @@ fn history_value<'a>(
                 }
                 identity = base;
             }
+            Some(ArrayHistory::Prefix {
+                end, base, rest, ..
+            }) => {
+                budget.spend(end.terms.len() + index.terms.len() + 1)?;
+                let condition = Formula::Ge(end.sub(index)?.add(&Linear::number(-1))?);
+                identity = match values::closed_boolean(&condition) {
+                    Some(true) => base,
+                    Some(false) => rest,
+                    None => return Ok(None),
+                };
+            }
             Some(ArrayHistory::Choice {
                 condition,
                 left,

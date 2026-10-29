@@ -40,6 +40,7 @@ pub(super) struct ProofState {
     // Closed arithmetic theorems proved solely from their own quantified domains.
     pub(super) definedness: BTreeMap<Formula, evidence::NodeId>,
     pub(super) representations: BTreeMap<subjects::Stamp, Linear>,
+    pub(super) prefix_representations: BTreeMap<(subjects::Stamp, Linear), Linear>,
     pub(super) facts: BTreeMap<String, Expr>,
     // Dependency footprints, indexed by call identity; never cached truth.
     pub(super) fact_calls: BTreeMap<subjects::ClaimKey, Vec<subjects::Snapshot>>,
@@ -136,6 +137,7 @@ pub(super) struct Arrays {
     pub(super) predicate_definitions: BTreeMap<String, evidence::DefinitionId>,
     pub(super) reads: BTreeMap<(String, Linear), Symbol>,
     pub(super) history: BTreeMap<String, ArrayHistory>,
+    pub(super) frozen: BTreeMap<String, Symbol>,
     // Whole-value frames for resource stores whose selector history retains a uniform default.
     pub(super) whole_stores: BTreeMap<String, (String, Linear)>,
     // Successful type transfers identify the written element with an earlier source value.

@@ -139,6 +139,47 @@ impl Context<'_> {
         }))
     }
 
+    pub(super) fn array_member_range(
+        &mut self,
+        array: &Symbol,
+        target: &Ty,
+        start: &Linear,
+        end: &Linear,
+    ) -> Result<Formula> {
+        let Symbol::Array { identity, len, .. } = array else {
+            return Err("type range requires array storage".into());
+        };
+        self.ensure_type_selector(array, target, 0)?;
+        let variable = self.fresh_name();
+        let index = Linear::variable(&variable);
+        let selector = &self.arrays.type_predicates[&(identity.clone(), target.clone())];
+        let body = Formula::Predicate {
+            symbol: selector.symbol.clone(),
+            arguments: std::iter::once(index.clone())
+                .chain(selector.captures.iter().map(Linear::variable))
+                .collect(),
+        };
+        let lower = Formula::Ge(index.clone());
+        let upper = Formula::Ge(len.sub(&index)?.add(&Linear::number(-1))?);
+        let domain = if matches!(target, Ty::Shape(_)) && end == len {
+            lower.and(Formula::Ge(index.sub(start)?)).and(upper)
+        } else if start == &Linear::number(0) {
+            lower
+                .and(Formula::Ge(end.sub(&index)?.add(&Linear::number(-1))?))
+                .and(upper)
+        } else {
+            lower
+                .and(Formula::Ge(index.sub(start)?))
+                .and(Formula::Ge(end.sub(&index)?.add(&Linear::number(-1))?))
+                .and(upper)
+        };
+        Ok(Formula::Forall {
+            variable,
+            domain: Box::new(domain),
+            body: Box::new(body),
+        })
+    }
+
     pub(super) fn prove_indexed_predicate(
         &mut self,
         goal: &Formula,

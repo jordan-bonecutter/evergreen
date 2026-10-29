@@ -73,7 +73,8 @@ fn renew<T>(value: Buffer<T>, capacity: usize) -> Buffer<T>
         result.cap == capacity
 {
     let Buffer::<T> {cap, len, data} = value;
-    let grown = arrays::relocate_prefix::<T>(cap, data, len, capacity);
+    let target: unique(T | shape(T), capacity) = alloc(capacity, shape(T));
+    let grown = arrays::relocate_prefix::<T>(cap, data, len, capacity, target);
     Buffer::<T> {cap: capacity, len: len, data: grown}
 }
 fn main() -> usize {

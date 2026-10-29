@@ -133,6 +133,7 @@ impl Context<'_> {
                         symbol_weight(value)?.saturating_add(index.terms.len() + 1)
                     }
                     ArrayHistory::Choice { condition, .. } => condition.storage_weight()?,
+                    ArrayHistory::Prefix { end, .. } => end.terms.len() + 1,
                 };
                 self.charge_value_work(cost)?;
             }
@@ -156,6 +157,14 @@ impl Context<'_> {
                     let stored = compare_scalar(self, &value)?;
                     let previous = compare(self, Some(contents.with_identity(base)), selected)?;
                     same.clone().and(stored).or(same.not().and(previous))
+                }
+                Some(ArrayHistory::Prefix {
+                    end, base, rest, ..
+                }) => {
+                    let within = Formula::Ge(end.sub(selected)?.add(&Linear::number(-1))?);
+                    let a = compare(self, Some(contents.with_identity(base)), selected)?;
+                    let b = compare(self, Some(contents.with_identity(rest)), selected)?;
+                    within.clone().and(a).or(within.not().and(b))
                 }
                 Some(ArrayHistory::Choice {
                     condition,
@@ -199,6 +208,31 @@ impl Context<'_> {
         right: &Linear,
         depth: usize,
     ) -> Result<Option<Formula>> {
+        for (side, contents) in [&key.0, &key.1].into_iter().enumerate() {
+            let Some(contents) = contents else {
+                continue;
+            };
+            let Some(ArrayHistory::Prefix {
+                end, base, rest, ..
+            }) = self.arrays.history.get(&contents.identity).cloned()
+            else {
+                continue;
+            };
+            let index = if side == 0 { left } else { right };
+            let within = Formula::Ge(end.sub(index)?.add(&Linear::number(-1))?);
+            let mut compare = |identity| {
+                let predecessor = Some(contents.with_identity(identity));
+                let previous = if side == 0 {
+                    (predecessor, key.1.clone())
+                } else {
+                    (key.0.clone(), predecessor)
+                };
+                self.value_equality(&previous, left, right, depth + 1)
+            };
+            let a = compare(base)?;
+            let b = compare(rest)?;
+            return Ok(Some(within.clone().and(a).or(within.not().and(b))));
+        }
         let mut sides = [0, 1];
         if let (Some(a), Some(b)) = (&key.0, &key.1) {
             if !self.arrays.value_transfers.contains_key(&a.identity)

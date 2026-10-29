@@ -3,7 +3,6 @@ use crate::syntax::format::test_edit::SourceEdit;
 
 const EXAMPLE: &str = include_str!("../../../../examples/range_reallocate.evg");
 const LIBRARY: &str = include_str!("../../../../stdlib/arrays/prefix.evg");
-const RELOCATION: &str = include_str!("../../../../stdlib/arrays/relocate.evg");
 const RELEASE: &str = include_str!("../../../../stdlib/arrays/release.evg");
 
 fn replay(source: &str) -> (VerifiedProgram, usize) {
@@ -56,7 +55,8 @@ fn source_prefix_relocation_supports_shrinking_and_empty_prefixes() {
     assert_eq!(replay(&shrink).0.run().unwrap().to_string(), "42");
     let empty = "fn main() -> usize {
         let data: unique(unique(usize) | shape(unique(usize)), 8) = alloc(8, shape(unique(usize)));
-        let grown = arrays::relocate_prefix::<unique(usize)>(8, data, 0, 16);
+        let target: unique(unique(usize) | shape(unique(usize)), 16) = alloc(16, shape(unique(usize)));
+        let grown = arrays::relocate_prefix::<unique(usize)>(8, data, 0, 16, target);
         arrays::release_empty::<unique(usize)>(16, grown);
         42
     }";
@@ -65,6 +65,14 @@ fn source_prefix_relocation_supports_shrinking_and_empty_prefixes() {
 
 #[test]
 fn source_prefix_relocation_rejects_incorrect_members_bounds_and_stale_views() {
+    let pointee_survives = EXAMPLE
+        .replace_evg("let grown =", "let payload = &*(*data)[0]; let grown =")
+        .replace_evg(
+            "finish(16, grown)",
+            "proof _: *payload == 7; finish(16, grown)",
+        );
+    assert_eq!(replay(&pointee_survives).0.run().unwrap().to_string(), "42");
+
     for bad in [
         EXAMPLE.replace_evg("(*data)[1] = alloc(42);", ""),
         EXAMPLE.replace_evg("8, data, 2, 16", "8, data, 1, 16"),
@@ -82,7 +90,7 @@ fn source_prefix_relocation_rejects_incorrect_members_bounds_and_stale_views() {
             .replace_evg("let grown =", "let payload = &*(*data)[0]; let grown =")
             .replace_evg(
                 "finish(16, grown)",
-                "proof _: *payload == 7; finish(16, grown)",
+                "let result = finish(16, grown); proof _: *payload == 7; result",
             ),
     ] {
         assert!(verify(&bad).is_err(), "{bad}");
@@ -90,23 +98,18 @@ fn source_prefix_relocation_rejects_incorrect_members_bounds_and_stale_views() {
 }
 
 #[test]
-fn source_prefix_relocation_rejects_skips_wrong_slots_and_missing_frames() {
-    let library = format!("{RELEASE}\u{1e}{RELOCATION}\u{1e}{LIBRARY}");
+fn source_prefix_relocation_rejects_missing_copy_and_duplicate_transfer() {
+    let library = format!("{RELEASE}\u{1e}{LIBRARY}");
     for bad in [
-        library.replace_evg("remaining = remaining - 1", "remaining = remaining - 2"),
-        library.replace_evg("copy_representation(&(*data)[length - 1])", "copy_representation(&(*data)[length])"),
-        library.replace_evg("transfer_type(&(*data)[length - 1], &(*target)[length - 1]);", ""),
+        library.replace_evg("copy_representation(&*data, &*target, length);", ""),
+        library.replace_evg("transfer_type(&*data, &*target, length);", ""),
         library.replace_evg(
-            "modifies(&*data, &*target, &remaining)",
-            "modifies(&*data, &remaining)",
+            "transfer_type(&*data, &*target, length);",
+            "transfer_type(&*data, &*target, length); transfer_type(&*data, &*target, length);",
         ),
         library.replace_evg(
-            "arrays::relocate_last::<T>(capacity, &*data, remaining, new_capacity, &*target, length);",
-            "",
-        ),
-        library.replace_evg(
-            "remaining = remaining - 1;",
-            "arrays::release_empty::<T>(data); remaining = remaining - 1;",
+            "copy_representation(&*data, &*target, length);",
+            "copy_representation(&*data, &*target, length + 1);",
         ),
     ] {
         let error = verify(&format!("{bad}\u{1e}{EXAMPLE}")).unwrap_err();

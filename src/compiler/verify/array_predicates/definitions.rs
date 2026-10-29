@@ -45,6 +45,49 @@ impl Context<'_> {
                 },
             );
         }
+        if !self.arrays.type_predicates.contains_key(&key) {
+            if let Some(ArrayHistory::Prefix {
+                end,
+                base_len,
+                base,
+                rest,
+            }) = self.arrays.history.get(identity).cloned()
+            {
+                let variable = "evg_selector_index";
+                let input = Linear::variable(variable);
+                let mut predecessors = Vec::new();
+                for predecessor in [&base, &rest] {
+                    let parent = Symbol::Array {
+                        element: element.clone(),
+                        len: if predecessor == &base {
+                            base_len.clone()
+                        } else {
+                            len.clone()
+                        },
+                        items: None,
+                        cells: BTreeMap::new(),
+                        identity: predecessor.clone(),
+                    };
+                    self.ensure_type_selector(&parent, target, depth + 1)?;
+                    let selector =
+                        &self.arrays.type_predicates[&(predecessor.clone(), target.clone())];
+                    predecessors.push(Formula::Predicate {
+                        symbol: selector.symbol.clone(),
+                        arguments: std::iter::once(input.clone())
+                            .chain(selector.captures.iter().map(Linear::variable))
+                            .collect(),
+                    });
+                }
+                let within = Formula::Ge(end.sub(&input)?.add(&Linear::number(-1))?);
+                let right = predecessors.pop().ok_or("missing prefix suffix selector")?;
+                let left = predecessors.pop().ok_or("missing prefix source selector")?;
+                let body = Formula::Ge(input.clone())
+                    .and(Formula::Ge(len.sub(&input)?.add(&Linear::number(-1))?))
+                    .and(within.clone().and(left).or(within.not().and(right)));
+                self.define_type_selector(identity, target, variable, body)?;
+                return Ok(());
+            }
+        }
         if !self.arrays.type_predicates.contains_key(&key)
             && matches!(element.as_ref(), Ty::Union(_))
         {

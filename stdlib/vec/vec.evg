@@ -183,7 +183,8 @@ impl<T> Vec<T> {
             discard_zero(data);
             Self::new(new_capacity)
         } else {
-            let grown = arrays::relocate_prefix::<T>(cap, data, len, new_capacity);
+            let target: unique(T | shape(T), new_capacity) = alloc(new_capacity, shape(T));
+            let grown = arrays::relocate_prefix::<T>(cap, data, len, new_capacity, target);
             Self {cap: new_capacity, len: len, data: grown}
         }
     }

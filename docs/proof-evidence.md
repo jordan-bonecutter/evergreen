@@ -954,11 +954,11 @@ not the current liveness of their former payload owners. This permits describing
 values across relocation without reviving a reference or authorizing a read.
 Ordinary payload observations retain their existing liveness checks.
 
-`arrays::relocate_prefix` now guarantees value preservation for the entire
-initialized prefix. Its loop tracks equality of the remaining source prefix and
-the completed destination suffix with the input's entry values. Local named
-facts share these formulas between the invariant and explicit transport proofs.
-The source allocation is released only after every element has been transferred.
+`arrays::relocate_prefix` guarantees prefix value preservation through one bulk
+representation copy and one type/ownership transfer into caller-provided storage.
+An immutable sparse prefix history relates new contents to the prior source below
+the boundary and vacant contents above it. The source is released after the range
+transfer; there is no per-index relocation invariant.
 
 The full Buffer growth/release example verifies and replays within the unchanged
 work limit. Logical lookup now rejects candidates whose cached connective shapes

@@ -92,6 +92,7 @@ impl Context<'_> {
             ArrayHistory::Store { index, value, .. } => {
                 index.terms.len().saturating_add(symbol_weight(value)?)
             }
+            ArrayHistory::Prefix { end, .. } => end.terms.len() + 1,
             ArrayHistory::Choice { condition, .. } => {
                 symbol_weight(&Symbol::Bool(condition.clone()))?
             }
@@ -103,7 +104,18 @@ impl Context<'_> {
             .get(identity)
             .cloned()
             .ok_or("array history disappeared")?;
+        let history = match history {
+            ArrayHistory::Prefix {
+                end, base, rest, ..
+            } => ArrayHistory::Choice {
+                condition: Formula::Ge(end.sub(index)?.add(&Linear::number(-1))?),
+                left: base,
+                right: rest,
+            },
+            other => other,
+        };
         match history {
+            ArrayHistory::Prefix { .. } => return Err("unresolved prefix history".into()),
             ArrayHistory::Fill(initial) => self.assume(&self.symbol_equal(value, &initial)?),
             ArrayHistory::Uninitialized(_) => {
                 Err("uninitialized arrays require sparse ownership reads".into())

@@ -153,7 +153,9 @@ impl Context<'_> {
                 return Ok(Some(current));
             }
             match self.arrays.history.get(&current) {
-                Some(ArrayHistory::Store { base, .. }) => current = base.clone(),
+                Some(ArrayHistory::Store { base, .. } | ArrayHistory::Prefix { base, .. }) => {
+                    current = base.clone()
+                }
                 _ => return Ok(None),
             }
         }
@@ -168,6 +170,34 @@ impl Context<'_> {
         let mut current = identity.to_owned();
         loop {
             self.charge_value_work(1 + current.len())?;
+            if let Some(Symbol::Array { items, cells, .. }) = self.arrays.frozen.get(&current) {
+                let cost = values_weight(cells.values().chain(items.iter().flatten()))?
+                    .saturating_add(cells.keys().map(|at| 1 + at.terms.len()).sum::<usize>());
+                self.charge_value_work(cost)?;
+                let Some(Symbol::Array { items, cells, .. }) = self.arrays.frozen.get(&current)
+                else {
+                    return Err("missing frozen array".into());
+                };
+                let known = items
+                    .iter()
+                    .flatten()
+                    .enumerate()
+                    .map(|(i, value)| (Linear::number(i as i128), value.clone()))
+                    .chain(cells.iter().map(|(i, value)| (i.clone(), value.clone())))
+                    .collect::<Vec<_>>();
+                for (at, value) in known.into_iter().rev() {
+                    let same = equal(index, &at)?;
+                    if index == &at || self.checked_entails(&same)? {
+                        return Ok(value);
+                    }
+                    if !self.checked_entails(&same.not())? {
+                        return Err(
+                            "frozen array observation needs proven index equality or separation"
+                                .into(),
+                        );
+                    }
+                }
+            }
             match self.arrays.history.get(&current) {
                 Some(ArrayHistory::Store {
                     index: at, value, ..
@@ -192,6 +222,31 @@ impl Context<'_> {
                         );
                     }
                     current = base;
+                }
+                Some(ArrayHistory::Prefix {
+                    end, base, rest, ..
+                }) => {
+                    let end = end.clone();
+                    let base = base.clone();
+                    let rest = rest.clone();
+                    let within = Formula::Ge(end.sub(index)?.add(&Linear::number(-1))?);
+                    current = if self.checked_entails(&within)? {
+                        base
+                    } else if self.checked_entails(&within.not())? {
+                        rest
+                    } else {
+                        return Err("resource prefix selection needs a proven range bound".into());
+                    };
+                }
+                Some(ArrayHistory::Fill(value) | ArrayHistory::Uninitialized(value)) => {
+                    let cost = symbol_weight(value)?;
+                    self.charge_value_work(cost)?;
+                    return match self.arrays.history.get(&current) {
+                        Some(ArrayHistory::Fill(value) | ArrayHistory::Uninitialized(value)) => {
+                            Ok(value.clone())
+                        }
+                        _ => Err("missing uniform array recipe".into()),
+                    };
                 }
                 _ => return self.input_array_port(element, &current, index),
             }

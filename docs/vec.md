@@ -46,22 +46,21 @@ Capacity growth remains explicit: `push` does not allocate automatically.
 Allocation may still fail at runtime; the interpreter also has a fuel budget.
 There is no small fixed capacity limit in the language's vector representation.
 
-Growth uses [`arrays::relocate_prefix`](../stdlib/arrays/prefix.evg).
-Representation copying carries no ownership. A checked type transfer makes the
-source slot vacant and its destination live. The source loop proves initialization
-and value preservation, then releases the old allocation. Existing element
-references into that released allocation become invalid. Growth also consumes
-the old header, so acquire header borrows again after assigning the result.
-Pushes within capacity
-retain the allocation and leave earlier elements in place.
+`Vec::reallocate` allocates vacant destination storage and passes it to
+[`arrays::relocate_prefix`](../stdlib/arrays/prefix.evg). That helper copies the
+prefix bytes once, proves representation equality, transfers its live types and
+existing ownership together, then releases the old allocation. It contains no
+allocation call or per-element relocation loop.
 
-For reference-free elements, relocation uses a checked ownership-effect summary:
-every incoming unique allocation is consumed and the result owns fresh storage.
-The checker derives this from the function body on every return path. Callers
-invalidate the old allocations and apply the verified result contract, without
-replaying the relocation loop. This is a general function rule, not a Vec builtin.
-Functions that can return an input allocation, accept borrowed storage, or carry
-nested pointers retain actual-body checking.
+Inline references into released storage become invalid. A reference into an
+allocation owned by an element survives moving that owning pointer. Growth also
+consumes the old header, so acquire header borrows again after assigning the
+result. Pushes within capacity retain the allocation and existing elements.
+
+The bulk operation checks source initialization, source-suffix vacancy,
+destination vacancy, bounds, disjointness, and current representation equality.
+A sparse prefix history carries values and type selectors; it transfers the
+existing nested owner tokens rather than fabricating new owners.
 
 `same_value` in the contracts describes logical values, not ownership or arbitrary
 byte equality. Growth preserves every value in the live prefix. Ordinary reads

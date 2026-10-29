@@ -127,3 +127,55 @@ fn sparse_transfer_ranges_preserve_entry_values_and_replay() {
     let retired = source.replace_evg("same_value((*target)[i]", "same_value((*data)[i]");
     assert!(verify(&retired).is_err());
 }
+
+#[test]
+fn bulk_prefix_transfer_rejects_stale_representations_and_live_destinations() {
+    let source = include_str!("../../../../examples/bulk_transfer.evg");
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let bytes = source.replace_evg("usize", "u8");
+    assert_eq!(verify(&bytes).unwrap().run().unwrap().to_string(), "42");
+    let enclosing = r#"type Pair struct {
+    source: [usize | shape(usize); 2],
+    target: [usize | shape(usize); 3]
+} where ((typeof(self.source[0]) == usize) != (typeof(self.target[0]) == usize));
+
+fn transfer(pair: Pair) -> Pair
+    where
+        arrays::initialized_prefix::<usize>(&pair.source, 2) &&
+        arrays::vacant_suffix::<usize>(&pair.target, 0)
+{
+    copy_representation(&pair.source, &pair.target, 2);
+    transfer_type(&pair.source, &pair.target, 2);
+    pair
+}
+fn main() -> usize {42}
+"#;
+    assert!(verify(enclosing).is_ok());
+    for invalid in [
+        source.replace_evg(
+            "transfer_type(&*source, &*target, 2);",
+            "(*target)[0] = shape(usize); transfer_type(&*source, &*target, 2);",
+        ),
+        source.replace_evg(
+            "transfer_type(&*source, &*target, 2);",
+            "(*source)[0] = 8; transfer_type(&*source, &*target, 2);",
+        ),
+        source.replace_evg(
+            "copy_representation(&*source, &*target, 2);",
+            "(*target)[0] = 8; copy_representation(&*source, &*target, 2);",
+        ),
+        source.replace_evg(
+            "transfer_type(&*source, &*target, 2);",
+            "copy_representation(&*target, &*target, 2); transfer_type(&*source, &*target, 2);",
+        ),
+    ] {
+        assert!(verify(&invalid).is_err(), "accepted {invalid}");
+    }
+}
