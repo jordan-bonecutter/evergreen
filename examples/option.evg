@@ -9,7 +9,11 @@ fn main() -> usize {
     let full = option::Option::<unique(usize)>::some(alloc(42));
     proof populated: full.is_some();
     let seen = **full.get();
-    let owner = full.unwrap();
+    let taken = full.take();
+    proof emptied: !full.is_some();
+    let again = full.take();
+    proof still_empty: !again.is_some();
+    let owner = taken.unwrap();
     let answer = *owner;
     proof same_value: seen == answer;
     answer

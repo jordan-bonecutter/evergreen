@@ -1,7 +1,11 @@
 // The flag and raw-union storage are ordinary source-defined data.
 module option;
 
-type Option<T> struct {data: T | shape(T), ok: bool} where self.ok <=> typeof(self.data) == T;
+type Option<T> struct {data: T | shape(T), ok: bool} where (
+    fact occupancy = self.ok <=>
+    typeof(self.data) == T;
+    occupancy
+);
 
 impl<T> Drop for Option<T> {
     fn drop({data, ok}) {
@@ -42,6 +46,23 @@ impl<T> Option<T> {
         borrows(&self.data)
     {
         &self.data
+    }
+
+    method& take() -> Self
+        modifies(&self.data, &self.ok)
+        ensures
+            !self.ok &&
+            result.ok == old(self.ok)
+    {
+        if self.ok {
+            let output: T | shape(T) = shape(T);
+            update(*self) lifts occupancy {
+                let value: T = move(self.data);
+                output = value;
+                self.ok = false;
+            }
+            Self {data: output, ok: true}
+        } else {Self::none()}
     }
 
     method unwrap() -> T

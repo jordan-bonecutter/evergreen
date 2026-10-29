@@ -15,6 +15,9 @@ fn main() -> usize {
 - `none()` constructs vacant storage and proves `!result.ok`.
 - `is_some()` returns the tag with a checked equality guarantee.
 - `get()` borrows the payload; its precondition requires presence.
+- `take()` moves the current option out through a reference and leaves it empty.
+  Its contract proves the returned tag equals the old tag. Taking an empty option
+  returns another empty option.
 - `unwrap()` consumes a known-present option and returns its payload.
 - `unwrap_or(fallback)` consumes the option and returns its payload or fallback.
   The unused fallback is dropped normally, including when it owns an allocation.
@@ -25,4 +28,4 @@ Copy. Its fields are visible, as in the original sketch; ordinary invariant
 checks still reject inconsistent updates.
 
 See [the owning example](../examples/option.evg). This initial API does not yet
-provide replacement, take, map, or pattern-specific conveniences.
+provide replacement, map, or pattern-specific conveniences.
