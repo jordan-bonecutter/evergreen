@@ -96,7 +96,7 @@ test('block inference preserves unsigned comparisons', async () => {
 test('record constructor results are copied before subsequent calls reuse the stack', async () => {
   const destructure = 'type Pair struct {a: usize, b: usize} impl Pair {method sum() -> usize {let Self {a, b} = self; a + b}} fn main() -> usize {let p = Pair {a: 20, b: 22}; p.sum()}';
   assert.equal((await execute(destructure)).result, '42');
-  const source = examples.nonzero.replace('    0\n}', '    let other = NonZero::new(20);\n    my_nonzero.data\n}');
+  const source = examples.nonzero.replace('type NonZero usize where self != 0;', 'type NonZero struct {data: usize} where data != 0;').replace('NonZero(x)', 'NonZero {data: x}').replace('    0\n}', '    let other = NonZero::new(20);\n    my_nonzero.data\n}');
   assert.equal((await execute(source)).result, '10');
 });
 

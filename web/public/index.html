@@ -28,13 +28,13 @@
         </div>
         <div class="hero-example">
           <div class="code-caption"><span class="file-dot" aria-hidden="true"></span> nonzero.evg <span class="language-label">EVERGREEN</span></div>
-          <pre class="example-code"><code><span class="keyword">type</span> NonZero <span class="keyword">struct</span> {data: usize} <span class="keyword">where</span> data != 0;
+          <pre class="example-code"><code><span class="keyword">type</span> NonZero usize <span class="keyword">where</span> self != 0;
 
 <span class="keyword">impl</span> NonZero {
     <span class="keyword">fn</span> new(x: usize) -&gt; Self
         <span class="keyword">where</span> x != 0
     {
-        <span class="keyword">return</span> NonZero {data: x};
+        <span class="keyword">return</span> NonZero(x);
     }
 }
 
@@ -47,23 +47,23 @@
       </section>
 
       <section id="why" class="why-section" aria-labelledby="why-title">
-        <div class="section-intro"><p class="eyebrow">The Core Idea</p><h2 id="why-title">More intent in the source.<br>Fewer assumptions in your head.</h2></div>
+        <div class="section-intro"><h2 id="why-title">More Powerful Than C.<br>Safer than Rust.</h2></div>
         <div class="principles">
-          <article><span class="principle-number">01 /</span><h3>Say what must be true.</h3><p>Put preconditions, postconditions, and data invariants beside the code they describe. They become obligations the compiler checks.</p><pre class="principle-code"><code data-example="contracts">fn increment(n: usize) -&gt; usize
+          <article><span class="principle-number">01 /</span><h3>Invariants live in your code.</h3><p>Put preconditions, postconditions, and data invariants beside the code they describe. They become obligations the compiler checks.</p><pre class="principle-code"><code data-example="contracts">fn increment(n: usize) -&gt; usize
     where n &lt; usize::MAX
     ensures result &gt; n
 {
     n + 1
-}</code></pre><p class="principle-caption">Every call must establish the precondition.</p></article>
-          <article><span class="principle-number">02 /</span><h3>Keep control of memory.</h3><p>Work with explicit layouts, ownership, and borrowed references. Evergreen tracks when a memory plane is live and which uses remain valid.</p><pre class="principle-code"><code data-example="borrows">let value: usize = 1;
+}</code></pre></article>
+			  <article><span class="principle-number">02 /</span><h3>A compiler that understands memory.</h3><p>Work with explicit layouts, ownership, and borrowed references. Evergreen tracks when a memory plane is live and which uses remain valid.</p><pre class="principle-code"><code data-example="borrows">let value: usize = 1;
 let first = &amp;value;
 let second = &amp;value;
 *first = 10;
-proof same: *second == 10;</code></pre><p class="principle-caption">A write is visible through both live borrows.</p></article>
-          <article><span class="principle-number">03 /</span><h3>Carry less into runtime.</h3><p>Proofs and ideal computations are erased after checking. Executable code keeps the work it needs to do.</p><pre class="principle-code"><code data-example="erasure">ideal let expected: nat = 42;
+proof same: *second == 10;</code></pre></article>
+          <article><span class="principle-number">03 /</span><h3>Powerful proofs that don't affect performance.</h3><p>Proofs and ideal computations are erased after checking. Executable code keeps the work it needs to do.</p><pre class="principle-code"><code data-example="erasure">ideal let expected: nat = 42;
 let value: usize = 42;
 proof matches:
-    nat(value) == expected;</code></pre><p class="principle-caption">The ideal binding and proof are erased. The value stays.</p></article>
+    nat(value) == expected;</code></pre></article>
         </div>
       </section>
 
