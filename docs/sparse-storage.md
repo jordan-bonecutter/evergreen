@@ -27,6 +27,13 @@ snapshots through `old()` retain their earlier contents. Capacity does not
 enumerate elements. A billion-slot version of this example checks, compiles,
 and replays its certificate without materializing a billion values.
 
+Memory snapshots also share plane headers in chunks. A snapshot copies the
+chunk index, and a write copies only the affected shared chunk. Payloads remain
+immutable and shared until replaced. This is separate from array sparsity:
+an array's capacity does not create a header for every element. The verifier
+charges actual chunk copies, including copies made in discarded branch worlds,
+against its existing work budget.
+
 Each cell represents one actual location. Forming a place compares its index
 with the already materialized indices. Equal indices reuse the same cell;
 distinct indices can demand a new one. Unresolved equality uses the existing
@@ -211,12 +218,11 @@ function declaration still checks the general loop body.
 The relocation tests replay certificates, check destructor counts and native
 execution, reject wrong slots, skipped elements, insufficient capacity, and
 stale views, and retain the same proof counts at billion-element capacities.
-The current public contract proves initialization and ownership safety. It does
-not yet express equality of every returned payload with its old value or
-preservation of external payload references across the loop abstraction.
-The example explicitly observes its two returned members before extraction and
-carries the vacant-range proof across cleanup. Integrating these operations
-into Vec and reducing the proof boilerplate remain work to do.
+The public relocation contract proves initialization, ownership safety, and
+`same_value` for the returned prefix. Reference-free payload reads can recover
+values from that guarantee. Following value relations across repeated relocation
+and preserving external payload references still need work. The public
+[Vec](vec.md) now uses this storage and source relocation implementation.
 
 A resource frame requires ownership of its backing array and matching
 `T | shape(T)` elements. The checker abstracts payload allocations at loop entry;
@@ -232,8 +238,7 @@ proofs, rather than a complete formalization of the memory model.
 
 This does not yet cover borrowed or shared payloads, recursive payload types,
 borrowed backing arrays, or explicit preservation of old payload identities.
-Conditional input-cell identities and integration into the general move-only Vec
-remain unfinished. Sparse resource arrays currently separate
+Conditional input-cell identities remain unfinished. Sparse resource arrays currently separate
 incompatible branch states rather than merging them into a universal range
 summary. Proof and case work remain bounded by the bootstrap's general budgets.
 
@@ -251,6 +256,5 @@ Its destructor immediately decomposes the header, then calls the source helper
 `arrays::drain_prefix`. Complete decomposition permits ordinary checked helper
 calls: the parent no longer has a live invariant, while every argument, borrowed
 write permission, and nested cleanup remains checked. This example covers empty,
-reserved, and populated buffers and nominal payload destructors. In-place
-push/pop still need ownership transitions inside invariant updates before the
-public Vec implementation can adopt the representation.
+reserved, and populated buffers and nominal payload destructors. The public Vec
+adds checked push/pop transitions inside invariant updates.

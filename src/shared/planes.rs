@@ -9,6 +9,7 @@ use std::sync::{
 };
 
 mod owners;
+mod store;
 pub use owners::{EarlyOwner, OwnedReference, OwnerCensus, OwnerCopy, OwnerScope};
 
 static NEXT_ARENA: AtomicU64 = AtomicU64::new(1);
@@ -58,7 +59,7 @@ pub enum Projection<I = usize, M = ()> {
     Owners,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct Plane<T> {
     ownership: owners::Ownership,
     census_revision: u64,
@@ -67,12 +68,23 @@ struct Plane<T> {
     value: Option<Arc<T>>,
 }
 
+impl<T> Clone for Plane<T> {
+    fn clone(&self) -> Self {
+        Self {
+            ownership: self.ownership.clone(),
+            census_revision: self.census_revision,
+            generation: self.generation,
+            value: self.value.clone(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Memory<T> {
     owner: u64,
     early_owners: usize,
     next_slot: Arc<AtomicUsize>,
-    planes: Vec<Plane<T>>,
+    planes: store::Store<T>,
 }
 
 impl<T> Default for Memory<T> {
@@ -96,7 +108,7 @@ impl<T> Default for Memory<T> {
             owner,
             early_owners: 0,
             next_slot: Arc::new(AtomicUsize::new(0)),
-            planes: Vec::new(),
+            planes: store::Store::default(),
         }
     }
 }
@@ -115,9 +127,11 @@ impl<T> Memory<T> {
     }
 
     pub(crate) fn snapshot_weight(&self) -> usize {
-        self.planes.iter().fold(self.planes.len(), |cost, plane| {
-            cost.saturating_add(plane.ownership.snapshot_weight())
-        })
+        self.planes.snapshot_weight()
+    }
+
+    pub(crate) fn take_copy_work(&self) -> usize {
+        self.planes.take_copy_work()
     }
 
     pub(crate) fn states(&self) -> Vec<(PlaneId, u64, Option<&T>)> {
@@ -432,6 +446,29 @@ mod tests {
         branch.take(plane).unwrap();
         assert!(branch.read(reference).is_err());
         assert_eq!(*original.read(reference).unwrap(), 7);
+    }
+
+    #[test]
+    fn chunked_snapshots_meter_copies_even_when_a_branch_is_discarded() {
+        let mut original = Memory::default();
+        let planes = (0..1000)
+            .map(|i| original.allocate(i).unwrap())
+            .collect::<Vec<_>>();
+        assert!(original.snapshot_weight() < 100);
+        assert_eq!(original.take_copy_work(), 0);
+        let mut branch = original.snapshot();
+        branch.write(planes[0], 42, false).unwrap();
+        let first_copy = original.take_copy_work();
+        assert!(0 < first_copy && first_copy < 100);
+        branch.write(planes[1], 43, false).unwrap();
+        assert_eq!(original.take_copy_work(), 0);
+        branch.take(planes[999]).unwrap();
+        drop(branch);
+        let discarded_copy = original.take_copy_work();
+        assert!(0 < discarded_copy && discarded_copy < 100);
+        for (i, plane) in planes.into_iter().enumerate() {
+            assert_eq!(*original.get(plane).unwrap(), i);
+        }
     }
 
     #[test]

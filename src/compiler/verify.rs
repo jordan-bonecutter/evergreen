@@ -755,7 +755,11 @@ enum ArrayHistory {
 
 impl<'a> Context<'a> {
     fn charge_value_work(&mut self, cost: usize) -> Result<()> {
-        self.work.value_work = self.work.value_work.saturating_add(cost);
+        self.work.value_work = self
+            .work
+            .value_work
+            .saturating_add(cost)
+            .saturating_add(self.storage.memory.take_copy_work());
         if self.work.value_work > MAX_VALUE_WORK {
             return Err("symbolic value work limit reached (262144 nodes)".into());
         }
