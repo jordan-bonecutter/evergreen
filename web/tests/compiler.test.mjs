@@ -47,6 +47,19 @@ test('the three playground examples use the real compiler', async () => {
   assert.equal((await execute(examples.error.replace('increment(usize::MAX)', 'increment(41)'))).result, '42');
 });
 
+test('browser diagnostics include source excerpts, requirement locations, and proof help', async () => {
+  const { metadata, module } = await compile(examples.error);
+  assert.equal(metadata.ok, false);
+  assert.equal(module.length, 0);
+  assert.match(metadata.error, /error:/);
+  assert.match(metadata.error, /--> main\.evg:\d+:\d+/);
+  assert.match(metadata.error, /increment\(usize::MAX\)/);
+  assert.match(metadata.error, /\^+/);
+  assert.match(metadata.error, /precondition declared at main\.evg:/);
+  assert.match(metadata.error, /help: supply stronger facts/);
+  assert.doesNotMatch(metadata.error, /\u001b\[/);
+});
+
 test('the Wasm ABI preserves unsigned 64-bit, signed, Boolean, unit, and UTF-8 output', async () => {
   for (const [source, expected] of [
     ['fn main() -> usize {usize::MAX}', '18446744073709551615'],

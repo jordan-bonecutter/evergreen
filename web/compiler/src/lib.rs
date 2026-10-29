@@ -2,7 +2,7 @@
 //! this instance; JS reacquires views after calls that can grow Wasm memory.
 
 use evergreen::{
-    compiler::{verify::verify, wasm},
+    compiler::{verify::verify_diagnostic, wasm},
     syntax::Type,
 };
 use std::cell::RefCell;
@@ -36,28 +36,45 @@ fn quote(text: &str) -> String {
 }
 
 fn compile(source: &str) -> (String, Vec<u8>) {
-    let program = match verify(source) {
+    let program = match verify_diagnostic(source) {
         Ok(program) => program,
-        Err(error) => {
+        Err(mut error) => {
+            if error.source.is_none()
+                && error.origin == evergreen::shared::diagnostics::SourceOrigin::Unspecified
+            {
+                error = error.with_source("main.evg".into(), source.into());
+            }
             return (
                 format!(
                     "{{\"ok\":false,\"stage\":\"verify\",\"error\":{}}}",
-                    quote(&error)
+                    quote(&evergreen::shared::diagnostics::render(
+                        &error,
+                        &["main.evg".into()],
+                        source,
+                        false
+                    ))
                 ),
                 Vec::new(),
-            )
+            );
         }
     };
     let module = match wasm::emit(&program) {
         Ok(module) => module,
         Err(error) => {
+            let error = evergreen::shared::diagnostics::Diagnostic::new(error)
+                .with_source("main.evg".into(), source.into());
             return (
                 format!(
                     "{{\"ok\":false,\"stage\":\"compile\",\"error\":{}}}",
-                    quote(&error)
+                    quote(&evergreen::shared::diagnostics::render(
+                        &error,
+                        &["main.evg".into()],
+                        source,
+                        false,
+                    ))
                 ),
                 Vec::new(),
-            )
+            );
         }
     };
     let result_kind = match program.entry_result_type() {
@@ -140,7 +157,7 @@ mod tests {
         assert!(metadata.contains("\"ok\":true"), "{metadata}");
         assert!(metadata.contains("external contract for console::print"));
         assert_eq!(&module[..4], b"\0asm");
-        let (metadata, module) = compile("fn main() -> usize {usize::MAX + 1}");
+        let (metadata, module) = compile("fn main() -> usize where(false) {0}");
         assert!(metadata.contains("\"ok\":false"));
         assert!(module.is_empty());
         assert_eq!(quote("\"\\\n\0"), "\"\\\"\\\\\\n\\u0000\"");
