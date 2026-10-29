@@ -254,8 +254,9 @@ impl Context<'_> {
         // A Boolean result already has a logical representation. Preserve the
         // guarded formula directly instead of creating a fresh Boolean and
         // expanding equivalence constraints in both branches.
+        let fact_result = matches!(a, Symbol::Fact(_)) || matches!(b, Symbol::Fact(_));
         let joined = match (&a, &b) {
-            (Symbol::Bool(a), Symbol::Bool(b)) => {
+            (Symbol::Bool(a) | Symbol::Fact(a), Symbol::Bool(b) | Symbol::Fact(b)) => {
                 self.charge_value_work(
                     p.storage_weight()?
                         .saturating_add(a.storage_weight()?)
@@ -267,7 +268,12 @@ impl Context<'_> {
                 } else {
                     p.clone().and(a.clone()).or(p.clone().not().and(b.clone()))
                 };
-                Ok((Symbol::Bool(value), Formula::True, Formula::True))
+                let value = if fact_result {
+                    Symbol::Fact(value)
+                } else {
+                    Symbol::Bool(value)
+                };
+                Ok((value, Formula::True, Formula::True))
             }
             _ => self.join_value(&a, &b, &mut views, line),
         };

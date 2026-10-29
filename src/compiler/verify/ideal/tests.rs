@@ -19,6 +19,12 @@ fn fact_definitions_describe_claims_without_proving_them() {
     );
     assert!(verify(&stale).is_err());
     assert!(verify("ideal fn claim() -> Fact {false} fn main() {claim();}").is_err());
+    let conditional = source
+        .replace_evg("fn check(value", "ideal fn optional(flag: bool, value: &usize) -> Fact {if flag {nonzero(value)} else {true}} fn check(value")
+        .replace_evg("where nonzero(value)", "where optional(true, value)");
+    assert!(verify(&conditional).is_ok());
+    let false_claim = conditional.replace_evg("let value: usize = 42", "let value: usize = 0");
+    assert!(verify(&false_claim).is_err());
 }
 
 #[test]
