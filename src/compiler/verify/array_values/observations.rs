@@ -13,6 +13,17 @@ struct Source {
     world: Option<state::WorldId>,
 }
 
+// One ordinary read only: lookup creates fresh mathematical proxies and adds
+// interpreted facts, but performs no runtime writes or lexical scope changes.
+// Only successful specializations are cached. Completed searches must retry
+// after an interpreted fact supplies new knowledge (possibly a missing domain).
+#[derive(Default)]
+struct Observations {
+    instances: BTreeMap<(evidence::NodeId, Linear, Option<state::WorldId>), evidence::NodeId>,
+    revision: usize,
+    completed: BTreeMap<(Contents, Linear, Option<state::WorldId>), usize>,
+}
+
 struct Observation<'a> {
     identity: &'a str,
     index: &'a Linear,
@@ -120,13 +131,14 @@ impl Context<'_> {
             value,
             fields: &[],
         };
-        self.observe_values(&observed, None)
+        self.observe_values(&observed, None, &mut Observations::default())
     }
 
     fn observe_values(
         &mut self,
         observed: &Observation<'_>,
         world: Option<state::WorldId>,
+        observations: &mut Observations,
     ) -> Result<()> {
         // Only direct equality recipes for this immutable contents identity can
         // describe this observation. The index filters candidates, never proves them.
@@ -164,7 +176,7 @@ impl Context<'_> {
             else {
                 continue;
             };
-            self.observe_compound_values(theorem, &variable, &body, observed, world)?;
+            self.observe_compound_values(theorem, &variable, &body, observed, world, observations)?;
             let mut pending = vec![(&*body, Vec::new())];
             while let Some((part, path)) = pending.pop() {
                 self.charge_value_work(1 + path.len())?;
@@ -213,7 +225,7 @@ impl Context<'_> {
                     // Validate the source before following any of its old-state
                     // dependencies. A stale or admitted range grants no lookup.
                     let Some(premise) =
-                        self.checked_array_specialization_in(theorem, &term, &instance, world)?
+                        self.observed_instance(theorem, &term, &instance, world, observations)?
                     else {
                         continue;
                     };
@@ -224,6 +236,7 @@ impl Context<'_> {
                         observed.index,
                         value,
                         Source { theorem, world },
+                        observations,
                     )?
                     else {
                         continue;
@@ -231,11 +244,40 @@ impl Context<'_> {
                     if self.checked_entails(&interpretation)? {
                         continue;
                     }
-                    self.import_scalar_observation(claim, interpretation, premise, &path)?;
+                    self.import_scalar_observation(
+                        claim,
+                        interpretation,
+                        premise,
+                        &path,
+                        observations,
+                    )?;
                 }
             }
         }
         Ok(())
+    }
+
+    fn observed_instance(
+        &mut self,
+        theorem: evidence::NodeId,
+        term: &Linear,
+        goal: &Formula,
+        world: Option<state::WorldId>,
+        observations: &mut Observations,
+    ) -> Result<Option<evidence::NodeId>> {
+        self.charge_value_work(term.terms.len() + 1)?;
+        let key = (theorem, term.clone(), world);
+        if let Some(&node) = observations.instances.get(&key) {
+            if self.proof.evidence.claim(node)? != goal {
+                return Err("array observation specialization changed its conclusion".into());
+            }
+            return Ok(Some(node));
+        }
+        let instance = self.checked_array_specialization_in(theorem, term, goal, world)?;
+        if let Some(node) = instance {
+            observations.instances.insert(key, node);
+        }
+        Ok(instance)
     }
 
     fn import_scalar_observation(
@@ -244,6 +286,7 @@ impl Context<'_> {
         interpretation: Formula,
         mut premise: evidence::NodeId,
         path: &[bool],
+        observations: &mut Observations,
     ) -> Result<()> {
         for &right in path {
             let Formula::And(a, b) = self.proof.evidence.claim(premise)?.clone() else {
@@ -272,7 +315,9 @@ impl Context<'_> {
                 argument: premise,
             },
         )?;
-        self.assume_from(&interpretation, paths::Origin::Evidence(fact))
+        self.assume_from(&interpretation, paths::Origin::Evidence(fact))?;
+        observations.revision += 1;
+        Ok(())
     }
 
     fn observed_scalar_equality(
@@ -283,6 +328,7 @@ impl Context<'_> {
         index: &Linear,
         observed: &Symbol,
         source: Source,
+        observations: &mut Observations,
     ) -> Result<Option<Formula>> {
         let Some((symbol, arguments, negated)) = atom(claim) else {
             return Ok(None);
@@ -313,6 +359,7 @@ impl Context<'_> {
                     &arguments[other],
                     &observed.ty(),
                     source,
+                    observations,
                 )?
                 else {
                     return Ok(None);
@@ -333,6 +380,7 @@ impl Context<'_> {
         index: &Linear,
         ty: &Ty,
         source: Source,
+        observations: &mut Observations,
     ) -> Result<Option<Symbol>> {
         let mut identity = contents.identity.clone();
         loop {
@@ -383,7 +431,13 @@ impl Context<'_> {
                         return Ok(None);
                     }
                     return self
-                        .historical_value(&contents.with_identity(identity), index, ty, source)
+                        .historical_value(
+                            &contents.with_identity(identity),
+                            index,
+                            ty,
+                            source,
+                            observations,
+                        )
                         .map(Some);
                 }
                 _ => return Ok(None),

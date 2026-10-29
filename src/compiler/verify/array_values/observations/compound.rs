@@ -11,6 +11,7 @@ impl Context<'_> {
         body: &Formula,
         observed: &Observation<'_>,
         world: Option<state::WorldId>,
+        observations: &mut Observations,
     ) -> Result<()> {
         if !matches!(
             body,
@@ -62,19 +63,19 @@ impl Context<'_> {
             self.charge_value_work(body.storage_weight()?)?;
             let instance = body.substitute(variable, &term)?;
             let Some(premise) =
-                self.checked_array_specialization_in(theorem, &term, &instance, world)?
+                self.observed_instance(theorem, &term, &instance, world, observations)?
             else {
                 continue;
             };
             let Some(interpretation) =
-                self.interpret_value_formula(&instance, observed, theorem, world, 0)?
+                self.interpret_value_formula(&instance, observed, theorem, world, 0, observations)?
             else {
                 continue;
             };
             if !interpretation.is_arithmetic() || self.checked_entails(&interpretation)? {
                 continue;
             }
-            self.import_scalar_observation(instance, interpretation, premise, &[])?;
+            self.import_scalar_observation(instance, interpretation, premise, &[], observations)?;
         }
         Ok(())
     }
@@ -86,6 +87,7 @@ impl Context<'_> {
         theorem: evidence::NodeId,
         world: Option<state::WorldId>,
         depth: usize,
+        observations: &mut Observations,
     ) -> Result<Option<Formula>> {
         self.charge_value_work(1)?;
         if depth >= 64 {
@@ -129,19 +131,32 @@ impl Context<'_> {
                             observed.index,
                             value,
                             Source { theorem, world },
+                            observations,
                         );
                     }
                 }
                 return Ok(None);
             }
             Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b) => {
-                let Some(a) =
-                    self.interpret_value_formula(a, observed, theorem, world, depth + 1)?
+                let Some(a) = self.interpret_value_formula(
+                    a,
+                    observed,
+                    theorem,
+                    world,
+                    depth + 1,
+                    observations,
+                )?
                 else {
                     return Ok(None);
                 };
-                let Some(b) =
-                    self.interpret_value_formula(b, observed, theorem, world, depth + 1)?
+                let Some(b) = self.interpret_value_formula(
+                    b,
+                    observed,
+                    theorem,
+                    world,
+                    depth + 1,
+                    observations,
+                )?
                 else {
                     return Ok(None);
                 };
@@ -152,8 +167,14 @@ impl Context<'_> {
                 }
             }
             Formula::Not(a) => {
-                let Some(a) =
-                    self.interpret_value_formula(a, observed, theorem, world, depth + 1)?
+                let Some(a) = self.interpret_value_formula(
+                    a,
+                    observed,
+                    theorem,
+                    world,
+                    depth + 1,
+                    observations,
+                )?
                 else {
                     return Ok(None);
                 };

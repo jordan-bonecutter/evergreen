@@ -225,6 +225,10 @@ through multiple relocations, as shown in
 [`repeated_relocation.evg`](../examples/repeated_relocation.evg). Historical
 payloads are mathematical descriptions: they create no owner, cannot be read
 as live storage, and do not assume an inactive member's nominal invariant.
+Within one read, historical lookup reuses checked theorem instances. It retries
+completed searches after learning a new interpreted fact and discards that
+lookup cache before another read; branch-local proofs cannot enter a lasting
+value cache.
 Repeated growth through the full Vec API can still exceed the work budget;
 preserving external payload references also needs work. The public
 [Vec](vec.md) now uses this storage and source relocation implementation.

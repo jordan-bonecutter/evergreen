@@ -73,6 +73,7 @@ impl Context<'_> {
         index: &Linear,
         ty: &Ty,
         source: Source,
+        observations: &mut Observations,
     ) -> Result<Symbol> {
         self.charge_value_work(contents.fields.len() + index.terms.len() + 1)?;
         let key = (contents.clone(), index.clone());
@@ -128,9 +129,19 @@ impl Context<'_> {
         };
         // Cache only the mathematical value's identity. Facts are rechecked in the current
         // proof context; a successful branch must not populate a global truth.
-        let result = worlds
-            .into_iter()
-            .try_for_each(|world| self.observe_values(&observed, world));
+        let result: Result<()> = worlds.into_iter().try_for_each(|world| {
+            self.charge_value_work(contents.fields.len() + index.terms.len() + 1)?;
+            let lookup = (contents.clone(), index.clone(), world);
+            if observations.completed.get(&lookup) == Some(&observations.revision) {
+                return Ok(());
+            }
+            let revision = observations.revision;
+            self.observe_values(&observed, world, observations)?;
+            // New interpreted facts may enable previously unavailable domains.
+            // Retry in that case, but not when this read's knowledge is unchanged.
+            observations.completed.insert(lookup, revision);
+            Ok(())
+        });
         self.arrays.observing_values.remove(&key);
         result?;
         Ok(value)
