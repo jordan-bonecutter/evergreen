@@ -1,9 +1,10 @@
 module lexer;
 
 // Initial token categories: EOF=0, identifier=1, integer=2, punctuation=3,
-// whitespace=4, unsupported byte=5, line comment=6. Named variants will replace these codes.
+// whitespace=4, error=5, line comment=6, quoted string=7.
+// Named variants will replace these codes.
 // Tokens refer to byte ranges; they do not copy or own the source text.
-type Token struct {kind: u8, start: usize, end: usize} where self.kind <= 6 && self.start <= self.end;
+type Token struct {kind: u8, start: usize, end: usize} where self.kind <= 7 && self.start <= self.end;
 
 impl Copy for Token {}
 
@@ -94,8 +95,98 @@ fn starts_comment(
     if length - position >= 2 {(*source)[position] == 47 && (*source)[position + 1] == 47} else {false}
 }
 
-// Every non-EOF result makes progress. Array accesses are statically bounded;
-// unsupported bytes produce a one-byte error token rather than being skipped.
+// Locate raw quoted text. Escape validation and decoding belong to a later
+// pass; an escape shields the following byte from terminating this token.
+fn quoted(
+    length: usize,
+    source: &[u8; length],
+    position: usize
+) -> Token
+    where
+        if position < length {(*source)[position] == 34} else {false}
+    ensures
+        result.start == position &&
+        position < result.end &&
+        result.end <= length &&
+        (result.kind == 7 ||
+        result.kind == 5) &&
+        (result.kind == 5 =>
+        result.end == length)
+{
+    let end = position + 1;
+    let escaped = false;
+    let closed = false;
+    while end < length && !closed
+        invariant
+            position < end &&
+            end <= length
+        modifies(&end, &escaped, &closed)
+        decreases(length - end)
+    {
+        let byte = (*source)[end];
+        if escaped {
+            escaped = false;
+        } else {
+            if byte == 92 {
+                escaped = true;
+            } else {
+                if byte == 34 {
+                    closed = true;
+                }
+            }
+        }
+        end = end + 1;
+    }
+    Token {
+        kind: if closed {7} else {5},
+        start: position,
+        end: end
+    }
+}
+
+fn ordinary(
+    length: usize,
+    source: &[u8; length],
+    position: usize
+) -> Token
+    where
+        position < length
+    ensures
+        result.start == position &&
+        position < result.end &&
+        result.end <= length &&
+        result.kind != 0
+{
+    let byte = (*source)[position];
+    let kind: u8 = if identifier_start(byte) {1} else {
+        if digit(byte) {2} else {
+            if whitespace(byte) {4} else {
+                if starts_comment(length, source, position) {6} else {
+                    if punctuation(byte) {3} else {5}
+                }
+            }
+        }
+    };
+    let end = if kind == 3 {punctuation_end(length, source, position)} else {position + 1};
+    let scanning = true;
+    while end < length && scanning
+        invariant
+            position < end &&
+            end <= length
+        modifies(&end, &scanning)
+        decreases(if scanning {integer::from(length) - integer::from(end) + 1} else {0})
+    {
+        if continues(kind, (*source)[end]) {
+            end = end + 1;
+        } else {
+            scanning = false;
+        }
+    }
+    Token {kind: kind, start: position, end: end}
+}
+
+// Every non-EOF result advances. Unknown bytes produce a one-byte error;
+// unterminated quoted text produces an error covering the remaining input.
 fn next(
     length: usize,
     source: &[u8; length],
@@ -116,32 +207,7 @@ fn next(
     if position == length {
         Token {kind: 0, start: position, end: position}
     } else {
-        let byte = (*source)[position];
-        let kind: u8 = if identifier_start(byte) {1} else {
-            if digit(byte) {2} else {
-                if whitespace(byte) {4} else {
-                    if starts_comment(length, source, position) {6} else {
-                        if punctuation(byte) {3} else {5}
-                    }
-                }
-            }
-        };
-        let end = if kind == 3 {punctuation_end(length, source, position)} else {position + 1};
-        let scanning = true;
-        while end < length && scanning
-            invariant
-                position < end &&
-                end <= length
-            modifies(&end, &scanning)
-            decreases(if scanning {integer::from(length) - integer::from(end) + 1} else {0})
-        {
-            if continues(kind, (*source)[end]) {
-                end = end + 1;
-            } else {
-                scanning = false;
-            }
-        }
-        Token {kind: kind, start: position, end: end}
+        if (*source)[position] == 34 {quoted(length, source, position)} else {ordinary(length, source, position)}
     }
 }
 

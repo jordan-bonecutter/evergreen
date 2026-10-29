@@ -47,6 +47,20 @@ fn expected(index: usize, kind: u8, end: usize) -> bool {
     }
 }
 
+fn strings() -> bool {
+    let empty: [u8; 2] = [34, 34];
+    let escaped_quote: [u8; 6] = [34, 97, 92, 34, 98, 34];
+    let escaped_slash: [u8; 4] = [34, 92, 92, 34];
+    let incomplete: [u8; 3] = [34, 97, 92];
+    let multiline: [u8; 3] = [34, 10, 34];
+    let a = lexer::next(2, &empty, 0);
+    let b = lexer::next(6, &escaped_quote, 0);
+    let c = lexer::next(4, &escaped_slash, 0);
+    let d = lexer::next(3, &incomplete, 0);
+    let e = lexer::next(3, &multiline, 0);
+    a.kind == 7 && a.end == 2 && b.kind == 7 && b.end == 6 && c.kind == 7 && c.end == 4 && d.kind == 5 && d.end == 3 && e.kind == 7 && e.end == 3
+}
+
 // Operators, comments ending at newline/EOF, and a standalone slash.
 // This entry point is a bootstrap smoke test, not a compiler yet.
 fn main() -> usize {
@@ -124,5 +138,5 @@ fn main() -> usize {
         count = count + 1;
         position = token.end;
     }
-    if valid && count == 33 {42} else {1}
+    if valid && count == 33 && strings() {42} else {1}
 }
