@@ -1,0 +1,16 @@
+// Move the boundary of a live prefix using representation copy and type transfer.
+fn main() -> usize {
+    let source: unique(unique(usize) | shape(unique(usize)), 2) = alloc(2, shape(unique(usize)));
+    let target: unique(unique(usize) | shape(unique(usize)), 3) = alloc(3, shape(unique(usize)));
+    (*source)[0] = alloc(7);
+    (*source)[1] = alloc(42);
+    arrays::relocate_last::<unique(usize)>(2, &*source, 2, 3, &*target, 2);
+    arrays::relocate_last::<unique(usize)>(2, &*source, 1, 3, &*target, 2);
+    let first: unique(usize) = move((*target)[0]);
+    let value: unique(usize) = move((*target)[1]);
+    let retired_source: unique(shape(unique(usize)), 2) = source;
+    let retired_target: unique(shape(unique(usize)), 3) = target;
+    drop(retired_source);
+    drop(retired_target);
+    *value
+}

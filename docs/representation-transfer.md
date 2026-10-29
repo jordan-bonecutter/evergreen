@@ -54,3 +54,21 @@ operation does not introduce transactions or synchronization for concurrent use.
 As with allocation and existing moves, these are frontend memory rules. The
 kernel checks the generated proof obligations; preservation by the emitted
 machine code is not independently certified yet.
+
+
+`arrays::relocate_last` adds a quantified frame contract around this operation:
+it retires the last live source-prefix slot and extends the destination's live
+interval backward by one. Both arrays retain their other initialized/vacant
+regions. The implementation and all four frame proofs are Evergreen source;
+there is no compiler rule for this array operation. See
+[representation_range.evg](../examples/representation_range.evg), which moves
+two unique owners, extracts them, and releases both vacant allocations.
+The focused regression also checks certificate replay, rejects skipping a
+required transfer or reading a retired slot, and compares verification obligation
+counts at three-slot and billion-slot destination capacities.
+
+This is an elementwise building block, not bulk range copying. Switching the
+existing Buffer growth sequence to a loop using this contract currently exceeds
+the symbolic-work budget, so its production path still uses `take_last` and
+`prepend`. Proof-cost reduction and a range-level representation relation are
+still needed for the intended small bulk-relocation implementation.

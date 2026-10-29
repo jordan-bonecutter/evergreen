@@ -14,3 +14,108 @@ fn relocate<T>(source: &(T | shape(T)), target: &(T | shape(T)))
     *target = copy_representation(source);
     transfer_type(source, target);
 }
+
+// Relocate the last live source slot into the preceding target interval slot.
+// The byte copy grants no ownership; the checked type transfer moves it once.
+fn relocate_last<T>(
+    capacity: usize,
+    data: &[T | shape(T); capacity],
+    length: usize,
+    target_capacity: usize,
+    target: &[T | shape(T); target_capacity],
+    end: usize
+)
+    where
+        0 < length &&
+        length <= capacity &&
+        length <= end &&
+        end <= target_capacity &&
+        arrays::initialized_prefix::<T>(data, integer::from(length)) &&
+        arrays::vacant_suffix::<T>(data, integer::from(length)) &&
+        arrays::initialized_range::<T>(target, integer::from(length), integer::from(end)) &&
+        arrays::vacant_outside::<T>(target, integer::from(length), integer::from(end))
+    modifies(&(*data)[length - 1], &(*target)[length - 1])
+    ensures
+        arrays::initialized_prefix::<T>(data, integer::from(length) - 1) &&
+        arrays::vacant_suffix::<T>(data, integer::from(length) - 1) &&
+        arrays::initialized_range::<T>(target, integer::from(length) - 1, integer::from(end)) &&
+        arrays::vacant_outside::<T>(target, integer::from(length) - 1, integer::from(end))
+{
+    proof initialized:
+        arrays::initialized_prefix::<T>(data, integer::from(length)) by {assumption};
+    proof vacant:
+        arrays::vacant_suffix::<T>(data, integer::from(length)) by {assumption};
+    proof target_prior:
+        arrays::initialized_range::<T>(target, integer::from(length), integer::from(end)) by {assumption};
+    proof target_vacant:
+        arrays::vacant_outside::<T>(target, integer::from(length), integer::from(end)) by {assumption};
+    (*target)[length - 1] = copy_representation(&(*data)[length - 1]);
+    transfer_type(&(*data)[length - 1], &(*target)[length - 1]);
+    proof frame:
+        old(arrays::initialized_prefix::<T>(data, integer::from(length))) =>
+        arrays::initialized_prefix::<T>(data, integer::from(length) - 1) by {
+            intro prior;
+            intro i;
+            omega
+        };
+    proof prefix:
+        arrays::initialized_prefix::<T>(data, integer::from(length) - 1) by {
+            apply frame;
+            exact initialized
+        };
+    proof empty_frame:
+        old(arrays::vacant_suffix::<T>(data, integer::from(length))) =>
+        arrays::vacant_suffix::<T>(data, integer::from(length) - 1) by {
+            intro prior;
+            intro i;
+            omega
+        };
+    proof suffix:
+        arrays::vacant_suffix::<T>(data, integer::from(length) - 1) by {
+            apply empty_frame;
+            exact vacant
+        };
+    proof extend:
+        (
+            old(
+                arrays::initialized_range::<T>(target, integer::from(length), integer::from(end))
+            )
+        ) =>
+        (
+            arrays::initialized_range::<T>(target, integer::from(length) - 1, integer::from(end))
+        ) by {
+            intro previous;
+            intro i;
+            omega
+        };
+    proof live:
+        arrays::initialized_range::<T>(target, integer::from(length) - 1, integer::from(end)) by {
+            apply extend;
+            exact target_prior
+        };
+    proof target_frame:
+        (
+            length <= end &&
+            (
+                old(
+                    arrays::vacant_outside::<T>(target, integer::from(length), integer::from(end))
+                )
+            )
+        ) =>
+        (
+            arrays::vacant_outside::<T>(target, integer::from(length) - 1, integer::from(end))
+        ) by {
+            intro premise;
+            cases premise with ordered,
+            previous;
+            intro i;
+            omega
+        };
+    proof rest:
+        arrays::vacant_outside::<T>(target, integer::from(length) - 1, integer::from(end)) by {
+            apply target_frame;
+            constructor;
+            omega;
+            exact target_vacant
+        };
+}

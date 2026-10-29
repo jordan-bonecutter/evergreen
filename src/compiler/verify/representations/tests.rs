@@ -69,3 +69,29 @@ fn source_relocation_transfers_sparse_slots_without_capacity_expansion() {
     );
     assert!(verify(&repeated).is_err());
 }
+
+#[test]
+fn representation_range_transfer_preserves_sparse_frames() {
+    let source = include_str!("../../../../examples/representation_range.evg");
+    let (program, certificate) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &certificate)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let huge = source.replace_evg('3', "1000000000");
+    assert_eq!(verify(&huge).unwrap().obligations, program.obligations);
+    let skipped = source.replace_evg(
+        "arrays::relocate_last::<unique(usize)>(2, &*source, 2, 3, &*target, 2);",
+        "",
+    );
+    assert!(verify(&skipped).is_err());
+    let stale = source.replace_evg(
+        "let first:",
+        "let invalid: unique(usize) = move((*source)[1]); let first:",
+    );
+    assert!(verify(&stale).is_err());
+}
