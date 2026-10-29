@@ -80,7 +80,7 @@ fn extraction_invalidates_the_slot_view_and_preserves_a_separate_payload_plane()
     );
     assert!(verify(&stolen)
         .unwrap_err()
-        .contains("moving owning fields"));
+        .contains("cannot move non-Copy value"));
 }
 
 #[test]

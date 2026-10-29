@@ -2213,7 +2213,12 @@ impl<'a> Context<'a> {
             && projecting_owner
             && !moving_member
         {
-            return Err(format!("line {}: moving owning fields or borrowed values needs partial-initialization tracking; unsupported", e.line));
+            return Err(format!(
+                "line {}: cannot move non-Copy value of type {} out of {}; destructure an owned container before consuming its fields, or use an explicit checked slot transfer; borrowing does not transfer ownership",
+                e.line,
+                self.diagnostic_type(&value.ty()),
+                syntax::display::expression(e),
+            ));
         }
         let value = self.coerce_pointer(value, expected, e.line)?;
         let value = self.union_coercion(value, expected, e.line, Some(e))?;

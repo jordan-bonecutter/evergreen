@@ -32,7 +32,7 @@ fn raw_union_extraction_requires_live_member_and_write_authority() {
         ("fn main() {let slot: unique(usize) | shape(unique(usize)) = alloc(42); let view = &slot; let first: unique(usize) = *view; let second: unique(usize) = *view; let retired: shape(unique(usize)) = slot;}", "active raw union member"),
         ("fn main() {let slot: unique(usize) | shape(unique(usize)) = alloc(42); let view = &slot; proof assumed: typeof(*view) == unique(usize) by {trustme}; let first: unique(usize) = *view; let second: unique(usize) = *view; let retired: shape(unique(usize)) = slot;}", "active raw union member"),
         ("fn main() -> usize {let slot: unique(usize) | shape(unique(usize)) = alloc(42); let view = &slot; let payload = &**view; let value: unique(usize) = *view; let retired: shape(unique(usize)) = slot; drop(value); *payload}", "type never"),
-        ("type Holder struct {data: unique(usize)} fn main() {let holder = Holder {data: alloc(42)}; let alias: shared(usize) = holder.data;}", "partial-initialization tracking"),
+        ("type Holder struct {data: unique(usize)} fn main() {let holder = Holder {data: alloc(42)}; let alias: shared(usize) = holder.data;}", "destructure an owned container"),
     ] {
         let error = verify(source).unwrap_err();
         assert!(error.contains(diagnostic), "{error}\n{source}");
