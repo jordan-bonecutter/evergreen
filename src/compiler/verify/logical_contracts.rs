@@ -13,11 +13,14 @@ mod type_tests;
 
 // Search the normalized goal: a connective may erase a predicate in the
 // original expression, and that erased symbol must not restrict candidates.
-fn first_predicate(formula: &Formula) -> Option<&str> {
+fn predicates(formula: &Formula) -> BTreeSet<&str> {
+    let mut symbols = BTreeSet::new();
     let mut pending = vec![formula];
     while let Some(part) = pending.pop() {
         match part {
-            Formula::Predicate { symbol, .. } => return Some(symbol),
+            Formula::Predicate { symbol, .. } => {
+                symbols.insert(symbol.as_str());
+            }
             Formula::And(a, b) | Formula::Or(a, b) | Formula::Implies(a, b) => {
                 pending.extend([&**a, &**b]);
             }
@@ -26,7 +29,7 @@ fn first_predicate(formula: &Formula) -> Option<&str> {
             _ => {}
         }
     }
-    None
+    symbols
 }
 
 impl Context<'_> {
@@ -121,13 +124,14 @@ impl Context<'_> {
     ) -> Result<Option<evidence::NodeId>> {
         self.charge_value_work(goal.storage_weight()?)?;
         let normalized = goal.normalized();
-        let selector = first_predicate(&normalized);
+        let selectors = predicates(&normalized);
         let witnesses = self.proof.witnesses.values().copied().collect::<Vec<_>>();
         self.charge_value_work(witnesses.len())?;
         let mut admitted = None;
         for node in witnesses {
-            if selector
-                .is_some_and(|symbol| !self.proof.evidence.claim_mentions_predicate(node, symbol))
+            if selectors
+                .iter()
+                .any(|symbol| !self.proof.evidence.claim_mentions_predicate(node, symbol))
             {
                 continue;
             }
@@ -154,8 +158,9 @@ impl Context<'_> {
         };
         self.charge_value_work(candidates.len())?;
         for node in candidates {
-            if selector
-                .is_some_and(|symbol| !self.proof.evidence.claim_mentions_predicate(node, symbol))
+            if selectors
+                .iter()
+                .any(|symbol| !self.proof.evidence.claim_mentions_predicate(node, symbol))
             {
                 continue;
             }

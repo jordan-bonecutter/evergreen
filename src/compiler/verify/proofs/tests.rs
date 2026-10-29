@@ -35,14 +35,14 @@ fn logical_lookup_skips_unrelated_predicates_without_losing_admissions() {
         // Deliberately large unrelated witnesses should cost a candidate
         // lookup, not repeated normalization of their complete formulas.
         for i in 0..64 {
-            let mut claim = atom(format!("unrelated_{i}"));
+            let mut claim = atom(format!("unrelated_{i}")).and(atom("shared".into()));
             for j in 0..16 {
                 claim = claim.and(atom(format!("unused_{i}_{j}")));
             }
             let node = ctx.proof.evidence.admit(claim).unwrap();
             ctx.proof.witnesses.insert(format!("unused_{i}"), node);
         }
-        let goal = atom("wanted".into());
+        let goal = atom("wanted".into()).and(atom("shared".into()));
         let wanted = ctx.proof.evidence.admit(goal.clone()).unwrap();
         ctx.proof.witnesses.insert("wanted".into(), wanted);
         let before = ctx.work.value_work;
