@@ -4,10 +4,14 @@ fn main() -> usize {
     let target: unique(unique(usize) | shape(unique(usize)), 3) = alloc(3, shape(unique(usize)));
     (*source)[0] = alloc(7);
     (*source)[1] = alloc(42);
+    let first_address = &*(*source)[0];
+    let last_address = &*(*source)[1];
     arrays::relocate_last::<unique(usize)>(2, &*source, 2, 3, &*target, 2);
     arrays::relocate_last::<unique(usize)>(2, &*source, 1, 3, &*target, 2);
     let first: unique(usize) = move((*target)[0]);
     let value: unique(usize) = move((*target)[1]);
+    proof first_preserved: &*first == first_address;
+    proof last_preserved: &*value == last_address;
     let retired_source: unique(shape(unique(usize)), 2) = source;
     let retired_target: unique(shape(unique(usize)), 3) = target;
     drop(retired_source);

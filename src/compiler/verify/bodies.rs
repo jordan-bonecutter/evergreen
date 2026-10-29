@@ -122,9 +122,8 @@ impl Context<'_> {
                     self.assume_from(&proposition, paths::Origin::Evidence(node))?;
                 } else {
                     if let Some(post) = &function.post {
-                        let snapshot = self.claim_subjects(post)?;
                         returned_claims
-                            .extend(self.publish_call_contract(node, snapshot, &value, post.line)?);
+                            .extend(self.publish_body_postcondition(node, post, &value)?);
                     }
                 }
             }

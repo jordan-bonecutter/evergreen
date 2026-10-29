@@ -12,6 +12,42 @@ pub(super) struct CallResult {
 }
 
 impl Context<'_> {
+    // Collect each source conjunct independently. An unsupported observation in
+    // one clause must not erase the footprints of its proven sibling clauses.
+    pub(super) fn publish_body_postcondition(
+        &mut self,
+        root: evidence::NodeId,
+        expression: &Expr,
+        value: &Symbol,
+    ) -> Result<Vec<evidence::NodeId>> {
+        let mut pending = vec![(root, expression)];
+        let mut published = Vec::new();
+        while let Some((node, expression)) = pending.pop() {
+            self.charge_value_work(1)?;
+            if let Kind::Binary(op, left, right) = &expression.kind {
+                if op == "&&" {
+                    let Formula::And(a, b) = self.proof.evidence.claim(node)?.clone() else {
+                        return Err("source contract conjunction lost its proof structure".into());
+                    };
+                    let a = self
+                        .proof
+                        .evidence
+                        .derive(*a, evidence::Rule::AndLeft(node))?;
+                    let b = self
+                        .proof
+                        .evidence
+                        .derive(*b, evidence::Rule::AndRight(node))?;
+                    pending.push((b, right));
+                    pending.push((a, left));
+                    continue;
+                }
+            }
+            let snapshot = self.claim_subjects(expression)?;
+            published.extend(self.publish_call_contract(node, snapshot, value, expression.line)?);
+        }
+        Ok(published)
+    }
+
     pub(super) fn publish_call_contract(
         &mut self,
         node: evidence::NodeId,

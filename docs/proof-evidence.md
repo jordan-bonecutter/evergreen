@@ -885,3 +885,11 @@ source entry value after the source becomes a shape. Quantified union-array
 value comparisons remain unfinished. Shapes have no accessible payload value to compare:
 value equality between shapes says nothing about their representation bytes.
 Use `same_representation` for that separate claim.
+
+When an actual function body exports a conjunction, each source `&&` clause now
+gets its own dependency snapshot before publication. An observation whose
+footprint is not yet expressible cannot erase the usable dependencies of its
+siblings. Every exported clause still comes from checked conjunction elimination;
+this neither invents evidence for the incomplete clause nor bypasses its freshness
+checks. Relocation's boundary helper can therefore advertise payload equality
+alongside the four range-state guarantees used by its caller's loop.

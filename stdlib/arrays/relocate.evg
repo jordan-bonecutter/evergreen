@@ -40,7 +40,8 @@ fn relocate_last<T>(
         arrays::initialized_prefix::<T>(data, integer::from(length) - 1) &&
         arrays::vacant_suffix::<T>(data, integer::from(length) - 1) &&
         arrays::initialized_range::<T>(target, integer::from(length) - 1, integer::from(end)) &&
-        arrays::vacant_outside::<T>(target, integer::from(length) - 1, integer::from(end))
+        arrays::vacant_outside::<T>(target, integer::from(length) - 1, integer::from(end)) &&
+        same_value((*target)[length - 1], old((*data)[length - 1]))
 {
     proof initialized:
         arrays::initialized_prefix::<T>(data, integer::from(length)) by {assumption};
