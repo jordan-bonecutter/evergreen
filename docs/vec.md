@@ -80,13 +80,12 @@ materializing slots. Demanded input cells can use those range proofs
 for typed member loans and checked extraction; see
 [range_slots.evg](../examples/range_slots.evg) and
 [range_index.evg](../examples/range_index.evg). Runtime indices require proven
-equality or separation from existing observations. Conditional cell identities,
-resource range loop frames, and cleanup of a dynamically initialized prefix
+equality or separation from existing observations. Conditional cell identities
 remain unfinished. Range promises can also live in nominal type invariants;
 [range_type.evg](../examples/range_type.evg) demonstrates a generic initialized
 slot with typed borrowing and complete consumption. Vec still needs conditional
-capacity observations, resource loop frames, and destruction of exactly its
-initialized prefix. Generic single-slot prefix/suffix transitions now work in
+capacity observations and integration of the resource frames and prefix
+cleanup described below. Generic single-slot prefix/suffix transitions now work in
 [range_store.evg](../examples/range_store.evg): push initializes the boundary,
 pop extracts the last owner, and explicit frame proofs preserve the untouched
 ranges. These are general source-level storage operations; the existing Vec
@@ -101,6 +100,16 @@ The final buffer-release step now accepts a checked full-range shape proof,
 through `arrays::release_empty::<T>(buffer)`; it does not need to observe every
 vacant slot. [`range_empty.evg`](../examples/range_empty.evg) demonstrates this
 step, including keeping an extracted payload alive after releasing its buffer.
+
+The source library now also provides `arrays::relocate_prefix` for moving an
+initialized prefix into a new allocation without Copy permission. See
+[`range_reallocate.evg`](../examples/range_reallocate.evg). It supports growth,
+shrinking, and an empty prefix; the proof establishes the returned initialized
+prefix and vacant suffix, then permits releasing the emptied source. Unique-owned
+payloads and records containing them are supported. Element-value preservation
+contracts and external payload identity preservation across the loop are still
+missing. Vec continues to use its previous Copy implementation until these
+operations and the nominal invariants are integrated.
 
 Run [vec_generic.evg](../examples/vec_generic.evg) with:
 

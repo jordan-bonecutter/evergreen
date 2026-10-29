@@ -219,3 +219,49 @@ fn atomic_counter_retries_are_library_loops_without_recursive_calls() {
         0
     );
 }
+
+#[test]
+fn actual_empty_loops_preserve_storage_without_using_admitted_guards() {
+    let helper = "fn maybe_write(data: unique(usize), run: bool) -> unique(usize) {
+        let active = run;
+        while active invariant true modifies(&*data, &active) {
+            *data = 7;
+            active = false;
+        }
+        data
+    }";
+    let source = format!(
+        "{helper} fn main() -> usize {{
+        let data: unique(usize) = alloc(42); let borrowed = &*data;
+        let returned = maybe_write(data, false);
+        proof _: *borrowed == 42 && *returned == 42;
+        *returned
+    }}"
+    );
+    let (program, bundle) = prove(&source).unwrap();
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert_eq!(
+        verify_with_certificate(&source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    assert!(
+        verify(&source.replace("maybe_write(data, false)", "maybe_write(data, true)")).is_err()
+    );
+    let admitted = format!(
+        "{helper} fn client(run: bool) {{
+        let data: unique(usize) = alloc(42);
+        proof lie: !run by {{trustme}};
+        let returned = maybe_write(data, run);
+        proof _: *returned == 42;
+    }}"
+    );
+    assert!(verify(&admitted).is_err());
+    // An empty actual call cannot hide an invalid generic iteration.
+    let invalid = source.replace("modifies(&*data, &active)", "modifies(&active)");
+    assert!(verify(&invalid)
+        .unwrap_err()
+        .contains("outside its modifies frame"));
+}

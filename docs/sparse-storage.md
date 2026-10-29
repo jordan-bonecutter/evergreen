@@ -194,6 +194,30 @@ with unique pointers and records containing unique pointers, including nominal
 destructors. Runtime capacity parameters also verify. The billion-slot check
 uses the same obligation and certificate counts without allocating that buffer.
 
+[`range_reallocate.evg`](../examples/range_reallocate.evg) uses the source
+library's `arrays::relocate_prefix::<T>(capacity, buffer, length, new_capacity)`
+to move that prefix into fresh storage. Both capacities are runtime values.
+The destination capacity must be positive, fit the allocation layout, and hold
+the live prefix. Each iteration extracts the source's last initialized member
+with `arrays::take_last` and inserts it with `arrays::prepend` at the same index
+in the destination. Separate resource frames protect the two allocations.
+The source becomes entirely vacant and is released; the result has an
+initialized prefix and vacant suffix. The operation supports growth, shrinking,
+and an empty prefix without Copy permission or a payload destructor during
+transfer. A rechecked call with a proven-false initial loop condition preserves
+its storage directly; admissions cannot authorize this shortcut, and the
+function declaration still checks the general loop body.
+
+The relocation tests replay certificates, check destructor counts and native
+execution, reject wrong slots, skipped elements, insufficient capacity, and
+stale views, and retain the same proof counts at billion-element capacities.
+The current public contract proves initialization and ownership safety. It does
+not yet express equality of every returned payload with its old value or
+preservation of external payload references across the loop abstraction.
+The example explicitly observes its two returned members before extraction and
+carries the vacant-range proof across cleanup. Integrating these operations
+into Vec and reducing the proof boilerplate remain work to do.
+
 A resource frame requires ownership of its backing array and matching
 `T | shape(T)` elements. The checker abstracts payload allocations at loop entry;
 old payload references cannot be reused after that abstraction. It preserves the

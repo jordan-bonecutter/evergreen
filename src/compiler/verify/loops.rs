@@ -15,6 +15,8 @@ mod copy_tests;
 #[cfg(test)]
 mod fill_tests;
 #[cfg(test)]
+mod relocate_tests;
+#[cfg(test)]
 mod resource_tests;
 #[cfg(test)]
 mod termination_tests;
@@ -128,6 +130,21 @@ impl Context<'_> {
         let initial = self.proposition(invariant)?;
         let entry =
             self.prove_subjects(&initial, Some(&subjects), "loop invariant on entry", line)?;
+
+        // The declaration has checked the arbitrary iteration. Rechecking an
+        // actual call whose guard is already false needs no iteration and no
+        // storage abstraction. Admissions cannot select this shortcut.
+        if self.execution.rechecking != 0 {
+            let guard = self
+                .scoped_eval(condition, Some(&Ty::Bool))?
+                .proposition()?;
+            if self.checked_entails(&guard.not())? {
+                // The invariant also holds at this unchanged exit. Retain
+                // its checked clauses for following explicit proof scripts.
+                self.import_contract_evidence(entry, subjects)?;
+                return self.validate_live(line);
+            }
+        }
 
         // Havoc exactly the declared contents, preserving plane identities,
         // live reference provenance, and fixed layouts.

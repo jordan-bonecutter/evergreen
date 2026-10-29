@@ -74,6 +74,14 @@ impl Context<'_> {
         parents: Vec<evidence::NodeId>,
     ) -> Result<()> {
         let root = self.proof.evidence.contract(proposition, parents)?;
+        self.import_contract_evidence(root, snapshot)
+    }
+
+    pub(super) fn import_contract_evidence(
+        &mut self,
+        root: evidence::NodeId,
+        snapshot: subjects::Snapshot,
+    ) -> Result<()> {
         for node in self.contract_clauses(root, snapshot)? {
             let claim = self.proof.evidence.claim(node)?.clone();
             if claim.is_arithmetic() && self.evidence_dependencies(node)?.admissions.is_empty() {
