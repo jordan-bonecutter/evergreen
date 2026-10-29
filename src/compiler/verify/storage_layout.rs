@@ -9,7 +9,10 @@ impl Context<'_> {
             (Symbol::Union { members: a, .. }, Symbol::Union { members: b, .. }) => {
                 Ok(same_union_storage(a, b))
             }
-            (Symbol::Shape(a), Symbol::Shape(b)) => Ok(a == b),
+            (
+                Symbol::Shape(a) | Symbol::Representation { ty: a, .. },
+                Symbol::Shape(b) | Symbol::Representation { ty: b, .. },
+            ) => Ok(a == b),
             (Symbol::Record(an, a), Symbol::Record(bn, b)) => {
                 if an != bn || a.len() != b.len() {
                     return Ok(false);

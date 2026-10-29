@@ -4,6 +4,59 @@
 use super::*;
 
 impl Evaluator<'_> {
+    pub(super) fn transfer_type(
+        &mut self,
+        args: &[Expr],
+        env: &BTreeMap<String, Value>,
+    ) -> Result<Value> {
+        let [source, target] = args else {
+            return Err("transfer_type requires two references".into());
+        };
+        let Value::Ref(_, source_ref, source_path) = self.expr(source, env, None)? else {
+            return Err("type transfer source is not a reference".into());
+        };
+        let Value::Ref(_, target_ref, target_path) = self.expr(target, env, None)? else {
+            return Err("type transfer target is not a reference".into());
+        };
+        let Value::Union(source_members, payload) = copy_value(
+            project(self.memory.read(source_ref)?, &source_path)?,
+            &mut self.fuel,
+        )?
+        else {
+            return Err("type transfer source is not union storage".into());
+        };
+        let Value::Union(target_members, target_payload) = copy_value(
+            project(self.memory.read(target_ref)?, &target_path)?,
+            &mut self.fuel,
+        )?
+        else {
+            return Err("type transfer target is not union storage".into());
+        };
+        let Value::Representation(ty, bytes) = *target_payload else {
+            return Err("type transfer target has no captured representation".into());
+        };
+        if payload != bytes {
+            return Err("type transfer representation mismatch: compiler/runtime disagreement or admitted equality".into());
+        }
+        let mut source_root = copy_value(self.memory.read(source_ref)?, &mut self.fuel)?;
+        replace_projection(
+            &mut source_root,
+            &source_path,
+            Value::Union(source_members, Box::new(Value::Representation(ty, bytes))),
+        )?;
+        let source_plane = self.memory.plane(source_ref)?;
+        self.memory.write(source_plane, source_root, false)?;
+        let mut target_root = copy_value(self.memory.read(target_ref)?, &mut self.fuel)?;
+        replace_projection(
+            &mut target_root,
+            &target_path,
+            Value::Union(target_members, payload),
+        )?;
+        let target_plane = self.memory.plane(target_ref)?;
+        self.memory.write(target_plane, target_root, false)?;
+        Ok(Value::Unit)
+    }
+
     pub(super) fn select_projected_member(
         &self,
         value: Value,

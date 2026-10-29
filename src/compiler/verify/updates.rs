@@ -232,8 +232,14 @@ impl Context<'_> {
     fn update_expression(&self, e: &Expr) -> bool {
         match &e.kind {
             Kind::Call(name, args) => {
-                if matches!(name.as_str(), "integer" | "nat" | "old") {
+                if matches!(
+                    name.as_str(),
+                    "integer" | "nat" | "old" | "copy_representation"
+                ) {
                     return args.len() == 1 && self.update_expression(&args[0]);
+                }
+                if matches!(name.as_str(), "same_representation" | "transfer_type") {
+                    return args.len() == 2 && args.iter().all(|arg| self.update_expression(arg));
                 }
                 self.declarations.functions.get(name).is_some_and(|f| {
                     (f.ideal || self.declarations.cleanup_helpers.contains(name))

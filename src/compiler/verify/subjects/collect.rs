@@ -179,6 +179,22 @@ impl Context<'_> {
                 )?;
                 Some(ClaimKey::Number(value as i128))
             }
+            Kind::Call(name, arguments)
+                if name == "same_representation" && arguments.len() == 2 =>
+            {
+                let mut keys = Vec::new();
+                for argument in arguments {
+                    let place = Expr {
+                        kind: Kind::Unary("*".into(), Box::new(argument.clone())),
+                        line: expression.line,
+                    };
+                    let Some(key) = self.collect_place_subject(&place, snapshot, depth + 1)? else {
+                        return Ok(None);
+                    };
+                    keys.push(key);
+                }
+                Some(ClaimKey::Call(name.clone(), keys))
+            }
             Kind::Call(name, arguments) if name == "owner_count" && arguments.len() == 1 => {
                 if let Some(reference) = self.owner_subject_reference(&arguments[0]) {
                     let stamp = self.proof.subjects.observe(

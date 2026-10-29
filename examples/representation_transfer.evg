@@ -1,0 +1,18 @@
+fn main() -> usize {
+    let source: [unique(usize); 2] | shape(
+        [unique(usize); 2]
+    ) = [alloc(7), alloc(42)];
+    // Copy the representation without creating another live owning array.
+    let target: [unique(usize); 2] | shape(
+        [unique(usize); 2]
+    ) = copy_representation(&source);
+    proof copied:
+        same_representation(&source, &target) by {omega};
+        // Transfer the live type and ownership. No bytes need changing here.
+    transfer_type(&source, &target);
+    let retired: shape(
+        [unique(usize); 2]
+    ) = source;
+    let values: [unique(usize); 2] = target;
+    *values[1]
+}

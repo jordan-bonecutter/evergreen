@@ -98,6 +98,26 @@ impl Emitter<'_> {
                 };
                 self.shape_value(value)?
             }
+            "copy_representation" => {
+                let [source] = args else {
+                    return Err("copy_representation requires one reference".into());
+                };
+                let Type::Ref(ty) = self.expr(source, None)? else {
+                    return Err("copy_representation requires a reference".into());
+                };
+                // Shape values use the aggregate-address convention. The
+                // receiving store copies these bytes without acquiring T.
+                Type::Shape(Box::new(
+                    ty.representation_payload()
+                        .ok_or("ambiguous representation type")?,
+                ))
+            }
+            "transfer_type" => {
+                // Verification established byte equality and transferred the
+                // live member. The copied destination bytes are already there.
+                self.immediate(0);
+                Type::Unit
+            }
             _ => {
                 let function = self.functions.get(name).ok_or("unknown native callee")?;
                 let supplied = function.supplied_parameters(args.len())?;

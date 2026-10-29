@@ -63,6 +63,7 @@ use proposition::Formula;
 mod references;
 #[cfg(test)]
 pub(crate) mod replacement_tests;
+mod representations;
 mod returns;
 mod state;
 mod storage_layout;
@@ -98,6 +99,10 @@ enum Ty {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Symbol {
+    Representation {
+        ty: Box<Ty>,
+        identity: Linear,
+    },
     Union {
         members: Vec<Ty>,
         active: Linear,
@@ -129,6 +134,7 @@ enum Symbol {
 impl Symbol {
     fn ty(&self) -> Ty {
         match self {
+            Self::Representation { ty, .. } => Ty::Shape(ty.clone()),
             Self::Union { members, .. } => Ty::Union(members.clone()),
             Self::Shape(inner) => Ty::Shape(inner.clone()),
             Self::Type { .. } => Ty::Type,
@@ -207,6 +213,10 @@ fn symbol_weight(value: &Symbol) -> Result<usize> {
                 pending.extend(members.iter().map(|ty| Node::Type(ty, depth + 1)));
             }
             Node::Value(Symbol::Shape(inner), depth) => pending.push(Node::Type(inner, depth + 1)),
+            Node::Value(Symbol::Representation { ty, identity }, depth) => {
+                weight = weight.saturating_add(identity.terms.len());
+                pending.push(Node::Type(ty, depth + 1));
+            }
             Node::Type(
                 Ty::Ref(inner) | Ty::Unique(inner) | Ty::Shared(inner) | Ty::Shape(inner),
                 depth,

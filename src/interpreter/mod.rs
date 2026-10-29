@@ -24,6 +24,7 @@ type Projection = PlaneProjection<usize, Type>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
+    Representation(Box<Type>, Box<Value>),
     Union(Vec<Type>, Box<Value>),
     Shape(Box<Type>),
     Int(i128),
@@ -51,7 +52,7 @@ fn charge_value(value: &Value, fuel: &mut usize) -> Result<()> {
             return Err("execution value-work limit reached (100000 steps and nodes)".into());
         }
         match value {
-            Value::Union(_, value) => pending.push(value),
+            Value::Union(_, value) | Value::Representation(_, value) => pending.push(value),
             Value::Array(_, items) => pending.extend(items),
             Value::Record(_, fields) => pending.extend(fields.values()),
             _ => {}
@@ -70,7 +71,7 @@ impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Union(_, value) => value.fmt(f),
-            Self::Shape(_) => write!(f, "<shape>"),
+            Self::Shape(_) | Self::Representation(..) => write!(f, "<shape>"),
             Self::Int(n) | Self::Nat(n) | Self::Machine(_, n) => write!(f, "{n}"),
             Self::Bool(b) => write!(f, "{b}"),
             Self::Array(_, items) => {
@@ -114,7 +115,7 @@ impl Value {
             (Self::Unique(actual, _), Type::Unique(expected))
             | (Self::Shared(actual, _), Type::Shared(expected))
             | (Self::Ref(actual, _, _), Type::Ref(expected))
-            | (Self::Shape(actual), Type::Shape(expected)) => {
+            | (Self::Shape(actual) | Self::Representation(actual, _), Type::Shape(expected)) => {
                 type_match::same_runtime_type(actual, expected)
             }
             _ => Ok(self.hint().as_ref() == Some(expected)),
@@ -138,7 +139,7 @@ impl Value {
     fn hint(&self) -> Option<Type> {
         match self {
             Self::Union(members, _) => Some(Type::Union(members.clone())),
-            Self::Shape(inner) => Some(Type::Shape(inner.clone())),
+            Self::Shape(inner) | Self::Representation(inner, _) => Some(Type::Shape(inner.clone())),
             Self::Int(_) => Some(Type::Int),
             Self::Nat(_) => Some(Type::Nat),
             Self::Bool(_) => Some(Type::Bool),
@@ -462,7 +463,7 @@ impl Evaluator<'_> {
 
     fn value_is_move_only(&self, value: &Value) -> bool {
         match value {
-            Value::Union(_, _) | Value::Shape(_) => true,
+            Value::Union(_, _) | Value::Shape(_) | Value::Representation(..) => true,
             Value::Unique(..) => true,
             Value::Shared(..) => !self
                 .target
@@ -974,6 +975,31 @@ impl Evaluator<'_> {
                         .ok_or("shape requires a type")?;
                     return Ok(Value::Shape(Box::new(ty)));
                 }
+                if name == "copy_representation" {
+                    let [source] = args.as_slice() else {
+                        return Err("copy_representation requires one reference".into());
+                    };
+                    let Value::Ref(ty, reference, path) = self.expr(source, env, None)? else {
+                        return Err("copy_representation requires a reference".into());
+                    };
+                    let ty = ty
+                        .representation_payload()
+                        .ok_or("ambiguous representation type")?;
+                    let mut value = copy_value(
+                        project(self.memory.read(reference)?, &path)?,
+                        &mut self.fuel,
+                    )?;
+                    if let Value::Union(_, payload) = value {
+                        value = *payload;
+                    }
+                    if let Value::Representation(_, payload) = value {
+                        value = *payload;
+                    }
+                    return Ok(Value::Representation(Box::new(ty), Box::new(value)));
+                }
+                if name == "transfer_type" {
+                    return self.transfer_type(args, env);
+                }
                 if let Some(target) = self.target.integer(name) {
                     let [argument] = args.as_slice() else {
                         return Err("integer conversion requires one argument".into());
@@ -1229,7 +1255,7 @@ fn root_name(e: &Expr) -> Result<String> {
 
 fn check_union_initialization(value: &Value) -> Result<bool> {
     match value {
-        Value::Union(_, payload) if matches!(payload.as_ref(), Value::Shape(_)) => Ok(true),
+        Value::Union(_, payload) if matches!(payload.as_ref(), Value::Shape(_) | Value::Representation(..)) => Ok(true),
         Value::Union(..) => Err("raw union replacement requires an uninitialized shape member: compiler/runtime disagreement".into()),
         _ => Ok(false),
     }
@@ -1238,7 +1264,10 @@ fn check_union_initialization(value: &Value) -> Result<bool> {
 fn same_layout(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Union(a, _), Value::Union(b, _)) => type_match::same_union_storage(a, b),
-        (Value::Shape(a), Value::Shape(b)) => type_match::same_storage_type(a, b),
+        (
+            Value::Shape(a) | Value::Representation(a, _),
+            Value::Shape(b) | Value::Representation(b, _),
+        ) => type_match::same_storage_type(a, b),
         (Value::Record(an, a), Value::Record(bn, b)) => {
             an == bn
                 && a.len() == b.len()

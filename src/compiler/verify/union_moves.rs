@@ -17,6 +17,22 @@ impl Context<'_> {
     }
 
     pub(super) fn move_union_member(&mut self, expression: &Expr, target: &Ty) -> Result<Symbol> {
+        self.move_union_member_into_shape(
+            expression,
+            target,
+            Symbol::Shape(Box::new(target.clone())),
+        )
+    }
+
+    pub(super) fn move_union_member_into_shape(
+        &mut self,
+        expression: &Expr,
+        target: &Ty,
+        vacancy: Symbol,
+    ) -> Result<Symbol> {
+        if vacancy.ty() != Ty::Shape(Box::new(target.clone())) {
+            return Err("member extraction must leave its matching shape".into());
+        }
         if self.execution.phase != Phase::Runtime {
             return Err("extracting a runtime union member cannot be erased".into());
         }
@@ -41,7 +57,7 @@ impl Context<'_> {
                     .position(|member| member == &shape)
                     .ok_or("member extraction requires a matching shape alternative")?;
                 let mut payloads = vec![None; members.len()];
-                payloads[index] = Some(Symbol::Shape(Box::new(target.clone())));
+                payloads[index] = Some(vacancy.clone());
                 let empty = Symbol::Union {
                     members: members.clone(),
                     active: Linear::number(index as i128),

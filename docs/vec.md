@@ -210,4 +210,8 @@ Once representation equality is proved, a checked transfer would change the
 source to `shape(T)` and destination to `T`, moving ownership authority exactly
 once. Existing borrow and plane validity obligations still apply. A verified
 loop should implement the copy; a bulk-copy backend implementation is optional.
-This operation and its representation-equality proof are not implemented yet.
+The first fixed-storage version is now implemented as `copy_representation`,
+`same_representation`, and `transfer_type`; see
+[representation-transfer.md](representation-transfer.md). It can move a whole
+owning array without per-element ownership proofs. Dynamic prefix views and
+Vec integration still need work, so `relocate_prefix` continues to use its loop.

@@ -59,7 +59,14 @@ pub(super) fn function_uses_planes(
 
     fn expression(value: &Expr, structs: &BTreeMap<String, Struct>) -> bool {
         match &value.kind {
-            Kind::Call(name, _) if name == "alloc" => true,
+            Kind::Call(name, _)
+                if matches!(
+                    name.as_str(),
+                    "alloc" | "copy_representation" | "transfer_type"
+                ) =>
+            {
+                true
+            }
             Kind::Unary(_, e) | Kind::Field(e, _) | Kind::FactAt(e, _) => expression(e, structs),
             Kind::Binary(_, a, b) | Kind::Index(a, b) => {
                 expression(a, structs) || expression(b, structs)

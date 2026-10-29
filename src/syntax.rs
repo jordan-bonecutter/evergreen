@@ -51,6 +51,9 @@ pub(crate) fn is_builtin_name(name: &str) -> bool {
                 | "shape"
                 | "owner_count"
                 | "same_value"
+                | "copy_representation"
+                | "same_representation"
+                | "transfer_type"
                 | "size_of"
                 | "align_of"
         )
@@ -149,6 +152,20 @@ pub enum Type {
 }
 
 impl Type {
+    pub(crate) fn representation_payload(&self) -> Option<Self> {
+        match self {
+            Self::Shape(inner) => Some(*inner.clone()),
+            Self::Union(members) => {
+                let mut live = members.iter().filter(|ty| !matches!(ty, Self::Shape(_)));
+                let ty = live.next()?;
+                if live.next().is_some() {
+                    return None;
+                }
+                Some(ty.clone())
+            }
+            ty => Some(ty.clone()),
+        }
+    }
     pub(crate) fn bytes(length: usize, line: usize) -> Self {
         Self::Array(
             Box::new(Self::Machine(MachineInt {

@@ -35,6 +35,7 @@ pub(super) struct LogicalBinding {
 
 #[derive(Default)]
 pub(super) struct ProofState {
+    pub(super) representations: BTreeMap<subjects::Stamp, Linear>,
     pub(super) facts: BTreeMap<String, Expr>,
     pub(super) fact_calls: Vec<(subjects::ClaimKey, subjects::Snapshot)>,
     pub(super) witnesses: BTreeMap<String, evidence::NodeId>,

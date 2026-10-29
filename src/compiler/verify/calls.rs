@@ -23,6 +23,12 @@ impl<'a> Context<'a> {
         expected: Option<&Ty>,
         line: usize,
     ) -> Result<Symbol> {
+        if matches!(
+            name,
+            "copy_representation" | "same_representation" | "transfer_type"
+        ) {
+            return self.representation_call(name, args, line);
+        }
         if name == "same_value" {
             return self.eval_same_value(args, line);
         }

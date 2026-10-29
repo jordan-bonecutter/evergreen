@@ -73,7 +73,16 @@ impl Engine {
         }
         let first = actual.first_mut().and_then(|(_, ty)| ty.take());
         let builtin = match name.as_str() {
-            "same_value" => Some(Type::Bool),
+            "same_value" | "same_representation" => Some(Type::Bool),
+            "transfer_type" => Some(Type::Unit),
+            "copy_representation" => {
+                return Ok(match first {
+                    Some(Type::Ref(inner)) => inner
+                        .representation_payload()
+                        .map(|ty| Type::Shape(Box::new(ty))),
+                    _ => None,
+                })
+            }
             "integer" => Some(Type::Int),
             "nat" | "owner_count" => Some(Type::Nat),
             "size_of" | "align_of" => Some(Type::Machine(self.target.integer("usize").unwrap())),
