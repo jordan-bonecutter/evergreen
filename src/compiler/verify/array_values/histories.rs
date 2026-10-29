@@ -108,6 +108,11 @@ impl Context<'_> {
         right: &Linear,
         depth: usize,
     ) -> Result<Option<Formula>> {
+        if key.0.as_ref().is_some_and(|value| value.whole)
+            || key.1.as_ref().is_some_and(|value| value.whole)
+        {
+            return self.whole_value_equality_body(key, left, right, depth);
+        }
         for (side, contents) in [&key.0, &key.1].into_iter().enumerate() {
             let Some(contents) = contents else { continue };
             let identity = &contents.identity;
@@ -176,5 +181,61 @@ impl Context<'_> {
             return Ok(Some(body));
         }
         Ok(None)
+    }
+    // A write changes exactly one logical element. At that index, leave the
+    // equality uninterpreted until a checked value-transfer recipe supplies it.
+    // Elsewhere, recurse into the immutable prior contents without reading cells.
+    fn whole_value_equality_body(
+        &mut self,
+        key: &Key,
+        left: &Linear,
+        right: &Linear,
+        depth: usize,
+    ) -> Result<Option<Formula>> {
+        let mut sides = [0, 1];
+        if let (Some(a), Some(b)) = (&key.0, &key.1) {
+            let mut ancestor = b.identity.clone();
+            for _ in 0..64 {
+                self.charge_value_work(1)?;
+                if ancestor == a.identity {
+                    sides = [1, 0];
+                    break;
+                }
+                let Some((parent, _)) = self.whole_store(&ancestor) else {
+                    break;
+                };
+                ancestor = parent;
+            }
+        }
+        for side in sides {
+            let Some(contents) = (if side == 0 { &key.0 } else { &key.1 }) else {
+                continue;
+            };
+            let Some((base, index)) = self.whole_store(&contents.identity) else {
+                continue;
+            };
+            self.charge_value_work(1 + index.terms.len())?;
+            let selected = if side == 0 { left } else { right };
+            let same = equal(selected, &index)?;
+            let recipe = self.declare_value_equality(key)?;
+            let changed = Formula::Predicate {
+                symbol: recipe.symbol,
+                arguments: vec![left.clone(), right.clone()],
+            };
+            let previous_key = if side == 0 {
+                (Some(contents.with_identity(base)), key.1.clone())
+            } else {
+                (key.0.clone(), Some(contents.with_identity(base)))
+            };
+            let previous = self.value_equality(&previous_key, left, right, depth + 1)?;
+            return Ok(Some(same.clone().and(changed).or(same.not().and(previous))));
+        }
+        Ok(None)
+    }
+    fn whole_store(&self, identity: &str) -> Option<(String, Linear)> {
+        match self.arrays.history.get(identity) {
+            Some(ArrayHistory::Store { base, index, .. }) => Some((base.clone(), index.clone())),
+            _ => self.arrays.whole_stores.get(identity).cloned(),
+        }
     }
 }

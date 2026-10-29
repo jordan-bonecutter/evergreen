@@ -13,6 +13,7 @@ impl Context<'_> {
         index: &Linear,
     ) -> Result<Option<Symbol>> {
         let contents = Contents {
+            whole: false,
             identity: identity.into(),
             fields: Vec::new(),
         };

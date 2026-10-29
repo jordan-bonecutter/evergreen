@@ -1028,7 +1028,11 @@ impl<'a> Context<'a> {
                 Some(ArrayHistory::Uninitialized(initial)) => Some(initial.clone()),
                 _ => None,
             };
+            let base = identity.clone();
             *identity = self.fresh_name();
+            self.arrays
+                .whole_stores
+                .insert(identity.clone(), (base, target.clone()));
             if let Some(initial) = empty {
                 self.charge_value_work(symbol_weight(&initial)?)?;
                 self.arrays

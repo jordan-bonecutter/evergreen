@@ -26,6 +26,7 @@ impl Observation<'_> {
             return Ok(None);
         }
         let suffix = Contents {
+            whole: false,
             identity: contents.identity.clone(),
             fields: contents.fields[self.fields.len()..].to_vec(),
         };

@@ -881,8 +881,9 @@ distinct sparse arrays still require a range relation not yet supported here.
 Observed unions compare matching active alternatives and their payloads.
 Inactive alternatives are not read; missing active observations are rejected.
 This also lets the single-slot relocation contract state that their destination preserves the
-source entry value after the source becomes a shape. Quantified union-array
-value comparisons remain unfinished. Shapes have no accessible payload value to compare:
+source entry value after the source becomes a shape. Quantified union-array comparisons now support immutable identity and unchanged
+regions around writes; transfer relations and ordinary element observations
+still need further integration. Shapes have no accessible payload value to compare:
 value equality between shapes says nothing about their representation bytes.
 Use `same_representation` for that separate claim.
 
@@ -899,3 +900,22 @@ Storage footprints can resolve addition and subtraction in indices, including
 not execute calls or allocate array elements. For machine arithmetic, every
 intermediate result must be provably within its type's bounds; otherwise the
 footprint stays incomplete instead of inventing an exact overflow result.
+
+## Sparse whole-value frames
+
+[`owning_array_frame.evg`](../examples/owning_array_frame.evg) proves that
+extracting the last owner leaves the earlier elements equal to their entry
+values. Quantified `same_value` compares whole logical elements using immutable
+array identities and indices. It does not materialize a bound cell, select an
+inactive union member, mint an owner, or authorize a runtime read.
+
+For a store, equality outside its index reduces to equality of the prior array
+version. Equality at the written index remains uninterpreted: a frame alone
+cannot prove that changed storage retained its value. Resource arrays keep a
+small write-frame record even when their type-selector history uses a uniform
+vacant default. The checker follows ancestry toward the shared version rather
+than depending on the spelling/order of generated identities.
+
+The example verifies with the same obligation count at capacities three and
+one billion; only the small case is executed. Its certificate replays without
+proof search, and extending its unchanged range over the extracted slot fails.

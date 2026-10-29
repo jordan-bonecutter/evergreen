@@ -24,6 +24,7 @@ fn number(n: i128) -> Symbol {
 
 fn contents(identity: &str, fields: &[&str]) -> Contents {
     Contents {
+        whole: false,
         identity: identity.into(),
         fields: fields.iter().map(|field| (*field).into()).collect(),
     }

@@ -124,6 +124,7 @@ impl Context<'_> {
             expression.line,
         )?;
         let contents = Contents {
+            whole: false,
             identity: identity.clone(),
             fields,
         };

@@ -7,6 +7,7 @@ use crate::compiler::kernel::terms::Id;
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(in crate::compiler::verify) struct Contents {
     pub(super) identity: String,
+    pub(super) whole: bool,
     pub(super) fields: Vec<String>,
 }
 
@@ -14,6 +15,7 @@ impl Contents {
     pub(super) fn with_identity(&self, identity: String) -> Self {
         Self {
             identity,
+            whole: self.whole,
             fields: self.fields.clone(),
         }
     }
@@ -31,8 +33,19 @@ impl Contents {
     }
 
     pub(super) fn term(&self, terms: &mut Terms, index: Id, work: &mut Work) -> Result<Id> {
-        let mut value =
-            terms.application(&format!("array_contents:{}", self.identity), &[index], work)?;
+        let mut value = terms.application(
+            &format!(
+                "{}:{}",
+                if self.whole {
+                    "array_values"
+                } else {
+                    "array_contents"
+                },
+                self.identity
+            ),
+            &[index],
+            work,
+        )?;
         for field in &self.fields {
             value = terms.application(&format!("record_field:{field}"), &[value], work)?;
         }

@@ -1,0 +1,33 @@
+fn preserve(
+    capacity: usize,
+    data: &[unique(usize) | shape(unique(usize)); capacity],
+    length: usize
+)
+    where
+        0 < length &&
+        length <= capacity &&
+        arrays::initialized_prefix::<unique(usize)>(data, integer::from(length))
+    modifies(&(*data)[length - 1])
+{
+    let value: unique(usize) = move((*data)[length - 1]);
+    proof untouched:
+        forall(i: integer)
+        where (
+            0 <= i &&
+            i < integer::from(length) - 1 &&
+            i < integer::from(capacity)
+        ) {same_value((*data)[i], old(*data)[i])} by {
+            intro i;
+            omega
+        };
+}
+fn main() -> usize {
+    let data: unique(unique(usize) | shape(unique(usize)), 3) = alloc(3, shape(unique(usize)));
+    (*data)[0] = alloc(42);
+    (*data)[1] = alloc(7);
+    preserve(3, &*data, 2);
+    let first: unique(usize) = move((*data)[0]);
+    let empty: unique(shape(unique(usize)), 3) = data;
+    drop(empty);
+    *first
+}

@@ -106,8 +106,11 @@ impl Context<'_> {
                 else {
                     return Err("same_value indexed operands require array storage".into());
                 };
-                if !self.history_element(&element) {
-                    return Err("same_value indexed operands require initialized scalar or reference-free record elements without cleanup".into());
+                let whole = !self.history_element(&element);
+                if whole && !fields.is_empty() {
+                    return Err(
+                        "indexed owning value equality currently compares whole elements".into(),
+                    );
                 }
                 let ty = self.scalar_projection_type(*element, &fields, expression.line)?;
                 self.defer_quantified_check(
@@ -118,7 +121,11 @@ impl Context<'_> {
                 )?;
                 return Ok(Value::Indexed {
                     ty,
-                    contents: Contents { identity, fields },
+                    contents: Contents {
+                        identity,
+                        fields,
+                        whole,
+                    },
                     index,
                 });
             }
@@ -141,6 +148,23 @@ impl Context<'_> {
         }
         if depth >= 64 {
             return Err("value equality projection depth limit reached".into());
+        }
+        if let (
+            Value::Indexed {
+                contents: left,
+                index: a,
+                ..
+            },
+            Value::Indexed {
+                contents: right,
+                index: b,
+                ..
+            },
+        ) = (a, b)
+        {
+            if left.whole && right.whole {
+                return self.value_equality(&(Some(left.clone()), Some(right.clone())), a, b, 0);
+            }
         }
         match a.ty() {
             Ty::Unit => Ok(Formula::True),

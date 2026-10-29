@@ -146,3 +146,21 @@ fn union_value_equality_compares_only_matching_live_payloads() {
         assert!(verify(bad).is_err(), "accepted {bad}");
     }
 }
+
+#[test]
+fn owning_array_frames_remain_sparse_and_do_not_preserve_the_changed_slot() {
+    let source = include_str!("../../../../../examples/owning_array_frame.evg");
+    let (program, certificate) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &certificate)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let huge = source.replace('3', "1000000000");
+    assert_eq!(verify(&huge).unwrap().obligations, program.obligations);
+    let changed = source.replace("i < integer::from(length) - 1", "i < integer::from(length)");
+    assert!(verify(&changed).is_err());
+}

@@ -24,6 +24,7 @@ impl Context<'_> {
         }
         for (fields, value) in self.scalar_leaves(value)? {
             let contents = Contents {
+                whole: false,
                 identity: identity.into(),
                 fields,
             };

@@ -137,6 +137,7 @@ fn observation_work_depends_on_mentioned_fields_not_record_width() {
         let mut session = Session::search();
         let mut ctx = Context::new(declarations, &mut session);
         let projection = Contents {
+            whole: false,
             identity: "input".into(),
             fields: vec!["chosen".into()],
         };
