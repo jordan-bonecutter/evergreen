@@ -87,6 +87,17 @@ fn runtime_safety_dependencies_flow_through_calls() {
 }
 
 #[test]
+fn isolated_heap_summaries_preserve_trusted_contract_dependencies() {
+    let source = "fn local() -> usize ensures result == 42 {let data: unique(usize) = alloc(43); *data} proof {trustme} fn needs(n: usize) where n == 42 {} fn main() {needs(local());}";
+    let (program, bundle) = prove(source).unwrap();
+    assert!(safety(&program, "local").is_empty());
+    assert_eq!(safety(&program, "main"), ["postcondition of local"]);
+    let replay = verify_with_certificate(source, &bundle).unwrap();
+    assert_eq!(replay.proof_search_count(), 0);
+    assert_eq!(safety(&replay, "main"), safety(&program, "main"));
+}
+
+#[test]
 fn binding_a_trusted_call_result_does_not_preserve_it_across_a_write() {
     let prefix = "fn trusted() -> usize ensures result == 42 {43} proof {trustme} fn needs(value: usize) where value == 42 {}";
     let good = format!("{prefix} fn main() {{let x = trusted(); needs(x);}}");

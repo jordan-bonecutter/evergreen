@@ -1,0 +1,18 @@
+fn work() -> usize
+    ensures
+        result == 42
+{
+    let values = vec::Vec::new(4);
+    values.push(7);
+    values.push(42);
+    values = values.reallocate(8);
+    let answer = values.pop();
+    proof preserved: answer == 42;
+    answer
+}
+fn main() -> usize {
+    let first = work();
+    let second = work();
+    proof same: first == second;
+    second
+}

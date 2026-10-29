@@ -76,6 +76,9 @@ header's allocation authority.
   destructors, growth, borrowed and moved value proofs, and cleanup exactly once.
 - [`buffer_release.evg`](../examples/buffer_release.evg): zero capacity, allocation,
   push/pop, and direct release of proven-empty storage.
+- [`vec_local_storage.evg`](../examples/vec_local_storage.evg): a helper with a
+  local Vec and a scalar contract, called repeatedly without replaying its heap
+  implementation. No references or owners cross that helper's boundary.
 
 The former Copy-only `filled` and `reallocate_filled` APIs are removed. Use `new`
 and initialize live elements explicitly. `into_data` is replaced by

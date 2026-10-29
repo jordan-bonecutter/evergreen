@@ -98,3 +98,15 @@ fn actual_reads_respect_branch_guards_and_do_not_export_inner_call_results() {
             proof _: forall(i: integer) where(0 <= i && i < 4) {i < integer(observed)} by {intro i; omega};}";
     assert!(verify(unrelated).is_err());
 }
+
+#[test]
+fn isolated_heap_computations_use_checked_contracts_without_replaying_allocations() {
+    let source = include_str!("../../../../examples/vec_local_storage.evg");
+    replay(source, "42");
+    // A caller receives the advertised contract, not the local body's concrete
+    // result. Removing the promise cannot leave the result known to be 42.
+    let unpromised = source.replace_evg("ensures result == 42", "");
+    assert!(verify(&unpromised).is_err());
+    let false_promise = source.replace_evg("ensures result == 42", "ensures result == 43");
+    assert!(verify(&false_promise).is_err());
+}

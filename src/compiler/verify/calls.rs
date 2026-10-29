@@ -527,7 +527,16 @@ impl<'a> Context<'a> {
                 return Err(format!("line {}: call to {name} writes through a parameter without a matching modifies contract", line));
             }
         }
-        let heap_call = heap::function_uses_planes(f, self.declarations.structs);
+        // Local allocations cannot touch caller storage when no reference or
+        // owner crosses the function boundary. Declaration checking already
+        // verifies that local heap's lifetime and cleanup; import its checked
+        // safety/contract summary just like any other isolated computation.
+        let storage_crosses_boundary = type_has_reference(&f.ret, self.declarations.structs)
+            || f.params
+                .iter()
+                .any(|(_, ty)| type_has_reference(ty, self.declarations.structs));
+        let heap_call =
+            storage_crosses_boundary && heap::function_uses_planes(f, self.declarations.structs);
         // Raw union transitions transfer real payloads. Recheck their bodies
         // rather than replacing the target with an unrelated arbitrary member.
         let union_write = writes.iter().any(|write| matches!(*write.ty, Ty::Union(_)));
