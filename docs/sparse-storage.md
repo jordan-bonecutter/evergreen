@@ -160,7 +160,8 @@ this example's range refers to the actual backing plane.
 initialized slot: decompose the parent, extract the payload, free the empty
 buffer, and let the payload's own cleanup run once. Before decomposition the
 parent still requires the slot to be initialized, so projected moves are rejected.
-General prefix cleanup in Drop bodies still needs resource loop frames.
+Prefix cleanup now has a resource loop frame for payloads containing ordinary
+values and unique ownership; borrowed links and shared owners remain excluded.
 
 [`range_empty.evg`](../examples/range_empty.evg) uses the source library's
 `arrays::release_empty::<T>(buffer)`. Capacity is inferred from the pointer type.
@@ -185,8 +186,29 @@ The same rules work with negative type tests and remain sparse at a billion
 slots. Resource reads through successive input versions reuse the original
 cell identities with checked index equality or separation.
 
-Resource range loop frames, conditional input-cell identities, and cleanup of
-a dynamically initialized prefix remain unfinished. The general
-move-only Vec still needs those rules. Sparse resource arrays currently separate
+[`range_drain.evg`](../examples/range_drain.evg) consumes a dynamically sized
+initialized prefix. Its loop invariant describes the live prefix and vacant
+suffix, each iteration extracts and drops the last member, and an explicit exit
+proof establishes the full empty range before releasing the buffer. This works
+with unique pointers and records containing unique pointers, including nominal
+destructors. Runtime capacity parameters also verify. The billion-slot check
+uses the same obligation and certificate counts without allocating that buffer.
+
+A resource frame requires ownership of its backing array and matching
+`T | shape(T)` elements. The checker abstracts payload allocations at loop entry;
+old payload references cannot be reused after that abstraction. It preserves the
+backing allocation and checks one arbitrary iteration, including local cleanup.
+Only payload allocations reached through the declared resource family may be
+consumed. Unrelated owners, backing allocations, and unframed writes remain
+protected. Deferred input allocations inherit this protection even if their
+first observation occurs inside an iteration; observing an input is not a new
+runtime allocation. Nested frames must both authorize a write.
+The frontend checks the ownership abstraction; the kernel checks the invariant
+proofs, rather than a complete formalization of the memory model.
+
+This does not yet cover borrowed or shared payloads, recursive payload types,
+borrowed backing arrays, or explicit preservation of old payload identities.
+Conditional input-cell identities and integration into the general move-only Vec
+remain unfinished. Sparse resource arrays currently separate
 incompatible branch states rather than merging them into a universal range
 summary. Proof and case work remain bounded by the bootstrap's general budgets.

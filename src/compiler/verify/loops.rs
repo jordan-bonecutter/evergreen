@@ -6,12 +6,16 @@
 use super::*;
 
 mod head;
+mod input_planes;
+mod resources;
 use head::Head;
 
 #[cfg(test)]
 mod copy_tests;
 #[cfg(test)]
 mod fill_tests;
+#[cfg(test)]
+mod resource_tests;
 #[cfg(test)]
 mod termination_tests;
 #[cfg(test)]
@@ -30,6 +34,8 @@ pub(super) struct Loop<'a> {
 pub(super) struct Frame {
     protected: BTreeSet<PlaneId>,
     writes: Vec<(PlaneId, Vec<Projection<Linear>>)>,
+    input_arrays: BTreeSet<String>,
+    resource_arrays: BTreeSet<String>,
     line: usize,
 }
 
@@ -128,9 +134,24 @@ impl Context<'_> {
         for target in &targets {
             let plane = self.storage.memory.plane(target.reference)?;
             let old = project(self.storage.memory.read(target.reference)?, &target.path)?.clone();
+            let resource = self.resource_loop_array(&target.ty)?;
+            if resource {
+                // Old payload identities cannot survive arbitrary iteration.
+                // This abstracts ownership; it executes no source destructor.
+                for child in self.loop_owned_payloads(&old)?.planes {
+                    self.take_symbol(child)?;
+                }
+            }
             let mut new = self.arbitrary(&target.ty)?;
-            self.preserve_views(&old, &mut new)?;
-            if !self.same_layout(&old, &new)? {
+            if !resource {
+                self.preserve_views(&old, &mut new)?;
+            }
+            let same_layout = if resource {
+                old.ty() == new.ty()
+            } else {
+                self.same_layout(&old, &new)?
+            };
+            if !same_layout {
                 return Err(format!(
                     "line {line}: loop frames must preserve storage layouts"
                 ));
@@ -197,7 +218,7 @@ impl Context<'_> {
             .into_iter()
             .filter_map(|(plane, _, value)| value.is_some().then_some(plane))
             .collect();
-        let writes = targets
+        let mut writes = targets
             .iter()
             .map(|target| {
                 Ok((
@@ -206,9 +227,24 @@ impl Context<'_> {
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
+        let mut consumable = BTreeSet::new();
+        let mut resource_arrays = BTreeSet::new();
+        for target in targets {
+            if self.resource_loop_array(&target.ty)? {
+                let value =
+                    project(self.storage.memory.read(target.reference)?, &target.path)?.clone();
+                let payloads = self.loop_owned_payloads(&value)?;
+                consumable.extend(payloads.planes);
+                resource_arrays.extend(payloads.arrays);
+            }
+        }
+        writes.extend(consumable.iter().map(|&plane| (plane, Vec::new())));
+        self.charge_value_work(self.arrays.inputs.len())?;
         self.storage.loops.push(Frame {
             protected,
             writes,
+            input_arrays: self.arrays.inputs.clone(),
+            resource_arrays,
             line,
         });
         let checked = (|| {
@@ -241,7 +277,7 @@ impl Context<'_> {
                 }
             }
             self.charge_value_work(store_weight(&self.storage.memory)?)?;
-            saved.check_generations(&self.storage.memory, line)?;
+            saved.check_generations(&self.storage.memory, &consumable, line)?;
             let subjects = self.claim_subjects(invariant)?;
             let step = self.proposition(invariant)?;
             self.prove_subjects(
@@ -343,11 +379,13 @@ impl Context<'_> {
                 ));
             };
             let allowed = match ty.as_ref() {
-                Ty::Array(element, _) => self.history_element(element),
+                Ty::Array(element, _) => {
+                    self.history_element(element) || self.resource_loop_array(&ty)?
+                }
                 ty => self.scalar_field_value(ty) && !self.has_runtime_cleanup(ty),
             };
             if !allowed {
-                return Err(format!("line {line}: loop frames currently support scalar contents, scalar records, and arrays of scalar records; reference or ownership replacement needs a shape invariant"));
+                return Err(format!("line {line}: loop frames support scalar storage and owned arrays of T | shape(T); borrowed or shared payloads and standalone owner replacement are not yet supported"));
             }
             let plane = self.storage.memory.plane(reference)?;
             for target in &targets {
@@ -358,6 +396,11 @@ impl Context<'_> {
                 }
             }
             let owned = self.owns_plane(plane)?;
+            if self.resource_loop_array(&ty)? && !owned {
+                return Err(format!(
+                    "line {line}: resource loop frames require ownership of the backing array"
+                ));
+            }
             if !self.write_permitted(reference, &path, owned)? {
                 return Err(format!(
                     "line {line}: loop modifies exceeds the function's write permissions"

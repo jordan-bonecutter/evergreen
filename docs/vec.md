@@ -93,7 +93,10 @@ ranges. These are general source-level storage operations; the existing Vec
 implementation has not yet switched to that representation.
 [range_drop.evg](../examples/range_drop.evg) provides source cleanup for one
 initialized owning slot. Destructor loops now use the ordinary loop checker,
-but iterating over a changing family of owners still needs a resource frame.
+and iterating over a changing family of unique owners now has a resource frame
+in [`range_drain.evg`](../examples/range_drain.evg). It proves a shrinking
+initialized prefix and runs each payload destructor once. Shared and borrowed
+payloads still need additional frame rules, and Vec has not adopted this storage.
 The final buffer-release step now accepts a checked full-range shape proof,
 through `arrays::release_empty::<T>(buffer)`; it does not need to observe every
 vacant slot. [`range_empty.evg`](../examples/range_empty.evg) demonstrates this

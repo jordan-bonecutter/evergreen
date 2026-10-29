@@ -51,10 +51,16 @@ impl Head {
         })
     }
 
-    pub(super) fn check_generations(&self, memory: &Memory<Symbol>, line: usize) -> Result<()> {
+    pub(super) fn check_generations(
+        &self,
+        memory: &Memory<Symbol>,
+        consumable: &BTreeSet<PlaneId>,
+        line: usize,
+    ) -> Result<()> {
         let after = memory.states();
         for (index, (plane, generation, old)) in self.memory.states().into_iter().enumerate() {
             if old.is_some()
+                && !consumable.contains(&plane)
                 && after.get(index).is_none_or(|(id, current, value)| {
                     *id != plane || *current != generation || value.is_none()
                 })

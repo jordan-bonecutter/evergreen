@@ -149,7 +149,7 @@ fn destructor_loops_cannot_consume_surrounding_owners_without_a_resource_frame()
     );
     let fake_frame = source.replace_evg("modifies(&cursor)", "modifies(&cursor, &data)");
     let error = verify(&fake_frame).unwrap_err();
-    assert!(error.contains("shape invariant"), "{error}");
+    assert!(error.contains("standalone owner replacement"), "{error}");
 }
 
 #[test]

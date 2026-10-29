@@ -247,6 +247,7 @@ impl Context<'_> {
             .cloned()
         {
             self.materialize_input_planes()?;
+            self.register_loop_input_port(identity, &value)?;
             self.assume_input_bounds(&value)?;
             return Ok(value);
         }
@@ -261,6 +262,7 @@ impl Context<'_> {
         for (plane, initial) in self.storage.memory.materialized_since(checkpoint) {
             self.arrays.initial_planes.insert(plane, initial.clone());
         }
+        self.register_loop_input_port(identity, &value)?;
         self.arrays
             .ports
             .entry(identity.to_owned())
