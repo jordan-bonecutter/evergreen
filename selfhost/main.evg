@@ -1,24 +1,94 @@
 import lexer;
 
-// "let x = 42;". This entry point is a bootstrap smoke test, not a compiler yet.
+fn expected(index: usize, kind: u8, end: usize) -> bool {
+    match index {
+        0 => kind == 1 && end == 1,
+        1 => kind == 3 && end == 3,
+        2 => kind == 1 && end == 4,
+        3 => kind == 4 && end == 5,
+        4 => kind == 3 && end == 7,
+        5 => kind == 4 && end == 8,
+        6 => kind == 1 && end == 9,
+        7 => kind == 4 && end == 10,
+        8 => kind == 3 && end == 13,
+        9 => kind == 4 && end == 14,
+        10 => kind == 1 && end == 15,
+        11 => kind == 4 && end == 16,
+        12 => kind == 3 && end == 18,
+        13 => kind == 4 && end == 19,
+        14 => kind == 3 && end == 21,
+        15 => kind == 4 && end == 22,
+        16 => kind == 3 && end == 24,
+        17 => kind == 4 && end == 25,
+        18 => kind == 3 && end == 27,
+        19 => kind == 4 && end == 28,
+        20 => kind == 3 && end == 30,
+        21 => kind == 4 && end == 31,
+        22 => kind == 3 && end == 33,
+        23 => kind == 4 && end == 34,
+        24 => kind == 3 && end == 36,
+        25 => kind == 4 && end == 37,
+        26 => kind == 3 && end == 38,
+        _ => false,
+    }
+}
+
+// "a::b => c <=> d <= >= == != && || -> <". This entry point is a bootstrap smoke test, not a compiler yet.
 fn main() -> usize {
-    let source: [u8; 11] = [108, 101, 116, 32, 120, 32, 61, 32, 52, 50, 59];
-    let kinds: [u8; 8] = [1, 4, 1, 4, 3, 4, 2, 3];
-    let ends: [usize; 8] = [3, 4, 5, 6, 7, 8, 10, 11];
+    let source: [u8; 38] = [
+        97,
+        58,
+        58,
+        98,
+        32,
+        61,
+        62,
+        32,
+        99,
+        32,
+        60,
+        61,
+        62,
+        32,
+        100,
+        32,
+        60,
+        61,
+        32,
+        62,
+        61,
+        32,
+        61,
+        61,
+        32,
+        33,
+        61,
+        32,
+        38,
+        38,
+        32,
+        124,
+        124,
+        32,
+        45,
+        62,
+        32,
+        60
+    ];
     let valid = true;
     let position: usize = 0;
     let count: usize = 0;
-    while position < 11
+    while position < 38
         invariant
             count <= position &&
-            position <= 11
+            position <= 38
         modifies(&position, &count, &valid)
-        decreases(11 - position)
+        decreases(38 - position)
     {
-        let token = lexer::next(11, &source, position);
-        valid = if count < 8 {valid && token.kind == kinds[count] && token.end == ends[count]} else {false};
+        let token = lexer::next(38, &source, position);
+        valid = valid && expected(count, token.kind, token.end);
         count = count + 1;
         position = token.end;
     }
-    if valid && count == 8 {42} else {1}
+    if valid && count == 27 {42} else {1}
 }

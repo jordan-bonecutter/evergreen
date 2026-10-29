@@ -35,6 +35,53 @@ fn continues(kind: u8, byte: u8) -> bool {
     }
 }
 
+fn operator_pair(first: u8, second: u8) -> bool {
+    match first {
+        45 => second == 62, // ->
+        60 => second == 61, // <=
+        62 => second == 61, // >=
+        61 => second == 61 || second == 62, // == or =>
+        33 => second == 61, // !=
+        38 => second == 38, // &&
+        124 => second == 124, // ||
+        58 => second == 58, // ::
+        _ => false,
+    }
+}
+
+fn punctuation_pair_end(
+    length: usize,
+    source: &[u8; length],
+    position: usize
+) -> usize
+    where
+        position < length
+    ensures
+        position < result &&
+        result <= length
+{
+    if length - position >= 2 {
+        if operator_pair((*source)[position], (*source)[position + 1]) {position + 2} else {position + 1}
+    } else {position + 1}
+}
+
+fn punctuation_end(
+    length: usize,
+    source: &[u8; length],
+    position: usize
+) -> usize
+    where
+        position < length
+    ensures
+        position < result &&
+        result <= length
+{
+    // Match <=> before <=. Establish the bound before evaluating lookahead.
+    if length - position >= 3 {
+        if (*source)[position] == 60 && (*source)[position + 1] == 61 && (*source)[position + 2] == 62 {position + 3} else {punctuation_pair_end(length, source, position)}
+    } else {punctuation_pair_end(length, source, position)}
+}
+
 // Every non-EOF result makes progress. Array accesses are statically bounded;
 // unsupported bytes produce a one-byte error token rather than being skipped.
 fn next(
@@ -65,7 +112,7 @@ fn next(
                 }
             }
         };
-        let end = position + 1;
+        let end = if kind == 3 {punctuation_end(length, source, position)} else {position + 1};
         let scanning = true;
         while end < length && scanning
             invariant
