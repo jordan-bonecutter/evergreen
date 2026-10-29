@@ -336,7 +336,17 @@ impl Emitter<'_> {
                 self.store(&ty)?;
                 self.slots.insert(name.clone(), Slot { offset, ty });
             }
-            Statement::Assign { target, value } => {
+            Statement::Assign {
+                target,
+                value,
+                starts,
+            } => {
+                if !starts.is_empty() {
+                    return Err(
+                        "WebAssembly target does not yet support assignment ownership starts"
+                            .into(),
+                    );
+                }
                 let ty = self.address(target)?;
                 self.expr(value, Some(&ty))?;
                 self.store(&ty)?;

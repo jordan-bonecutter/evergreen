@@ -6,6 +6,18 @@ import { runProgram, MAX_OUTPUT } from '../public/runtime.js';
 
 const compiler = await WebAssembly.compile(await readFile(new URL('../dist/evergreen-compiler.wasm', import.meta.url)));
 
+test('the three core idea snippets verify and compile as displayed', async () => {
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const snippets = [...html.matchAll(/<code data-example="([^"]+)">([\s\S]*?)<\/code>/g)];
+  assert.equal(snippets.length, 3);
+  for (const [, name, encoded] of snippets) {
+    const code = encoded.replaceAll('&gt;', '>').replaceAll('&lt;', '<').replaceAll('&amp;', '&');
+    const source = name === 'contracts' ? `${code} fn main() {}` : `fn main() {${code}}`;
+    const { metadata } = await compile(source);
+    assert.equal(metadata.ok, true, `${name}: ${JSON.stringify(metadata)}`);
+  }
+});
+
 async function compile(source) {
   const { exports } = await WebAssembly.instantiate(compiler, {});
   const bytes = new TextEncoder().encode(source);
