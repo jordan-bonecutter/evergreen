@@ -131,6 +131,11 @@ impl Context<'_> {
 
     fn same_proposition(&mut self, a: &Formula, b: &Formula) -> Result<bool> {
         self.charge_value_work(symbol_weight(&Symbol::Bool(a.clone()))?)?;
+        // Identical syntax needs no normalization or second formula copy.
+        // State/admission checks still run in witness_matches after this test.
+        if a == b {
+            return Ok(true);
+        }
         self.charge_value_work(symbol_weight(&Symbol::Bool(b.clone()))?)?;
         Ok(a.normalized().alpha_equal(&b.normalized()))
     }
