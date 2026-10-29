@@ -1,0 +1,66 @@
+// The flag and raw-union storage are ordinary source-defined data.
+module option;
+
+type Option<T> struct {data: T | shape(T), ok: bool} where self.ok <=> typeof(self.data) == T;
+
+impl<T> Drop for Option<T> {
+    fn drop({data, ok}) {
+        if ok {
+            let value: T = data;
+            drop(value);
+        } else {
+            let vacant: shape(T) = data;
+        }
+    }
+}
+
+impl<T> Option<T> {
+    fn some(value: T) -> Self
+        ensures
+            result.ok
+    {
+        Self {data: value, ok: true}
+    }
+
+    fn none() -> Self
+        ensures
+            !result.ok
+    {
+        Self {data: shape(T), ok: false}
+    }
+
+    method& is_some() -> bool
+        ensures
+            result == self.ok
+    {
+        self.ok
+    }
+
+    method& get() -> &T
+        where
+            self.ok
+        borrows(&self.data)
+    {
+        &self.data
+    }
+
+    method unwrap() -> T
+        where
+            self.ok
+    {
+        let Self {data, ok} = self;
+        let value: T = data;
+        value
+    }
+
+    method unwrap_or(fallback: T) -> T {
+        let Self {data, ok} = self;
+        if ok {
+            let value: T = data;
+            value
+        } else {
+            let vacant: shape(T) = data;
+            fallback
+        }
+    }
+}

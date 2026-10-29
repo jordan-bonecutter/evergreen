@@ -1,0 +1,16 @@
+fn main() -> usize {
+    let unused = option::Option::<unique(usize)>::some(alloc(0));
+    drop(unused);
+    let vacant = option::Option::<unique(usize)>::none();
+    drop(vacant);
+    let empty = option::Option::<unique(usize)>::none();
+    let first = empty.unwrap_or(alloc(7));
+    drop(first);
+    let full = option::Option::<unique(usize)>::some(alloc(42));
+    proof populated: full.is_some();
+    let seen = **full.get();
+    let owner = full.unwrap();
+    let answer = *owner;
+    proof same_value: seen == answer;
+    answer
+}

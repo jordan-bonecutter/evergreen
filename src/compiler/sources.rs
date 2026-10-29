@@ -60,6 +60,12 @@ const LIBRARIES: &[Library] = &[
         source: include_str!("../../stdlib/utf8/utf8.evg"),
     },
     Library {
+        module: Some("option"),
+        exports: &[],
+        path: "stdlib/option/option.evg",
+        source: include_str!("../../stdlib/option/option.evg"),
+    },
+    Library {
         module: Some("vec"),
         exports: &[],
         path: "stdlib/vec/vec.evg",

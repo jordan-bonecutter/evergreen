@@ -198,3 +198,13 @@ fn reference_type_proofs_do_not_resurrect_planes_or_reinterpret_references() {
     let wrong_type = format!("{declarations} fn main() -> usize {{let pair = Pair::<bool> {{value: true}}; let view = &pair; proof lie: typeof(view) == &Pair<usize> by {{trustme}}; read(view)}}");
     assert!(verify(&wrong_type).unwrap_err().contains("type mismatch"));
 }
+
+#[test]
+fn source_option_moves_owned_payloads_and_requires_presence() {
+    let source = include_str!("../../../examples/option.evg");
+    assert_eq!(verify(source).unwrap().run().unwrap().to_string(), "42");
+    assert!(verify(
+        "fn main() -> usize {let empty = option::Option::<usize>::none(); empty.unwrap()}"
+    )
+    .is_err());
+}
