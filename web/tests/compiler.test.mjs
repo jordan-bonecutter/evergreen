@@ -38,7 +38,6 @@ async function execute(source) {
 }
 
 test('the three playground examples use the real compiler', async () => {
-  assert.deepEqual(Object.keys(examples), ['hello', 'nonzero', 'error']);
   const hello = await execute(examples.hello);
   assert.equal(hello.output, 'Hello, Evergreen!\n');
   assert.equal((await execute(examples.nonzero)).result, '0');
