@@ -35,6 +35,8 @@ pub(super) struct LogicalBinding {
 
 #[derive(Default)]
 pub(super) struct ProofState {
+    // Immutable normalization results, not proofs or state-dependent truth.
+    pub(super) normal_forms: BTreeMap<Formula, std::sync::Arc<Formula>>,
     // Closed arithmetic theorems proved solely from their own quantified domains.
     pub(super) definedness: BTreeMap<Formula, evidence::NodeId>,
     pub(super) representations: BTreeMap<subjects::Stamp, Linear>,

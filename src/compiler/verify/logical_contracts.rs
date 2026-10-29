@@ -33,6 +33,20 @@ fn predicates(formula: &Formula) -> BTreeSet<&str> {
 }
 
 impl Context<'_> {
+    fn normalized_formula(&mut self, formula: &Formula) -> Result<std::sync::Arc<Formula>> {
+        if let Some(normalized) = self.proof.normal_forms.get(formula).cloned() {
+            self.charge_value_work(1)?;
+            return Ok(normalized);
+        }
+        self.charge_value_work(formula.storage_weight()?)?;
+        let normalized = std::sync::Arc::new(formula.normalized());
+        self.charge_value_work(normalized.storage_weight()?)?;
+        self.proof
+            .normal_forms
+            .insert(formula.clone(), normalized.clone());
+        Ok(normalized)
+    }
+
     pub(super) fn guarded_claim_evidence(
         &mut self,
         node: evidence::NodeId,
@@ -122,8 +136,7 @@ impl Context<'_> {
         goal: &Formula,
         subjects: Option<&subjects::Snapshot>,
     ) -> Result<Option<evidence::NodeId>> {
-        self.charge_value_work(goal.storage_weight()?)?;
-        let normalized = goal.normalized();
+        let normalized = self.normalized_formula(goal)?;
         let selectors = predicates(&normalized);
         let witnesses = self.proof.witnesses.values().copied().collect::<Vec<_>>();
         self.charge_value_work(witnesses.len())?;
