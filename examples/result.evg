@@ -1,0 +1,13 @@
+fn main() -> usize {
+    let success = results::Result::<usize, usize>::ok(42);
+    proof succeeded: success.is_ok();
+    proof stored: *success.get() == 42;
+    let value = success.unwrap();
+    proof preserved: value == 42;
+    let failure = results::Result::<usize, usize>::err(7);
+    proof failed: failure.is_err();
+    proof error_stored: *failure.get_err() == 7;
+    let code = failure.unwrap_err();
+    proof error_preserved: code == 7;
+    if value == 42 && code == 7 {42} else {1}
+}

@@ -1,0 +1,104 @@
+module results;
+
+// Explicit occupancy keeps both variants valid even when T and E coincide.
+// Pattern representations can later supply a compact, overlapping layout.
+opaque type Result<T, E> struct {value: T | shape(T), error: E | shape(E), ok: bool} where (
+    (self.ok <=> typeof(self.value) == T) &&
+    (!self.ok <=> typeof(self.error) == E)
+);
+
+impl<T, E> Drop for Result<T, E> {
+    fn drop({value, error, ok}) {
+        if ok {
+            let live: T = value;
+            let vacant: shape(E) = error;
+            drop(live);
+        } else {
+            let vacant: shape(T) = value;
+            let live: E = error;
+            drop(live);
+        }
+    }
+}
+
+impl<T, E> Result<T, E> {
+    fn ok(value: T) -> Self
+        ensures
+            if result.ok {same_value(*result.get(), value)} else {false}
+    {
+        Self {value: value, error: shape(E), ok: true}
+    }
+
+    fn err(error: E) -> Self
+        ensures
+            if result.ok {false} else {same_value(*result.get_err(), error)}
+    {
+        Self {value: shape(T), error: error, ok: false}
+    }
+
+    method& is_ok() -> bool
+        ensures
+            result == self.ok
+    {
+        self.ok
+    }
+    method& is_err() -> bool
+        ensures
+            result == !self.ok
+    {
+        !self.ok
+    }
+
+    method& get() -> &T
+        where
+            self.ok
+        borrows(&self.value)
+    {
+        &self.value
+    }
+    method& get_err() -> &E
+        where
+            !self.ok
+        borrows(&self.error)
+    {
+        &self.error
+    }
+
+    method unwrap() -> T
+        where
+            self.ok
+        ensures
+            same_value(result, old(self.value))
+    {
+        let Self {value, error, ok} = self;
+        let live: T = value;
+        let vacant: shape(E) = error;
+        live
+    }
+
+    method unwrap_err() -> E
+        where
+            !self.ok
+        ensures
+            same_value(result, old(self.error))
+    {
+        let Self {value, error, ok} = self;
+        let vacant: shape(T) = value;
+        let live: E = error;
+        live
+    }
+
+    method unwrap_or(fallback: T) -> T {
+        let Self {value, error, ok} = self;
+        if ok {
+            let live: T = value;
+            let vacant: shape(E) = error;
+            live
+        } else {
+            let vacant: shape(T) = value;
+            let live: E = error;
+            drop(live);
+            fallback
+        }
+    }
+}

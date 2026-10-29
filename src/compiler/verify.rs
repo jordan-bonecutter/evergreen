@@ -55,6 +55,8 @@ mod parameters;
 mod paths;
 mod places;
 #[cfg(test)]
+mod result_tests;
+#[cfg(test)]
 mod selfhost_tests;
 use paths::{extend, extend_from};
 mod program;

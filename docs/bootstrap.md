@@ -2789,3 +2789,20 @@ The source UTF-8 validator also benefits from demand-driven reads: a known inval
 leading byte proves rejection without importing an unknown tail, even for a
 billion-byte input. A known ASCII first byte does not prove anything about that
 tail's validity. The tests check both sides of this distinction.
+
+### Source-defined Result
+
+`results::Result<T, E>` is automatically loaded from
+`stdlib/results/results.evg`. It provides `ok`, `err`, `is_ok`, `is_err`, `get`,
+`get_err`, `unwrap`, `unwrap_err`, and `unwrap_or`. Unwrapping requires a proof
+of the appropriate variant; constructors and unwrap operations preserve the
+payload value in their contracts. Borrowed accessors retain the actual field's
+plane, and consuming the result invalidates views into its header.
+
+This initial representation uses two shaped slots and a Boolean invariant:
+exactly one payload is initialized. It works when `T` and `E` coincide and drops
+only the live payload. It is not yet the compact overlapping representation
+planned for pattern kinds. No Result-specific checker or runtime operation is
+introduced. `examples/result.evg` demonstrates value proofs for both variants.
+Nested early return and the `?` propagation operator remain separate pending
+control-flow work.
