@@ -219,6 +219,30 @@ impl Context<'_> {
                 ancestor = parent;
             }
         }
+        // A loop frame can relate an abstract entry version to an older
+        // concrete array. Prefer unfolding toward that already-described
+        // relation instead of expanding the concrete array's earlier stores.
+        for side in sides {
+            self.charge_value_work(1)?;
+            let Some(contents) = (if side == 0 { &key.0 } else { &key.1 }) else {
+                continue;
+            };
+            let Some((base, _)) = self.whole_store(&contents.identity) else {
+                continue;
+            };
+            let mut previous = if side == 0 {
+                (Some(contents.with_identity(base)), key.1.clone())
+            } else {
+                (key.0.clone(), Some(contents.with_identity(base)))
+            };
+            if previous.0 > previous.1 {
+                previous = (previous.1, previous.0);
+            }
+            if self.arrays.value_equalities.contains_key(&previous) {
+                sides = [side, 1 - side];
+                break;
+            }
+        }
         for side in sides {
             let Some(contents) = (if side == 0 { &key.0 } else { &key.1 }) else {
                 continue;

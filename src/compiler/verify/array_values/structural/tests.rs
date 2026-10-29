@@ -211,3 +211,21 @@ fn owning_buffer_growth_exposes_reference_free_payload_values() {
     let error = verify(&wrong).unwrap_err();
     assert!(error.contains("cannot prove proof preserved"), "{error}");
 }
+
+#[test]
+fn relocation_frames_reuse_abstract_entry_relations_to_previously_stored_arrays() {
+    let source = "fn main() -> usize {let data: unique(bool | shape(bool), 2) = alloc(2, shape(bool)); (*data)[0] = true; let grown = arrays::relocate_prefix::<bool>(2, data, 1, 4); let view: &bool = &(*grown)[0]; let value = *view; arrays::drain_prefix::<bool>(4, grown, 1); proof preserved: value; if value {42} else {0}}";
+    let (program, bundle) = prove(source).unwrap();
+    assert_eq!(program.run().unwrap().to_string(), "42");
+    assert!(program.trusted_assumptions().is_empty());
+    assert_eq!(
+        verify_with_certificate(source, &bundle)
+            .unwrap()
+            .proof_search_count(),
+        0
+    );
+    let wrong = source.replace("(*data)[0] = true", "(*data)[0] = false");
+    assert!(verify(&wrong)
+        .unwrap_err()
+        .contains("cannot prove proof preserved"));
+}
